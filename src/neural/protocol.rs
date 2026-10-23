@@ -13,6 +13,7 @@
 use super::provider::SERVING_LIMIT_TOKENS;
 use super::provider::{
     DocumentLimits, FunctionDescriptor, MAX_DIMENSIONS, MAX_DOCUMENT_BATCH, TokenizedInput,
+    decode_finite_f32_le, extend_f32_le,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -82,6 +83,18 @@ impl Header {
             | Self::Vectors { protocol, .. }
             | Self::Busy { protocol, .. }
             | Self::Error { protocol, .. } => *protocol,
+        }
+    }
+
+    /// The serde `kind` tag.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Hello { .. } => "hello",
+            Self::Ready { .. } => "ready",
+            Self::Embed { .. } => "embed",
+            Self::Vectors { .. } => "vectors",
+            Self::Busy { .. } => "busy",
+            Self::Error { .. } => "error",
         }
     }
 }
@@ -306,9 +319,7 @@ pub fn decode_ids_with_limits(
 pub fn encode_vectors(vectors: &[Vec<f32>]) -> Vec<u8> {
     let mut payload = Vec::with_capacity(vectors.iter().map(|v| v.len() * 4).sum());
     for vector in vectors {
-        for value in vector {
-            payload.extend_from_slice(&value.to_le_bytes());
-        }
+        extend_f32_le(&mut payload, vector);
     }
     payload
 }
@@ -339,17 +350,13 @@ pub fn decode_vectors(
             payload.len()
         )));
     }
-    let values: Vec<f32> = payload
-        .chunks_exact(4)
-        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-        .collect();
-    if values.iter().any(|v| !v.is_finite()) {
-        return Err(FrameError::Malformed("nonfinite vector value".into()));
-    }
-    Ok(values
-        .chunks_exact(expected_dims)
-        .map(<[f32]>::to_vec)
-        .collect())
+    payload
+        .chunks_exact(expected_dims * 4)
+        .map(|row| {
+            decode_finite_f32_le(row)
+                .ok_or_else(|| FrameError::Malformed("nonfinite vector value".into()))
+        })
+        .collect()
 }
 
 #[cfg(test)]

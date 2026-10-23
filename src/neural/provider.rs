@@ -341,6 +341,28 @@ pub fn validate_vector(vector: &[f32], dims: usize) -> Result<(), ProviderError>
     Ok(())
 }
 
+/// Append `values` as f32 LE: the element encoding of cache rows and
+/// `vectors` replies.
+pub(crate) fn extend_f32_le(out: &mut Vec<u8>, values: &[f32]) {
+    for value in values {
+        out.extend_from_slice(&value.to_le_bytes());
+    }
+}
+
+/// `bytes` (a multiple of 4) as f32 LE values; `None` at the first nonfinite
+/// one.
+pub(crate) fn decode_finite_f32_le(bytes: &[u8]) -> Option<Vec<f32>> {
+    let mut vector = Vec::with_capacity(bytes.len() / 4);
+    for chunk in bytes.chunks_exact(4) {
+        let value = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+        if !value.is_finite() {
+            return None;
+        }
+        vector.push(value);
+    }
+    Some(vector)
+}
+
 /// A thread-safe probe of a call the provider already returned from that
 /// still runs in the model (see [`EmbeddingProvider::late_call`]).
 pub type LateCall = std::sync::Arc<dyn Fn() -> bool + Send + Sync>;

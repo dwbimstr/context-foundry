@@ -31,12 +31,10 @@ impl Input {
     }
 }
 
-fn prefix(profile: &SemanticProfile) -> String {
+fn prefix(digest: &str, recipe: &str) -> String {
     format!(
         "{PREFIX}{}:",
-        crate::digest(
-            format!("{}:{}", profile.descriptor.digest(), profile.recipe_id()).as_bytes()
-        )
+        crate::digest(format!("{digest}:{recipe}").as_bytes())
     )
 }
 fn enabled(profile: &SemanticProfile) -> bool {
@@ -111,6 +109,8 @@ pub(crate) fn render(
     tokens: &dyn TokenCount,
     control: &Control,
 ) -> FResult<Vec<Input>> {
+    let digest = profile.descriptor.digest();
+    let recipe = profile.recipe_id();
     let mut inputs = Vec::new();
     for record in records {
         control.check()?;
@@ -152,15 +152,14 @@ pub(crate) fn render(
             )
             .into());
         }
-        let digest = profile.descriptor.digest();
         let key = provider::input_key(&digest, &rendered);
         inputs.push(Input {
             record: Record {
                 id: record.id.clone(),
                 revision: record.revision,
                 fingerprint: crate::knowledge::fingerprint(&record)?,
-                digest,
-                recipe: profile.recipe_id(),
+                digest: digest.clone(),
+                recipe: recipe.clone(),
                 key,
             },
             ids,
@@ -185,7 +184,7 @@ pub(crate) fn prune(
     if !enabled(profile) {
         return Ok(());
     }
-    let prefix = prefix(profile);
+    let prefix = prefix(&profile.descriptor.digest(), &profile.recipe_id());
     let ids: std::collections::BTreeSet<_> = inputs
         .iter()
         .map(|input| input.record.id.as_str())
@@ -233,7 +232,11 @@ pub(crate) fn bind(
     {
         return Ok(false);
     }
-    let key = format!("{}{}", prefix(profile), record.id);
+    let key = format!(
+        "{}{}",
+        prefix(&profile.descriptor.digest(), &profile.recipe_id()),
+        record.id
+    );
     let encoded = serde_json::to_string(record)?;
     {
         let mut state = tx.open_table(cache::STATE)?;
@@ -267,7 +270,9 @@ pub(crate) fn search(
     let state = tx.open_table(cache::STATE)?;
     let briefs = tx.open_table(brief::BRIEFS)?;
     let sources = tx.open_table(crate::store::SOURCES)?;
-    let prefix = prefix(profile);
+    let digest = profile.descriptor.digest();
+    let recipe = profile.recipe_id();
+    let prefix = prefix(&digest, &recipe);
     let upper = format!("{prefix}~");
     let mut candidates = Vec::new();
     for row in state
@@ -278,7 +283,7 @@ pub(crate) fn search(
         let (_, raw) = row?;
         let record: Record = serde_json::from_str(raw.value())
             .map_err(|_| FoundryError::CorruptStore("invalid area vector binding".into()))?;
-        if record.digest != profile.descriptor.digest() || record.recipe != profile.recipe_id() {
+        if record.digest != digest || record.recipe != recipe {
             continue;
         }
         let Some(raw) = briefs.get(record.id.as_str())? else {

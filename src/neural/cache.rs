@@ -657,9 +657,7 @@ fn encode_row(function_digest: &str, vector: &[f32]) -> Vec<u8> {
     let mut value = Vec::with_capacity(row_bytes(vector.len()));
     value.extend_from_slice(function_digest.as_bytes());
     value.extend_from_slice(&(vector.len() as u32).to_le_bytes());
-    for component in vector {
-        value.extend_from_slice(&component.to_le_bytes());
-    }
+    provider::extend_f32_le(&mut value, vector);
     value
 }
 
@@ -1069,7 +1067,7 @@ impl Engine {
         let short = key.get(..8).unwrap_or(key);
         match (probe_row(bytes, function_digest), layout(bytes)) {
             (CacheProbe::Current, Layout::Dims(stored)) if stored == dims => {
-                match decode_vector(&bytes[68..]) {
+                match provider::decode_finite_f32_le(&bytes[68..]) {
                     Some(vector) => Ok(CacheLookup::Hit(vector)),
                     None => Ok(CacheLookup::Corrupt(format!(
                         "semantic_cache[{short}…] holds a nonfinite vector"
@@ -1414,20 +1412,6 @@ pub(crate) fn plan_generation_removal(store: &Dir) -> FResult<Option<(Dir, Vec<O
     Ok(Some((root, names)))
 }
 
-/// Cache-row vector decode of a row's value bytes: finite values, else
-/// `None`.
-fn decode_vector(bytes: &[u8]) -> Option<Vec<f32>> {
-    let mut vector = Vec::with_capacity(bytes.len() / 4);
-    for chunk in bytes.chunks_exact(4) {
-        let value = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-        if !value.is_finite() {
-            return None;
-        }
-        vector.push(value);
-    }
-    Some(vector)
-}
-
 pub(crate) fn is_key(key: &str) -> bool {
     key.len() == 64 && key.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
@@ -1513,7 +1497,10 @@ mod tests {
             assert_eq!(layout(&row), Layout::Dims(dims));
             assert_eq!(probe_row(&row, DIGEST), CacheProbe::Current);
             assert_eq!(probe_row(&row, &"cd".repeat(32)), CacheProbe::Retained);
-            assert_eq!(decode_vector(&row[68..]).unwrap().len(), dims);
+            assert_eq!(
+                provider::decode_finite_f32_le(&row[68..]).unwrap().len(),
+                dims
+            );
         }
         // A descriptor v1 row: digest and 2048 values, no dimension field.
         let mut legacy = DIGEST.as_bytes().to_vec();
