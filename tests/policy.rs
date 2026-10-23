@@ -1,9 +1,10 @@
 //! 013 T003 acceptance (SC-003): serving, selection, rollback and the
-//! retired legacy path, over the real request path (`mcp::context_primary`,
-//! the function the MCP owner and the CLI both call), the real candidate
-//! artifacts T002 publishes, and `foundry-learn-fake` behind the real
-//! supervised spawn. Fault hooks are the fake's (`--predict-*`); every
-//! number they inject goes through the core's own validation.
+//! retired legacy path, over the real request path
+//! (`mcp::context_primary_with_options`, the function the MCP owner and the
+//! CLI both call), the real candidate artifacts T002 publishes, and
+//! `foundry-learn-fake` behind the real supervised spawn. Fault hooks are the
+//! fake's (`--predict-*`); every number they inject goes through the core's
+//! own validation.
 //!
 //! `--features learning-worker` adds the real-checkpoint parity test: the
 //! served function's probabilities equal T002's evaluation probabilities
@@ -18,6 +19,7 @@
 use context_foundry::learning::{self, train};
 use context_foundry::policy::{self, Policy, PolicyServing};
 use context_foundry::response::{self, Budget};
+use context_foundry::store::ContextOptions;
 use context_foundry::{Control, Engine, FoundryError, Strategy, testkit};
 use protobuf::{EnumOrUnknown, Message as _};
 use scip::types::{Document, Index, Occurrence, PositionEncoding};
@@ -552,8 +554,16 @@ fn context(
     deadline: Duration,
 ) -> String {
     let control = Control::with_deadline(Instant::now() + deadline);
-    let combined = context_foundry::mcp::context_primary(
-        &None, policy, engine, query, strategy, &control, false, None,
+    let combined = context_foundry::mcp::context_primary_with_options(
+        &None,
+        engine,
+        query,
+        strategy,
+        &control,
+        ContextOptions {
+            policy,
+            ..Default::default()
+        },
     )
     .expect("context candidates");
     response::pack_context(
@@ -1145,15 +1155,16 @@ fn missing_nemotron_does_not_disable_the_policy() {
     let slot: context_foundry::mcp::SemanticSlot = Some(Err("fallback:profile_invalid".into()));
     let segments_for = |query: &str| {
         let control = Control::with_deadline(Instant::now() + Duration::from_secs(5));
-        let combined = context_foundry::mcp::context_primary(
+        let combined = context_foundry::mcp::context_primary_with_options(
             &slot,
-            Some(&served),
             &engine,
             query,
             Strategy::Auto,
             &control,
-            false,
-            None,
+            ContextOptions {
+                policy: Some(&served),
+                ..Default::default()
+            },
         )
         .unwrap();
         let text = response::pack_context(
@@ -1514,8 +1525,8 @@ fn a_reply_published_before_the_ceiling_succeeds_when_the_waiter_looks_late() {
 
 /// A short read deadline: the prediction waits half the remaining time, so
 /// a 3 s prediction under an 800 ms deadline still leaves the deterministic
-/// baseline its time, through the real `context_primary` path, with no
-/// deadline error.
+/// baseline its time, through the real `context_primary_with_options` path,
+/// with no deadline error.
 #[test]
 fn a_short_read_deadline_still_delivers_the_baseline() {
     let env = Env::new(0.6);

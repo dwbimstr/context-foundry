@@ -103,35 +103,7 @@ pub fn search_primary(
 /// with the semantic path applied and, when a policy is configured, its
 /// routing of an `auto` strategy (013 T003): after the 009 merge, before
 /// graph expansion, under the same read deadline as the query embedding.
-/// `anchors` as in [`Engine::context_candidates_with`].
-#[allow(clippy::too_many_arguments)]
-pub fn context_primary(
-    slot: &SemanticSlot,
-    policy: Option<&crate::policy::Policy>,
-    engine: &Engine,
-    query: &str,
-    strategy: Strategy,
-    control: &Control,
-    memory: bool,
-    anchors: Option<&[crate::store::AnchorCandidate]>,
-) -> FResult<crate::memory::MemoryContext> {
-    context_primary_with_options(
-        slot,
-        engine,
-        query,
-        strategy,
-        control,
-        crate::store::ContextOptions {
-            memory,
-            policy,
-            anchors,
-            ..crate::store::ContextOptions::default()
-        },
-    )
-}
-
-/// The same production path with explicitly configured experimental packing.
-/// The default wrapper above remains available to existing library callers.
+/// `requested.anchors` as in [`Engine::context_candidates_with`].
 pub fn context_primary_with_options(
     slot: &SemanticSlot,
     engine: &Engine,

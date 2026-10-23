@@ -128,7 +128,7 @@ fn explicit_semantic_options_refuse_invalid_admission_before_store_creation() {
     control
         .cancel_flag()
         .store(true, std::sync::atomic::Ordering::SeqCst);
-    let error = bootstrap::apply_with_semantic(
+    let error = bootstrap::apply(
         &f.root,
         Some(&f.store),
         &["lexical".into(), "semantic".into()],
@@ -306,7 +306,7 @@ fn unchanged_bootstrap_replays_cached_vectors_without_a_worker_and_refuses_other
     }
     let other = f.dir.path().join("other");
     std::fs::create_dir(&other).unwrap();
-    let error = bootstrap::apply_with_semantic(
+    let error = bootstrap::apply(
         &other,
         Some(&f.store),
         &["semantic".into()],
@@ -322,7 +322,7 @@ fn unchanged_bootstrap_replays_cached_vectors_without_a_worker_and_refuses_other
     )
     .unwrap_err();
     assert_eq!(error.code(), "wrong_workspace");
-    // The compatibility entry point also retains explicit setup state.
+    // Without a semantic run, apply still retains explicit setup state.
     let report = bootstrap::apply(
         &f.root,
         Some(&f.store),
@@ -330,6 +330,7 @@ fn unchanged_bootstrap_replays_cached_vectors_without_a_worker_and_refuses_other
         None,
         None,
         Some(Path::new("missing-profile")),
+        None,
     )
     .unwrap();
     assert_eq!(report.components[0].state, ComponentState::NeedsSetup);

@@ -147,7 +147,6 @@ fn default_store(root: &Path) -> PathBuf {
 
 /// Inspection only: touches nothing but existence checks; never opens a
 /// store writer, never executes repository code, never loads a model.
-#[allow(clippy::too_many_arguments)]
 pub fn inspect(
     root: &Path,
     store: Option<&Path>,
@@ -156,7 +155,6 @@ pub fn inspect(
     graph_snapshot: Option<&Path>,
     profile: Option<&Path>,
     binary: &Path,
-    http: Option<HttpConnectInfo<'_>>,
 ) -> FResult<BootstrapReport> {
     let root = canonical_root(root)?;
     let store = store
@@ -249,15 +247,6 @@ pub fn inspect(
             store.display()
         ));
     }
-    if let Some(http) = http {
-        next_actions.push(format!(
-            "{} connect --host {} --root {} --store {} --print-config",
-            binary.display(),
-            http.host,
-            root.display(),
-            store.display()
-        ));
-    }
     let complete = !reports.is_empty() && reports.iter().all(|r| r.state == ComponentState::Ready);
     Ok(BootstrapReport {
         applied: false,
@@ -275,29 +264,11 @@ pub fn inspect(
 /// Apply the explicit baseline: initialize a new store (001 explicit
 /// initializer) or open the existing one, verify the root binding, index
 /// baseline source, and import a completed graph artifact when both files
-/// are supplied. Interrupted application reuses the existing store and
-/// committed work through the normal owner; it never reinitializes.
+/// are supplied; `semantic` adds preparation within its explicit budget,
+/// retaining one store owner throughout. Interrupted application reuses the
+/// existing store and committed work through the normal owner; it never
+/// reinitializes.
 pub fn apply(
-    root: &Path,
-    store: Option<&Path>,
-    components: &[String],
-    graph_index: Option<&Path>,
-    graph_snapshot: Option<&Path>,
-    profile: Option<&Path>,
-) -> FResult<BootstrapReport> {
-    apply_with_semantic(
-        root,
-        store,
-        components,
-        graph_index,
-        graph_snapshot,
-        profile,
-        None,
-    )
-}
-
-/// Apply with an explicit semantic budget, retaining one store owner throughout.
-pub fn apply_with_semantic(
     root: &Path,
     store: Option<&Path>,
     components: &[String],
@@ -618,10 +589,6 @@ fn bound_graph_bundle(
 // ---------------------------------------------------------------------------
 // connect: printed per-project host configuration
 // ---------------------------------------------------------------------------
-
-pub struct HttpConnectInfo<'a> {
-    pub host: &'a str,
-}
 
 /// Host tool timeout above the maximum advertised `index` timeout
 /// (1,200,000 ms): a host that applies its own shorter default would cancel
