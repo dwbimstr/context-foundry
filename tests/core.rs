@@ -4031,6 +4031,46 @@ fn a_resolved_anchor_packs_its_definition_and_eight_directory_lines() {
     }
 }
 
+/// An anchored definition that is also a unit (the same full handle) has the
+/// unit's forms, then `[address]`: a signature form where the signature
+/// differs from the body, none where it reads the same.
+#[test]
+fn an_anchored_copy_of_a_unit_has_the_units_signature_form() {
+    let fixture = tempfile::tempdir().unwrap();
+    let (_store, mut engine) = setup(&fixture.path().join("ws"));
+    let lets: String = (0..200)
+        .map(|j| format!("    let v{j} = a + {j};\n"))
+        .collect();
+    engine
+        .replace_source(
+            "big.rs",
+            &format!("pub fn twin(a: u8) -> u8 {{\n{lets}    a\n}}\n"),
+        )
+        .unwrap();
+    engine
+        .replace_source("small.rs", "pub fn twin() {}\n")
+        .unwrap();
+    drain(&mut engine);
+    let batch = engine
+        .context_candidates("`twin`", Strategy::Search, &Control::unbounded())
+        .unwrap();
+    let entries = &batch.anchors[0].entries;
+    assert_eq!(entries.len(), 2);
+    for entry in entries {
+        let unit = batch
+            .items
+            .iter()
+            .find(|item| item.handle == entry.handle)
+            .expect("the anchored definition is also a unit");
+        let mut forms = unit.forms.clone();
+        forms.push(RenderedForm::Address);
+        assert_eq!(entry.forms, forms);
+        let big = source(entry).path == "big.rs";
+        let signed = matches!(unit.forms.get(1), Some(RenderedForm::Signature(_)));
+        assert_eq!(signed, big, "only the long body has a distinct signature");
+    }
+}
+
 /// One of two same-name anchored definitions changes between candidate
 /// collection and the final read: it is a tier-1 item and an anchor-window
 /// entry, yet it is dropped from both, absent from the output and counted

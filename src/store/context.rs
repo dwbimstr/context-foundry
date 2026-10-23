@@ -86,6 +86,31 @@ fn behavior_supports(
     })
 }
 
+/// The signature text of a source item that is not a block: its range with
+/// every elidable span folded; `None` without its file's outliner.
+fn render_signature(
+    item: &RankedItem,
+    outliners: &std::collections::BTreeMap<&str, crate::syntax::Outliner<'_>>,
+) -> Option<String> {
+    let handle = item.handle.as_ref()?;
+    if item.label == "block" {
+        return None;
+    }
+    let outliner = outliners.get(handle.path.as_str())?;
+    Some(outliner.render(handle.start as usize..handle.end as usize, 0, 0))
+}
+
+/// Appends `signature` as a signature form unless a verbatim form already
+/// reads the same.
+fn append_signature(forms: &mut Vec<RenderedForm>, signature: std::borrow::Cow<'_, str>) {
+    let same = forms
+        .iter()
+        .any(|form| matches!(form, RenderedForm::Verbatim(text) if *text == *signature));
+    if !same {
+        forms.push(RenderedForm::Signature(signature.into_owned()));
+    }
+}
+
 impl Engine {
     /// Context candidates (context-v2 § Context candidates and routing), in
     /// order: up to 32 delivery units from the two-tier ranking, then up to
@@ -389,26 +414,35 @@ impl Engine {
                     .map(|lang| (path.as_str(), crate::syntax::Outliner::new(body, lang)))
             })
             .collect();
-        let anchor_entries = anchors
+        // Signature forms. Each unit's renders once; an anchor entry with a
+        // unit's full handle reuses that text instead of rendering it again.
+        let signatures: Vec<Option<String>> = units
+            .iter()
+            .map(|item| render_signature(item, &outliners))
+            .collect();
+        for entry in anchors
             .iter_mut()
-            .flat_map(|window| window.entries.iter_mut());
-        for item in units.iter_mut().chain(anchor_entries) {
-            let Some(handle) = &item.handle else {
-                continue;
-            };
-            if item.label == "block" {
+            .flat_map(|window| window.entries.iter_mut())
+        {
+            if entry.label == "block" {
                 continue;
             }
-            let Some(outliner) = outliners.get(handle.path.as_str()) else {
-                continue;
-            };
-            let signature = outliner.render(handle.start as usize..handle.end as usize, 0, 0);
-            let same = item
-                .forms
+            let reused = units
                 .iter()
-                .any(|form| matches!(form, RenderedForm::Verbatim(text) if *text == signature));
-            if !same {
-                item.forms.push(RenderedForm::Signature(signature));
+                .zip(&signatures)
+                .find_map(|(unit, text)| text.as_deref().filter(|_| unit.handle == entry.handle));
+            let signature = match reused {
+                Some(text) => std::borrow::Cow::Borrowed(text),
+                None => match render_signature(entry, &outliners) {
+                    Some(text) => std::borrow::Cow::Owned(text),
+                    None => continue,
+                },
+            };
+            append_signature(&mut entry.forms, signature);
+        }
+        for (item, signature) in units.iter_mut().zip(signatures) {
+            if let Some(signature) = signature {
+                append_signature(&mut item.forms, std::borrow::Cow::Owned(signature));
             }
         }
         // An anchored definition's last rung (context-v2 § Ladder for
