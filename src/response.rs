@@ -674,12 +674,61 @@ fn refusal_floor_impl(
     })
 }
 
+/// Exact accounting for one packing loop: each trial is a whole response,
+/// measured once; the last one that fits is the result, never rendered or
+/// counted again. Token counts are not additive, so a trial is never priced
+/// from its parts.
+struct BudgetedText<'a> {
+    budget: Budget,
+    boundary: ByteMeasure<'a>,
+    text: String,
+    tokens: usize,
+}
+
+impl<'a> BudgetedText<'a> {
+    fn new(budget: Budget, boundary: ByteMeasure<'a>) -> Self {
+        Self {
+            budget,
+            boundary,
+            text: String::new(),
+            tokens: 0,
+        }
+    }
+
+    /// Keeps `text` when its emitted bytes fit the byte cap and its tokens
+    /// fit the budget.
+    fn try_accept(&mut self, text: String) -> bool {
+        if (self.boundary)(&text) > BYTE_CAP {
+            return false;
+        }
+        let tokens = count_tokens(&text);
+        if tokens > self.budget.tokens {
+            return false;
+        }
+        self.text = text;
+        self.tokens = tokens;
+        true
+    }
+
+    /// The last accepted text with its exact count.
+    fn finish(self, omitted: usize, truncated: bool) -> PackedText {
+        debug_assert!(!self.text.is_empty(), "no trial was accepted");
+        PackedText {
+            text: self.text,
+            tokens: self.tokens,
+            omitted,
+            truncated,
+        }
+    }
+}
+
 /// Ladder packing (context-v2 § Ladder packing) over an already ordered list
 /// of candidates, each given as its rendered forms in ladder order: include
 /// the first form whose complete response (header updated for that
 /// inclusion) fits the token budget and the byte cap, else omit and count
-/// the candidate; then drop last-added items until the final header fits.
-/// If even the header cannot fit, refuse with a sufficient budget.
+/// the candidate. Every trial's header carries that trial's counts, so the
+/// last fitting trial is final and no item is dropped to repair it. If even
+/// the header cannot fit, refuse with a sufficient budget.
 ///
 /// `tail` holds already-rendered lines that are NOT ladder candidates (008
 /// memory lines): after the ladder, each tail line that fits the remaining
@@ -691,7 +740,6 @@ fn pack(
     tail: (&[String], &[(usize, usize)]),
     header: &HeaderV2,
     budget: Budget,
-    byte_cap: usize,
     boundary: ByteMeasure,
 ) -> FResult<PackedText> {
     let (tail, required) = tail;
@@ -713,8 +761,8 @@ fn pack(
         }
         text
     };
-    let fits = |text: &str| boundary(text) <= byte_cap && count_tokens(text) <= budget.tokens;
     header.check_task_capacity(items.len(), budget.limited_by, boundary)?;
+    let mut packed = BudgetedText::new(budget, boundary);
     let mut included: Vec<(usize, usize)> = Vec::new();
     'candidate: for (index, forms) in items.iter().enumerate() {
         for form in 0..forms.len() {
@@ -733,31 +781,26 @@ fn pack(
                 continue 'candidate;
             }
             included.push((index, form));
-            if fits(&render(&included, &[], budget.tokens, budget.limited_by)) {
+            if packed.try_accept(render(&included, &[], budget.tokens, budget.limited_by)) {
                 break;
             }
             included.pop();
         }
     }
-    let mut tail_kept: Vec<usize> = Vec::new();
-    let base_fits = loop {
-        let text = render(&included, &tail_kept, budget.tokens, budget.limited_by);
-        if fits(&text) {
-            break true;
-        }
-        if included.pop().is_none() {
-            break false;
-        }
-    };
-    if !base_fits {
-        // Not even the header fits; memory lines cannot rescue it.
+    // A rejected trial restores the last accepted `included`, so that trial
+    // is already the final rendering. With nothing included, the bare header
+    // must fit; memory lines cannot rescue it.
+    if included.is_empty() && !packed.try_accept(render(&[], &[], budget.tokens, budget.limited_by))
+    {
         return Err(too_small(budget.tokens, &|shown, limited_by| {
             render(&[], &[], shown, limited_by)
         }));
     }
     // 008: fill the remaining budget with memory lines, one fitting line at
     // a time; a line that does not fit is skipped, never traded for a source
-    // item and never counted as omitted.
+    // item and never counted as omitted. Indices arrive once, ascending, so
+    // `tail_kept` stays sorted.
+    let mut tail_kept: Vec<usize> = Vec::new();
     for index in 0..tail.len() {
         if required.iter().any(|&(tail_index, source_index)| {
             tail_index == index
@@ -775,24 +818,18 @@ fn pack(
         }) {
             continue;
         }
-        if !tail_kept.contains(&index) {
-            let mut trial = tail_kept.clone();
-            trial.push(index);
-            trial.sort_unstable();
-            if fits(&render(&included, &trial, budget.tokens, budget.limited_by)) {
-                tail_kept = trial;
-            }
+        tail_kept.push(index);
+        if !packed.try_accept(render(
+            &included,
+            &tail_kept,
+            budget.tokens,
+            budget.limited_by,
+        )) {
+            tail_kept.pop();
         }
     }
-    let text = render(&included, &tail_kept, budget.tokens, budget.limited_by);
-    let tokens = count_tokens(&text);
     let omitted = items.len().saturating_sub(included.len());
-    Ok(PackedText {
-        text,
-        tokens,
-        omitted,
-        truncated: omitted > 0,
-    })
+    Ok(packed.finish(omitted, omitted > 0))
 }
 
 /// v2 retrieve text view: header, one item naming the delivered prefix, and
@@ -1027,7 +1064,7 @@ pub fn pack_context(
     budget: Budget,
     boundary: ByteMeasure,
 ) -> FResult<PackedText> {
-    pack_context_impl(batch, None, &[], None, budget, boundary)
+    pack_context_guarded(batch, None, (&[], &[]), None, budget, boundary)
 }
 
 /// [`pack_context`] with 008 memory included: after the ladder places the
@@ -1041,7 +1078,7 @@ pub fn pack_context_with_memory(
     boundary: ByteMeasure,
 ) -> FResult<PackedText> {
     let tail: Vec<String> = hits.iter().map(memory_line).collect();
-    pack_context_impl(batch, None, &tail, None, budget, boundary)
+    pack_context_guarded(batch, None, (&tail, &[]), None, budget, boundary)
 }
 
 /// The multi-root form of [`pack_context`]: the batch is the 007 merge of
@@ -1054,7 +1091,7 @@ pub fn pack_context_roots(
     budget: Budget,
     boundary: ByteMeasure,
 ) -> FResult<PackedText> {
-    pack_context_impl(batch, Some(roots), &[], None, budget, boundary)
+    pack_context_guarded(batch, Some(roots), (&[], &[]), None, budget, boundary)
 }
 
 /// [`pack_context_roots`] with 008 memory from the primary root.
@@ -1066,7 +1103,7 @@ pub fn pack_context_roots_with_memory(
     boundary: ByteMeasure,
 ) -> FResult<PackedText> {
     let tail: Vec<String> = hits.iter().map(memory_line).collect();
-    pack_context_impl(batch, Some(roots), &tail, None, budget, boundary)
+    pack_context_guarded(batch, Some(roots), (&tail, &[]), None, budget, boundary)
 }
 
 /// Compose a selected task view with ordinary source/graph/project-memory
@@ -1189,17 +1226,6 @@ fn context_header<'a>(
     }
 }
 
-fn pack_context_impl(
-    batch: &CandidateBatch,
-    roots: Option<&[RootHeader]>,
-    tail: &[String],
-    task_view: Option<&str>,
-    budget: Budget,
-    boundary: ByteMeasure,
-) -> FResult<PackedText> {
-    pack_context_guarded(batch, roots, (tail, &[]), task_view, budget, boundary)
-}
-
 fn pack_context_guarded(
     batch: &CandidateBatch,
     roots: Option<&[RootHeader]>,
@@ -1214,15 +1240,7 @@ fn pack_context_guarded(
     let items: Vec<Vec<String>> = batch.items.iter().map(ranked_forms).collect();
     let mut header = context_header(batch, roots, None, false);
     header.task_view = task_view;
-    pack(
-        &items,
-        &batch.items,
-        tail,
-        &header,
-        budget,
-        BYTE_CAP,
-        boundary,
-    )
+    pack(&items, &batch.items, tail, &header, budget, boundary)
 }
 
 /// One entry of the anchored selection: its renderings in ladder order —
@@ -1496,9 +1514,9 @@ fn pack_anchored(
             }
             text
         };
-    let fits = |text: &str| boundary(text) <= BYTE_CAP && count_tokens(text) <= budget.tokens;
-    let trial = |slots: &[Slot], dropped: usize| {
-        fits(&render(
+    let mut packed = BudgetedText::new(budget, boundary);
+    let trial = |packed: &mut BudgetedText, slots: &[Slot], dropped: usize| {
+        packed.try_accept(render(
             slots,
             dropped,
             false,
@@ -1508,10 +1526,14 @@ fn pack_anchored(
         ))
     };
     // The first of `order`'s forms that fits, else the entry is omitted.
-    let place = |slots: &mut [Slot], index: usize, order: &[usize], dropped: &mut usize| {
+    let place = |packed: &mut BudgetedText,
+                 slots: &mut [Slot],
+                 index: usize,
+                 order: &[usize],
+                 dropped: &mut usize| {
         for &form in order {
             slots[index].chosen = Some(form);
-            if trial(slots, *dropped) {
+            if trial(packed, slots, *dropped) {
                 return;
             }
         }
@@ -1520,21 +1542,24 @@ fn pack_anchored(
     };
     // A door group fits whole or is omitted, its lines counted; so is an
     // omitted entry's.
-    let place_group =
-        |slots: &mut [Slot], entry: usize, group: &std::ops::Range<usize>, dropped: &mut usize| {
-            if !group.is_empty() && slots[entry].chosen.is_some() {
-                for index in group.clone() {
-                    slots[index].chosen = Some(0);
-                }
-                if trial(slots, *dropped) {
-                    return;
-                }
-                for index in group.clone() {
-                    slots[index].chosen = None;
-                }
+    let place_group = |packed: &mut BudgetedText,
+                       slots: &mut [Slot],
+                       entry: usize,
+                       group: &std::ops::Range<usize>,
+                       dropped: &mut usize| {
+        if !group.is_empty() && slots[entry].chosen.is_some() {
+            for index in group.clone() {
+                slots[index].chosen = Some(0);
             }
-            *dropped += group.len();
-        };
+            if trial(packed, slots, *dropped) {
+                return;
+            }
+            for index in group.clone() {
+                slots[index].chosen = None;
+            }
+        }
+        *dropped += group.len();
+    };
     let mut dropped = 0usize;
     for plan in &plans {
         match plan {
@@ -1548,11 +1573,11 @@ fn pack_anchored(
                 } else {
                     (0..slots[*first].forms.len()).collect()
                 };
-                place(&mut slots, *first, &ladder, &mut dropped);
-                place_group(&mut slots, *first, group, &mut dropped);
+                place(&mut packed, &mut slots, *first, &ladder, &mut dropped);
+                place_group(&mut packed, &mut slots, *first, group, &mut dropped);
                 if !behavior {
                     for index in directory.clone() {
-                        place(&mut slots, index, &[0], &mut dropped);
+                        place(&mut packed, &mut slots, index, &[0], &mut dropped);
                     }
                 }
             }
@@ -1567,12 +1592,18 @@ fn pack_anchored(
                         continue;
                     }
                     let address = slots[index].address;
-                    place(&mut slots, index, address.as_slice(), &mut dropped);
+                    place(
+                        &mut packed,
+                        &mut slots,
+                        index,
+                        address.as_slice(),
+                        &mut dropped,
+                    );
                 }
                 // `doors:each`: the entries' groups, in list order, before
                 // any upgrade.
                 for (index, group) in entries {
-                    place_group(&mut slots, *index, group, &mut dropped);
+                    place_group(&mut packed, &mut slots, *index, group, &mut dropped);
                 }
                 // Pass 2 upgrades to the signature (verbatim when there is
                 // none), pass 3 to verbatim: each in list order when the
@@ -1585,7 +1616,7 @@ fn pack_anchored(
                         let form = if verbatim { 0 } else { slots[index].preferred };
                         if form < previous {
                             slots[index].chosen = Some(form);
-                            if !trial(&slots, dropped) {
+                            if !trial(&mut packed, &slots, dropped) {
                                 slots[index].chosen = Some(previous);
                             }
                         }
@@ -1596,23 +1627,25 @@ fn pack_anchored(
     }
     for index in support_slots {
         let ladder: Vec<usize> = (0..slots[index].forms.len()).collect();
-        place(&mut slots, index, &ladder, &mut dropped);
+        place(&mut packed, &mut slots, index, &ladder, &mut dropped);
     }
     if behavior {
         for plan in &plans {
             if let Plan::Resolved { directory, .. } = plan {
                 for index in directory.clone() {
-                    place(&mut slots, index, &[0], &mut dropped);
+                    place(&mut packed, &mut slots, index, &[0], &mut dropped);
                 }
             }
         }
     }
     for index in door_slots {
-        place(&mut slots, index, &[0], &mut dropped);
+        place(&mut packed, &mut slots, index, &[0], &mut dropped);
     }
     // The final header carries the final counts: drop the last shown entry
     // until the whole response fits. A door group goes whole, every line
     // counted; it follows its entry, so an entry goes only after its group.
+    // `dropped` may have grown since the last accepted trial, so the final
+    // rendering is always measured afresh.
     let mut group_of: Vec<Option<std::ops::Range<usize>>> = vec![None; slots.len()];
     let mut mark = |group: &std::ops::Range<usize>| {
         for index in group.clone() {
@@ -1626,7 +1659,7 @@ fn pack_anchored(
         }
     }
     let base_fits = loop {
-        if trial(&slots, dropped) {
+        if trial(&mut packed, &slots, dropped) {
             break true;
         }
         match slots.iter().rposition(|slot| slot.chosen.is_some()) {
@@ -1647,7 +1680,7 @@ fn pack_anchored(
     }
     // The `⋯ <m> more files` line follows the door lines when it fits.
     let more = more_files.is_some()
-        && fits(&render(
+        && packed.try_accept(render(
             &slots,
             dropped,
             true,
@@ -1659,7 +1692,7 @@ fn pack_anchored(
     let mut tail_kept: Vec<usize> = Vec::new();
     for index in 0..tail.len() {
         tail_kept.push(index);
-        if !fits(&render(
+        if !packed.try_accept(render(
             &slots,
             dropped,
             more,
@@ -1670,22 +1703,8 @@ fn pack_anchored(
             tail_kept.pop();
         }
     }
-    let text = render(
-        &slots,
-        dropped,
-        more,
-        &tail_kept,
-        budget.tokens,
-        budget.limited_by,
-    );
-    let tokens = count_tokens(&text);
     let omitted = outside + dropped;
-    Ok(PackedText {
-        text,
-        tokens,
-        omitted,
-        truncated: omitted > 0,
-    })
+    Ok(packed.finish(omitted, omitted > 0))
 }
 
 /// A source item's search locator line (context-v2 § Search locator lines):
@@ -1752,7 +1771,7 @@ fn pack_search_impl(
         doors: None,
         anchored: false,
     };
-    pack(&items, &[], (&[], &[]), &header, budget, BYTE_CAP, boundary)
+    pack(&items, &[], (&[], &[]), &header, budget, boundary)
 }
 
 /// 008 memory search: the v2 header exactly as `search` builds it (from the
@@ -1787,7 +1806,7 @@ pub fn pack_memory_search(
         doors: None,
         anchored: false,
     };
-    pack(&items, &[], (&[], &[]), &header, budget, BYTE_CAP, boundary)
+    pack(&items, &[], (&[], &[]), &header, budget, boundary)
 }
 
 /// One compact memory line (008): `mem:<id>@r<revision> <author>:
@@ -2255,11 +2274,11 @@ fn pack_task_evidence(
         }
         text
     };
-    let fits = |text: &str| boundary(text) <= BYTE_CAP && count_tokens(text) <= budget.tokens;
     let base = render(&[], &[], MAX_BUDGET_TOKENS, budget.limited_by);
     if boundary(&base) > BYTE_CAP || count_tokens(&base) > MAX_BUDGET_TOKENS {
         return Err(FoundryError::UnsupportedMode("selected task and evidence metadata exceed delivery capacity; explicitly fold or deselect task entries".into()));
     }
+    let mut packed = BudgetedText::new(budget, boundary);
     let mut selected = Vec::new();
     let mut kept = Vec::new();
     // A proof and the source bodies it depends on are one delivery decision.
@@ -2297,7 +2316,7 @@ fn pack_task_evidence(
         }
         trial.sort_unstable();
         kept.push(proof);
-        if fits(&render(&trial, &kept, budget.tokens, budget.limited_by)) {
+        if packed.try_accept(render(&trial, &kept, budget.tokens, budget.limited_by)) {
             selected = trial;
         } else {
             kept.pop();
@@ -2310,16 +2329,21 @@ fn pack_task_evidence(
         for f in 0..forms.len() {
             let position = selected.partition_point(|&(index, _)| index < i);
             selected.insert(position, (i, f));
-            if fits(&render(&selected, &kept, budget.tokens, budget.limited_by)) {
+            if packed.try_accept(render(&selected, &kept, budget.tokens, budget.limited_by)) {
                 break;
             }
             selected.remove(position);
         }
     }
-    // Each admission used the full renderer, including proof metadata. Never
-    // drop a required body to repair an overfull header after the fact.
-    selected.sort_unstable();
-    if !fits(&render(&selected, &kept, budget.tokens, budget.limited_by)) {
+    // Each admission used the full renderer, including proof metadata, and a
+    // rejected one restores the last accepted state (`selected` stays sorted:
+    // proof trials are sorted, bodies insert at their position), so that
+    // rendering is final. Never drop a required body to repair an overfull
+    // header after the fact. With nothing admitted, the bare response must fit.
+    if selected.is_empty()
+        && kept.is_empty()
+        && !packed.try_accept(render(&[], &[], budget.tokens, budget.limited_by))
+    {
         return Err(too_small(budget.tokens, &|t, l| render(&[], &[], t, l)));
     }
     for (i, (_, required, _)) in tail.iter().enumerate() {
@@ -2327,16 +2351,11 @@ fn pack_task_evidence(
             continue;
         }
         kept.push(i);
-        if !fits(&render(&selected, &kept, budget.tokens, budget.limited_by)) {
+        if !packed.try_accept(render(&selected, &kept, budget.tokens, budget.limited_by)) {
             kept.pop();
         }
     }
-    let text = render(&selected, &kept, budget.tokens, budget.limited_by);
     let omitted = items.len() - selected.len();
-    Ok(PackedText {
-        tokens: count_tokens(&text),
-        text,
-        omitted,
-        truncated: omitted > 0 || selected.iter().any(|&(_, f)| f > 0) || plan.discovery_limited,
-    })
+    let truncated = omitted > 0 || selected.iter().any(|&(_, f)| f > 0) || plan.discovery_limited;
+    Ok(packed.finish(omitted, truncated))
 }
