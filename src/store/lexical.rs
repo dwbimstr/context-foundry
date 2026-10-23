@@ -593,17 +593,7 @@ impl Engine {
         control: &crate::Control,
         selection: SearchSelection<'_>,
     ) -> FResult<CandidateBatch> {
-        if query.trim().is_empty() || query.len() > 4096 {
-            return Err(FoundryError::InvalidArgument(
-                "query must contain 1..4096 nonblank bytes".into(),
-            ));
-        }
-        if !(1..=64).contains(&limit) {
-            return Err(FoundryError::InvalidArgument("limit must be 1..64".into()));
-        }
-        // The path filter is validated before the workspace and index
-        // requirements (error precedence the extraction must not change).
-        path.map(path_filter).transpose()?;
+        check_search(query, path, limit)?;
         let workspace_id = self.require_workspace_id()?;
         let TwoTier {
             prose,
@@ -617,28 +607,15 @@ impl Engine {
         // the whole candidate window, then cut to `limit`; stale and capped
         // skips are counted past the cut.
         let tx = self.db.begin_read()?;
-        let sources = tx.open_table(SOURCES)?;
-        let stored = tx.open_table(CHUNKS)?;
+        let mut sources = FinalSources::open(&tx)?;
         let mut counters = CandidateCounters {
             candidates_full,
             ..CandidateCounters::default()
         };
-        let mut current: std::collections::BTreeMap<String, Option<SourceMeta>> =
-            std::collections::BTreeMap::new();
         let mut seen = LexicalSelection::default();
         let mut cut = Cut::new(limit, prose);
         for (rank, candidate) in first.iter().chain(&second).enumerate() {
-            if !current.contains_key(&candidate.path) {
-                let meta = match sources.get(candidate.path.as_str())? {
-                    Some(raw) => Some(decode::<SourceMeta>(raw.value(), "source")?),
-                    None => None,
-                };
-                current.insert(candidate.path.clone(), meta);
-            }
-            if current[&candidate.path]
-                .as_ref()
-                .is_none_or(|meta| meta.hash != candidate.hash)
-            {
+            if !sources.is_current(&candidate.path, &candidate.hash)? {
                 counters.stale += 1;
                 candidate.trace(control, &workspace_id, rank, "stale");
                 continue;
@@ -654,26 +631,13 @@ impl Engine {
         let kept = cut.finish(&mut counters, |rank, candidate, outcome| {
             candidate.trace(control, &workspace_id, rank, outcome)
         });
-        let wanted: std::collections::BTreeSet<String> = if prose {
-            prose_terms(query)
-        } else {
-            analyzed_terms(crate::syntax::code_subtokens, query)
-        }
-        .into_iter()
-        .collect();
-        let mut verified: std::collections::BTreeMap<String, VerifiedSource> =
-            std::collections::BTreeMap::new();
+        let wanted = wanted_terms(query, prose);
         let mut items = Vec::with_capacity(kept.len());
         let mut delivered = std::collections::BTreeSet::new();
         for (rank, candidate) in kept.into_iter().enumerate() {
-            let Some(Some(meta)) = current.get(&candidate.path) else {
+            let Some((meta, body)) = sources.body(&candidate.path)? else {
                 continue;
             };
-            if !verified.contains_key(&candidate.path) {
-                let source = reconstruct_verified(&stored, &candidate.path, meta)?;
-                verified.insert(candidate.path.clone(), source);
-            }
-            let body = &verified[&candidate.path].body;
             let item = ranked_context_item(
                 candidate,
                 rank,
@@ -689,15 +653,7 @@ impl Engine {
                 items.push(item);
             }
         }
-        let anchors = anchor_windows(
-            &windows,
-            &first,
-            &current,
-            &stored,
-            &mut verified,
-            &workspace_id,
-            &wanted,
-        )?;
+        let anchors = anchor_windows(&windows, &first, &mut sources, &workspace_id, &wanted)?;
         let freshness = self.freshness_in(&tx)?;
         Ok(CandidateBatch {
             freshness,

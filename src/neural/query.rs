@@ -34,7 +34,7 @@ mod refinement;
 mod runtime;
 use super::area;
 use super::cache;
-pub(crate) use refinement::{OwnerProof, OwnerScope};
+pub(crate) use refinement::{OwnerProof, OwnerScope, RefinedHit};
 pub(crate) use runtime::KnowledgeCall;
 pub use runtime::{DocumentCall, MakeProvider, QueryRuntime};
 
