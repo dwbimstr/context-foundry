@@ -86,12 +86,12 @@ impl Plan {
         mut self,
         store: &Dir,
         identity: &Prepared,
-        entries: &[GenerationEntry],
+        build: IndexBuild,
         control: &Control,
         built: &dyn Fn(),
     ) -> FResult<(Staged, cache::CoverageSnapshot, Publication)> {
         let full = self.previous.is_none();
-        let loaded: BTreeSet<_> = entries.iter().map(|e| e.input_key.as_str()).collect();
+        let loaded: BTreeSet<_> = build.keys.iter().map(String::as_str).collect();
         let missing: Vec<_> = if full {
             self.units
                 .keys()
@@ -144,10 +144,21 @@ impl Plan {
             || overlay_bytes
                 .as_ref()
                 .is_some_and(|bytes| bytes.len() as u64 > locations::MAX_DELTA_BYTES);
+        if compact_locations {
+            // The reader caps the label map; refuse before serializing anything.
+            let rows = self
+                .units
+                .iter()
+                .map(|(key, units)| (key.as_str(), units.as_slice()));
+            within_publication_limit(label_map_bytes(rows)?, MAX_META_BYTES, "mapping")?;
+        }
+        let delta_keys =
+            (!full && self.delta_changed && !build.keys.is_empty()).then(|| build.keys.clone());
+        let mut build = Some(build);
         let mut manifest = match self.previous {
             Some(previous) => previous.manifest,
             None => {
-                let bytes = encode_index(identity, entries, control, built)?;
+                let bytes = build.take().expect("one index build").finish(built)?;
                 let hash = crate::digest(&bytes);
                 artifacts.push((format!("ann-{hash}.usearch"), bytes));
                 let keys: Vec<_> = self.units.keys().cloned().collect();
@@ -177,17 +188,18 @@ impl Plan {
             }
         };
         if !full && self.delta_changed {
-            manifest.delta = if entries.is_empty() {
-                None
-            } else {
-                let bytes = encode_index(identity, entries, control, built)?;
-                within_publication_limit(bytes.len() as u64, MAX_DELTA_BYTES, "delta")?;
-                let hash = crate::digest(&bytes);
-                artifacts.push((format!("ann-{hash}.usearch"), bytes));
-                Some(DeltaManifest {
-                    sha256: hash,
-                    entries: entries.iter().map(|e| e.input_key.clone()).collect(),
-                })
+            manifest.delta = match delta_keys {
+                None => None,
+                Some(entries) => {
+                    let bytes = build.take().expect("one index build").finish(built)?;
+                    within_publication_limit(bytes.len() as u64, MAX_DELTA_BYTES, "delta")?;
+                    let hash = crate::digest(&bytes);
+                    artifacts.push((format!("ann-{hash}.usearch"), bytes));
+                    Some(DeltaManifest {
+                        sha256: hash,
+                        entries,
+                    })
+                }
             };
         }
         if compact_locations {
@@ -245,8 +257,15 @@ pub(super) fn full(
     control: &Control,
     built: &dyn Fn(),
 ) -> FResult<Staged> {
-    // Validate all direct callers before cloning potentially oversized mappings.
+    // Validate all direct callers before cloning potentially oversized mappings
+    // or allocating ANN storage.
     check_entries(entries, &identity.recipe)?;
+    let mut sorted: Vec<_> = entries.iter().collect();
+    sorted.sort_by(|a, b| a.input_key.cmp(&b.input_key));
+    let mut build = IndexBuild::new(identity, sorted.len())?;
+    for entry in sorted {
+        build.add(entry, control)?;
+    }
     let units = entries
         .iter()
         .map(|entry| {
@@ -274,78 +293,144 @@ pub(super) fn full(
         mapping_revision: None,
     };
     Plan::new(mapping, None)
-        .stage(store, identity, entries, control, built)
+        .stage(store, identity, build, control, built)
         .map(|result| result.0)
 }
 
 fn check_entries(entries: &[GenerationEntry], recipe: &str) -> FResult<()> {
-    let mut vectors = 0u64;
     let mut seen = BTreeSet::new();
     for entry in entries {
-        // Publication must enforce the same location contract as a fresh load.
-        // Refuse before staging can replace the last readable generation.
-        if !is_hex64(&entry.input_key) || !locations::valid_units(&entry.units, recipe) {
-            return Err(FoundryError::Semantic {
-                code: "cache_corrupt",
-                message: "invalid input key or locations in generation input".into(),
-            });
-        }
+        check_input(entry, recipe)?;
         if !seen.insert(&entry.input_key) {
-            return Err(FoundryError::Semantic {
-                code: "cache_corrupt",
-                message: "duplicate input key in generation input".into(),
-            });
+            return Err(duplicate_input());
         }
-        vectors = vectors.saturating_add(entry.vector.len() as u64 * 4);
-        within_publication_limit(vectors, MAX_VECTOR_BYTES, "vectors")?;
     }
-    within_publication_limit(label_map_bytes(entries)?, MAX_META_BYTES, "mapping")
+    within_publication_limit(
+        label_map_bytes(entry_labels(entries))?,
+        MAX_META_BYTES,
+        "mapping",
+    )
 }
 
-fn encode_index(
-    identity: &Prepared,
-    entries: &[GenerationEntry],
-    control: &Control,
-    built: &dyn Fn(),
-) -> FResult<Vec<u8>> {
-    use usearch::{Index, IndexOptions, MetricKind, ScalarKind};
-    check_entries(entries, &identity.recipe)?;
-    let options = IndexOptions {
-        dimensions: identity.dimensions,
-        metric: MetricKind::Cos,
-        quantization: ScalarKind::F16,
-        multi: false,
-        ..IndexOptions::default()
-    };
-    let fail = |error: &dyn std::fmt::Display| FoundryError::Semantic {
+/// Publication enforces the same location contract as a fresh load, and
+/// refuses before staging can replace the last readable generation.
+fn check_input(entry: &GenerationEntry, recipe: &str) -> FResult<()> {
+    if !is_hex64(&entry.input_key) || !locations::valid_units(&entry.units, recipe) {
+        return Err(FoundryError::Semantic {
+            code: "cache_corrupt",
+            message: "invalid input key or locations in generation input".into(),
+        });
+    }
+    Ok(())
+}
+
+fn duplicate_input() -> FoundryError {
+    FoundryError::Semantic {
+        code: "cache_corrupt",
+        message: "duplicate or unordered input key in generation input".into(),
+    }
+}
+
+fn usearch_failed(error: &dyn std::fmt::Display) -> FoundryError {
+    FoundryError::Semantic {
         code: "index_unavailable",
         message: format!("usearch build: {error}"),
-    };
-    let index = Index::new(&options).map_err(|e| fail(&e))?;
-    index.reserve(entries.len().max(1)).map_err(|e| fail(&e))?;
-    let mut sorted: Vec<_> = entries.iter().collect();
-    sorted.sort_by(|a, b| a.input_key.cmp(&b.input_key));
-    for (ordinal, entry) in sorted.iter().enumerate() {
+    }
+}
+
+/// One ANN segment built in ascending key order as cache pages arrive. Each
+/// decoded f32 vector goes into the f16 index and is dropped, so publication
+/// holds one lookup page of f32 vectors rather than the whole generation's.
+/// Ordinals are ranks over the sorted keys, exactly as a whole-batch build
+/// assigned them. The native index is created on the first input, or when an
+/// empty segment is serialized, so a location-only publication allocates none.
+pub(crate) struct IndexBuild {
+    index: Option<usearch::Index>,
+    capacity: usize,
+    dimensions: usize,
+    recipe: String,
+    keys: Vec<String>,
+}
+
+impl IndexBuild {
+    /// Refuses a capacity whose f16 vectors alone exceed the reader's index
+    /// bound before allocating anything.
+    pub(crate) fn new(identity: &Prepared, capacity: usize) -> FResult<Self> {
+        within_publication_limit(
+            (capacity as u64)
+                .saturating_mul(identity.dimensions as u64)
+                .saturating_mul(2),
+            MAX_INDEX_BYTES,
+            "index",
+        )?;
+        Ok(Self {
+            index: None,
+            capacity,
+            dimensions: identity.dimensions,
+            recipe: identity.recipe.clone(),
+            keys: Vec::new(),
+        })
+    }
+
+    fn native(&mut self) -> FResult<&usearch::Index> {
+        use usearch::{Index, IndexOptions, MetricKind, ScalarKind};
+        if self.index.is_none() {
+            let options = IndexOptions {
+                dimensions: self.dimensions,
+                metric: MetricKind::Cos,
+                quantization: ScalarKind::F16,
+                multi: false,
+                ..IndexOptions::default()
+            };
+            let index = Index::new(&options).map_err(|e| usearch_failed(&e))?;
+            index
+                .reserve(self.capacity.max(1))
+                .map_err(|e| usearch_failed(&e))?;
+            self.keys.reserve_exact(self.capacity);
+            self.index = Some(index);
+        }
+        Ok(self.index.as_ref().expect("created above"))
+    }
+
+    /// Add the next input; keys must strictly ascend.
+    pub(crate) fn add(&mut self, entry: &GenerationEntry, control: &Control) -> FResult<()> {
+        let ordinal = self.keys.len();
         if ordinal.is_multiple_of(256) {
             control.check()?;
         }
-        if entry.vector.len() != identity.dimensions || entry.vector.iter().any(|v| !v.is_finite())
+        check_input(entry, &self.recipe)?;
+        if self
+            .keys
+            .last()
+            .is_some_and(|last| *last >= entry.input_key)
         {
+            return Err(duplicate_input());
+        }
+        if entry.vector.len() != self.dimensions || entry.vector.iter().any(|v| !v.is_finite()) {
             return Err(FoundryError::Semantic {
                 code: "provider_malformed",
                 message: format!("invalid vector for entry {ordinal}"),
             });
         }
-        index
+        self.native()?
             .add(ordinal as u64, entry.vector.as_slice())
-            .map_err(|e| fail(&e))?;
+            .map_err(|e| usearch_failed(&e))?;
+        self.keys.push(entry.input_key.clone());
+        Ok(())
     }
-    built();
-    let len = index.serialized_length();
-    within_publication_limit(len as u64, MAX_INDEX_BYTES, "index")?;
-    let mut bytes = vec![0; len];
-    index.save_to_buffer(&mut bytes).map_err(|e| fail(&e))?;
-    Ok(bytes)
+
+    /// The serialized segment, within the reader's bound.
+    fn finish(mut self, built: &dyn Fn()) -> FResult<Vec<u8>> {
+        built();
+        let index = self.native()?;
+        let len = index.serialized_length();
+        within_publication_limit(len as u64, MAX_INDEX_BYTES, "index")?;
+        let mut bytes = vec![0; len];
+        index
+            .save_to_buffer(&mut bytes)
+            .map_err(|e| usearch_failed(&e))?;
+        Ok(bytes)
+    }
 }
 
 /// The only mutable publication name is the manifest. An interrupted stage or
@@ -584,20 +669,22 @@ mod tests {
         let prior = validate(store);
         let plan = Plan::new(mapping(entries, revision), Some(prior));
         let needed = plan.needed();
-        let vectors: Vec<_> = entries
-            .iter()
-            .filter(|e| needed.contains_key(&e.input_key))
-            .map(|e| GenerationEntry {
-                input_key: e.input_key.clone(),
-                vector: e.vector.clone(),
-                units: e.units.clone(),
-            })
-            .collect();
+        let build = build_of(entries.iter().filter(|e| needed.contains_key(&e.input_key)));
         let (stage, _, result) = plan
-            .stage(store, &identity(), &vectors, &Control::unbounded(), &|| {})
+            .stage(store, &identity(), build, &Control::unbounded(), &|| {})
             .unwrap();
         stage.publish(&Control::unbounded()).unwrap();
         result
+    }
+    /// The index build of `entries`, added in key order as publication adds them.
+    fn build_of<'a>(entries: impl IntoIterator<Item = &'a GenerationEntry>) -> IndexBuild {
+        let mut sorted: Vec<_> = entries.into_iter().collect();
+        sorted.sort_by(|a, b| a.input_key.cmp(&b.input_key));
+        let mut build = IndexBuild::new(&identity(), sorted.len()).unwrap();
+        for entry in sorted {
+            build.add(entry, &Control::unbounded()).unwrap();
+        }
+        build
     }
 
     #[test]
@@ -670,9 +757,13 @@ mod tests {
             "location publication decodes zero vectors"
         );
         let (stage, _, result) = plan
-            .stage(&store, &identity(), &[], &Control::unbounded(), &|| {
-                panic!("no ANN build for locations")
-            })
+            .stage(
+                &store,
+                &identity(),
+                build_of([]),
+                &Control::unbounded(),
+                &|| panic!("no ANN build for locations"),
+            )
             .unwrap();
         assert_eq!(result, Publication::Mapped(321));
         stage.publish(&Control::unbounded()).unwrap();
@@ -713,7 +804,13 @@ mod tests {
             "churn threshold triggers compaction"
         );
         let (stage, _, outcome) = plan
-            .stage(&store, &identity(), &changed, &Control::unbounded(), &|| {})
+            .stage(
+                &store,
+                &identity(),
+                build_of(&changed),
+                &Control::unbounded(),
+                &|| {},
+            )
             .unwrap();
         assert_eq!(outcome, Publication::Rebuilt(100));
         fault::arm(
@@ -799,9 +896,13 @@ mod tests {
         let plan = Plan::new(mapping(&current, 4), Some(bounded.clone()));
         assert!(plan.needed().is_empty());
         let (stage, _, _) = plan
-            .stage(&store, &identity(), &[], &Control::unbounded(), &|| {
-                panic!("location rebase must not build ANN")
-            })
+            .stage(
+                &store,
+                &identity(),
+                build_of([]),
+                &Control::unbounded(),
+                &|| panic!("location rebase must not build ANN"),
+            )
             .unwrap();
         fault::arm(
             crate::neural::fault_names::PUBLISH_BEFORE_MANIFEST,

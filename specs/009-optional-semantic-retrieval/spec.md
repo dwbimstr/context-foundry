@@ -1410,9 +1410,9 @@ newly lost G1 tasks; and the pre-registered F4 on a fresh sealed set of 300, 130
   until `semantic prepare` runs for the new recipe. A cards generation is never served
   as hierarchy. Cached card vectors stay keyed by their exact inputs.
 - **Costs.** 1.8–2.1 times the units, 5.9 hours of Metal preparation for rust-lang/rust
-  against 72 minutes, and a 3.24 GB serving peak against 1.95 GB. Its vectors use 89% of
-  the 2 GiB publication bound at 62,035 files, so step 1 of the scale plan below is now
-  due.
+  against 72 minutes, and a 3.24 GB serving peak against 1.95 GB. Its vectors had used
+  89% of a 2 GiB publication bound at 62,035 files; step 1 of the scale plan below
+  removed that bound the same day.
 
 T005 sandbox repair continuation (2026-10-10): the existing behavior-context opt-in
 now admits [anchorless prose selection](../001-source-state-recovery/contracts/context-v2.md#experimental-anchorless-prose-selection--009-t005-2026-10-10).
@@ -1824,8 +1824,8 @@ and [verification.rs](../../src/neural/index/verification.rs), shared by the CLI
   exact compact JSON publication writes. Worst-case estimates refused about
   112k-card repositories (2026-10-17), then a rust-lang/rust hierarchy whose 182 MiB
   label map they counted as 277 MiB and whose view they estimated at 1.03 GiB
-  (2026-10-21). The vector payload (2 GiB) is the next limit: that hierarchy's 624,325
-  vectors use about 89% of it. Checkpoints of the current accounting use a separate key, so
+  (2026-10-21). Publication no longer holds the generation's f32 vectors (scale plan
+  step 1 below, 2026-10-22). Checkpoints of the current accounting use a separate key, so
   neither accounting restores the other's. Refresh is paged through the existing
   owner steps. Restart, cancellation of a taken view, identity change, purge and
   explicit mapping audit/repair can rebuild it from redb when authoritative inputs
@@ -1853,23 +1853,32 @@ and [verification.rs](../../src/neural/index/verification.rs), shared by the CLI
   Once loaded, an unchanged generation serves its verified in-memory copy; segment
   file versions are rechecked on generation refresh, not on every warm query.
 
-**Scale ceiling plan (2026-10-21, proposed, not implemented).** Measured on the
+**Scale ceiling plan (2026-10-21; step 1 implemented 2026-10-22).** Measured on the
 complete rust-lang/rust hierarchy (62,035 files, 685,623 units, 624,325 vectors). The
 edge is the corpus size at which a bound refuses publication, scaled linearly at that
 density.
 
 | Bound | Limit | rust hierarchy | Used | Edge |
 |---|---|---|---|---|
-| f32 vectors held by publication | 2 GiB | 1.79 GiB | 89% | ~69k files |
+| f32 vectors held by publication (removed by step 1) | 2 GiB | 1.79 GiB | 89% | ~69k files |
 | Label map file (`locations-*.json`) | 256 MiB | 182.5 MiB | 71% | ~87k files |
 | Mapping-view estimate | 2 GiB | 1.03 GiB | 52% | ~120k files |
 | ANN file (f16, 1,685 B/vector) | 4 GiB | 0.98 GiB | 24% | ~253k files |
 
-1. **Stream vectors into the index builder.** `encode_index` adds f32 vectors to an
-   f16 index after publication has copied every one into memory. Reading each from the
-   cache as it is added removes the first bound without changing retrieval, because the
-   index already stores f16. Saving the index to its staged file, rather than to a
-   second in-memory buffer, removes another ~1 GB copy.
+1. **Stream vectors into the index builder (implemented 2026-10-22).** The cache lookup
+   now runs in pages of at most 1,024 decoded vectors (`LOOKUP_PAGE`), and in the
+   preparation driver each page is decoded under the engine slot. Each page goes into
+   the f16 index under construction (`IndexBuild`) and is dropped. Keys still arrive
+   in ascending order, so ordinals are unchanged. The 2 GiB bound is gone; a
+   publication whose f16 vectors alone would exceed the 4 GiB index bound is refused
+   before building. Every published label map is now checked against its 256 MiB bound
+   before it is serialized, including location-only compactions. Republishing from the
+   same cache gives byte-identical generations (ANN, label-map and membership hashes)
+   on rust-lang/rust and oh-my-pi. The publisher's peak footprint fell from 7.35 to
+   4.87 GB on rust and from 2.79 to 2.23 GB on oh-my-pi. Saving the index to its staged
+   file rather than to a second in-memory buffer would remove another ~1 GB copy. It
+   is not done: the usearch binding saves only to a path or a buffer, and staged files
+   are written through held descriptors.
 2. **Intern paths and source hashes in the label map** (generation format v6). The map
    repeats both strings for each unit. Re-encoded with one `[path, sha256]` table and
    `[file, kind, start, end]` locations, the rust map takes 64.6 MB instead of
