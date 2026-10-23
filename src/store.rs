@@ -2600,8 +2600,16 @@ fn prose_concepts(query: &str) -> Vec<Vec<String>> {
         .collect()
 }
 
-fn prose_terms(query: &str) -> Vec<String> {
-    prose_concepts(query).into_iter().flatten().collect()
+/// The terms that pick a materialized item's best line and passage: a prose
+/// query's concepts, otherwise its indexed analysis.
+fn wanted_terms(query: &str, prose: bool) -> std::collections::BTreeSet<String> {
+    if prose {
+        prose_concepts(query).into_iter().flatten().collect()
+    } else {
+        analyzed_terms(crate::syntax::code_subtokens, query)
+            .into_iter()
+            .collect()
+    }
 }
 
 /// Distinct concept coverage dominates frequency/rarity for prose. Adjacent
@@ -2673,6 +2681,21 @@ fn prose_lexical(query: &str, body: Field) -> Box<dyn Query> {
     Box::new(BooleanQuery::union(clauses))
 }
 
+/// The request checks both searches share, in their error precedence: the
+/// query, the limit, then the path filter (before the workspace and index
+/// requirements). Returns the normalized filter.
+fn check_search(query: &str, path: Option<&str>, limit: usize) -> FResult<Option<String>> {
+    if query.trim().is_empty() || query.len() > 4096 {
+        return Err(FoundryError::InvalidArgument(
+            "query must contain 1..4096 nonblank bytes".into(),
+        ));
+    }
+    if !(1..=64).contains(&limit) {
+        return Err(FoundryError::InvalidArgument("limit must be 1..64".into()));
+    }
+    path.map(path_filter).transpose()
+}
+
 /// The two-tier collection of one query, before revalidation.
 struct TwoTier {
     prose: bool,
@@ -2685,18 +2708,89 @@ struct TwoTier {
     windows: Vec<WindowSlice>,
 }
 
+/// The sources of one final read: each path's metadata read once and each
+/// current path's body reconstructed and verified once, on first use.
+struct FinalSources {
+    sources: redb::ReadOnlyTable<&'static str, &'static str>,
+    stored: redb::ReadOnlyTable<&'static str, &'static str>,
+    metas: std::collections::BTreeMap<String, Option<SourceMeta>>,
+    verified: std::collections::BTreeMap<String, String>,
+}
+
+impl FinalSources {
+    fn open(tx: &redb::ReadTransaction) -> FResult<Self> {
+        Ok(Self {
+            sources: tx.open_table(SOURCES)?,
+            stored: tx.open_table(CHUNKS)?,
+            metas: std::collections::BTreeMap::new(),
+            verified: std::collections::BTreeMap::new(),
+        })
+    }
+
+    /// `path`'s metadata in this read; `None` for a removed source.
+    fn meta(&mut self, path: &str) -> FResult<Option<&SourceMeta>> {
+        Self::load(&self.sources, &mut self.metas, path)
+    }
+
+    /// Whether `path`'s source in this read is the version hashed `hash`.
+    fn is_current(&mut self, path: &str, hash: &str) -> FResult<bool> {
+        Ok(self.meta(path)?.is_some_and(|meta| meta.hash == hash))
+    }
+
+    /// `path`'s metadata as already read; never reads.
+    fn loaded(&self, path: &str) -> Option<&SourceMeta> {
+        self.metas.get(path).and_then(Option::as_ref)
+    }
+
+    /// `path`'s metadata and verified body in this read; `None` for a
+    /// removed source.
+    fn body(&mut self, path: &str) -> FResult<Option<(&SourceMeta, &str)>> {
+        let Some(meta) = Self::load(&self.sources, &mut self.metas, path)? else {
+            return Ok(None);
+        };
+        if !self.verified.contains_key(path) {
+            let source = reconstruct_verified(&self.stored, path, meta)?;
+            self.verified.insert(path.to_owned(), source.body);
+        }
+        Ok(Some((meta, self.verified[path].as_str())))
+    }
+
+    /// The bodies verified so far, by path.
+    fn verified_bodies(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.verified
+            .iter()
+            .map(|(path, body)| (path.as_str(), body.as_str()))
+    }
+
+    /// `path`'s metadata and body as already verified; never reads.
+    fn verified_body(&self, path: &str) -> Option<(&SourceMeta, &str)> {
+        Some((self.loaded(path)?, self.verified.get(path)?.as_str()))
+    }
+
+    fn load<'a>(
+        sources: &redb::ReadOnlyTable<&'static str, &'static str>,
+        metas: &'a mut std::collections::BTreeMap<String, Option<SourceMeta>>,
+        path: &str,
+    ) -> FResult<Option<&'a SourceMeta>> {
+        if !metas.contains_key(path) {
+            let meta = match sources.get(path)? {
+                Some(raw) => Some(decode::<SourceMeta>(raw.value(), "source")?),
+                None => None,
+            };
+            metas.insert(path.to_owned(), meta);
+        }
+        Ok(metas[path].as_ref())
+    }
+}
+
 /// The anchor windows of one store from its tier-1 candidates: each
 /// window's first [`ANCHOR_LIST`] current definitions, materialized from the
-/// verified sources the caller's final read loads (`current` holds every
-/// tier-1 path's metadata). Stale definitions are skipped here: the tier-1
-/// pass already counted them.
-#[allow(clippy::too_many_arguments)]
-fn anchor_windows<C: ReadableTable<&'static str, &'static str>>(
+/// final read's verified `sources`. Stale definitions are skipped here: the
+/// tier-1 pass counts them.
+fn anchor_windows(
     windows: &[WindowSlice],
     first: &[Candidate],
-    current: &std::collections::BTreeMap<String, Option<SourceMeta>>,
-    stored: &C,
-    verified: &mut std::collections::BTreeMap<String, VerifiedSource>,
+    sources: &mut FinalSources,
     workspace_id: &str,
     wanted: &std::collections::BTreeSet<String>,
 ) -> FResult<Vec<AnchorWindow>> {
@@ -2707,17 +2801,12 @@ fn anchor_windows<C: ReadableTable<&'static str, &'static str>>(
             if entries.len() == ANCHOR_LIST {
                 break;
             }
-            let Some(Some(meta)) = current.get(&candidate.path) else {
+            if !sources.is_current(&candidate.path, &candidate.hash)? {
+                continue;
+            }
+            let Some((meta, body)) = sources.body(&candidate.path)? else {
                 continue;
             };
-            if meta.hash != candidate.hash {
-                continue;
-            }
-            if !verified.contains_key(&candidate.path) {
-                let source = reconstruct_verified(stored, &candidate.path, meta)?;
-                verified.insert(candidate.path.clone(), source);
-            }
-            let body = &verified[&candidate.path].body;
             let rank = entries.len();
             entries.push(ranked_item(
                 candidate,

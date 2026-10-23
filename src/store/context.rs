@@ -264,21 +264,7 @@ impl Engine {
             .task
             .map(|scope| self.task_view_in(&tx, scope))
             .transpose()?;
-        let sources = tx.open_table(SOURCES)?;
-        let stored = tx.open_table(CHUNKS)?;
-        let mut current: std::collections::BTreeMap<String, Option<SourceMeta>> =
-            std::collections::BTreeMap::new();
-        let mut current_meta = |path: &str| -> FResult<Option<SourceMeta>> {
-            if let Some(meta) = current.get(path) {
-                return Ok(meta.clone());
-            }
-            let meta = match sources.get(path)? {
-                Some(raw) => Some(decode::<SourceMeta>(raw.value(), "source")?),
-                None => None,
-            };
-            current.insert(path.to_owned(), meta.clone());
-            Ok(meta)
-        };
+        let mut sources = FinalSources::open(&tx)?;
         let mut counters = search.counters;
         let mut units: Vec<RankedItem> = Vec::new();
         let mut dropped: std::collections::BTreeSet<(String, u64, u64)> =
@@ -287,8 +273,7 @@ impl Engine {
             let Some(handle) = &item.handle else {
                 continue;
             };
-            let fresh = current_meta(&handle.path)?.is_some_and(|meta| meta.hash == handle.sha256);
-            if fresh {
+            if sources.is_current(&handle.path, &handle.sha256)? {
                 units.push(item);
             } else {
                 if let Some(trace) = control.trace() {
@@ -309,7 +294,7 @@ impl Engine {
                 let Some(handle) = &entry.handle else {
                     continue;
                 };
-                if current_meta(&handle.path)?.is_some_and(|meta| meta.hash == handle.sha256) {
+                if sources.is_current(&handle.path, &handle.sha256)? {
                     fresh_entries.push(entry);
                 } else if dropped.insert((handle.path.clone(), handle.start, handle.end)) {
                     if let Some(trace) = control.trace() {
@@ -377,8 +362,6 @@ impl Engine {
         };
         // Verified bodies, once per path, for the signature forms of units in
         // languages with units and for the first distinct files' outlines.
-        let mut bodies: std::collections::BTreeMap<String, (String, String)> =
-            std::collections::BTreeMap::new();
         let mut outline_paths: Vec<String> = Vec::new();
         for item in &units {
             let Some(handle) = &item.handle else {
@@ -399,19 +382,15 @@ impl Engine {
                 .is_some_and(crate::syntax::Lang::has_units);
             let wanted =
                 (has_units && item.label != "block") || outline_paths.contains(&handle.path);
-            if wanted
-                && !bodies.contains_key(&handle.path)
-                && let Some(meta) = current_meta(&handle.path)?
-            {
-                let verified = reconstruct_verified(&stored, &handle.path, &meta)?;
-                bodies.insert(handle.path.clone(), (meta.hash, verified.body));
+            if wanted {
+                sources.body(&handle.path)?;
             }
         }
-        let outliners: std::collections::BTreeMap<&str, crate::syntax::Outliner> = bodies
-            .iter()
-            .filter_map(|(path, (_, body))| {
+        let outliners: std::collections::BTreeMap<&str, crate::syntax::Outliner> = sources
+            .verified_bodies()
+            .filter_map(|(path, body)| {
                 crate::syntax::Lang::from_path(path)
-                    .map(|lang| (path.as_str(), crate::syntax::Outliner::new(body, lang)))
+                    .map(|lang| (path, crate::syntax::Outliner::new(body, lang)))
             })
             .collect();
         // Signature forms. Each unit's renders once; an anchor entry with a
@@ -455,8 +434,8 @@ impl Engine {
         }
         let mut outlines: Vec<RankedItem> = Vec::new();
         for path in &outline_paths {
-            let (Some((hash, body)), Some(outliner)) =
-                (bodies.get(path), outliners.get(path.as_str()))
+            let (Some((meta, body)), Some(outliner)) =
+                (sources.verified_body(path), outliners.get(path.as_str()))
             else {
                 continue;
             };
@@ -483,7 +462,7 @@ impl Engine {
                 handle: Some(SourceHandle {
                     workspace_id: self.workspace_id.clone().unwrap_or_default(),
                     path: path.clone(),
-                    sha256: hash.clone(),
+                    sha256: meta.hash.clone(),
                     start: 0,
                     end: body.len() as u64,
                 }),
