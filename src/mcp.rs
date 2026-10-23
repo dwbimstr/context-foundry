@@ -56,7 +56,7 @@ use std::{
     future::Future,
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex,
+        Arc, LazyLock, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
     time::{Duration, Instant},
@@ -857,12 +857,35 @@ fn text_result(text: String) -> CallToolResult {
     result
 }
 
-/// The MCP boundary's byte measure handed to the core packers: the
-/// serialized `CallToolResult` carrying a success text, so the 256 KiB cap
-/// covers JSON escaping and the envelope. Tokens are counted on the text
+/// The serialized success result with an empty text, less that empty
+/// string's two quotes: every byte of the result but the text's JSON string.
+static SUCCESS_ENVELOPE_BYTES: LazyLock<usize> =
+    LazyLock::new(|| serialize_result(&text_result(String::new())).len() - 2);
+
+/// An `io::Write` that keeps only the number of bytes written.
+struct ByteCount(usize);
+
+impl std::io::Write for ByteCount {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0 += bytes.len();
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// The MCP boundary's byte measure handed to the core packers: the length
+/// of the serialized `CallToolResult` carrying a success text, so the
+/// 256 KiB cap covers JSON escaping and the envelope. It adds the text's
+/// JSON-string length, counted by the same serializer, to the fixed
+/// envelope without building the result. Tokens are counted on the text
 /// block alone.
 fn emitted_bytes(text: &str) -> usize {
-    serialize_result(&text_result(text.to_owned())).len()
+    let mut escaped = ByteCount(0);
+    serde_json::to_writer(&mut escaped, text).expect("a str serializes into a byte count");
+    *SUCCESS_ENVELOPE_BYTES + escaped.0
 }
 
 fn error_shape_text(text: String) -> CallToolResult {
@@ -1153,6 +1176,29 @@ pub struct ServerOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The byte cap holds only if the probe is exactly the length of the
+    /// result delivered for the same text.
+    #[test]
+    fn the_emitted_byte_probe_is_the_serialized_result_length() {
+        let controls: String = ('\u{0}'..='\u{1f}').chain(['\u{7f}']).collect();
+        let unicode = "é 🦀 \u{2028} \u{2029}";
+        let large = format!("a\"b\\c {controls} {unicode}\n").repeat(4096);
+        for (case, text) in [
+            ("empty", ""),
+            ("quotes", "\"\" \"quoted\" \""),
+            ("backslashes", "\\ \\\\ C:\\dir\\ \\\""),
+            ("controls", controls.as_str()),
+            ("unicode", unicode),
+            ("large", large.as_str()),
+        ] {
+            assert_eq!(
+                emitted_bytes(text),
+                serialize_result(&text_result(text.to_owned())).len(),
+                "{case}"
+            );
+        }
+    }
 
     /// The limiter suffix is part of the counted header and its token cost
     /// differs by label, so a hint computed under one label could be too
