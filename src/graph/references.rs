@@ -256,17 +256,17 @@ impl EligibleScopes {
 /// One origin source, verified and indexed for line and delivery-unit lookups.
 /// Its delivery units are parsed on first use, so a file whose sites are only
 /// counted (doors beyond the shown files) is never parsed.
-struct FileView {
+pub(crate) struct FileView {
     /// The SHA-256 of the bytes `body` was verified against.
-    hash: String,
-    body: String,
+    pub(crate) hash: String,
+    pub(crate) body: String,
     lang: Option<crate::syntax::Lang>,
     line_starts: Vec<usize>,
     documents: std::cell::OnceCell<Vec<crate::syntax::Document>>,
 }
 
 impl FileView {
-    fn new(path: &str, hash: String, body: String) -> Self {
+    pub(crate) fn new(path: &str, hash: String, body: String) -> Self {
         let mut line_starts = vec![0];
         line_starts.extend(body.match_indices('\n').map(|(at, _)| at + 1));
         Self {
@@ -283,12 +283,13 @@ impl FileView {
             .get_or_init(|| crate::syntax::documents(&self.body, self.lang))
     }
 
-    fn line_of(&self, offset: usize) -> u64 {
+    /// One-based line of the byte `offset`.
+    pub(crate) fn line_of(&self, offset: usize) -> u64 {
         self.line_starts.partition_point(|&start| start <= offset) as u64
     }
 
     /// The text of one-based `line`, without its LF or CRLF terminator.
-    fn line_text(&self, line: u64) -> &str {
+    pub(crate) fn line_text(&self, line: u64) -> &str {
         let index = (line as usize).saturating_sub(1);
         let start = self
             .line_starts
@@ -428,23 +429,16 @@ fn resolve_prefix(
     }
 }
 
-/// A position seed: 001's handle precedence (workspace was checked first),
-/// then the NARROWEST occurrence containing `offset` across every producer's
-/// scope for that source. Several distinct symbols sharing that narrowest
-/// span are `ambiguous_symbol` (at most eight candidates). A search the
-/// shared allowance did not finish is reported truncated — never as a
-/// resolution and never as an absence.
-#[allow(clippy::too_many_arguments)] // the seed shares the response's one window state
-fn resolve_position(
+/// A handle seed's verified source, by 001's handle precedence (the
+/// workspace was checked first): `not_found` without a source,
+/// `stale_handle` when it carries other bytes, then the handle's range
+/// checked against the verified bytes.
+fn seed_view<'f>(
     tx: &redb::ReadTransaction,
     handle: &HandleRef,
-    offset: u64,
-    producers: &[(String, ProducerRow)],
-    revision: u64,
-    examined: &mut usize,
-    files: &mut HashMap<String, Option<FileView>>,
-    visited: &mut std::collections::BTreeSet<String>,
-) -> FResult<Seeded> {
+    files: &'f mut HashMap<String, Option<FileView>>,
+    visited: &mut BTreeSet<String>,
+) -> FResult<&'f FileView> {
     let sources = tx.open_table(SOURCES)?;
     let meta: SourceMeta = match sources.get(handle.path.as_str())? {
         None => return Err(FoundryError::NotFound),
@@ -478,6 +472,28 @@ fn resolve_position(
     if !valid_empty && !valid_span {
         return Err(FoundryError::InvalidRange);
     }
+    Ok(view)
+}
+
+/// A position seed: 001's handle precedence (workspace was checked first),
+/// then the NARROWEST occurrence containing `offset` across every producer's
+/// scope for that source. Several distinct symbols sharing that narrowest
+/// span are `ambiguous_symbol` (at most eight candidates). A search the
+/// shared allowance did not finish is reported truncated — never as a
+/// resolution and never as an absence.
+#[allow(clippy::too_many_arguments)] // the seed shares the response's one window state
+fn resolve_position(
+    tx: &redb::ReadTransaction,
+    handle: &HandleRef,
+    offset: u64,
+    producers: &[(String, ProducerRow)],
+    revision: u64,
+    examined: &mut usize,
+    files: &mut HashMap<String, Option<FileView>>,
+    visited: &mut BTreeSet<String>,
+) -> FResult<Seeded> {
+    let view = seed_view(tx, handle, files, visited)?;
+    let body = view.body.as_str();
     if !(handle.start <= offset && offset < handle.end) {
         return Err(FoundryError::InvalidRange);
     }
@@ -527,7 +543,7 @@ fn resolve_position(
             continue;
         };
         // Facts read from other bytes cannot describe this handle.
-        if scope.source_hash != meta.hash {
+        if scope.source_hash != view.hash {
             continue;
         }
         let eligible = row.selected.as_ref().is_some_and(|selected| {
@@ -755,37 +771,7 @@ fn resolve_handle(
     files: &mut HashMap<String, Option<FileView>>,
     visited: &mut BTreeSet<String>,
 ) -> FResult<Seeded> {
-    let sources = tx.open_table(SOURCES)?;
-    let meta: SourceMeta = match sources.get(handle.path.as_str())? {
-        None => return Err(FoundryError::NotFound),
-        Some(raw) => crate::store::decode(raw.value(), "source")?,
-    };
-    if !meta.hash.starts_with(&handle.sha32) {
-        return Err(FoundryError::StaleHandle);
-    }
-    visited.insert(handle.path.clone());
-    let Some(view) = verified_file(
-        files,
-        &sources,
-        &tx.open_table(CHUNKS)?,
-        &handle.path,
-        &meta.hash,
-    )?
-    else {
-        return Err(FoundryError::CorruptSource(format!(
-            "{}: the indexed source could not be loaded",
-            handle.path
-        )));
-    };
-    let body = &view.body;
-    let valid_empty = handle.start == 0 && handle.end == 0 && meta.bytes == 0;
-    let valid_span = handle.start < handle.end
-        && handle.end <= body.len() as u64
-        && body.is_char_boundary(handle.start as usize)
-        && body.is_char_boundary(handle.end as usize);
-    if !valid_empty && !valid_span {
-        return Err(FoundryError::InvalidRange);
-    }
+    let view = seed_view(tx, handle, files, visited)?;
     let undefined = |why: &str| invalid(format!("no_compiler_definition: {why}"));
     let Some(name) = view.definition_name(handle.start, handle.end) else {
         return Err(undefined("the handle names no definition unit"));
@@ -803,7 +789,7 @@ fn resolve_handle(
         producers,
         revision,
         &handle.path,
-        &meta.hash,
+        &view.hash,
         name,
         examined,
     )? {
@@ -1201,14 +1187,18 @@ impl Engine {
     /// overshoots them. A handle seed's split identities are read as one
     /// set: their definitions and references deduplicated by site.
     pub fn references(&self, request: &ReferencesRequest) -> FResult<ReferencesOutcome> {
-        self.references_in(&self.db.begin_read()?, request)
+        self.references_in(&self.db.begin_read()?, request, &mut HashMap::new())
     }
 
     /// Compose compiler evidence in the caller's final source/task snapshot.
+    /// `files` is the caller's verified-file cache for `tx`: calls sharing it
+    /// read and verify a source once, and each call keeps its own allowance
+    /// and visited-file budget.
     pub(crate) fn references_in(
         &self,
         tx: &redb::ReadTransaction,
         request: &ReferencesRequest,
+        files: &mut HashMap<String, Option<FileView>>,
     ) -> FResult<ReferencesOutcome> {
         if !(1..=REFERENCES_MAX_LIMIT).contains(&request.limit) {
             return Err(invalid("references limit must be 1..256"));
@@ -1232,7 +1222,6 @@ impl Engine {
         let producers = read_producers(tx)?;
         // One cache and one visited-file budget serve the seed read, the
         // definition verification and the reference labeling alike.
-        let mut files: HashMap<String, Option<FileView>> = HashMap::new();
         let mut visited: BTreeSet<String> = BTreeSet::new();
         let mut examined = 0usize;
         let seeded = match &seed {
@@ -1244,7 +1233,7 @@ impl Engine {
                 &producers,
                 freshness.source_revision,
                 &mut examined,
-                &mut files,
+                files,
                 &mut visited,
             )?,
             Seed::Handle(handle) => resolve_handle(
@@ -1253,7 +1242,7 @@ impl Engine {
                 &producers,
                 freshness.source_revision,
                 &mut examined,
-                &mut files,
+                files,
                 &mut visited,
             )?,
         };
@@ -1347,7 +1336,7 @@ impl Engine {
             &bound,
             true,
             &mut examined,
-            &mut files,
+            files,
             &mut visited,
         )?;
         // `more` promises a continuation cursor. A window that stopped with
