@@ -1802,10 +1802,6 @@ impl FoundryMcp {
 
     /// The aliases and labels of every admitted root, for the multi-root
     /// refusal floor.
-    fn root_labels(&self) -> Vec<(String, String)> {
-        Self::meta_labels(&self.state.meta)
-    }
-
     fn meta_labels(meta: &[RootMeta]) -> Vec<(String, String)> {
         meta.iter()
             .map(|meta| (meta.alias.clone(), meta.label.clone()))
@@ -1842,7 +1838,6 @@ impl FoundryMcp {
         }
         let listed = self.listed_roots(selected.as_deref(), &selection);
         let meta = Arc::clone(&self.state.meta);
-        let floor_labels = self.root_labels();
         let run_meta = Arc::clone(&meta);
         let pack_meta = Arc::clone(&meta);
         let semantic = self.state.semantic.clone();
@@ -1850,7 +1845,7 @@ impl FoundryMcp {
             ctx,
             tokens,
             "search",
-            move || response::refusal_floor_roots("search", None, &floor_labels),
+            move || response::refusal_floor_roots("search", None, &Self::meta_labels(&meta)),
             move |engines, control, _budget| {
                 let engines = &*engines;
                 let (batches, facts) = collect_root_batches(
@@ -1945,7 +1940,6 @@ impl FoundryMcp {
         }
         let listed = self.listed_roots(selected.as_deref(), &selection);
         let meta = Arc::clone(&self.state.meta);
-        let floor_labels = self.root_labels();
         let run_meta = Arc::clone(&meta);
         let pack_meta = Arc::clone(&meta);
         let task_requested = task.is_some();
@@ -1960,7 +1954,7 @@ impl FoundryMcp {
                 if task_requested {
                     response::MAX_BUDGET_TOKENS
                 } else {
-                    response::refusal_floor_roots("context", None, &floor_labels)
+                    response::refusal_floor_roots("context", None, &Self::meta_labels(&meta))
                 }
             },
             move |engines, control, _budget| {

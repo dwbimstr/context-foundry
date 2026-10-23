@@ -258,15 +258,11 @@ struct GateState {
 /// connection-local allowances and DELETE cancellation.
 const NEWEST_SESSION_PROTOCOL: &str = "2025-11-25";
 
-fn jsonrpc_is_initialize(body: &[u8]) -> bool {
-    serde_json::from_slice::<serde_json::Value>(body)
-        .ok()
-        .and_then(|value| {
-            value
-                .get("method")
-                .and_then(|method| method.as_str().map(|method| method == "initialize"))
-        })
-        .unwrap_or(false)
+fn jsonrpc_is_initialize(value: &serde_json::Value) -> bool {
+    value
+        .get("method")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|method| method == "initialize")
 }
 
 /// A request naming a newer protocol that is not an `initialize` asks for
@@ -286,13 +282,13 @@ fn stateless_protocol_refusal() -> http::Response<axum::body::Body> {
 /// `method` and an `id`). Notifications (`notifications/cancelled`,
 /// `initialized`) and client responses never take handler capacity, so
 /// cancellation and overload relief stay serviceable at saturation.
-fn count_jsonrpc_requests(body: &[u8]) -> usize {
+fn count_jsonrpc_requests(value: &serde_json::Value) -> usize {
     fn is_request(object: &serde_json::Map<String, serde_json::Value>) -> bool {
         object.contains_key("method") && object.contains_key("id")
     }
-    match serde_json::from_slice::<serde_json::Value>(body) {
-        Ok(serde_json::Value::Object(object)) => usize::from(is_request(&object)),
-        Ok(serde_json::Value::Array(items)) => items
+    match value {
+        serde_json::Value::Object(object) => usize::from(is_request(object)),
+        serde_json::Value::Array(items) => items
             .iter()
             .filter(|item| item.as_object().is_some_and(is_request))
             .count(),
@@ -369,10 +365,15 @@ async fn auth_admission_gate(
                 .expect("static 413 response");
         }
     };
-    if newer_protocol && !jsonrpc_is_initialize(&bytes) {
-        return stateless_protocol_refusal();
-    }
-    let requests = count_jsonrpc_requests(&bytes);
+    // One parse serves both classifications; malformed JSON classifies as
+    // `null` (not an initialize, no requests).
+    let requests = {
+        let value = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        if newer_protocol && !jsonrpc_is_initialize(&value) {
+            return stateless_protocol_refusal();
+        }
+        count_jsonrpc_requests(&value)
+    };
     let mut request = http::Request::from_parts(parts, axum::body::Body::from(bytes));
     if requests > 0 {
         let Ok(permit) = Arc::clone(&state.permits).try_acquire_many_owned(requests as u32) else {
@@ -582,7 +583,11 @@ mod tests {
 
     #[test]
     fn request_classification_counts_only_handler_bearing_messages() {
-        let count = |text: &str| count_jsonrpc_requests(text.as_bytes());
+        let count = |text: &str| {
+            count_jsonrpc_requests(
+                &serde_json::from_slice(text.as_bytes()).unwrap_or(serde_json::Value::Null),
+            )
+        };
         assert_eq!(
             count(r#"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#),
             1
