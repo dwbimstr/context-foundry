@@ -61,8 +61,13 @@ Both arms ran `f06ec74` with EmbeddingGemma 2 at 2,048 tokens, a minute apart, a
 | Mean delivered tokens | 2022.7 | 2021.5 |
 
 No row errored, retried or exceeded the cap. The archive's resource and latency
-guards were lost with it; the serving peak on rust (cards 1.95 GB, hierarchy
-3.24 GB) is reported, not gated.
+guards were lost with it; the serving peak is reported, not gated. Remeasured in one
+session as the MCP owner's peak footprint over rust's 197 G2 questions (`/usr/bin/time
+-l`; the embedding worker is a separate process), it is 1.97 GB for cards, 3.34 GB for
+hierarchy and 4.91 GB for the unmerged one score with fusion (maximum RSS 5.18 GB).
+The earlier 1.95 and 3.24 GB used the same method. One score with fusion sits at the
+owner's ~5 GB line for a design document, but it is not significant against the new
+default (p = 0.057), so it stays a lab result and is not built.
 
 **Promotion.** A profile without `representation` now selects `hierarchy-v1` with a
 64-token parent and 512-token inputs ([spec 009](../specs/009-optional-semantic-retrieval/spec.md)).
