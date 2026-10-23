@@ -1047,10 +1047,7 @@ pub fn serve(args: WorkerArgs, run: impl FnOnce(&mut Engine) -> i32) -> i32 {
                                 shared.write_error(
                                     None,
                                     "frame_invalid",
-                                    &format!(
-                                        "unexpected {} frame on worker input",
-                                        kind_name(&other)
-                                    ),
+                                    &format!("unexpected {} frame on worker input", other.kind()),
                                 );
                                 exit_now(FRAME_EXIT);
                             }
@@ -1082,17 +1079,6 @@ pub fn serve(args: WorkerArgs, run: impl FnOnce(&mut Engine) -> i32) -> i32 {
         args,
     };
     run(&mut engine)
-}
-
-fn kind_name(header: &Header) -> &'static str {
-    match header {
-        Header::Hello { .. } => "hello",
-        Header::Ready { .. } => "ready",
-        Header::Embed { .. } => "embed",
-        Header::Vectors { .. } => "vectors",
-        Header::Busy { .. } => "busy",
-        Header::Error { .. } => "error",
-    }
 }
 
 /// What arming the owner-death watcher found.

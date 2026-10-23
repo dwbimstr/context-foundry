@@ -706,6 +706,8 @@ pub struct WorkerProvider {
     )>,
     shared: Arc<Shared>,
     descriptor: Arc<FunctionDescriptor>,
+    /// `descriptor`'s digest, sent with every request.
+    descriptor_digest: String,
     /// The profile's document-call limits, checked before any request.
     limits: DocumentLimits,
     /// Vocabulary bound the worker reported at readiness.
@@ -1062,7 +1064,7 @@ impl WorkerProvider {
                         Ok((other, _)) => {
                             shared.set_broken(format!(
                                 "unexpected {} frame from the worker",
-                                protocol_kind(&other)
+                                other.kind()
                             ));
                             break;
                         }
@@ -1202,6 +1204,7 @@ impl WorkerProvider {
             artifacts: None,
             shared,
             descriptor: Arc::new(profile.descriptor.clone()),
+            descriptor_digest: profile.descriptor.digest(),
             limits: profile.document_limits(),
             vocab,
             scratch: Some(scratch),
@@ -1341,7 +1344,7 @@ impl WorkerProvider {
         let header = Header::Embed {
             protocol: protocol::PROTOCOL_VERSION,
             id,
-            descriptor_digest: self.descriptor.digest(),
+            descriptor_digest: self.descriptor_digest.clone(),
             purpose,
             lengths,
         };
@@ -1608,17 +1611,6 @@ impl EmbeddingProvider for WorkerProvider {
     fn late_call(&self) -> Option<LateCall> {
         let shared = Arc::clone(&self.shared);
         Some(Arc::new(move || shared.abandoned()))
-    }
-}
-
-fn protocol_kind(header: &Header) -> &'static str {
-    match header {
-        Header::Hello { .. } => "hello",
-        Header::Ready { .. } => "ready",
-        Header::Embed { .. } => "embed",
-        Header::Vectors { .. } => "vectors",
-        Header::Busy { .. } => "busy",
-        Header::Error { .. } => "error",
     }
 }
 
