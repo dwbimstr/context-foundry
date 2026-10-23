@@ -215,7 +215,7 @@ impl Engine {
                     break;
                 }
                 examined += 1;
-                refinement_paths.insert(unit.path.clone());
+                refinement_paths.insert(String::from(&*unit.path));
             }
             if let Some(trace) = control.trace() {
                 trace.record(
@@ -253,10 +253,10 @@ impl Engine {
             for (rank, unit) in &ordinary.items {
                 control.check()?;
                 if unit.kind == crate::neural::cache::CardKind::Parent
-                    && refinement_paths.contains(&unit.path)
+                    && refinement_paths.contains(&*unit.path)
                 {
                     refinement_scopes
-                        .entry(unit.path.clone())
+                        .entry(String::from(&*unit.path))
                         .or_default()
                         .push(OwnerScope {
                             source_hash: &unit.source_sha256,
@@ -394,14 +394,12 @@ impl Engine {
                 continue;
             }
             load(&mut current, &location.path)?;
-            let current_location = current[location.path.as_str()]
-                .as_ref()
-                .is_some_and(|meta| {
-                    meta.hash == location.source_sha256
-                        && location.end <= meta.bytes as u64
-                        && (location.kind != crate::neural::cache::CardKind::File
-                            || (location.start == 0 && location.end == meta.bytes as u64))
-                });
+            let current_location = current[&*location.path].as_ref().is_some_and(|meta| {
+                *meta.hash == *location.source_sha256
+                    && location.end <= meta.bytes as u64
+                    && (location.kind != crate::neural::cache::CardKind::File
+                        || (location.start == 0 && location.end == meta.bytes as u64))
+            });
             if !current_location {
                 trace_location("stale");
                 counters.stale += 1;
@@ -410,7 +408,7 @@ impl Engine {
             trace_location("eligible");
             eligible_refined += usize::from(is_refined);
             placed.push(Placed {
-                unit: (location.path.as_str(), location.start, location.end),
+                unit: (&*location.path, location.start, location.end),
                 kind: Some(location.kind),
             });
         }

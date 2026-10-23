@@ -7,7 +7,9 @@ The base label map stores each distinct `[path, source sha256]` once and each
 location as `[file, kind, start, end]`. Publication counts the exact bytes before
 writing. Because one stored string can stand for many locations, publisher and
 reader also cap the path and hash bytes locations expand to at 1 GiB. Rust's expand
-to 73.7 MiB, so the cap binds near 860k files (cross-lab review finding).
+to 73.7 MiB, so the cap binds near 860k files (cross-lab review finding). Since
+2026-10-23 decoded locations share each stored path and hash (`Arc<str>`), so they
+can no longer outgrow the file and this cap is gone.
 
 | Republished from the same cache | v5 label map | v6 label map | ANN / members |
 | --- | --- | --- | --- |
