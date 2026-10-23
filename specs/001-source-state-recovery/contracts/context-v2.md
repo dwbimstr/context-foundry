@@ -779,7 +779,7 @@ The `tokens` range (1..32768) is validated at the boundaries — CLI before open
 store, MCP in its argument parser — so `context_candidates` takes no budget.
 
 Items are already revalidated in that store's final read transaction. Packing is
-`response::pack(items, header, budget, byte_cap, boundary)` over an already ordered
+`response::pack(items, header, budget, boundary)` over an already ordered
 list. Single-root order is batch order; 007 merges batches, never packed responses.
 
 ### Context candidates and routing
