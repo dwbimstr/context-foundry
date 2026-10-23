@@ -2643,11 +2643,15 @@ fn a_v1_generation_is_unavailable_by_name_and_prepare_republishes_it_without_doc
     let read = |path: &Path| -> serde_json::Value {
         serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
     };
-    let mut labels = read(&labels_path);
-    for entry in labels["labels"].as_array_mut().unwrap() {
-        entry.as_object_mut().unwrap().remove("units");
-    }
-    let labels_bytes = serde_json::to_vec(&labels).unwrap();
+    // A v1 label map: ordinals and keys only, no locations.
+    let v1: Vec<_> = read(&labels_path)["labels"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .enumerate()
+        .map(|(label, row)| serde_json::json!({"label": label, "input_key": row[0]}))
+        .collect();
+    let labels_bytes = serde_json::to_vec(&serde_json::json!({ "labels": v1 })).unwrap();
     let mut manifest = read(&manifest_path);
     manifest["v"] = 1.into();
     manifest["labels_sha256"] = context_foundry::digest(&labels_bytes).into();
@@ -7962,7 +7966,8 @@ fn serving_rejects_a_rehashed_mapping_that_claims_the_wrong_representation() {
     ));
     let mut labels: serde_json::Value =
         serde_json::from_slice(&std::fs::read(old_labels).unwrap()).unwrap();
-    labels["labels"][0]["units"][0]["kind"] = "body".into();
+    // The first key's first location: `[file, kind, start, end]`.
+    labels["labels"][0][1][0][1] = "body".into();
     let bytes = serde_json::to_vec(&labels).unwrap();
     let hash = context_foundry::digest(&bytes);
     std::fs::write(directory.join(format!("locations-{hash}.json")), bytes).unwrap();

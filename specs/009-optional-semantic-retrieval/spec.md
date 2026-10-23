@@ -924,7 +924,10 @@ T003's, each passing only with that task's verification.
     had at publication, and the manifest records the `source_revision` those were read
     at and `coverage` (`complete` only when every admitted source had a current
     partition and every eligible unit's vector is in the index); a v1 generation is
-    unavailable by name until preparation republishes it from the cache.
+    unavailable by name until preparation republishes it from the cache. Since v6
+    (2026-10-22) the base label map stores each distinct `[path, source_sha256]` once
+    and each location as `[file, kind, start, end]`; the bounded overlay keeps whole
+    locations.
 
     Startup never resumes preparation. Purge commits removal and the stopped state
     under sole ownership; leftover derived files are ineligible and never repopulate
@@ -1853,7 +1856,7 @@ and [verification.rs](../../src/neural/index/verification.rs), shared by the CLI
   Once loaded, an unchanged generation serves its verified in-memory copy; segment
   file versions are rechecked on generation refresh, not on every warm query.
 
-**Scale ceiling plan (2026-10-21; step 1 implemented 2026-10-22).** Measured on the
+**Scale ceiling plan (2026-10-21; steps 1 and 2 implemented 2026-10-22).** Measured on the
 complete rust-lang/rust hierarchy (62,035 files, 685,623 units, 624,325 vectors). The
 edge is the corpus size at which a bound refuses publication, scaled linearly at that
 density.
@@ -1861,7 +1864,8 @@ density.
 | Bound | Limit | rust hierarchy | Used | Edge |
 |---|---|---|---|---|
 | f32 vectors held by publication (removed by step 1) | 2 GiB | 1.79 GiB | 89% | ~69k files |
-| Label map file (`locations-*.json`) | 256 MiB | 182.5 MiB | 71% | ~87k files |
+| Label map file (`locations-*.json`), v5 | 256 MiB | 182.5 MiB | 71% | ~87k files |
+| Label map file, v6 (step 2) | 256 MiB | 66.2 MiB | 26% | ~240k files |
 | Mapping-view estimate | 2 GiB | 1.03 GiB | 52% | ~120k files |
 | ANN file (f16, 1,685 B/vector) | 4 GiB | 0.98 GiB | 24% | ~253k files |
 
@@ -1879,12 +1883,20 @@ density.
    file rather than to a second in-memory buffer would remove another ~1 GB copy. It
    is not done: the usearch binding saves only to a path or a buffer, and staged files
    are written through held descriptors.
-2. **Intern paths and source hashes in the label map** (generation format v6). The map
-   repeats both strings for each unit. Re-encoded with one `[path, sha256]` table and
-   `[file, kind, start, end]` locations, the rust map takes 64.6 MB instead of
-   191.4 MB, which moves its edge to ~258k files. A v5 generation is republished
-   from the cache with zero document calls. Interning is simpler than sharding; shard
-   only past the ANN bound. The mapping-view estimate (~120k files) then binds. It is
+2. **Intern paths and source hashes in the label map (implemented 2026-10-22,
+   generation format v6).** The v5 map repeated both strings for every unit. v6 stores
+   one sorted `[path, sha256]` table and `[file, kind, start, end]` locations, with
+   each key's position as its label. Publication counts the exact bytes by
+   serializing the same view before writing. Republished from the same cache, the
+   rust map is 69,390,990 bytes instead of 191,404,275 and the oh-my-pi map 18,805,169
+   instead of 53,313,825. ANN and membership hashes are unchanged, and with the same
+   ANN, G2 serves byte for byte what v5 serves. One stored string can stand for many
+   locations, so publisher and reader cap the decoded path and hash bytes at 1 GiB
+   (`MAX_LOCATION_STRING_BYTES`; rust's are 73.7 MiB). A v5 generation is refused by
+   name and republished from the cache with zero document calls. That republish
+   rebuilds the ANN graph, which can differ from an earlier build of the same vectors
+   (combined G2 166 against 169 on the original builds; rust alone 52 against 54). The overlay keeps whole locations;
+   it is bounded at 32 MiB. The mapping-view estimate (~120k files) now binds. It is
    a proxy that charges each unit's input key twelve times, so measure the view's real
    allocation before changing that bound.
 3. **Change dimensions last, and only after measurement.** Matryoshka prefixes shrink

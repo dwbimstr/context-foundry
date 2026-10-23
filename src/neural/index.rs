@@ -1,6 +1,6 @@
 //! 009 derived semantic index: one validated generation per profile digest
 //! under `<store>/semantic/<function digest>/`: an immutable F16 base, one bounded
-//! F16 delta, and separate current locations. A v5 manifest atomically names
+//! F16 delta, and separate current locations. A v6 manifest atomically names
 //! content-addressed artifacts; retired base keys are filtered during ANN selection.
 //! The base is compacted only at bounded churn thresholds or explicit repair.
 //! Earlier formats used one F16 index file,
@@ -63,11 +63,12 @@ pub const MANIFEST_FILE: &str = "generation.json";
 /// each label's unit locations and the coverage record serving needs; v3
 /// (009 T004) records geometry; v4 (T008) separates immutable vector segments
 /// from current locations under one atomic manifest; v5 adds independent bounded
-/// location overlays, immutable membership and a transactional mapping revision.
-/// An older generation is
+/// location overlays, immutable membership and a transactional mapping revision;
+/// v6 stores each distinct source path and hash once in the label map
+/// ([`locations::LabelTable`]). An older generation is
 /// unavailable by name until preparation republishes it from the cache
 /// (zero document calls).
-pub const GENERATION_VERSION: u32 = 5;
+pub const GENERATION_VERSION: u32 = 6;
 /// The scalar kind and metric of the derived index (D001 chosen values).
 pub const SCALAR_KIND: &str = "f16";
 pub const METRIC: &str = "cos";
@@ -119,7 +120,7 @@ fn json_string_bytes(text: &str) -> u64 {
 /// An upper bound on one serialized location: its escaped strings plus field
 /// names, the kind and both offsets at full width. It sizes the locations
 /// retained by the mapping walk; the published file is counted exactly by
-/// [`label_map_bytes`].
+/// serializing it ([`locations::LabelTable`]).
 #[cfg(feature = "semantic")]
 fn location_bytes(path: &str, hash: &str) -> u64 {
     json_string_bytes(path) + json_string_bytes(hash) + 160
@@ -143,28 +144,7 @@ fn serialized_bytes(value: &impl Serialize) -> FResult<u64> {
     Ok(count.0)
 }
 
-/// The serialized [`LabelMap`] the reader caps at [`MAX_META_BYTES`]: exact
-/// strings and locations, over-counting only each label ordinal (taken at full
-/// u64 width) and one separator. A worst-case estimate refused a 182 MiB
-/// rust-lang/rust hierarchy map as 277 MiB (2026-10-21), so publication counts
-/// what it will write.
-#[cfg(feature = "semantic")]
-fn label_map_bytes<'a>(
-    entries: impl IntoIterator<Item = (&'a str, &'a [UnitLocation])>,
-) -> FResult<u64> {
-    // `{"labels":[` … `]}`, then per entry `{"label":<20 digits>,"input_key":`
-    // … `,"units":[` … `]}` and a separating comma.
-    let mut bytes = 13u64;
-    for (input_key, units) in entries {
-        bytes = bytes.saturating_add(55 + json_string_bytes(input_key));
-        for unit in units {
-            bytes = bytes.saturating_add(serialized_bytes(unit)? + 1);
-        }
-    }
-    Ok(bytes)
-}
-
-/// The label-map rows of generation inputs, for [`label_map_bytes`].
+/// The label-map rows of generation inputs.
 #[cfg(feature = "semantic")]
 fn entry_labels(entries: &[GenerationEntry]) -> impl Iterator<Item = (&str, &[UnitLocation])> {
     entries
@@ -273,23 +253,6 @@ pub enum Segment {
     Bytes(Vec<u8>),
     #[cfg(feature = "semantic")]
     Resident(std::sync::Arc<usearch::Index>),
-}
-
-/// Label ↔ document-input key. Labels are ordinals over the SORTED unique key
-/// set, so a generation is deterministic for one cache state and no unit
-/// identity ever comes from storage ordinals: identity is the key itself.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct LabelMap {
-    pub labels: Vec<LabelEntry>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct LabelEntry {
-    pub label: u64,
-    pub input_key: String,
-    /// Every current unit carrying `input_key` at publication: serving
-    /// expands a dense hit through these, never through a partition walk.
-    pub units: Vec<UnitLocation>,
 }
 
 /// One unit a label stood for at publication. The request's final read
@@ -1174,72 +1137,6 @@ mod tests {
 
     #[cfg(feature = "semantic")]
     #[test]
-    fn publication_counts_the_label_map_it_writes() {
-        use crate::neural::cache::CardKind;
-        let location = |path: &str, start: u64, end: u64| UnitLocation {
-            kind: if start.is_multiple_of(2) {
-                CardKind::Body
-            } else {
-                CardKind::ContainerFragment
-            },
-            path: path.into(),
-            start,
-            end,
-            source_sha256: "cd".repeat(32),
-        };
-        let written = |entries: &[GenerationEntry]| {
-            serde_json::to_vec(&LabelMap {
-                labels: entries
-                    .iter()
-                    .enumerate()
-                    .map(|(label, entry)| LabelEntry {
-                        label: label as u64,
-                        input_key: entry.input_key.clone(),
-                        units: entry.units.clone(),
-                    })
-                    .collect(),
-            })
-            .unwrap()
-            .len() as u64
-        };
-        // An empty map is exact; otherwise the only excess is each ordinal's
-        // missing digits plus one separator per entry, so any under-count of a
-        // string, location or structural byte fails the equality.
-        assert_eq!(label_map_bytes(entry_labels(&[])).unwrap(), written(&[]));
-        let mut entries = entries(4);
-        entries[0].units = vec![location("a\"b\\c\nd\u{1}é.rs", 7, u64::MAX)];
-        entries[1].units = (0..9)
-            .map(|i| {
-                location(
-                    &format!("library/core/src/num/f{i}.rs"),
-                    i * 1_000_003,
-                    u64::MAX - i,
-                )
-            })
-            .collect();
-        for size in [1, 3, 12] {
-            let mut map: Vec<GenerationEntry> = (0..size)
-                .map(|i| GenerationEntry {
-                    input_key: format!("{i:064x}"),
-                    vector: Vec::new(),
-                    units: entries[i % entries.len()].units.clone(),
-                })
-                .collect();
-            map.sort_by(|a, b| a.input_key.cmp(&b.input_key));
-            let excess = 1
-                + (0..size as u64)
-                    .map(|i| 21 - i.to_string().len() as u64)
-                    .sum::<u64>();
-            assert_eq!(
-                label_map_bytes(entry_labels(&map)).unwrap(),
-                written(&map) + excess,
-                "{size} entries"
-            );
-        }
-    }
-
-    #[cfg(feature = "semantic")]
-    #[test]
     fn oversized_publication_preserves_the_previous_generation() {
         let scratch = tempfile::tempdir().unwrap();
         let store = Dir::open_path(scratch.path()).unwrap();
@@ -1554,6 +1451,9 @@ mod tests {
         value["v"] = 2.into();
         std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
         let err = validate_generation(&store, &identity.digest, "r1", 256).unwrap_err();
-        assert!(err.contains("format v2 is not v5"), "{err}");
+        assert!(
+            err.contains(&format!("format v2 is not v{GENERATION_VERSION}")),
+            "{err}"
+        );
     }
 }

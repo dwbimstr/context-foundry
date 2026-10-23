@@ -144,14 +144,18 @@ impl Plan {
             || overlay_bytes
                 .as_ref()
                 .is_some_and(|bytes| bytes.len() as u64 > locations::MAX_DELTA_BYTES);
-        if compact_locations {
-            // The reader caps the label map; refuse before serializing anything.
-            let rows = self
-                .units
-                .iter()
-                .map(|(key, units)| (key.as_str(), units.as_slice()));
-            within_publication_limit(label_map_bytes(rows)?, MAX_META_BYTES, "mapping")?;
-        }
+        // The reader caps the label map; refuse before serializing anything.
+        let labels = if compact_locations {
+            let table = locations::LabelTable::new(
+                self.units
+                    .iter()
+                    .map(|(key, units)| (key.as_str(), units.as_slice())),
+            );
+            table.within_bounds()?;
+            Some(table)
+        } else {
+            None
+        };
         let delta_keys =
             (!full && self.delta_changed && !build.keys.is_empty()).then(|| build.keys.clone());
         let mut build = Some(build);
@@ -202,20 +206,8 @@ impl Plan {
                 }
             };
         }
-        if compact_locations {
-            let labels = LabelMap {
-                labels: self
-                    .units
-                    .iter()
-                    .enumerate()
-                    .map(|(label, (key, units))| LabelEntry {
-                        label: label as u64,
-                        input_key: key.clone(),
-                        units: (**units).clone(),
-                    })
-                    .collect(),
-            };
-            let bytes = serde_json::to_vec(&labels)?;
+        if let Some(table) = labels {
+            let bytes = table.encode()?;
             manifest.labels_sha256 = crate::digest(&bytes);
             neural_fault!(LOCATION_WRITE, Some(control), "base")?;
             artifacts.push((manifest.labels_file(), bytes));
@@ -305,11 +297,7 @@ fn check_entries(entries: &[GenerationEntry], recipe: &str) -> FResult<()> {
             return Err(duplicate_input());
         }
     }
-    within_publication_limit(
-        label_map_bytes(entry_labels(entries))?,
-        MAX_META_BYTES,
-        "mapping",
-    )
+    locations::LabelTable::new(entry_labels(entries)).within_bounds()
 }
 
 /// Publication enforces the same location contract as a fresh load, and
