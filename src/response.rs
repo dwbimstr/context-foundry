@@ -906,10 +906,10 @@ fn pack_retrieve_impl(
         text
     };
     let lengths = prefix_lengths(span);
+    let mut packed = BudgetedText::new(budget, boundary);
     let mut failed_length = None;
     for &length in &lengths {
-        let mut text = render(length, budget.tokens, budget.limited_by);
-        if boundary(&text) <= BYTE_CAP && count_tokens(&text) <= budget.tokens {
+        if packed.try_accept(render(length, budget.tokens, budget.limited_by)) {
             // Halving finds a fitting bracket cheaply, but returning that rung
             // can waste half the allowance. Refine within the bracket while
             // retaining only exactly verified fits. BPE counts need not be
@@ -924,21 +924,13 @@ fn pack_retrieve_impl(
                 if trial <= length {
                     break;
                 }
-                let candidate = render(trial, budget.tokens, budget.limited_by);
-                if boundary(&candidate) <= BYTE_CAP && count_tokens(&candidate) <= budget.tokens {
+                if packed.try_accept(render(trial, budget.tokens, budget.limited_by)) {
                     length = trial;
-                    text = candidate;
                 } else {
                     upper = trial;
                 }
             }
-            let tokens = count_tokens(&text);
-            return Ok(PackedText {
-                text,
-                tokens,
-                omitted: 0,
-                truncated: length < span.len(),
-            });
+            return Ok(packed.finish(0, length < span.len()));
         }
         failed_length = Some(length);
     }
@@ -1009,16 +1001,10 @@ fn pack_retrieve_outline_impl(
         ));
         text
     };
+    let mut packed = BudgetedText::new(budget, boundary);
     for body in [&out.outline, &out.outline_min] {
-        let text = render(body, budget.tokens, budget.limited_by);
-        if boundary(&text) <= BYTE_CAP && count_tokens(&text) <= budget.tokens {
-            let tokens = count_tokens(&text);
-            return Ok(PackedText {
-                text,
-                tokens,
-                omitted: 0,
-                truncated: false,
-            });
+        if packed.try_accept(render(body, budget.tokens, budget.limited_by)) {
+            return Ok(packed.finish(0, false));
         }
     }
     // The smallest form must fit the largest budget and the byte cap under
@@ -2024,30 +2010,25 @@ fn pack_references_impl(
         }
         text
     };
-    let fits = |text: &str| boundary(text) <= BYTE_CAP && count_tokens(text) <= budget.tokens;
+    let mut packed = BudgetedText::new(budget, boundary);
     let mut included = 0usize;
     for n in 1..=total {
-        if !fits(&render(n, budget.tokens, budget.limited_by)) {
+        if !packed.try_accept(render(n, budget.tokens, budget.limited_by)) {
             break;
         }
         included = n;
     }
+    // A rejected trial leaves the last accepted prefix, which is final; with
+    // no references, the empty page must fit.
     if included == 0 {
         let hint = total.min(1);
-        if total > 0 || !fits(&render(0, budget.tokens, budget.limited_by)) {
+        if total > 0 || !packed.try_accept(render(0, budget.tokens, budget.limited_by)) {
             return Err(too_small(budget.tokens, &|b, limited_by| {
                 render(hint, b, limited_by)
             }));
         }
     }
-    let text = render(included, budget.tokens, budget.limited_by);
-    let tokens = count_tokens(&text);
-    Ok(PackedText {
-        text,
-        tokens,
-        omitted: total - included,
-        truncated: included < total || outcome.more,
-    })
+    Ok(packed.finish(total - included, included < total || outcome.more))
 }
 
 /// The outcome-free sufficient budget for a `references` refusal made before
