@@ -1,7 +1,9 @@
 //! Dense-aware search (spec 009): `Engine::search_candidates_semantic`, the
 //! selection it shares with context assembly, and the path filter and prose
-//! passages only it uses, with their test. Lexical search, doors and the
-//! shared candidate types stay in the parent module.
+//! passages only it uses, with their test. Placement order, callable grouping,
+//! per-file cap and cut live in `super::placement`; shared candidate types stay
+//! in the parent module.
+use super::placement::{Cut, Order, Placed, Refined, group_callables, place};
 use super::*;
 
 /// Whether `path` lies under a normalized [`path_filter`]: the file itself
@@ -332,15 +334,15 @@ impl Engine {
             &wanted,
         )?;
         // Lexical documents of the current source version only.
-        let mut lexical: Vec<Candidate> = Vec::with_capacity(first.len() + second.len());
+        let mut lexical: Vec<&Candidate> = Vec::with_capacity(first.len() + second.len());
         let mut lexical_selection = LexicalSelection::default();
-        for (rank, candidate) in first.into_iter().chain(second).enumerate() {
+        for (rank, candidate) in first.iter().chain(&second).enumerate() {
             load(&mut current, &candidate.path)?;
             if current[&candidate.path]
                 .as_ref()
                 .is_some_and(|meta| meta.hash == candidate.hash)
             {
-                if let Err(outcome) = lexical_selection.insert(&candidate, prose) {
+                if let Err(outcome) = lexical_selection.insert(candidate, prose) {
                     candidate.trace(control, &workspace_id, rank, outcome);
                     continue;
                 }
@@ -407,65 +409,30 @@ impl Engine {
             }
             trace_location("eligible");
             eligible_refined += usize::from(is_refined);
-            placed.push((
-                (location.path.clone(), location.start, location.end),
-                Some(location.kind),
-            ));
+            placed.push(Placed {
+                unit: (location.path.as_str(), location.start, location.end),
+                kind: Some(location.kind),
+            });
         }
         let freshness = self.freshness_in(&tx)?;
         let word = dense.coverage_at(freshness.source_revision);
-        // Coverage reports availability, not whether dense relevance outranks
-        // lexical evidence. Experimental body/hierarchy placement uses the same
-        // bounded hybrid order before and after preparation completes. Keep the
-        // existing partial/address and coarse-only admission rules; complete
-        // address coverage and ordinary search retain their placement.
         // Freshness was checked above; no candidate/output slots are added.
-        if prose
-            && (word == "partial"
-                || dense.file_overviews_only()
-                || dense.has_body_representations())
-        {
-            let mut dense_order = std::mem::take(&mut placed).into_iter();
-            let mut lexical_order = lexical.iter().map(|c| (c.selection_unit(prose), None));
-            loop {
-                let (lexical, dense) = (lexical_order.next(), dense_order.next());
-                if lexical.is_none() && dense.is_none() {
-                    break;
-                }
-                // Independently embedded body passages precede broad lexical
-                // documents. Without eligible refinement, lexical evidence
-                // goes first. Neither choice depends on coverage completeness.
-                if eligible_refined > 0 {
-                    placed.extend(dense);
-                    placed.extend(lexical);
-                } else {
-                    placed.extend(lexical);
-                    placed.extend(dense);
-                }
-            }
-            if let Some(trace) = control.trace() {
-                let policy = if dense.has_body_representations() {
-                    "body_prose_interleave_v1"
-                } else if dense.file_overviews_only() {
-                    "coarse_prose_interleave_v1"
-                } else {
-                    "partial_prose_interleave_v1"
-                };
-                trace.record(serde_json::json!({"stage":"placement_policy","policy":policy,"coverage":word,"lexical_first":eligible_refined == 0,"refined_hits":refined_count,"eligible_refined_locations":eligible_refined,"refinement_files":refinement_paths.len()}));
-            }
-        } else {
-            placed.extend(
-                lexical
-                    .iter()
-                    .map(|candidate| (candidate.selection_unit(prose), None)),
-            );
-        }
+        let order = Order::resolve(
+            prose,
+            word,
+            dense,
+            Refined {
+                hits: refined_count,
+                eligible: eligible_refined,
+                files: refinement_paths.len(),
+            },
+        );
+        let mut placed = place(order, placed, &lexical, prose, control);
         // The candidate carrying each lexical unit: its first (best-ranked)
         // current document, as in the baseline.
-        let mut by_unit: std::collections::HashMap<(String, u64, u64), &Candidate> =
-            std::collections::HashMap::new();
+        let mut by_unit = std::collections::HashMap::new();
         let mut by_document = std::collections::HashMap::new();
-        for candidate in &lexical {
+        for &candidate in &lexical {
             by_unit.entry(candidate.unit()).or_insert(candidate);
             by_document
                 .entry(candidate.selection_unit(prose))
@@ -473,85 +440,37 @@ impl Engine {
         }
 
         if prose {
-            let references: Vec<_> = placed
-                .iter()
-                .map(|(unit, kind)| {
-                    if kind.is_none() {
-                        by_document.get(unit).copied()
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            let order = super::lexical::callable_passage_order(
-                &references,
-                control,
-                "semantic_owner_grouping",
-            )?;
-            let mut pending: Vec<_> = placed.into_iter().map(Some).collect();
-            placed = order
-                .into_iter()
-                .map(|index| pending[index].take().expect("unique placement index"))
-                .collect();
+            placed = group_callables(&placed, &by_document, control)?;
         }
 
         // The baseline's merge per unit, per-file cap and cut, over the
         // placed order.
         let mut seen = std::collections::BTreeSet::new();
-        let mut per_file: std::collections::BTreeMap<String, usize> =
-            std::collections::BTreeMap::new();
-        let mut kept = Vec::new();
-        let mut overflow = Vec::new();
-        let trace_placement = |rank: usize,
-                               unit: &(String, u64, u64),
-                               kind: Option<crate::neural::cache::CardKind>,
-                               outcome: &str| {
+        let mut cut = Cut::new(limit, prose);
+        let trace_placement = |rank: usize, item: Placed<'_>, outcome: &str| {
             if let Some(trace) = control.trace() {
                 trace.record(serde_json::json!({
-                    "stage": "placement", "origin": if kind.is_some() { "dense" } else { "lexical" },
+                    "stage": "placement", "origin": if item.kind.is_some() { "dense" } else { "lexical" },
                     "rank": rank, "outcome": outcome,
-                    "unit": {"workspace_id": workspace_id, "path": unit.0,
-                        "sha256": current.get(&unit.0).and_then(|m| m.as_ref()).map(|m| &m.hash),
-                        "start": unit.1, "end": unit.2},
+                    "unit": {"workspace_id": workspace_id, "path": item.unit.0,
+                        "sha256": current.get(item.unit.0).and_then(|m| m.as_ref()).map(|m| &m.hash),
+                        "start": item.unit.1, "end": item.unit.2},
                 }));
             }
         };
-        for (rank, (unit, kind)) in placed.iter().enumerate() {
-            if !seen.insert(unit) {
-                trace_placement(rank, unit, *kind, "duplicate");
+        for (rank, &item) in placed.iter().enumerate() {
+            if !seen.insert(item.unit) {
+                trace_placement(rank, item, "duplicate");
                 continue;
             }
-            let count = per_file.entry(unit.0.clone()).or_default();
-            if *count == PER_FILE_CAP {
-                if prose {
-                    overflow.push((rank, unit, *kind));
-                    continue;
-                }
-                counters.capped += 1;
-                trace_placement(rank, unit, *kind, "per_file_cap");
-                continue;
-            }
-            *count += 1;
-            if kept.len() == limit {
-                counters.truncated = true;
-                trace_placement(rank, unit, *kind, "limit");
-                continue;
-            }
-            trace_placement(rank, unit, *kind, "kept");
-            kept.push((unit, *kind));
-        }
-        for (rank, unit, kind) in overflow {
-            if kept.len() < limit {
-                trace_placement(rank, unit, kind, "kept");
-                kept.push((unit, kind));
-            } else {
-                counters.truncated = true;
-                trace_placement(rank, unit, kind, "limit");
+            if let Some(outcome) = cut.offer(rank, item.unit.0, item, &mut counters) {
+                trace_placement(rank, item, outcome);
             }
         }
+        let kept = cut.finish(&mut counters, trace_placement);
         let mut items = Vec::with_capacity(kept.len());
         let mut delivered = std::collections::BTreeSet::new();
-        for (rank, (unit, kind)) in kept.into_iter().enumerate() {
+        for (rank, Placed { unit, kind }) in kept.into_iter().enumerate() {
             control.check()?;
             let from_dense = kind.is_some();
             let exact_body = kind == Some(crate::neural::cache::CardKind::Body);
@@ -568,15 +487,15 @@ impl Engine {
             };
             if !verified.contains_key(unit_path) {
                 let source = reconstruct_verified(&stored, unit_path, meta)?;
-                verified.insert(unit_path.clone(), source);
+                verified.insert(unit_path.to_owned(), source);
             }
             let body = &verified[unit_path].body;
             let candidate = if from_dense {
                 // An exact unit match may contribute its label and support.
                 // A scored Body still renders its own unchanged byte range.
-                by_unit.get(unit)
+                by_unit.get(&unit)
             } else {
-                by_document.get(unit)
+                by_document.get(&unit)
             }
             .copied();
             let mut item = match candidate {
@@ -594,7 +513,7 @@ impl Engine {
                 )?,
                 None => {
                     // A dense-only unit: no delivery-unit label.
-                    let (from, to) = (*unit_start as usize, *unit_end as usize);
+                    let (from, to) = (unit_start as usize, unit_end as usize);
                     if !(from < to
                         && to <= body.len()
                         && body.is_char_boundary(from)
@@ -623,7 +542,7 @@ impl Engine {
                         score: 0.0,
                         handle: Some(SourceHandle {
                             workspace_id: workspace_id.clone(),
-                            path: unit_path.clone(),
+                            path: unit_path.to_owned(),
                             sha256: meta.hash.clone(),
                             start: from as u64,
                             end: to as u64,
@@ -657,7 +576,7 @@ impl Engine {
                     let focused = item
                         .handle
                         .as_ref()
-                        .is_some_and(|h| (h.start, h.end) != (*unit_start, *unit_end));
+                        .is_some_and(|h| (h.start, h.end) != (unit_start, unit_end));
                     trace.record(serde_json::json!({
                         "stage":"materialization", "origin":"dense", "rank":rank,
                         "unit":{"workspace_id":workspace_id,"path":unit_path,"sha256":meta.hash,
