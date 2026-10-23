@@ -32,10 +32,11 @@ below are history.
 - **Losses now.** Ranking loses 79 answers to the caps and 44 to the packer; recall
   loses 80 never retrieved. Hierarchy's 17 newly lost G1 tasks are mostly tier-1
   lexical hits placed behind every dense unit.
-- **Scale.** Publication now streams cached vectors into the index builder, so the
-  2 GiB vector bound (89% used at 62,035 files) is gone. Republished generations are
-  byte-identical, and the rust publisher's peak fell from 7.35 to 4.87 GB. The label
-  map binds next, near 87k files (spec 009, *Scale ceiling plan* step 2).
+- **Scale.** Publication streams cached vectors (no 2 GiB vector bound) and
+  generation v6 interns label-map paths and hashes (rust map 191 → 69 MB). At rust's
+  density the next bounds are the mapping-view estimate near 120k files, then the label
+  map near 240k and the ANN near 253k. A v5 store needs `semantic prepare` once. That
+  rebuilds its ANN, which on G2 located 166 against the original build's 169.
 - **Open.** No CI runs; local gates are the receipt. The 6,000-file watcher test is
   intermittent on this Mac (F18). After a reboot, repeat G2 runs differ in 36 of 388
   rows with equal totals; compare arms within one session.

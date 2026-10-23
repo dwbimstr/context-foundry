@@ -1,5 +1,46 @@
 # Validation
 
+## Interned label map (generation v6) — 2026-10-22
+
+Step 2 of the [scale plan](../specs/009-optional-semantic-retrieval/spec.md) is in.
+The base label map stores each distinct `[path, source sha256]` once and each
+location as `[file, kind, start, end]`. Publication counts the exact bytes before
+writing. Because one stored string can stand for many locations, publisher and
+reader also cap the path and hash bytes locations expand to at 1 GiB. Rust's expand
+to 73.7 MiB, so the cap binds near 860k files (cross-lab review finding).
+
+| Republished from the same cache | v5 label map | v6 label map | ANN / members |
+| --- | --- | --- | --- |
+| rust-lang/rust hierarchy (624,325 keys) | 191,404,275 bytes | **69,390,990** | identical |
+| oh-my-pi hierarchy (183,311 keys) | 53,313,825 | **18,805,169** | identical |
+
+The 256 MiB label-map bound now binds near 240k files at rust's density, after the
+mapping-view estimate (~120k) and before the ANN file (~253k). Publisher peaks moved
+within run-to-run noise (rust 5.24 → 5.00 GB, oh-my-pi 2.29 → 2.32 GB). Serving
+shows no clear change either: 3.25 → 3.17 GB peak, 3.48 → 3.54 GB maximum RSS.
+
+**Serving is unchanged.** With the same ANN, G2 under v6 matches v5 byte for byte,
+388/388 rows and responses. **Cutover:** a v5 store reports `generation format v5
+is not v6` and serves lexical results. `semantic prepare` republishes it in 90 s
+(oh-my-pi) and 325 s (rust) with zero embeddings. The replaced v5 files stay until
+the next publication reclaims them (1.24 GB on rust), as after any full rebuild.
+
+**The republish rebuilds the ANN, and the rebuilt graph scores differently.** The
+head store's original ANN (`1d12fcb8…`, built late in the 5.9-hour preparation
+process) differs from every fresh rebuild (`6ffafcd3…`); two fresh rebuilds agree
+byte for byte. On G2 (both corpora) the rebuilt graphs locate 166 against 169 (+1/−4,
+p = 1; rust 52 against 54; bodies 152 → 150). That is within noise and does not touch F4's margin, but the 169 is a
+property of that one build, not of the recipe alone. [INFERENCE] HNSW level
+assignment depends on the building process's earlier index builds; the cause was
+not investigated.
+
+**Checks.** Unit tests fix the round trip, the refusal of damaged tables and the
+string budget at its boundary. Local gates on Rust 1.97.1 and 1.90.0 pass all five:
+1,284 tests passed, 0 failed, 34 ignored. A GPT-6.1 Sol review found that an
+interned path could expand without bound; with the budget, its second review
+returned SHIP. The budgeted build again served 388/388 identical G2 responses. No CI
+ran.
+
 ## Streamed index build — 2026-10-22
 
 Step 1 of the [scale plan](../specs/009-optional-semantic-retrieval/spec.md) is in. In
