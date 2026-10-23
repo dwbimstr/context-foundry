@@ -42,7 +42,7 @@ use super::ipc::{
     PredictRequest,
 };
 use super::profile::LearnProfile;
-use super::supervisor::{self, Breach, Request, Spawned};
+use super::supervisor::{self, Breach, Request, Spawned, Supervised};
 use crate::control::Control;
 use crate::decision_model::{self, CheckpointPin, Rendered};
 use crate::error::{FResult, FoundryError};
@@ -51,10 +51,8 @@ use crate::neural::protocol::{FrameError, read_frame_as, write_frame_as};
 use crate::neural::supervisor::terminate_and_reap;
 use crate::policy::{Expected, Prediction, validate_reply};
 use std::io::{BufReader, Write as _};
-use std::os::fd::OwnedFd;
-use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, mpsc};
 use std::time::{Duration, Instant};
 
@@ -216,18 +214,12 @@ pub struct WorkerState {
 /// The resident serving worker of one owner (MCP) or one command (CLI).
 pub struct PolicyWorker {
     shared: Arc<Shared>,
-    child: Arc<Mutex<Option<Child>>>,
+    process: Supervised,
     candidate_sha256: String,
     model_function_sha256: String,
     /// Requests to the writer thread, which owns the worker's stdin;
     /// dropping it is owner EOF.
     requests: Option<mpsc::Sender<Vec<u8>>>,
-    handles: Vec<std::thread::JoinHandle<()>>,
-    stopping: Arc<AtomicBool>,
-    liveness: Option<OwnedFd>,
-    run: Option<PathBuf>,
-    stderr_tail: Arc<Mutex<Vec<u8>>>,
-    breach: Breach,
     stopped: bool,
 }
 
@@ -340,16 +332,10 @@ impl PolicyWorker {
     pub fn start(launch: ServeLaunch<'_>, control: &Control) -> FResult<Self> {
         let ceilings = &launch.profile.ceilings;
         let Spawned {
-            child,
+            process,
             stdin,
             stdout,
-            stderr_tail,
-            breach,
-            stopping,
             staged,
-            handles,
-            liveness,
-            run,
             scratch,
             ..
         } = supervisor::spawn(
@@ -375,16 +361,10 @@ impl PolicyWorker {
                 changed: Condvar::new(),
                 hold_publication: test_hold_publication(),
             }),
-            child,
+            process,
             candidate_sha256: launch.candidate_sha256.to_owned(),
             model_function_sha256: launch.model_function_sha256.to_owned(),
             requests: None,
-            handles,
-            stopping,
-            liveness: Some(liveness),
-            run: Some(run),
-            stderr_tail,
-            breach,
             stopped: false,
         };
         // The head is the core's input, not worker output: reserved before
@@ -435,9 +415,10 @@ impl PolicyWorker {
         }
         let (loaded_tx, loaded_rx) = mpsc::channel();
         let reader = worker.reader(stdout, loaded_tx);
-        worker.handles.push(reader);
+        worker.process.handles.push(reader);
         let (requests, queue) = mpsc::channel::<Vec<u8>>();
         worker
+            .process
             .handles
             .push(std::thread::spawn(move || write_requests(stdin, queue)));
         worker.requests = Some(requests);
@@ -508,22 +489,13 @@ impl PolicyWorker {
                     ));
                 }
             };
-        if *source_dtype != pin.source_dtype
-            || *weights_sha256 != pin.weights_sha256
-            || *encoder_config_sha256 != pin.encoder_config_sha256
-        {
+        if !supervisor::loads_pin(pin, source_dtype, weights_sha256, encoder_config_sha256) {
             return Err(self.failure(
                 "checkpoint_invalid",
                 "the worker loaded another checkpoint than the candidate pins".into(),
             ));
         }
-        let set = decision_model::trainable();
-        let names: Vec<&str> = set.iter().map(|(name, _)| name.as_str()).collect();
-        let elements: u64 = set
-            .iter()
-            .map(|(_, shape)| shape.iter().product::<usize>() as u64)
-            .sum();
-        if *trainable != names || counts.trainable != elements {
+        if !supervisor::trainable_is_contract(trainable, counts) {
             return Err(self.failure(
                 "worker_failed",
                 "the worker's trainable set is not the contract's".into(),
@@ -541,9 +513,9 @@ impl PolicyWorker {
         loaded: mpsc::Sender<Result<(LearnHeader, Vec<u8>), String>>,
     ) -> std::thread::JoinHandle<()> {
         let shared = Arc::clone(&self.shared);
-        let child = Arc::clone(&self.child);
-        let breach = Arc::clone(&self.breach);
-        let tail = Arc::clone(&self.stderr_tail);
+        let child = Arc::clone(&self.process.child);
+        let breach = Arc::clone(&self.process.breach);
+        let tail = Arc::clone(&self.process.stderr_tail);
         let candidate = self.candidate_sha256.clone();
         let function = self.model_function_sha256.clone();
         std::thread::spawn(move || {
@@ -601,7 +573,8 @@ impl PolicyWorker {
     /// Stop the worker, then name the failure (a monitor breach wins).
     fn failure(&mut self, code: &'static str, message: String) -> FoundryError {
         self.shutdown();
-        let (code, message) = named(&self.breach, &self.stderr_tail, code, message);
+        let process = &self.process;
+        let (code, message) = named(&process.breach, &process.stderr_tail, code, message);
         FoundryError::Learning { code, message }
     }
 
@@ -653,7 +626,7 @@ impl PolicyWorker {
         if !sent {
             terminate(
                 &mut slot,
-                &self.child,
+                &self.process.child,
                 "worker_failed",
                 "the request channel to the worker is closed".into(),
             );
@@ -733,7 +706,7 @@ impl PolicyWorker {
         if slot.consecutive_timeouts >= TIMEOUT_LIMIT {
             terminate(
                 &mut slot,
-                &self.child,
+                &self.process.child,
                 "prediction_timeouts",
                 format!("{TIMEOUT_LIMIT} consecutive predictions exceeded their ceiling"),
             );
@@ -766,16 +739,8 @@ impl PolicyWorker {
             }
             self.shared.changed.notify_all();
         }
-        terminate_and_reap(&self.child);
-        self.liveness = None;
-        self.stopping.store(true, Ordering::SeqCst);
-        for handle in self.handles.drain(..) {
-            let _ = handle.join();
-        }
+        self.process.reap();
         self.stopped = true;
-        if let Some(run) = self.run.take() {
-            let _ = std::fs::remove_dir_all(run);
-        }
     }
 }
 

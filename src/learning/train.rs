@@ -359,7 +359,6 @@ pub fn train(engine: &Engine, request: &TrainRequest<'_>, control: &Control) -> 
             control,
         )?;
         publish(
-            engine,
             request,
             &target,
             Publishing {
@@ -532,9 +531,9 @@ mod macos {
             .base
             .map(|base| stage_head(&worker, base, HeadSlot::Base, "base_invalid"))
             .transpose()?;
-        let loaded = worker.load(policy, plan.model_function, head, seed, control)?;
+        let frozen_loaded = worker.load(policy, plan.model_function, head, seed, control)?;
         let frozen_before = worker.frozen_hash(control)?;
-        if frozen_before != loaded.frozen_encoder_sha256 {
+        if frozen_before != frozen_loaded {
             return Err(fail(
                 "frozen_encoder_changed",
                 "the frozen encoder digest changed between load and its first check",
@@ -698,7 +697,6 @@ fn cases_of(rows: &[Row]) -> Vec<CaseInput> {
 
 /// Evaluate, build and publish the candidate, then read it back.
 fn publish(
-    _engine: &Engine,
     request: &TrainRequest<'_>,
     target: &OutputTarget,
     p: Publishing<'_>,

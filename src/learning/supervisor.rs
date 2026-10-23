@@ -5,11 +5,12 @@
 //! before anything is reported.
 //!
 //! Reused from 009 rather than copied: the scratch-root rules
-//! ([`crate::neural::supervisor::prepare_run_scratch_at`]), the pre-exec
-//! child setup ([`crate::neural::supervisor::child_setup_limited`]: own
-//! process group, extra hard limits, `RLIMIT_NPROC=0`, inheritable
-//! descriptors closed), the footprint measurement and its fault point, the
-//! TERM/KILL/reap sequence and the frame format.
+//! ([`crate::neural::supervisor::prepare_run_scratch_at`]), the jailed
+//! launch command and the bounded stderr drain, the pre-exec child setup
+//! ([`crate::neural::supervisor::child_setup_limited`]: own process group,
+//! extra hard limits, `RLIMIT_NPROC=0`, inheritable descriptors closed), the
+//! footprint measurement and its fault point, the TERM/KILL/reap sequence
+//! and the frame format.
 //!
 //! Enforcement (the matrix in [`super::profile::PROVIDED`]):
 //! * `RLIMIT_NPROC=0`, `RLIMIT_CPU = wall_seconds × cpu_threads` and
@@ -28,19 +29,21 @@ use super::ipc::{self, HeadSlot, Identity, LEARN_PROTOCOL, LearnHeader, Message,
 use super::profile::LearnProfile;
 use super::{LearningPolicy, fail};
 use crate::control::Control;
+use crate::decision_model::CheckpointPin;
 use crate::error::{FResult, FoundryError};
 use crate::neural::anchor::Dir;
 use crate::neural::profile::hash_regular_file_until;
-use crate::neural::protocol::{self, FrameError, read_frame_as, write_frame_as};
+use crate::neural::protocol::{FrameError, read_frame_as, write_frame_as};
 use crate::neural::provider::ProviderError;
 use crate::neural::supervisor::{
-    child_setup_limited, physical_footprint, prepare_run_scratch_at, terminate_and_reap,
+    child_setup_limited, drain_stderr, jailed_command, keep_bounded, physical_footprint,
+    prepare_run_scratch_at, terminate_and_reap,
 };
-use std::io::{BufReader, Read as _};
+use std::io::BufReader;
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::process::{CommandExt as _, ExitStatusExt as _};
 use std::path::PathBuf;
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, ChildStdin};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
@@ -136,12 +139,6 @@ impl Limits {
     }
 }
 
-/// What a `load` verified, as the owner checked it.
-pub struct Loaded {
-    pub frozen_encoder_sha256: String,
-    pub counts: ParameterCounts,
-}
-
 /// What a `save` reported.
 pub struct Saved {
     pub sha256: String,
@@ -151,20 +148,13 @@ pub struct Saved {
 
 /// The supervised worker.
 pub struct LearnWorker {
-    child: Arc<Mutex<Option<Child>>>,
-    pid: u32,
+    process: Supervised,
     stdin: Option<ChildStdin>,
     frames: mpsc::Receiver<Frame>,
-    stderr_tail: Arc<Mutex<Vec<u8>>>,
-    breach: Breach,
-    stopping: Arc<AtomicBool>,
     /// Bytes the core itself placed in the run directory (starting heads):
     /// inputs, not worker output, so the supervised total excludes them.
     staged: Arc<std::sync::atomic::AtomicU64>,
     limits: Limits,
-    handles: Vec<std::thread::JoinHandle<()>>,
-    liveness: Option<OwnedFd>,
-    scratch_path: Option<PathBuf>,
     scratch: Dir,
     next_id: u64,
     identity: Identity,
@@ -220,24 +210,78 @@ pub(super) fn worker_code(code: &str) -> &'static str {
         .unwrap_or("worker_failed")
 }
 
+/// Whether a `loaded` reply names exactly the pinned checkpoint.
+pub(super) fn loads_pin(
+    pin: &CheckpointPin,
+    source_dtype: &str,
+    weights_sha256: &str,
+    encoder_config_sha256: &str,
+) -> bool {
+    source_dtype == pin.source_dtype
+        && weights_sha256 == pin.weights_sha256
+        && encoder_config_sha256 == pin.encoder_config_sha256
+}
+
+/// Whether a `loaded` reply's trainable set is the contract's: the names in
+/// order and their total element count.
+pub(super) fn trainable_is_contract(trainable: &[String], counts: &ParameterCounts) -> bool {
+    let set = crate::decision_model::trainable();
+    let elements: u64 = set
+        .iter()
+        .map(|(_, shape)| shape.iter().product::<usize>() as u64)
+        .sum();
+    trainable.iter().eq(set.iter().map(|(name, _)| name)) && counts.trainable == elements
+}
+
 /// A launched, supervised worker before its first frame: the one launch
 /// convention training ([`LearnWorker`]) and serving ([`super::serve`])
 /// share. Its stderr drains into a bounded tail and ONE monitor polls
 /// [`Limits::measure`] every [`POLL_INTERVAL`], killing on a breach.
 pub(super) struct Spawned {
-    pub child: Arc<Mutex<Option<Child>>>,
-    pub pid: u32,
+    pub process: Supervised,
     pub stdin: Option<ChildStdin>,
     pub stdout: Option<std::process::ChildStdout>,
-    pub stderr_tail: Arc<Mutex<Vec<u8>>>,
-    pub breach: Breach,
-    pub stopping: Arc<AtomicBool>,
     pub staged: Arc<std::sync::atomic::AtomicU64>,
     limits: Limits,
-    pub handles: Vec<std::thread::JoinHandle<()>>,
-    pub liveness: OwnedFd,
-    pub run: PathBuf,
     pub scratch: Dir,
+}
+
+/// The supervised process from launch to reap, owned by [`LearnWorker`] or
+/// [`super::serve::PolicyWorker`].
+pub(super) struct Supervised {
+    pub child: Arc<Mutex<Option<Child>>>,
+    pub stderr_tail: Arc<Mutex<Vec<u8>>>,
+    pub breach: Breach,
+    pub handles: Vec<std::thread::JoinHandle<()>>,
+    stopping: Arc<AtomicBool>,
+    liveness: Option<OwnedFd>,
+    run: Option<PathBuf>,
+}
+
+impl Supervised {
+    /// The stop the monitor imposed, if any.
+    pub fn breached(&self) -> Option<(&'static str, String)> {
+        self.breach
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+    }
+
+    /// TERM, 5 s, KILL and reap; close the liveness pipe; stop the monitor;
+    /// join the helper threads; remove the scratch run directory. Returns
+    /// the reaped exit status.
+    pub fn reap(&mut self) -> Option<std::process::ExitStatus> {
+        let status = terminate_and_reap(&self.child);
+        self.liveness = None;
+        self.stopping.store(true, Ordering::SeqCst);
+        for handle in self.handles.drain(..) {
+            let _ = handle.join();
+        }
+        if let Some(run) = self.run.take() {
+            let _ = std::fs::remove_dir_all(run);
+        }
+        status
+    }
 }
 
 /// The resources one launch requests: LibTorch threads, the hard
@@ -298,12 +342,8 @@ pub(super) fn spawn(
         }
     };
     let read_fd = liveness_reader.as_raw_fd();
-    let mut command = Command::new(&executable);
+    let mut command = jailed_command(&executable, &run, read_fd);
     command
-        .arg("--owner-pid")
-        .arg(std::process::id().to_string())
-        .arg("--liveness-fd")
-        .arg(read_fd.to_string())
         .arg("--checkpoint-dir")
         .arg(&profile.checkpoint_dir)
         // The worker re-enters this itself: App Sandbox moves a sandboxed
@@ -311,16 +351,7 @@ pub(super) fn spawn(
         .arg("--run-dir")
         .arg(&run)
         .args(request.extra_args)
-        .current_dir(&run)
-        // `env -i` style: no inherited credentials, proxies or sockets.
-        .env_clear()
-        .env("PATH", "/usr/bin:/bin")
-        .env("HOME", &run)
-        .env("TMPDIR", run.join("tmp"))
-        .env("OMP_NUM_THREADS", request.threads.to_string())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .env("OMP_NUM_THREADS", request.threads.to_string());
     let mut hard = Vec::with_capacity(2);
     if let Some(cpu_seconds) = request.cpu_seconds {
         hard.push((libc::RLIMIT_CPU, cpu_seconds as libc::rlim_t));
@@ -346,7 +377,6 @@ pub(super) fn spawn(
         }
     };
     drop(liveness_reader);
-    let pid = child.id();
     let stdin = child.stdin.take();
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
@@ -358,18 +388,8 @@ pub(super) fn spawn(
     let mut handles = Vec::new();
     if let Some(stderr) = stderr {
         let tail = Arc::clone(&stderr_tail);
-        handles.push(std::thread::spawn(move || {
-            let mut reader = BufReader::new(stderr);
-            let mut chunk = [0u8; 4096];
-            while let Ok(n) = reader.read(&mut chunk) {
-                if n == 0 {
-                    break;
-                }
-                let mut tail = tail.lock().unwrap_or_else(|p| p.into_inner());
-                let room = protocol::MAX_STDERR_BYTES.saturating_sub(tail.len());
-                tail.extend_from_slice(&chunk[..n.min(room)]);
-            }
-        }));
+        let keep = move |chunk: &[u8]| keep_bounded(&tail, chunk);
+        handles.push(drain_stderr(stderr, keep));
     }
     let limits = Limits {
         memory: request.memory_bytes,
@@ -409,18 +429,19 @@ pub(super) fn spawn(
         }));
     }
     Ok(Spawned {
-        child,
-        pid,
+        process: Supervised {
+            child,
+            stderr_tail,
+            breach,
+            handles,
+            stopping,
+            liveness: Some(OwnedFd::from(liveness_writer)),
+            run: Some(run),
+        },
         stdin,
         stdout,
-        stderr_tail,
-        breach,
-        stopping,
         staged,
         limits,
-        handles,
-        liveness: OwnedFd::from(liveness_writer),
-        run,
         scratch,
     })
 }
@@ -437,18 +458,11 @@ impl LearnWorker {
     ) -> FResult<Self> {
         let threads = policy.cpu_threads;
         let Spawned {
-            child,
-            pid,
+            mut process,
             stdin,
             stdout,
-            stderr_tail,
-            breach,
-            stopping,
             staged,
             limits,
-            mut handles,
-            liveness,
-            run,
             scratch,
         } = spawn(
             profile,
@@ -463,7 +477,7 @@ impl LearnWorker {
         )?;
         let (tx, frames) = mpsc::channel::<Frame>();
         if let Some(stdout) = stdout {
-            handles.push(std::thread::spawn(move || {
+            process.handles.push(std::thread::spawn(move || {
                 let mut reader = BufReader::new(stdout);
                 loop {
                     match read_frame_as::<LearnHeader, _>(&mut reader) {
@@ -485,18 +499,11 @@ impl LearnWorker {
             }));
         }
         Ok(Self {
-            child,
-            pid,
+            process,
             stdin,
             frames,
-            stderr_tail,
-            breach,
-            stopping,
             staged,
             limits,
-            handles,
-            liveness: Some(liveness),
-            scratch_path: Some(run),
             scratch,
             next_id: 1,
             identity: Identity {
@@ -509,11 +516,6 @@ impl LearnWorker {
             status: None,
             stopped: false,
         })
-    }
-
-    /// The worker's PID while it lives.
-    pub fn pid(&self) -> Option<u32> {
-        (!self.stopped).then_some(self.pid)
     }
 
     /// The scratch run directory, held by descriptor: starting heads go in,
@@ -537,41 +539,40 @@ impl LearnWorker {
         super::candidate::copy_head_into(from, &self.scratch, slot.file_name())
     }
 
-    pub fn identity(&self) -> &Identity {
-        &self.identity
-    }
-
     fn stderr_excerpt(&self) -> String {
-        let tail = self.stderr_tail.lock().unwrap_or_else(|p| p.into_inner());
+        let tail = self
+            .process
+            .stderr_tail
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         String::from_utf8_lossy(&tail).chars().take(2000).collect()
     }
 
-    /// Stop the worker, then name the failure. A monitor breach and a
-    /// kernel limit (`SIGXCPU`, `SIGXFSZ`) win over the symptom they caused.
-    fn fail(&mut self, code: &'static str, message: String) -> FoundryError {
-        self.shutdown();
-        if let Some((code, message)) = self
-            .breach
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .clone()
-        {
-            return fail(code, message);
+    /// The stop imposed on the worker, which wins over the symptom it
+    /// caused: a monitor breach, then a kernel limit (`SIGXCPU`, `SIGXFSZ`).
+    fn imposed_stop(&self) -> Option<FoundryError> {
+        if let Some((code, message)) = self.process.breached() {
+            return Some(fail(code, message));
         }
         match self.status.and_then(|status| status.signal()) {
-            Some(libc::SIGXCPU) => {
-                return fail(
-                    "cpu_limit",
-                    "the worker exhausted its hard CPU-time limit (wall_seconds × cpu_threads)",
-                );
-            }
-            Some(libc::SIGXFSZ) => {
-                return fail(
-                    "output_limit",
-                    "the worker exceeded its hard per-file output limit (output_bytes)",
-                );
-            }
-            _ => {}
+            Some(libc::SIGXCPU) => Some(fail(
+                "cpu_limit",
+                "the worker exhausted its hard CPU-time limit (wall_seconds × cpu_threads)",
+            )),
+            Some(libc::SIGXFSZ) => Some(fail(
+                "output_limit",
+                "the worker exceeded its hard per-file output limit (output_bytes)",
+            )),
+            _ => None,
+        }
+    }
+
+    /// Stop the worker, then name the failure; an [`Self::imposed_stop`]
+    /// wins.
+    fn fail(&mut self, code: &'static str, message: String) -> FoundryError {
+        self.shutdown();
+        if let Some(stop) = self.imposed_stop() {
+            return stop;
         }
         let excerpt = self.stderr_excerpt();
         if excerpt.is_empty() || code != "worker_failed" {
@@ -725,7 +726,8 @@ impl LearnWorker {
 
     /// (Re)load the checkpoint and, with `head`, a starting head that the
     /// caller already placed in the scratch run directory. The owner's
-    /// identity becomes `{model_function, head digest, 0}`.
+    /// identity becomes `{model_function, head digest, 0}`. Returns the
+    /// frozen encoder's digest.
     pub fn load(
         &mut self,
         policy: &LearningPolicy,
@@ -733,7 +735,7 @@ impl LearnWorker {
         head: Option<(HeadSlot, String)>,
         seed: u64,
         control: &Control,
-    ) -> FResult<Loaded> {
+    ) -> FResult<String> {
         self.identity = Identity {
             model_function_sha256: model_function_sha256.to_owned(),
             head_sha256: head.as_ref().map(|(_, sha)| sha.clone()),
@@ -763,33 +765,24 @@ impl LearnWorker {
         else {
             unreachable!("the kind was checked");
         };
-        let names: Vec<String> = crate::decision_model::trainable()
-            .into_iter()
-            .map(|(name, _)| name)
-            .collect();
-        let elements: u64 = crate::decision_model::trainable()
-            .iter()
-            .map(|(_, shape)| shape.iter().product::<usize>() as u64)
-            .sum();
-        if source_dtype != policy.model.source_dtype
-            || weights_sha256 != policy.model.weights_sha256
-            || encoder_config_sha256 != policy.model.encoder_config_sha256
-        {
+        if !loads_pin(
+            &policy.model,
+            &source_dtype,
+            &weights_sha256,
+            &encoder_config_sha256,
+        ) {
             return Err(self.fail(
                 "checkpoint_invalid",
                 "the worker loaded another checkpoint than the policy pins".into(),
             ));
         }
-        if trainable != names || counts.trainable != elements {
+        if !trainable_is_contract(&trainable, &counts) {
             return Err(self.fail(
                 "worker_failed",
                 "the worker's trainable set is not the contract's".into(),
             ));
         }
-        Ok(Loaded {
-            frozen_encoder_sha256,
-            counts,
-        })
+        Ok(frozen_encoder_sha256)
     }
 
     /// One training update; the owner's step count follows.
@@ -905,12 +898,7 @@ impl LearnWorker {
     /// request's bound and the caller's control. A stop shuts the worker
     /// down and names itself.
     fn check_stops(&mut self, bound: Instant, control: &Control) -> FResult<()> {
-        let breached = self
-            .breach
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .clone();
-        if let Some((code, message)) = breached {
+        if let Some((code, message)) = self.process.breached() {
             return Err(self.fail(code, message));
         }
         let now = Instant::now();
@@ -953,7 +941,7 @@ impl LearnWorker {
         // Measured while the handle is held and the child is unreaped, so a
         // reused PID is never read (the monitor's own rule).
         let measured = {
-            let mut guard = self.child.lock().unwrap_or_else(|p| p.into_inner());
+            let mut guard = self.process.child.lock().unwrap_or_else(|p| p.into_inner());
             match guard.as_mut() {
                 Some(child) => match child.try_wait() {
                     Ok(None) => self.limits.measure(child.id()),
@@ -967,28 +955,8 @@ impl LearnWorker {
         }
         self.check_stops(self.wall_deadline, control)?;
         self.stop(true);
-        let breached = self
-            .breach
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .clone();
-        if let Some((code, message)) = breached {
-            return Err(fail(code, message));
-        }
-        match self.status.and_then(|status| status.signal()) {
-            Some(libc::SIGXCPU) => {
-                return Err(fail(
-                    "cpu_limit",
-                    "the worker exhausted its hard CPU-time limit (wall_seconds × cpu_threads)",
-                ));
-            }
-            Some(libc::SIGXFSZ) => {
-                return Err(fail(
-                    "output_limit",
-                    "the worker exceeded its hard per-file output limit (output_bytes)",
-                ));
-            }
-            _ => {}
+        if let Some(stop) = self.imposed_stop() {
+            return Err(stop);
         }
         let mut clean_end = false;
         while let Ok(frame) = self.frames.try_recv() {
@@ -1040,7 +1008,7 @@ impl LearnWorker {
         if wait_for_exit {
             let started = Instant::now();
             while started.elapsed() < EXIT_GRACE {
-                let mut guard = self.child.lock().unwrap_or_else(|p| p.into_inner());
+                let mut guard = self.process.child.lock().unwrap_or_else(|p| p.into_inner());
                 match guard.as_mut().map(Child::try_wait) {
                     Some(Ok(Some(status))) => {
                         self.status = Some(status);
@@ -1054,16 +1022,8 @@ impl LearnWorker {
                 std::thread::sleep(Duration::from_millis(20));
             }
         }
-        self.status = terminate_and_reap(&self.child).or(self.status);
-        self.liveness = None;
-        self.stopping.store(true, Ordering::SeqCst);
-        for handle in self.handles.drain(..) {
-            let _ = handle.join();
-        }
+        self.status = self.process.reap().or(self.status);
         self.stopped = true;
-        if let Some(run) = self.scratch_path.take() {
-            let _ = std::fs::remove_dir_all(run);
-        }
     }
 }
 
