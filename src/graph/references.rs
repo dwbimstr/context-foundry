@@ -238,18 +238,17 @@ struct EligibleScopes {
 }
 
 impl EligibleScopes {
-    fn get(&mut self, path: &str) -> FResult<Option<ScopeRow>> {
-        if let Some(row) = self.cache.get(path) {
-            return Ok(row.clone());
+    fn get(&mut self, path: &str) -> FResult<Option<&ScopeRow>> {
+        if !self.cache.contains_key(path) {
+            let row = self
+                .scopes
+                .get(scope_key(&self.namespace, path).as_str())?
+                .map(|raw| stored_row::<ScopeRow>(raw.value(), "compiler scope"))
+                .transpose()?
+                .filter(|row| row.snapshot_id == self.snapshot_id);
+            self.cache.insert(path.to_owned(), row);
         }
-        let row = self
-            .scopes
-            .get(scope_key(&self.namespace, path).as_str())?
-            .map(|raw| stored_row::<ScopeRow>(raw.value(), "compiler scope"))
-            .transpose()?
-            .filter(|row| row.snapshot_id == self.snapshot_id);
-        self.cache.insert(path.to_owned(), row.clone());
-        Ok(row)
+        Ok(self.cache.get(path).and_then(Option::as_ref))
     }
 }
 
@@ -370,11 +369,32 @@ fn cached_file<'f>(
         .filter(|view| view.hash == expected_hash)
 }
 
-fn unit_label(unit: &crate::syntax::DeliveryUnit) -> String {
-    match unit.qname.as_deref() {
+/// The view a delivered site was verified against: the window caches it
+/// before it delivers the site, and nothing evicts it.
+fn delivered_view<'f>(
+    files: &'f HashMap<String, Option<FileView>>,
+    path: &str,
+    sha256: &str,
+) -> FResult<&'f FileView> {
+    cached_file(files, path, sha256).ok_or_else(|| {
+        FoundryError::CorruptStore(format!(
+            "{path}: a delivered reference's source is not loaded"
+        ))
+    })
+}
+
+/// The delivery unit containing the site's `start` and its label:
+/// `<kind> <qualified name>`, or the kind alone for an unnamed unit. With no
+/// unit there, the site `start..end` itself, labeled `block`.
+fn site_unit(view: &FileView, start: u64, end: u64) -> (u64, u64, String) {
+    let Some(unit) = view.unit_at(start as usize) else {
+        return (start, end, "block".to_owned());
+    };
+    let label = match unit.qname.as_deref() {
         Some(qname) if !qname.is_empty() => format!("{} {qname}", unit.kind.as_str()),
         _ => unit.kind.as_str().to_owned(),
-    }
+    };
+    (unit.start as u64, unit.end as u64, label)
 }
 
 /// A prefix seed: the stored symbol ids starting with it (at most 9 probed).
@@ -803,12 +823,23 @@ fn resolve_handle(
     }
 }
 
+/// One delivered reference site, verified against its scope's bytes.
+struct Site {
+    /// The index of the target whose record delivered the site.
+    target: usize,
+    path: String,
+    /// The SHA-256 of the bytes the site's scope was published from.
+    sha256: String,
+    start: u64,
+    end: u64,
+    /// One-based line of `start`.
+    line: u64,
+}
+
 /// One window over a symbol set's reference records.
 #[derive(Default)]
 struct ReferenceWindow {
-    items: Vec<ReferenceItem>,
-    /// Delivered references whose target is not uniquely resolved.
-    unresolved: usize,
+    sites: Vec<Site>,
     /// Records dropped as ineligible: outside the selected snapshot, or a
     /// source no longer carrying the bytes the scope was published from.
     stale: usize,
@@ -857,11 +888,9 @@ fn eligible_scopes(
 /// `limit` and the shared allowance are checked per record on the EXISTENCE
 /// of a next record, before any is decoded: an exhausted window never reads
 /// (and so never trips over) a record it could not deliver anyway; the
-/// visited-file budget is checked before a new file is read. `unique` is the
-/// target's unique definition: it gives each item its edge id, and without
-/// it every delivered item counts as unresolved. `labeled` names each item's
-/// enclosing delivery unit (parsing its file); otherwise the unit is the site
-/// itself and the label empty, and the caller labels what it shows.
+/// visited-file budget is checked before a new file is read. Every delivered
+/// site's source stays in `files`, where the caller labels the sites it
+/// shows.
 #[allow(clippy::too_many_arguments)] // the window shares the response's one read state
 fn reference_window(
     by_symbol: &redb::ReadOnlyTable<&'static str, &'static str>,
@@ -871,9 +900,6 @@ fn reference_window(
     targets: &[Target],
     after: Option<&(String, u64, u64)>,
     limit: usize,
-    unique: Option<&DefinitionCandidate>,
-    bound: &str,
-    labeled: bool,
     examined: &mut usize,
     files: &mut HashMap<String, Option<FileView>>,
     visited: &mut BTreeSet<String>,
@@ -908,7 +934,7 @@ fn reference_window(
         if !pending {
             break;
         }
-        if window.items.len() >= limit || *examined >= REFERENCES_MAX_EXAMINED {
+        if window.sites.len() >= limit || *examined >= REFERENCES_MAX_EXAMINED {
             window.want_more = true;
             break;
         }
@@ -929,9 +955,8 @@ fn reference_window(
         let Some((index, parsed)) = next else {
             break;
         };
-        let target = &targets[index];
         let site = (parsed.path.clone(), parsed.start, parsed.end);
-        let scope = match scopes.get_mut(&target.namespace) {
+        let scope = match scopes.get_mut(&targets[index].namespace) {
             Some(eligible) => eligible.get(&parsed.path)?,
             None => None,
         };
@@ -971,56 +996,13 @@ fn reference_window(
             continue;
         }
         delivered = Some(site);
-        if unique.is_none() {
-            window.unresolved += 1;
-        }
-        let (unit_start, unit_end, label) = match labeled.then(|| view.unit_at(start)) {
-            Some(Some(unit)) => (unit.start as u64, unit.end as u64, unit_label(unit)),
-            Some(None) => (parsed.start, parsed.end, "block".to_owned()),
-            None => (parsed.start, parsed.end, String::new()),
-        };
-        let edge = unique.map(|definition| {
-            edge_id(
-                &target.namespace,
-                "references",
-                EdgeEnd {
-                    identity: &parsed.path,
-                    hash: &scope.source_hash,
-                    start: parsed.start,
-                    end: parsed.end,
-                },
-                EdgeEnd {
-                    identity: &definition.path,
-                    hash: &definition.sha256,
-                    start: definition.start,
-                    end: definition.end,
-                },
-            )
-        });
-        window.items.push(ReferenceItem {
-            occurrence_id: occurrence_id(
-                &target.namespace,
-                OccurrenceKind::Reference,
-                &parsed.path,
-                &scope.source_hash,
-                parsed.start,
-                parsed.end,
-                &target.symbol_id,
-            ),
-            path: parsed.path.clone(),
+        window.sites.push(Site {
+            target: index,
+            path: parsed.path,
             sha256: scope.source_hash.clone(),
             start: parsed.start,
             end: parsed.end,
             line: view.line_of(start),
-            unit: SourceHandle {
-                workspace_id: bound.to_owned(),
-                path: parsed.path,
-                sha256: scope.source_hash,
-                start: unit_start,
-                end: unit_end,
-            },
-            label,
-            edge_id: edge,
         });
     }
     Ok(window)
@@ -1040,9 +1022,8 @@ struct TargetWindow {
 /// The definition lookup, then one reference window, over `targets` in the
 /// caller's read `tx`, drawing on the response's shared allowance
 /// (`examined`), file cache and visited-file budget: the one window that
-/// `references` and exact doors share (context-v2 § Doors). `labeled` gives
-/// `references` items (enclosing unit, label, edge id); otherwise door sites,
-/// which the caller labels per shown file.
+/// `references` and exact doors share (context-v2 § Doors). Each caller
+/// labels the sites it shows.
 #[allow(clippy::too_many_arguments)] // the window shares the response's one read state
 fn target_window(
     tx: &redb::ReadTransaction,
@@ -1050,8 +1031,6 @@ fn target_window(
     targets: &[Target],
     after: Option<&(String, u64, u64)>,
     limit: usize,
-    bound: &str,
-    labeled: bool,
     examined: &mut usize,
     files: &mut HashMap<String, Option<FileView>>,
     visited: &mut BTreeSet<String>,
@@ -1128,7 +1107,7 @@ fn target_window(
             visited.insert(parsed.path.clone());
             definitions.push(DefinitionCandidate {
                 path: parsed.path,
-                sha256: scope.source_hash,
+                sha256: scope.source_hash.clone(),
                 start: parsed.start,
                 end: parsed.end,
             });
@@ -1145,10 +1124,6 @@ fn target_window(
     };
 
     // References in (path, start, end) order, strictly after the cursor.
-    // Door sites carry no edge ids.
-    let unique = (labeled && target == TargetResolution::Unique)
-        .then(|| definitions.first())
-        .flatten();
     let window = reference_window(
         &by_symbol,
         &sources,
@@ -1157,9 +1132,6 @@ fn target_window(
         targets,
         after,
         limit,
-        unique,
-        bound,
-        labeled,
         examined,
         files,
         visited,
@@ -1333,12 +1305,68 @@ impl Engine {
             &targets,
             after.as_ref(),
             request.limit,
-            &bound,
-            true,
             &mut examined,
             files,
             &mut visited,
         )?;
+        // Only a uniquely resolved target gives its references edge ids;
+        // without one every delivered reference is unresolved.
+        let unique = (target == TargetResolution::Unique)
+            .then(|| definitions.first())
+            .flatten();
+        let unresolved = if unique.is_none() {
+            window.sites.len()
+        } else {
+            0
+        };
+        let mut items = Vec::with_capacity(window.sites.len());
+        for site in window.sites {
+            let symbol = &targets[site.target];
+            let view = delivered_view(files, &site.path, &site.sha256)?;
+            let (unit_start, unit_end, label) = site_unit(view, site.start, site.end);
+            items.push(ReferenceItem {
+                occurrence_id: occurrence_id(
+                    &symbol.namespace,
+                    OccurrenceKind::Reference,
+                    &site.path,
+                    &site.sha256,
+                    site.start,
+                    site.end,
+                    &symbol.symbol_id,
+                ),
+                edge_id: unique.map(|definition| {
+                    edge_id(
+                        &symbol.namespace,
+                        "references",
+                        EdgeEnd {
+                            identity: &site.path,
+                            hash: &site.sha256,
+                            start: site.start,
+                            end: site.end,
+                        },
+                        EdgeEnd {
+                            identity: &definition.path,
+                            hash: &definition.sha256,
+                            start: definition.start,
+                            end: definition.end,
+                        },
+                    )
+                }),
+                unit: SourceHandle {
+                    workspace_id: bound.clone(),
+                    path: site.path.clone(),
+                    sha256: site.sha256.clone(),
+                    start: unit_start,
+                    end: unit_end,
+                },
+                path: site.path,
+                sha256: site.sha256,
+                start: site.start,
+                end: site.end,
+                line: site.line,
+                label,
+            });
+        }
         // `more` promises a continuation cursor. A window that stopped with
         // a reference still pending but before consuming ANY record has no
         // cursor to hand back: that is a budget cliff, not an end. It is
@@ -1357,7 +1385,7 @@ impl Engine {
             .map(|(path, start, end)| format!("{path}#{start}-{end}"));
         let coverage = if complete
             && stale == 0
-            && window.unresolved == 0
+            && unresolved == 0
             && !no_progress
             && target == TargetResolution::Unique
         {
@@ -1374,9 +1402,9 @@ impl Engine {
             target: Some(target),
             definitions,
             definitions_truncated,
-            items: window.items,
+            items,
             examined,
-            unresolved: window.unresolved,
+            unresolved,
             stale,
             candidates_full,
             coverage,
@@ -1500,8 +1528,6 @@ impl<'t> DoorReads<'t> {
             &targets,
             None,
             REFERENCES_MAX_LIMIT,
-            self.bound,
-            false,
             &mut examined,
             &mut self.files,
             &mut visited,
@@ -1515,7 +1541,7 @@ impl<'t> DoorReads<'t> {
                 || visited.len() >= REFERENCES_MAX_FILES,
             stale: found.stale,
         };
-        for sites in window.items.chunk_by(|a, b| a.path == b.path) {
+        for sites in window.sites.chunk_by(|a, b| a.path == b.path) {
             let known = self.summarized.get(&sites[0].path);
             let mut fresh = sites
                 .iter()
@@ -1528,16 +1554,8 @@ impl<'t> DoorReads<'t> {
                 continue;
             }
             let more = fresh.count();
-            let Some(view) = cached_file(&self.files, &first.path, &first.sha256) else {
-                return Err(FoundryError::CorruptStore(format!(
-                    "{}: a delivered reference's source is not loaded",
-                    first.path
-                )));
-            };
-            let (start, end, label) = match view.unit_at(first.start as usize) {
-                Some(unit) => (unit.start as u64, unit.end as u64, unit_label(unit)),
-                None => (first.start, first.end, "block".to_owned()),
-            };
+            let view = delivered_view(&self.files, &first.path, &first.sha256)?;
+            let (start, end, label) = site_unit(view, first.start, first.end);
             doors.lines.push(crate::store::DoorLine {
                 unit: SourceHandle {
                     workspace_id: self.bound.to_owned(),
