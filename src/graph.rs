@@ -32,7 +32,7 @@ pub use references::{
     REFERENCES_MAX_EXAMINED, REFERENCES_MAX_FILES, REFERENCES_MAX_LIMIT, ReferenceItem,
     ReferencesOutcome, ReferencesRequest, ReferencesSeed, TargetResolution,
 };
-pub(crate) use references::{DoorReads, ExactResolution};
+pub(crate) use references::{DoorReads, ExactResolution, FileView};
 
 fn invalid(message: impl Into<String>) -> FoundryError {
     FoundryError::InvalidArgument(message.into())

@@ -570,6 +570,9 @@ impl Engine {
             }
         }
         let mut reference_sources = BTreeMap::new();
+        // Every seed's window reads `tx`, so one verified-file cache serves
+        // them all.
+        let mut reference_files = std::collections::HashMap::new();
         for seed in compiler_seeds {
             control.check()?;
             let found = match self.references_in(
@@ -579,6 +582,7 @@ impl Engine {
                     limit: 8,
                     after: None,
                 },
+                &mut reference_files,
             ) {
                 Ok(found) => found,
                 Err(FoundryError::InvalidArgument(reason))
@@ -598,13 +602,15 @@ impl Engine {
             for reference in &found.items {
                 if !reference_sources.contains_key(&reference.path) {
                     control.check()?;
-                    let parsed = crate::boundary::source_in(&tx, &reference.path)?.and_then(
-                        |(meta, body)| {
+                    // A delivered site's source is cached, verified at its hash.
+                    let parsed = reference_files
+                        .get(&reference.path)
+                        .and_then(Option::as_ref)
+                        .and_then(|view| {
                             let tree =
-                                crate::syntax::parse_reference_source(&reference.path, &body)?;
-                            Some((meta.hash, body, tree))
-                        },
-                    );
+                                crate::syntax::parse_reference_source(&reference.path, &view.body)?;
+                            Some((view.hash.clone(), view.body.clone(), tree))
+                        });
                     reference_sources.insert(reference.path.clone(), parsed);
                 }
                 let usage = reference_sources[&reference.path]

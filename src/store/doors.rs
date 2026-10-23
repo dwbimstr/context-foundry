@@ -17,64 +17,22 @@ struct DoorCandidate {
     label: String,
 }
 
-/// One verified source an approximate-doors pass reads, with its line starts.
-struct DoorFile {
-    hash: String,
-    body: String,
-    line_starts: Vec<usize>,
-}
-
-impl DoorFile {
-    fn new(hash: String, body: String) -> Self {
-        let mut line_starts = vec![0];
-        line_starts.extend(body.match_indices('\n').map(|(at, _)| at + 1));
-        Self {
-            hash,
-            body,
-            line_starts,
-        }
-    }
-
-    /// One-based line of the byte `offset`.
-    fn line_of(&self, offset: usize) -> u64 {
-        self.line_starts.partition_point(|&start| start <= offset) as u64
-    }
-
-    /// The text of one-based `line`, without its LF or CRLF terminator.
-    fn line_text(&self, line: u64) -> &str {
-        let index = (line as usize).saturating_sub(1);
-        let start = self
-            .line_starts
-            .get(index)
-            .copied()
-            .unwrap_or(self.body.len());
-        let end = self
-            .line_starts
-            .get(index + 1)
-            .copied()
-            .unwrap_or(self.body.len());
-        let text = &self.body[start..end];
-        let text = text.strip_suffix('\n').unwrap_or(text);
-        text.strip_suffix('\r').unwrap_or(text)
-    }
-}
-
 /// `path`'s verified bytes, loaded into `files` once in the caller's read
 /// transaction; `None` when the source is absent or no longer carries
 /// `hash`.
 fn door_file<'f>(
-    files: &'f mut std::collections::HashMap<String, Option<DoorFile>>,
+    files: &'f mut std::collections::HashMap<String, Option<graph::FileView>>,
     sources: &redb::ReadOnlyTable<&'static str, &'static str>,
     stored: &redb::ReadOnlyTable<&'static str, &'static str>,
     path: &str,
     hash: &str,
-) -> FResult<Option<&'f DoorFile>> {
+) -> FResult<Option<&'f graph::FileView>> {
     if !files.contains_key(path) {
         let file = match sources.get(path)? {
             Some(raw) => {
                 let meta = decode::<SourceMeta>(raw.value(), "source")?;
                 let body = reconstruct_verified(stored, path, &meta)?.body;
-                Some(DoorFile::new(meta.hash, body))
+                Some(graph::FileView::new(path, meta.hash, body))
             }
             None => None,
         };
@@ -234,7 +192,7 @@ impl Engine {
         let bound = self.workspace_id.clone().unwrap_or_default();
         let sources = tx.open_table(SOURCES)?;
         let stored = tx.open_table(CHUNKS)?;
-        let mut files: std::collections::HashMap<String, Option<DoorFile>> =
+        let mut files: std::collections::HashMap<String, Option<graph::FileView>> =
             std::collections::HashMap::new();
         let Some(file) = door_file(&mut files, &sources, &stored, &named.path, &named.sha256)?
         else {
