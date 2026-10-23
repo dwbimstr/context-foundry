@@ -32,6 +32,7 @@ mod context;
 mod doors;
 mod lexical;
 mod lifecycle;
+mod placement;
 mod retrieve;
 #[cfg(feature = "semantic")]
 mod semantic_search;
@@ -2103,14 +2104,14 @@ struct Candidate {
 
 impl Candidate {
     /// The delivery unit's identity within this store.
-    fn unit(&self) -> (String, u64, u64) {
-        (self.path.clone(), self.unit_start, self.unit_end)
+    fn unit(&self) -> placement::UnitRef<'_> {
+        (self.path.as_str(), self.unit_start, self.unit_end)
     }
 
-    fn selection_unit(&self, prose: bool) -> (String, u64, u64) {
+    fn selection_unit(&self, prose: bool) -> placement::UnitRef<'_> {
         if prose && self.tier == 2 && self.unit_end.saturating_sub(self.unit_start) > 1536 {
             (
-                self.path.clone(),
+                self.path.as_str(),
                 self.start.max(self.unit_start),
                 self.end.min(self.unit_end),
             )
@@ -2150,12 +2151,12 @@ impl Candidate {
 /// two disjoint documents in experimental prose context, within the existing
 /// candidate, per-file and delivery budgets. Anchored retrieval is unchanged.
 #[derive(Default)]
-struct LexicalSelection {
-    spans: std::collections::BTreeMap<(String, u64, u64), Vec<(u64, u64)>>,
+struct LexicalSelection<'a> {
+    spans: std::collections::BTreeMap<placement::UnitRef<'a>, Vec<(u64, u64)>>,
 }
 
-impl LexicalSelection {
-    fn insert(&mut self, candidate: &Candidate, prose: bool) -> Result<(), &'static str> {
+impl<'a> LexicalSelection<'a> {
+    fn insert(&mut self, candidate: &'a Candidate, prose: bool) -> Result<(), &'static str> {
         let unit = candidate.unit();
         let (_, start, end) = candidate.selection_unit(prose);
         let limit = if (start, end) == (unit.1, unit.2) {

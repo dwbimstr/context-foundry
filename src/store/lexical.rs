@@ -2,7 +2,8 @@
 //! tier collectors, and the `Engine` search, candidate and two-tier collection
 //! methods with the record plans of memory and brief search. Query parsing,
 //! the shared candidate types, prose helpers and doors stay in the parent
-//! module.
+//! module; the shared per-file cap and cut live in `super::placement`.
+use super::placement::Cut;
 use super::*;
 
 /// Discover callable owners first, then keep their next matching passage nearby.
@@ -625,10 +626,7 @@ impl Engine {
         let mut current: std::collections::BTreeMap<String, Option<SourceMeta>> =
             std::collections::BTreeMap::new();
         let mut seen = LexicalSelection::default();
-        let mut per_file: std::collections::BTreeMap<String, usize> =
-            std::collections::BTreeMap::new();
-        let mut kept: Vec<&Candidate> = Vec::new();
-        let mut overflow = Vec::new();
+        let mut cut = Cut::new(limit, prose);
         for (rank, candidate) in first.iter().chain(&second).enumerate() {
             if !current.contains_key(&candidate.path) {
                 let meta = match sources.get(candidate.path.as_str())? {
@@ -649,36 +647,13 @@ impl Engine {
                 candidate.trace(control, &workspace_id, rank, outcome);
                 continue;
             }
-            let count = per_file.entry(candidate.path.clone()).or_default();
-            if *count == PER_FILE_CAP {
-                if prose {
-                    overflow.push((rank, candidate));
-                    continue;
-                }
-                counters.capped += 1;
-                candidate.trace(control, &workspace_id, rank, "per_file_cap");
-                continue;
-            }
-            *count += 1;
-            if kept.len() == limit {
-                counters.truncated = true;
-                candidate.trace(control, &workspace_id, rank, "limit");
-                continue;
-            }
-            candidate.trace(control, &workspace_id, rank, "kept");
-            kept.push(candidate);
-        }
-        // Diversity gets first choice, but a sparse result must not discard
-        // additional evidence solely because it lives in the same file.
-        for (rank, candidate) in overflow {
-            if kept.len() < limit {
-                candidate.trace(control, &workspace_id, rank, "kept");
-                kept.push(candidate);
-            } else {
-                counters.truncated = true;
-                candidate.trace(control, &workspace_id, rank, "limit");
+            if let Some(outcome) = cut.offer(rank, &candidate.path, candidate, &mut counters) {
+                candidate.trace(control, &workspace_id, rank, outcome);
             }
         }
+        let kept = cut.finish(&mut counters, |rank, candidate, outcome| {
+            candidate.trace(control, &workspace_id, rank, outcome)
+        });
         let wanted: std::collections::BTreeSet<String> = if prose {
             prose_terms(query)
         } else {
