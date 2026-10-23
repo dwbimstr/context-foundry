@@ -10,31 +10,34 @@ use super::*;
 /// subtokens of at least 2 characters.
 pub fn code_subtokens(text: &str) -> Vec<(usize, usize)> {
     let mut out = Vec::new();
-    let chars: Vec<(usize, char)> = text.char_indices().collect();
-    let end_of = |index: usize| chars.get(index).map_or(text.len(), |(offset, _)| *offset);
-    let mut run_start: Option<usize> = None;
-    for index in 0..=chars.len() {
-        let alphanumeric = chars.get(index).is_some_and(|(_, c)| c.is_alphanumeric());
-        match (run_start, alphanumeric) {
-            (None, true) => run_start = Some(index),
-            (Some(start), false) => {
-                let mut piece = start;
-                for i in start + 1..index {
-                    let (previous, current) = (chars[i - 1].1, chars[i].1);
-                    let next_lower = i + 1 < index && chars[i + 1].1.is_lowercase();
-                    let boundary = (previous.is_lowercase() && current.is_uppercase())
-                        || (previous.is_uppercase() && current.is_uppercase() && next_lower)
-                        || previous.is_alphabetic() != current.is_alphabetic();
-                    if boundary {
-                        out.push((end_of(piece), end_of(i)));
-                        piece = i;
-                    }
-                }
-                out.push((end_of(piece), end_of(index)));
-                run_start = None;
+    let mut chars = text.char_indices().peekable();
+    // The open subtoken: its start offset and its last character.
+    let mut piece: Option<(usize, char)> = None;
+    while let Some((offset, current)) = chars.next() {
+        if !current.is_alphanumeric() {
+            if let Some((start, _)) = piece.take() {
+                out.push((start, offset));
             }
-            _ => {}
+            continue;
         }
+        let mut start = offset;
+        if let Some((open, previous)) = piece {
+            let next_lower = chars
+                .peek()
+                .is_some_and(|&(_, next)| next.is_alphanumeric() && next.is_lowercase());
+            let boundary = (previous.is_lowercase() && current.is_uppercase())
+                || (previous.is_uppercase() && current.is_uppercase() && next_lower)
+                || previous.is_alphabetic() != current.is_alphabetic();
+            if boundary {
+                out.push((open, offset));
+            } else {
+                start = open;
+            }
+        }
+        piece = Some((start, current));
+    }
+    if let Some((start, _)) = piece {
+        out.push((start, text.len()));
     }
     out
 }
