@@ -58,7 +58,10 @@ pub(crate) fn parse_boundary_python(
     if let Some(stopped) = over_scanner_limit(Lang::Python, source.as_bytes()) {
         return Err(stopped);
     }
-    parse(source, &tree_sitter_python::LANGUAGE.into())
+    let Some(grammar) = Lang::Python.grammar() else {
+        return Ok(None);
+    };
+    parse(source, &grammar)
 }
 
 /// Bounded syntax evidence for occurrences/call candidates, not name resolution.
@@ -66,20 +69,11 @@ pub(crate) fn parse_reference_source(path: &str, source: &str) -> Option<tree_si
     if source.len() > MAX_PARSE_BYTES {
         return None;
     }
-    let lang = Lang::from_path(path)?;
+    let lang = Lang::from_path(path).filter(|&lang| call_language(lang))?;
     if over_scanner_limit(lang, source.as_bytes()).is_some() {
         return None;
     }
-    let grammar = match lang {
-        Lang::Rust => tree_sitter_rust::LANGUAGE.into(),
-        Lang::Python => tree_sitter_python::LANGUAGE.into(),
-        Lang::Go => tree_sitter_go::LANGUAGE.into(),
-        Lang::JavaScript => tree_sitter_javascript::LANGUAGE.into(),
-        Lang::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
-        Lang::Tsx => tree_sitter_typescript::LANGUAGE_TSX.into(),
-        _ => return None,
-    };
-    let tree = parse(source, &grammar).ok()??;
+    let tree = parse(source, &lang.grammar()?).ok()??;
     (!tree.root_node().has_error()).then_some(tree)
 }
 
