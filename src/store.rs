@@ -1233,59 +1233,119 @@ fn fields_of(schema: &Schema) -> Fields {
 /// A Tantivy tokenizer over one `syntax` analysis: lowercased tokens of at
 /// least 2 characters at consecutive positions.
 #[derive(Clone)]
-struct SplitTokenizer(fn(&str) -> Vec<(usize, usize)>);
-
-struct SplitTokens {
-    tokens: Vec<Token>,
-    next: usize,
+struct SplitTokenizer {
+    split: fn(&str) -> Vec<(usize, usize)>,
+    token: Token,
 }
 
-impl Tokenizer for SplitTokenizer {
-    type TokenStream<'a> = SplitTokens;
-    fn token_stream<'a>(&'a mut self, text: &'a str) -> SplitTokens {
-        SplitTokens {
-            tokens: analyzed_tokens(self.0, text),
-            next: 0,
+impl SplitTokenizer {
+    fn new(split: fn(&str) -> Vec<(usize, usize)>) -> Self {
+        SplitTokenizer {
+            split,
+            token: Token::default(),
         }
     }
 }
 
-/// Tantivy reads a token only after `advance` returned true.
-impl TokenStream for SplitTokens {
-    fn advance(&mut self) -> bool {
-        let more = self.next < self.tokens.len();
-        self.next += usize::from(more);
-        more
-    }
-    fn token(&self) -> &Token {
-        &self.tokens[self.next - 1]
-    }
-    fn token_mut(&mut self) -> &mut Token {
-        &mut self.tokens[self.next - 1]
+/// The tokens of one text, streamed through the tokenizer's reused `Token`.
+struct SplitTokens<'a> {
+    text: &'a str,
+    ranges: std::vec::IntoIter<(usize, usize)>,
+    token: &'a mut Token,
+}
+
+impl Tokenizer for SplitTokenizer {
+    type TokenStream<'a> = SplitTokens<'a>;
+    fn token_stream<'a>(&'a mut self, text: &'a str) -> SplitTokens<'a> {
+        self.token.reset();
+        SplitTokens {
+            text,
+            ranges: (self.split)(text).into_iter(),
+            token: &mut self.token,
+        }
     }
 }
 
-fn analyzed_tokens(split: fn(&str) -> Vec<(usize, usize)>, text: &str) -> Vec<Token> {
-    split(text)
-        .into_iter()
-        .filter(|&(from, to)| text[from..to].chars().nth(1).is_some())
-        .enumerate()
-        .map(|(position, (from, to))| Token {
-            offset_from: from,
-            offset_to: to,
-            position,
-            text: text[from..to].to_lowercase(),
-            position_length: 1,
-        })
-        .collect()
+impl TokenStream for SplitTokens<'_> {
+    fn advance(&mut self) -> bool {
+        let text = self.text;
+        let Some((from, to)) = self
+            .ranges
+            .find(|&(from, to)| text[from..to].chars().nth(1).is_some())
+        else {
+            return false;
+        };
+        let piece = &text[from..to];
+        self.token.offset_from = from;
+        self.token.offset_to = to;
+        // `reset` sets `usize::MAX`: the first token is at position 0.
+        self.token.position = self.token.position.wrapping_add(1);
+        self.token.text.clear();
+        // Equal to `str::to_lowercase`, which owns the final-sigma rule.
+        if piece.is_ascii() {
+            self.token.text.push_str(piece);
+            self.token.text.make_ascii_lowercase();
+        } else {
+            self.token.text.push_str(&piece.to_lowercase());
+        }
+        true
+    }
+    fn token(&self) -> &Token {
+        self.token
+    }
+    fn token_mut(&mut self) -> &mut Token {
+        self.token
+    }
 }
 
 /// The query-side terms of one analysis, identical to the indexed tokens.
 fn analyzed_terms(split: fn(&str) -> Vec<(usize, usize)>, text: &str) -> Vec<String> {
-    analyzed_tokens(split, text)
-        .into_iter()
-        .map(|token| token.text)
-        .collect()
+    let mut tokenizer = SplitTokenizer::new(split);
+    let mut tokens = tokenizer.token_stream(text);
+    let mut terms = Vec::new();
+    while tokens.advance() {
+        terms.push(tokens.token().text.clone());
+    }
+    terms
+}
+
+#[cfg(test)]
+mod split_tests {
+    use super::*;
+    use crate::syntax::{code_subtokens, identifier_runs};
+
+    #[test]
+    fn streamed_tokens_are_the_lowercased_pieces_of_at_least_two_chars_in_order() {
+        for split in [code_subtokens, identifier_runs] {
+            let mut tokenizer = SplitTokenizer::new(split);
+            for text in [
+                "HTTPServer2x ΟΔΟΣ snake_case é a1 Ⅻ",
+                "",
+                "İSTANBUL naïveCafé ΣΑΣ $id_9 x",
+            ] {
+                let expected: Vec<Token> = split(text)
+                    .into_iter()
+                    .filter(|&(from, to)| text[from..to].chars().count() >= 2)
+                    .enumerate()
+                    .map(|(position, (from, to))| Token {
+                        offset_from: from,
+                        offset_to: to,
+                        position,
+                        text: text[from..to].to_lowercase(),
+                        position_length: 1,
+                    })
+                    .collect();
+                let mut tokens = tokenizer.token_stream(text);
+                let mut streamed = Vec::new();
+                while tokens.advance() {
+                    streamed.push(tokens.token().clone());
+                }
+                assert_eq!(streamed, expected, "{text:?}");
+                let terms: Vec<String> = expected.into_iter().map(|token| token.text).collect();
+                assert_eq!(analyzed_terms(split, text), terms, "{text:?}");
+            }
+        }
+    }
 }
 
 /// The content ranges of the query's backtick code spans (context-v2
@@ -1645,11 +1705,11 @@ fn search_handles(index: Index) -> tantivy::Result<SearchHandles> {
     );
     tokenizers.register(
         "foundry_ident",
-        SplitTokenizer(crate::syntax::identifier_runs),
+        SplitTokenizer::new(crate::syntax::identifier_runs),
     );
     tokenizers.register(
         "foundry_code",
-        SplitTokenizer(crate::syntax::code_subtokens),
+        SplitTokenizer::new(crate::syntax::code_subtokens),
     );
     let fields = fields_of(&index.schema());
     let reader = index
@@ -2067,15 +2127,22 @@ pub(crate) fn path_filter(raw: &str) -> FResult<String> {
 /// The 0-based index of the line of `text` holding the most distinct query
 /// subtokens, the earliest on ties.
 fn best_line_index(text: &str, wanted: &std::collections::BTreeSet<String>) -> u64 {
+    let mut tokenizer = SplitTokenizer::new(crate::syntax::code_subtokens);
+    // The distinct wanted terms of one line.
+    let mut matched: Vec<&str> = Vec::new();
     let mut best = (0usize, 0u64);
     for (index, line) in text.split_inclusive('\n').enumerate() {
-        let distinct: std::collections::BTreeSet<String> =
-            analyzed_terms(crate::syntax::code_subtokens, line)
-                .into_iter()
-                .collect();
-        let score = distinct.intersection(wanted).count();
-        if score > best.0 {
-            best = (score, index as u64);
+        matched.clear();
+        let mut tokens = tokenizer.token_stream(line);
+        while tokens.advance() {
+            if let Some(term) = wanted.get(tokens.token().text.as_str())
+                && !matched.contains(&term.as_str())
+            {
+                matched.push(term);
+            }
+        }
+        if matched.len() > best.0 {
+            best = (matched.len(), index as u64);
         }
     }
     best.1
