@@ -185,16 +185,14 @@ fn region_kind(
     }
 }
 
-/// Compute/stream cards without retaining corpus-wide token arrays. The fallback
-/// render path retains just spans and shared context strings for one source.
-pub fn visit(
+/// Check the recipe and source bounds, then parse the unit forest once, with
+/// the proof [`visit_parsed`] needs for structural card kinds.
+pub(super) fn parse(
     source: &str,
     lang: Option<Lang>,
     recipe: &CardRecipe<'_>,
     parent_tokens: usize,
-    tokens: &dyn TokenCount,
-    mut emit: impl FnMut(Span, Card),
-) -> Result<(), ProviderError> {
+) -> Result<(Vec<Unit>, bool), ProviderError> {
     if recipe.card_tokens == 0
         || recipe.card_tokens > provider::MAX_CONTEXT_TOKENS
         || parent_tokens > recipe.card_tokens / 4
@@ -204,9 +202,44 @@ pub fn visit(
             "body recipe/source exceeds its bounds".into(),
         ));
     }
-    let (units, clean_tree) = lang
+    Ok(lang
         .map(|lang| syntax::units_with_certainty(source, lang))
-        .unwrap_or_default();
+        .unwrap_or_default())
+}
+
+/// Compute/stream cards without retaining corpus-wide token arrays. The fallback
+/// render path retains just spans and shared context strings for one source.
+pub fn visit(
+    source: &str,
+    lang: Option<Lang>,
+    recipe: &CardRecipe<'_>,
+    parent_tokens: usize,
+    tokens: &dyn TokenCount,
+    emit: impl FnMut(Span, Card),
+) -> Result<(), ProviderError> {
+    let (units, clean_tree) = parse(source, lang, recipe, parent_tokens)?;
+    visit_parsed(
+        source,
+        &units,
+        clean_tree,
+        recipe,
+        parent_tokens,
+        tokens,
+        emit,
+    )
+}
+
+/// [`visit`] over the forest and certainty [`parse`] returned for `source`
+/// under the same recipe and parent budget.
+pub(super) fn visit_parsed(
+    source: &str,
+    units: &[Unit],
+    clean_tree: bool,
+    recipe: &CardRecipe<'_>,
+    parent_tokens: usize,
+    tokens: &dyn TokenCount,
+    mut emit: impl FnMut(Span, Card),
+) -> Result<(), ProviderError> {
     let preamble = units.first().map_or(0, |unit| unit.start);
     // Unit ownership is determined in one ordered traversal. Functions/methods
     // stay whole even with nested definitions; containers contribute residuals
@@ -253,7 +286,7 @@ pub fn visit(
         if source[start..end].trim().is_empty() {
             continue;
         }
-        let context = context(source, &units, owner, preamble, parent_tokens, tokens)?;
+        let context = context(source, units, owner, preamble, parent_tokens, tokens)?;
         plan_bytes = plan_bytes.saturating_add(context.len());
         if plan_bytes > 16 * 1024 * 1024 {
             return Err(ProviderError::InputTooLarge(
@@ -262,7 +295,7 @@ pub fn visit(
         }
         let mut span = Span {
             kind: if clean_tree {
-                region_kind(source, &units, owner, start, end)
+                region_kind(source, units, owner, start, end)
             } else {
                 crate::neural::cache::CardKind::Body
             },
