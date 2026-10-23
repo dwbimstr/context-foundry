@@ -10,16 +10,6 @@ pub type Locations = imbl::OrdMap<String, Arc<Vec<UnitLocation>>>;
 pub(crate) type Overlay = BTreeMap<String, Option<Arc<Vec<UnitLocation>>>>;
 pub const MAX_CHANGES: usize = 4096;
 pub const MAX_DELTA_BYTES: u64 = 32 * 1024 * 1024;
-/// Path and hash bytes v6 locations may expand to when decoded. v6 stores
-/// each string once, so the file bound alone would let a 64 MiB map expand
-/// to tens of GiB. Publisher and reader enforce the same budget; rust-lang/rust's
-/// 685,623 hierarchy locations expand to 73.7 MiB, so it binds near 860k files.
-pub const MAX_LOCATION_STRING_BYTES: u64 = 4 * MAX_META_BYTES;
-
-/// The bytes one decoded location's strings occupy.
-fn location_strings(path: &str, source_sha256: &str) -> u64 {
-    (path.len() + source_sha256.len()) as u64
-}
 
 /// Generation v6 label map. `files` lists each distinct `[path, source
 /// sha256]` pair once, sorted; `labels` lists each input key once, sorted,
@@ -31,7 +21,6 @@ fn location_strings(path: &str, source_sha256: &str) -> u64 {
 pub(crate) struct LabelTable<'a> {
     files: Vec<(&'a str, &'a str)>,
     rows: Vec<(&'a str, &'a [UnitLocation])>,
-    strings: u64,
 }
 
 #[cfg(feature = "semantic")]
@@ -42,33 +31,17 @@ impl<'a> LabelTable<'a> {
         let rows: Vec<_> = rows.into_iter().collect();
         let mut files: Vec<_> = rows
             .iter()
-            .flat_map(|(_, units)| {
-                units
-                    .iter()
-                    .map(|unit| (unit.path.as_str(), unit.source_sha256.as_str()))
-            })
+            .flat_map(|(_, units)| units.iter())
+            .map(|unit| (&*unit.path, &*unit.source_sha256))
             .collect();
-        let strings = files
-            .iter()
-            .map(|(path, hash)| location_strings(path, hash))
-            .fold(0u64, u64::saturating_add);
         files.sort_unstable();
         files.dedup();
-        Self {
-            files,
-            rows,
-            strings,
-        }
+        Self { files, rows }
     }
 
     /// Refuse a map the reader would refuse: its exact encoded length over
-    /// the file bound, or its decoded strings over [`MAX_LOCATION_STRING_BYTES`].
+    /// the file bound.
     pub(crate) fn within_bounds(&self) -> FResult<()> {
-        within_publication_limit(
-            self.strings,
-            MAX_LOCATION_STRING_BYTES,
-            "mapping location strings",
-        )?;
         within_publication_limit(serialized_bytes(self)?, MAX_META_BYTES, "mapping")
     }
 
@@ -78,7 +51,7 @@ impl<'a> LabelTable<'a> {
 
     fn file(&self, unit: &UnitLocation) -> usize {
         self.files
-            .binary_search(&(unit.path.as_str(), unit.source_sha256.as_str()))
+            .binary_search(&(&*unit.path, &*unit.source_sha256))
             .expect("every location's file is in the table")
     }
 }
@@ -120,29 +93,18 @@ type EncodedLocation = (usize, crate::neural::cache::CardKind, u64, u64);
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EncodedLabels {
-    files: Vec<(String, String)>,
+    files: Vec<(Arc<str>, Arc<str>)>,
     labels: Vec<(String, Vec<EncodedLocation>)>,
 }
 
 /// Decode a v6 label map: files sorted and unique, every file index in range,
-/// keys sorted and unique, every key's locations valid for `recipe`, and the
-/// decoded strings within [`MAX_LOCATION_STRING_BYTES`].
+/// keys sorted and unique, and every key's locations valid for `recipe`.
+/// Locations share their file's strings; cancellation is checked per 1,024
+/// labels and locations together.
 pub(super) fn decode_labels(
     bytes: &[u8],
     recipe: &str,
     control: &Control,
-) -> Result<Locations, GenerationError> {
-    decode_labels_within(bytes, recipe, control, MAX_LOCATION_STRING_BYTES)
-}
-
-/// [`decode_labels`] with an explicit string budget, checked before each
-/// location's strings are copied; cancellation is checked per 1,024 labels
-/// and locations together.
-fn decode_labels_within(
-    bytes: &[u8],
-    recipe: &str,
-    control: &Control,
-    budget: u64,
 ) -> Result<Locations, GenerationError> {
     let EncodedLabels { files, labels } =
         serde_json::from_slice(bytes).map_err(|e| unavailable(format!("label map: {e}")))?;
@@ -151,7 +113,7 @@ fn decode_labels_within(
         return Err(malformed());
     }
     let (mut units, mut previous) = (Locations::new(), None::<String>);
-    let (mut work, mut strings) = (0usize, 0u64);
+    let mut work = 0usize;
     let mut step = || -> Result<(), GenerationError> {
         work += 1;
         if work.is_multiple_of(1024) {
@@ -165,12 +127,6 @@ fn decode_labels_within(
         for (file, kind, start, end) in encoded {
             step()?;
             let (path, source_sha256) = files.get(file).ok_or_else(malformed)?;
-            strings = strings.saturating_add(location_strings(path, source_sha256));
-            if strings > budget {
-                return Err(unavailable(format!(
-                    "label map locations expand beyond {budget} bytes of paths and hashes"
-                )));
-            }
             locations.push(UnitLocation {
                 kind,
                 path: path.clone(),
@@ -388,7 +344,7 @@ mod tests {
             path: path.into(),
             start,
             end: start + 5,
-            source_sha256: hash.to_string().repeat(64),
+            source_sha256: hash.to_string().repeat(64).into(),
         }
     }
 
@@ -476,30 +432,5 @@ mod tests {
                 "{what}: {result:?}"
             );
         }
-    }
-
-    /// One interned string may be referenced by many locations, so the reader
-    /// bounds what they expand to before copying: a small map cannot decode
-    /// into an unbounded allocation. The budget is inclusive.
-    #[test]
-    fn decoding_refuses_locations_that_expand_past_the_string_budget() {
-        let path = "src/shared.rs";
-        let mut rows = Locations::new();
-        rows.insert(
-            format!("{:064x}", 1),
-            Arc::new(
-                (0..16)
-                    .map(|i| location(path, 'a', i * 10, CardKind::Body))
-                    .collect(),
-            ),
-        );
-        let bytes = encode(&rows);
-        let expanded = 16 * (path.len() + 64) as u64;
-        let decode = |budget| decode_labels_within(&bytes, RECIPE, &Control::unbounded(), budget);
-        assert_eq!(decode(expanded).unwrap(), rows);
-        assert!(matches!(
-            decode(expanded - 1),
-            Err(GenerationError::Unavailable(_))
-        ));
     }
 }

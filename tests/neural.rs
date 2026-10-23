@@ -1614,7 +1614,7 @@ fn one_entry() -> Vec<index::GenerationEntry> {
             path: "a.md".into(),
             start: 0,
             end: 1,
-            source_sha256: "00".repeat(32),
+            source_sha256: "00".repeat(32).into(),
         }],
     }]
 }

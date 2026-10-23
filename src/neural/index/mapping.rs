@@ -5,6 +5,7 @@ use super::*;
 use crate::neural::mapping_store::{self as durable, Checkpoint};
 use redb::{ReadableDatabase, ReadableTable, ReadableTableMetadata};
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::sync::Arc;
 
 const MAX_DIRTY: usize = 1024;
 const MAX_DIRTY_BYTES: usize = 1024 * 1024;
@@ -109,9 +110,9 @@ impl View {
                 }
             }
             if let Some(units) = self.units.get_mut(&unit.input_key) {
-                let units = std::sync::Arc::make_mut(units);
+                let units = Arc::make_mut(units);
                 let before = units.len();
-                units.retain(|unit| unit.path != path);
+                units.retain(|unit| &*unit.path != path);
                 self.cached = self
                     .cached
                     .checked_sub((before - units.len()) as u64)
@@ -138,6 +139,8 @@ impl View {
         self.bytes = self.bytes.saturating_add(row_bytes(path, &record));
         within_publication_limit(self.bytes, MAX_VIEW_BYTES, "mapping view")?;
         self.eligible += record.units.len() as u64;
+        // The row's cached units share one path and one hash.
+        let mut strings: Option<(Arc<str>, Arc<str>)> = None;
         for unit in &record.units {
             self.reverse
                 .entry(unit.input_key.clone())
@@ -158,13 +161,16 @@ impl View {
             if cached {
                 self.cached += 1;
                 let units = self.units.entry(unit.input_key.clone()).or_default();
-                let units = std::sync::Arc::make_mut(units);
+                let units = Arc::make_mut(units);
+                let (shared_path, shared_hash) = strings.get_or_insert_with(|| {
+                    (Arc::from(path), Arc::from(record.source_hash.as_str()))
+                });
                 let location = UnitLocation {
                     kind: unit.kind,
-                    path: path.to_owned(),
+                    path: shared_path.clone(),
                     start: unit.start as u64,
                     end: unit.end as u64,
-                    source_sha256: record.source_hash.clone(),
+                    source_sha256: shared_hash.clone(),
                 };
                 let order = |a: &UnitLocation| {
                     (&a.path, a.start, a.end).cmp(&(&location.path, location.start, location.end))
@@ -662,7 +668,7 @@ mod tests {
         let current = walk(&engine);
         assert_eq!(current.coverage.cached_current_units, 1);
         assert_eq!(
-            current.units.values().next().unwrap()[0].source_sha256,
+            &*current.units.values().next().unwrap()[0].source_sha256,
             engine.source("f0001.md").unwrap().unwrap().hash
         );
         assert_eq!(

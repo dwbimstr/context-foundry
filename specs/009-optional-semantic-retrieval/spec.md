@@ -1890,9 +1890,8 @@ density.
    serializing the same view before writing. Republished from the same cache, the
    rust map is 69,390,990 bytes instead of 191,404,275 and the oh-my-pi map 18,805,169
    instead of 53,313,825. ANN and membership hashes are unchanged, and with the same
-   ANN, G2 serves byte for byte what v5 serves. One stored string can stand for many
-   locations, so publisher and reader cap the decoded path and hash bytes at 1 GiB
-   (`MAX_LOCATION_STRING_BYTES`; rust's are 73.7 MiB). A v5 generation is refused by
+   ANN, G2 serves byte for byte what v5 serves. Decoded locations share each stored
+   path and hash, so decoding never expands them. A v5 generation is refused by
    name and republished from the cache with zero document calls. That republish
    rebuilds the ANN graph, which can differ from an earlier build of the same vectors
    (combined G2 166 against 169 on the original builds; rust alone 52 against 54). The overlay keeps whole locations;

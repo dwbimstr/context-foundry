@@ -250,14 +250,16 @@ pub enum Segment {
 
 /// One unit a label stood for at publication. The request's final read
 /// revalidates it against the current source, like any lexical candidate.
+/// A decoded label map, and the mapping view, share one path and one hash per
+/// file across its locations.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnitLocation {
     #[serde(default)]
     pub kind: crate::neural::cache::CardKind,
-    pub path: String,
+    pub path: std::sync::Arc<str>,
     pub start: u64,
     pub end: u64,
-    pub source_sha256: String,
+    pub source_sha256: std::sync::Arc<str>,
 }
 
 /// One direct [`build_generation`] input: a vector and its unit locations.
@@ -1074,7 +1076,7 @@ mod tests {
                 path: path.into(),
                 start: u64::MAX - 1,
                 end: u64::MAX,
-                source_sha256: "ab".repeat(32),
+                source_sha256: "ab".repeat(32).into(),
             };
             let actual = serde_json::to_vec(&unit).unwrap().len() as u64;
             let bound = location_bytes(&unit.path, &unit.source_sha256);
@@ -1113,7 +1115,7 @@ mod tests {
         // A direct builder caller can bypass admitted-path bounds. Refuse
         // before cloning labels, allocating ANN storage or replacing files.
         // Each control character serializes as six bytes.
-        entries[0].units[0].path = "\u{1}".repeat((MAX_META_BYTES / 6 + 1) as usize);
+        entries[0].units[0].path = "\u{1}".repeat((MAX_META_BYTES / 6 + 1) as usize).into();
         let error = build_generation(&store, &identity, &entries, scope, &control).unwrap_err();
         assert_eq!(error.code(), "resource_limit");
         let retained = validate_generation(&store, &identity.digest, "r1", 128).unwrap();
@@ -1148,7 +1150,7 @@ mod tests {
         let mut later = unit.clone();
         later.path = "z.txt".into();
         let mut empty_path = unit.clone();
-        empty_path.path.clear();
+        empty_path.path = "".into();
         let mut empty_range = unit.clone();
         empty_range.end = empty_range.start;
         let mut invalid_hash = unit.clone();
@@ -1218,10 +1220,10 @@ mod tests {
                 vector: vec![i as f32 / 10.0 + 0.1; dimensions],
                 units: vec![UnitLocation {
                     kind: crate::neural::cache::CardKind::Address,
-                    path: format!("f{i}.txt"),
+                    path: format!("f{i}.txt").into(),
                     start: 0,
                     end: 5,
-                    source_sha256: "ab".repeat(32),
+                    source_sha256: "ab".repeat(32).into(),
                 }],
             })
             .collect()

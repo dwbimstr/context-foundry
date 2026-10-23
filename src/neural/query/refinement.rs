@@ -205,7 +205,7 @@ impl DenseWindow {
                     .and_then(|locations| {
                         locations
                             .binary_search_by(|location| {
-                                (location.path.as_str(), location.start, location.end).cmp(&(
+                                (&*location.path, location.start, location.end).cmp(&(
                                     path.as_str(),
                                     unit.start as u64,
                                     unit.end as u64,
@@ -216,7 +216,7 @@ impl DenseWindow {
                     })
                     .filter(|location| {
                         location.kind == super::cache::CardKind::Body
-                            && location.source_sha256 == record.source_hash
+                            && *location.source_sha256 == *record.source_hash
                     });
                 let Some(location) = published else {
                     stats.unpublished_units += 1;
@@ -458,11 +458,11 @@ fn refinement_candidate_window<'a>(
         let mut deferred = Vec::new();
         for location in joined.remove(&hit.label).unwrap_or_default() {
             control.check()?;
-            if !seen.insert((location.path.as_str(), location.start, location.end)) {
+            if !seen.insert((&*location.path, location.start, location.end)) {
                 stats.duplicate_locations += 1;
                 continue;
             }
-            let count = per_file.entry(location.path.as_str()).or_default();
+            let count = per_file.entry(&*location.path).or_default();
             if *count == crate::store::PER_FILE_CAP {
                 deferred.push(location);
                 continue;
@@ -545,11 +545,11 @@ fn bounded_unit_locations<'a>(
         let (exact, children) = if let Some(path) = filter {
             // Exact path and component-boundary subtree are disjoint ranges:
             // e.g. a-b and a.rs can sort between a and a/child.
-            let exact_from = units.partition_point(|unit| unit.path.as_str() < path);
-            let exact_to = units.partition_point(|unit| unit.path.as_str() <= path);
+            let exact_from = units.partition_point(|unit| &*unit.path < path);
+            let exact_to = units.partition_point(|unit| &*unit.path <= path);
             let (lower, upper) = subtree.as_ref().expect("filter subtree bounds");
-            let child_from = units.partition_point(|unit| unit.path.as_str() < lower.as_str());
-            let child_to = units.partition_point(|unit| unit.path.as_str() < upper.as_str());
+            let child_from = units.partition_point(|unit| &*unit.path < lower.as_str());
+            let child_to = units.partition_point(|unit| &*unit.path < upper.as_str());
             (&units[exact_from..exact_to], &units[child_from..child_to])
         } else {
             (units, &units[..0])
@@ -806,11 +806,11 @@ mod tests {
                 path: if label < 64 {
                     "src/repeated.rs".into()
                 } else {
-                    format!("src/independent_{label:03}.rs")
+                    format!("src/independent_{label:03}.rs").into()
                 },
                 start: (label * 8) as u64,
                 end: (label * 8 + 8) as u64,
-                source_sha256: "ab".repeat(32),
+                source_sha256: "ab".repeat(32).into(),
             })
             .collect();
         let hits = || {
@@ -878,7 +878,7 @@ mod tests {
                 path: "src/one.rs".into(),
                 start: n * 8,
                 end: n * 8 + 8,
-                source_sha256: "ab".repeat(32),
+                source_sha256: "ab".repeat(32).into(),
             })
             .collect();
         let mut stats = RefinementStats::default();
@@ -906,10 +906,10 @@ mod tests {
             .enumerate()
             .map(|(index, path)| UnitLocation {
                 kind: super::super::cache::CardKind::Body,
-                path: format!("src/{path}.rs"),
+                path: format!("src/{path}.rs").into(),
                 start: (index * 8) as u64,
                 end: (index * 8 + 8) as u64,
-                source_sha256: "ab".repeat(32),
+                source_sha256: "ab".repeat(32).into(),
             })
             .collect();
         let joined = [
@@ -937,7 +937,7 @@ mod tests {
             selected[1]
                 .locations
                 .iter()
-                .filter(|l| l.path == "src/a.rs")
+                .filter(|l| &*l.path == "src/a.rs")
                 .count(),
             1
         );
@@ -945,7 +945,7 @@ mod tests {
             selected[1]
                 .locations
                 .iter()
-                .filter(|l| l.path == "src/b.rs")
+                .filter(|l| &*l.path == "src/b.rs")
                 .count(),
             5
         );
@@ -957,19 +957,19 @@ mod tests {
 
     #[test]
     fn ordinary_provenance_is_bounded_fair_filtered_and_cancellable() {
-        let location = |path: String| UnitLocation {
+        let location = |path: &str| UnitLocation {
             kind: super::super::cache::CardKind::Body,
-            path,
+            path: path.into(),
             start: 0,
             end: 8,
-            source_sha256: "ab".repeat(32),
+            source_sha256: "ab".repeat(32).into(),
         };
         let shared: Vec<_> = (0..10_000)
-            .map(|i| location(format!("src/mirror_{i:05}.rs")))
+            .map(|i| location(&format!("src/mirror_{i:05}.rs")))
             .collect();
         let independent = vec![
-            location("src/independent_a.rs".into()),
-            location("src/independent_b.rs".into()),
+            location("src/independent_a.rs"),
+            location("src/independent_b.rs"),
         ];
         let bounded = bounded_unit_locations(
             vec![&shared, &independent],
@@ -985,7 +985,7 @@ mod tests {
             bounded.items.iter().filter(|(rank, _)| *rank == 1).count(),
             2
         );
-        assert_eq!(bounded.items[1].1.path, "src/independent_a.rs");
+        assert_eq!(&*bounded.items[1].1.path, "src/independent_a.rs");
         let filtered = bounded_unit_locations(
             vec![&shared],
             Some("src/mirror_09999.rs"),
@@ -994,11 +994,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(filtered.items.len(), 1);
-        assert_eq!(filtered.items[0].1.path, "src/mirror_09999.rs");
+        assert_eq!(&*filtered.items[0].1.path, "src/mirror_09999.rs");
         assert!(!filtered.truncated);
         let paths: Vec<_> = ["a", "a-b", "a.rs", "a/x", "a/x/z", "ab", "b"]
             .into_iter()
-            .map(|path| location(path.into()))
+            .map(location)
             .collect();
         let filtered =
             bounded_unit_locations(vec![&paths], Some("a"), 4096, &Control::unbounded()).unwrap();
@@ -1006,7 +1006,7 @@ mod tests {
             filtered
                 .items
                 .iter()
-                .map(|(_, unit)| unit.path.as_str())
+                .map(|(_, unit)| &*unit.path)
                 .collect::<Vec<_>>(),
             ["a", "a/x", "a/x/z"]
         );

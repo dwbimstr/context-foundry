@@ -612,10 +612,10 @@ mod tests {
                     vector,
                     units: vec![UnitLocation {
                         kind: crate::neural::cache::CardKind::Address,
-                        path: format!("src/{i}.rs"),
+                        path: format!("src/{i}.rs").into(),
                         start: 0,
                         end: 10,
-                        source_sha256: "cd".repeat(32),
+                        source_sha256: "cd".repeat(32).into(),
                     }],
                 }
             })

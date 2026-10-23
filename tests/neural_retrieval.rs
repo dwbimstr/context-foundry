@@ -620,7 +620,7 @@ fn window_paths(window: &DenseWindow) -> BTreeSet<String> {
         .hits
         .iter()
         .flat_map(|hit| window.units(hit))
-        .map(|unit| unit.path.clone())
+        .map(|unit| String::from(&*unit.path))
         .collect()
 }
 
@@ -934,7 +934,7 @@ fn dense_units_come_first_in_similarity_order_then_the_lexical_ones_in_todays_or
         .hits
         .iter()
         .flat_map(|hit| window.units(hit))
-        .map(|location| (location.path.clone(), location.start, location.end))
+        .map(|location| (String::from(&*location.path), location.start, location.end))
         .collect();
     let positions: Vec<usize> = dense
         .iter()
@@ -1093,7 +1093,7 @@ fn capped_dense_units_are_followed_by_a_known_lexical_only_candidate_in_exact_or
         .hits
         .iter()
         .flat_map(|hit| window.units(hit))
-        .map(|location| (location.path.clone(), location.start, location.end))
+        .map(|location| (String::from(&*location.path), location.start, location.end))
         .collect();
     assert_eq!(
         dense.iter().filter(|unit| unit.0 == GLOW).count(),
@@ -1257,7 +1257,7 @@ fn cold_and_warm_queries_load_the_index_once_and_spend_one_embedding_each() {
     assert!(
         cold.units(&cold.hits[0])
             .iter()
-            .any(|unit| unit.path == DUSK_PATH),
+            .any(|unit| &*unit.path == DUSK_PATH),
         "the nearest vector is the dusk document"
     );
     record(
@@ -6348,7 +6348,8 @@ fn body_recipe_migration_edits_rename_and_revert_reuse_exact_inputs_and_deliver_
         .iter()
         .flat_map(|hit| window.units(hit))
         .find(|unit| {
-            unit.path == path && body[unit.start as usize..unit.end as usize].starts_with("fn xyz")
+            &*unit.path == path
+                && body[unit.start as usize..unit.end as usize].starts_with("fn xyz")
         })
         .unwrap();
     assert_eq!(
@@ -6681,7 +6682,7 @@ fn overview_bootstrap_bounds_inputs_and_reuses_them_during_hierarchy_expansion()
         mapping
             .units
             .values()
-            .all(|locations| locations.iter().all(|location| location.path != path))
+            .all(|locations| locations.iter().all(|location| &*location.path != path))
     );
 }
 
@@ -6924,7 +6925,7 @@ fn container_role_upgrade_reuses_vectors_and_republishes_exact_roles() {
             prior_generation.labels[&unit.input_key]
                 .iter()
                 .any(|location| {
-                    location.path == path
+                    &*location.path == path
                         && location.start == unit.start as u64
                         && location.end == unit.end as u64
                         && location.kind == CardKind::Body
@@ -6953,7 +6954,9 @@ fn container_role_upgrade_reuses_vectors_and_republishes_exact_roles() {
             .units
             .values()
             .flat_map(|locations| locations.iter())
-            .any(|location| location.path == path && location.kind == CardKind::ContainerFragment)
+            .any(|location| {
+                &*location.path == path && location.kind == CardKind::ContainerFragment
+            })
     );
     let upgraded_generation =
         index::validate_generation_with(&store, &digest, &current.recipe_id, DIMENSIONS, &control)
@@ -6976,7 +6979,7 @@ fn container_role_upgrade_reuses_vectors_and_republishes_exact_roles() {
             upgraded_generation.labels[&unit.input_key]
                 .iter()
                 .any(|location| {
-                    location.path == path
+                    &*location.path == path
                         && location.start == unit.start as u64
                         && location.end == unit.end as u64
                         && location.kind == unit.kind
@@ -7041,7 +7044,7 @@ fn hierarchy_refines_implementation_bodies_after_container_only_discovery() {
             window
                 .units(hit)
                 .iter()
-                .any(|unit| unit.path == path && unit.kind == CardKind::ContainerFragment)
+                .any(|unit| &*unit.path == path && unit.kind == CardKind::ContainerFragment)
         })
         .cloned()
         .collect();
@@ -7202,7 +7205,7 @@ fn experimental_body_placement_survives_real_partial_to_complete_publication() {
                     .units
                     .values()
                     .flat_map(|units| units.iter())
-                    .filter(|unit| { unit.path == *path && unit.kind == retained_kind })
+                    .filter(|unit| { *unit.path == **path && unit.kind == retained_kind })
                     .count(),
                 1,
                 "one complete small callable per dense file: {representation:?} {path}"
@@ -7220,7 +7223,7 @@ fn experimental_body_placement_survives_real_partial_to_complete_publication() {
             .map(|(key, locations)| {
                 let noise = locations
                     .iter()
-                    .any(|unit| noise_paths.contains(&unit.path) && unit.kind == retained_kind);
+                    .any(|unit| noise_paths.contains(&*unit.path) && unit.kind == retained_kind);
                 (
                     key.clone(),
                     if noise {
@@ -7312,7 +7315,7 @@ fn experimental_body_placement_survives_real_partial_to_complete_publication() {
                 assert!(new_keys.iter().all(|key| {
                     current.units[*key]
                         .iter()
-                        .all(|unit| unit.path == late_path)
+                        .all(|unit| &*unit.path == late_path)
                 }));
                 assert_eq!(report.embedded_units, new_keys.len() as u64);
                 assert_eq!(
@@ -7358,7 +7361,7 @@ fn experimental_body_placement_survives_real_partial_to_complete_publication() {
                     window
                         .units(hit)
                         .iter()
-                        .any(|unit| noise_paths.contains(&unit.path) && unit.kind == retained_kind)
+                        .any(|unit| noise_paths.contains(&*unit.path) && unit.kind == retained_kind)
                 })
                 .cloned()
                 .collect();
@@ -7373,7 +7376,7 @@ fn experimental_body_placement_survives_real_partial_to_complete_publication() {
                 let locations = window.units(hit);
                 locations.len() == 1
                     && locations[0].kind == retained_kind
-                    && noise_paths.contains(&locations[0].path)
+                    && noise_paths.contains(&*locations[0].path)
             }));
             window.hits = retained;
             identities.push(
@@ -7431,10 +7434,10 @@ fn experimental_body_placement_survives_real_partial_to_complete_publication() {
                                 original.units.values().flat_map(|units| units.iter()).any(
                                     |unit| {
                                         unit.kind == CardKind::Body
-                                            && unit.path == *path
+                                            && *unit.path == **path
                                             && unit.start == *start
                                             && unit.end == *end
-                                            && unit.source_sha256 == *hash
+                                            && *unit.source_sha256 == **hash
                                     }
                                 ),
                                 "delivered semantic evidence preserves its scored span"
@@ -7709,7 +7712,7 @@ fn hierarchy_refinement_scores_competing_bodies_outside_a_lexical_owner() {
             .iter()
             .filter(|hit| {
                 window.units(hit).iter().any(|unit| {
-                    unit.path == path
+                    &*unit.path == path
                         && unit.kind == discovery_kind
                         && (discovery_kind == CardKind::File
                             || (unit.start >= owner_range.end && unit.end - unit.start < 128))
@@ -8089,7 +8092,7 @@ fn hierarchy_refinement_preserves_scored_body_spans_and_rechecks_freshness() {
     let paths: BTreeSet<_> = mapping
         .units
         .values()
-        .flat_map(|units| units.iter().map(|unit| unit.path.clone()))
+        .flat_map(|units| units.iter().map(|unit| String::from(&*unit.path)))
         .collect();
     let saved: Vec<_> = paths
         .iter()
@@ -8406,7 +8409,7 @@ fn hierarchy_vectors_are_independent_and_incremental_with_shared_source_ranges()
             .unwrap()
             .units
             .values()
-            .all(|units| units.iter().all(|unit| unit.path != path))
+            .all(|units| units.iter().all(|unit| &*unit.path != path))
     );
 }
 

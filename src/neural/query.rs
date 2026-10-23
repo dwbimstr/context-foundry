@@ -378,22 +378,16 @@ impl DenseIndex {
                     segment
                         .keys
                         .get(key as usize)
-                        .and_then(|key| self.labels.get(key))
-                        .is_some_and(|units| !units.is_empty())
+                        .is_some_and(|key| self.labels.contains_key(key))
                 })
                 .map_err(|e| Fallback::new("index_unavailable", format!("usearch search: {e}")))?;
-            hits.extend(matches.keys.iter().zip(&matches.distances).filter_map(
-                |(&key, &distance)| {
-                    segment
-                        .keys
-                        .get(key as usize)
-                        .filter(|key| self.labels.get(*key).is_some_and(|units| !units.is_empty()))
-                        .map(|_| DenseHit {
-                            label: offset + key as usize,
-                            distance,
-                        })
-                },
-            ));
+            // usearch returns only keys the predicate admitted.
+            for (&key, &distance) in matches.keys.iter().zip(&matches.distances) {
+                hits.push(DenseHit {
+                    label: offset + key as usize,
+                    distance,
+                });
+            }
             offset += segment.keys.len();
         }
         hits.sort_by(|a, b| {
