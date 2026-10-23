@@ -310,7 +310,7 @@ fn parse_fields(map: &Map<String, Value>) -> FResult<RecordFields> {
                 "missing required field `source_links` (use [] when none)",
             ));
         }
-        Some(Value::Array(items)) => items.clone(),
+        Some(Value::Array(items)) => items,
         Some(_) => return Err(invalid("field `source_links` must be an array of handles")),
     };
     if links.len() > MAX_LINKS {
@@ -319,7 +319,7 @@ fn parse_fields(map: &Map<String, Value>) -> FResult<RecordFields> {
         )));
     }
     let mut source_links = Vec::with_capacity(links.len());
-    for item in &links {
+    for item in links {
         let Value::String(handle) = item else {
             return Err(invalid("field `source_links` must be an array of handles"));
         };
@@ -471,23 +471,50 @@ fn check_workspace(engine: &Engine, workspace_id: &str) -> FResult<String> {
     Ok(bound)
 }
 
+/// Commit one new memory revision inside `tx`. Every source link first gets
+/// full verified-source validation (workspace, chunk reconstruct + hash,
+/// range, UTF-8 boundaries) against this transaction's source state; counter
+/// exhaustion is refused next. Both come before any write, so a refused
+/// mutation writes nothing and consumes no revision. Then the row, the
+/// counter and the pending key are written.
+pub(crate) fn write_revision(
+    tx: &redb::WriteTransaction,
+    meta: &mut redb::Table<'_, &'static str, &'static str>,
+    memory: &mut redb::Table<'_, &'static str, &'static str>,
+    workspace_id: String,
+    fields: RecordFields,
+) -> FResult<MemoryRecord> {
+    for handle in &fields.source_links {
+        store::validate_link_span(tx, &workspace_id, handle)?;
+    }
+    let next = store::read_counter(&*meta, "memory_revision")?
+        .checked_add(1)
+        .ok_or(FoundryError::RevisionExhausted)?;
+    let record = MemoryRecord {
+        id: fields.id,
+        workspace_id,
+        revision: next,
+        text: fields.text,
+        author: fields.author,
+        provenance: fields.provenance,
+        source_links: fields.source_links,
+    };
+    memory.insert(record.id.as_str(), serde_json::to_string(&record)?.as_str())?;
+    meta.insert("memory_revision", next.to_string().as_str())?;
+    tx.open_table(store::PENDING)?.insert(
+        memory_pending_key(&record.id).as_str(),
+        next.to_string().as_str(),
+    )?;
+    Ok(record)
+}
+
 impl Engine {
     /// Field and bounds validation at the authoritative boundary, mirroring
     /// `replace_source`: the parser may have checked, but the engine never
     /// trusts its callers. An id outside `[A-Za-z0-9_-]{1,128}` could forge
     /// wire lines or collide with source search keys, so it is refused here.
     pub(crate) fn validate_record_fields(fields: &RecordFields) -> FResult<()> {
-        let valid_id = !fields.id.is_empty()
-            && fields.id.len() <= MAX_ID_BYTES
-            && fields
-                .id
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
-        if !valid_id {
-            return Err(FoundryError::InvalidArgument(
-                "id must match [A-Za-z0-9_-]{1,128}".into(),
-            ));
-        }
+        Self::validate_id(&fields.id)?;
         if fields.text.len() > MAX_TEXT_BYTES || fields.text.trim().is_empty() {
             return Err(FoundryError::InvalidArgument(format!(
                 "text must be nonblank and at most {MAX_TEXT_BYTES} bytes"
@@ -529,22 +556,6 @@ impl Engine {
         }
     }
 
-    /// Validate the source links of an actual create/replace inside the
-    /// mutation's own write transaction: workspace, existence, digest and
-    /// range against that transaction's authoritative source state.
-    fn validate_links_in_tx(
-        tx: &redb::WriteTransaction,
-        bound: &str,
-        links: &[String],
-    ) -> FResult<()> {
-        // Full verified-source validation (chunk reconstruct + hash + range +
-        // UTF-8 boundaries) through the shared retrieve-grade checks.
-        for handle in links {
-            store::validate_link_span(tx, bound, handle)?;
-        }
-        Ok(())
-    }
-
     /// `put`: absent id → new revision; identical fields → the existing row
     /// unchanged (no revision consumed); different fields → `conflict`. Row,
     /// counter and pending key commit in ONE transaction.
@@ -584,31 +595,11 @@ impl Engine {
                     // transaction's source state, after the idempotency
                     // decision, so a retried identical put whose source later
                     // changed still reports `unchanged`.
-                    Self::validate_links_in_tx(&tx, &bound, &input.fields.source_links)?;
-                    // Counter exhaustion is refused before any write in this
-                    // transaction; a refused put writes nothing and consumes
-                    // no revision.
-                    let next = store::read_counter(&meta, "memory_revision")?
-                        .checked_add(1)
-                        .ok_or(FoundryError::RevisionExhausted)?;
-                    let record = MemoryRecord {
-                        id: input.fields.id.clone(),
-                        workspace_id: bound,
-                        revision: next,
-                        text: input.fields.text.clone(),
-                        author: input.fields.author.clone(),
-                        provenance: input.fields.provenance.clone(),
-                        source_links: input.fields.source_links.clone(),
-                    };
-                    memory.insert(record.id.as_str(), serde_json::to_string(&record)?.as_str())?;
-                    meta.insert("memory_revision", next.to_string().as_str())?;
-                    tx.open_table(store::PENDING)?.insert(
-                        memory_pending_key(&record.id).as_str(),
-                        next.to_string().as_str(),
-                    )?;
+                    let record =
+                        write_revision(&tx, &mut meta, &mut memory, bound, input.fields.clone())?;
                     PutReport {
                         id: record.id,
-                        revision: next,
+                        revision: record.revision,
                         outcome: "created",
                     }
                 }
@@ -640,28 +631,10 @@ impl Engine {
             // A real replacement: links validate inside this transaction,
             // after the CAS check, so a consumed revision conflicts even when
             // its links have since gone stale.
-            Self::validate_links_in_tx(&tx, &bound, &input.fields.source_links)?;
-            let next = store::read_counter(&meta, "memory_revision")?
-                .checked_add(1)
-                .ok_or(FoundryError::RevisionExhausted)?;
-            let record = MemoryRecord {
-                id: input.fields.id.clone(),
-                workspace_id: bound,
-                revision: next,
-                text: input.fields.text.clone(),
-                author: input.fields.author.clone(),
-                provenance: input.fields.provenance.clone(),
-                source_links: input.fields.source_links.clone(),
-            };
-            memory.insert(record.id.as_str(), serde_json::to_string(&record)?.as_str())?;
-            meta.insert("memory_revision", next.to_string().as_str())?;
-            tx.open_table(store::PENDING)?.insert(
-                memory_pending_key(&record.id).as_str(),
-                next.to_string().as_str(),
-            )?;
+            let record = write_revision(&tx, &mut meta, &mut memory, bound, input.fields.clone())?;
             PutReport {
                 id: record.id,
-                revision: next,
+                revision: record.revision,
                 outcome: "updated",
             }
         };

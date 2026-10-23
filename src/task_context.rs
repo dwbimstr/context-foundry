@@ -957,27 +957,14 @@ impl Engine {
                 if memory.get(memory_id.as_str())?.is_some() {
                     return Err(FoundryError::Conflict("memory ID already exists".into()));
                 }
-                for handle in &fields.source_links {
-                    store::validate_link_span(&tx, &request.workspace_id, handle)?;
-                }
-                let next = store::read_counter(&meta, "memory_revision")?
-                    .checked_add(1)
-                    .ok_or(FoundryError::RevisionExhausted)?;
-                let record = crate::memory::MemoryRecord {
-                    id: fields.id,
-                    workspace_id: request.workspace_id.clone(),
-                    revision: next,
-                    text: fields.text,
-                    author: fields.author,
-                    provenance: fields.provenance,
-                    source_links: fields.source_links,
-                };
-                memory.insert(memory_id.as_str(), serde_json::to_string(&record)?.as_str())?;
-                meta.insert("memory_revision", next.to_string().as_str())?;
-                tx.open_table(store::PENDING)?.insert(
-                    crate::memory::memory_pending_key(memory_id).as_str(),
-                    next.to_string().as_str(),
-                )?;
+                let next = crate::memory::write_revision(
+                    &tx,
+                    &mut meta,
+                    &mut memory,
+                    request.workspace_id.clone(),
+                    fields,
+                )?
+                .revision;
                 task.promotions.insert(
                     memory_id.clone(),
                     Promotion {
