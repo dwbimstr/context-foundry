@@ -75,9 +75,12 @@ Do not work around a blocker by changing a model, threshold, question set or pro
   maintenance, and all failed and unknown attempts. The selected history has 71 requests,
   of which 66 are complete and five unknown. A smaller failed prompt is not a benefit.
 
-## F4. Sealed independent 48-question evaluation (resume step 6)
+## F4. Sealed independent evaluation — passed 2026-10-22
 
-- **Status (2026-10-22):** the sealed 48-question set is unreachable, so the owner
+- **Verdict: PASS.** On the fresh sealed 300-question set, complete hierarchy located
+  130 definitions against cards' 100 (+64/−34, p = 0.0016; verbatim bodies 97 → 128),
+  and became the default ([validation](docs/validation.md#f4-and-the-hierarchy-default--2026-10-22)).
+- **Why the set is fresh (2026-10-22):** the sealed 48-question set is unreachable, so the owner
   replaced it with a fresh sealed set (pre-registration below). The archive is not on
   the owner's Mac (Spotlight, a home search eight levels deep, iCloud Drive; no Time
   Machine destination). It is not in any release or gist of the 43 `dwbimstr`

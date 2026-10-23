@@ -43,10 +43,7 @@ const ROW: u64 = row_bytes(DIMS) as u64;
 
 /// The fixture profile's partition recipe.
 fn recipe() -> String {
-    partition::recipe_id(
-        "fake-bytes 1",
-        context_foundry::neural::profile::DEFAULT_CARD_TOKENS,
-    )
+    partition::recipe_id("fake-bytes 1", testkit::FIXTURE_CARD_TOKENS)
 }
 
 /// A prepared identity for hand-built generations.
@@ -56,6 +53,63 @@ fn prepared(digest: &str) -> index::Prepared {
         recipe: "recipe".to_owned(),
         dimensions: DIMS,
     }
+}
+
+/// F4 promoted complete hierarchy (2026-10-22). A profile that omits its
+/// representation and card limit selects it; a legacy cards profile that
+/// states only its 128-token limit is refused with the fix; explicit cards
+/// keep their exact recipe and survive a write and reload.
+#[test]
+fn omitted_representation_selects_promoted_hierarchy_and_cards_stay_explicit() {
+    use context_foundry::neural::partition::Representation;
+    let dir = tempfile::tempdir().unwrap();
+    let path = testkit::write_semantic_profile(dir.path(), "promotion", |_| {});
+    let written: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let load = |edit: &dyn Fn(&mut serde_json::Map<String, serde_json::Value>)| {
+        let mut profile = written.clone();
+        edit(profile.as_object_mut().unwrap());
+        std::fs::write(&path, serde_json::to_vec(&profile).unwrap()).unwrap();
+        SemanticProfile::load(&path)
+    };
+
+    let cards = load(&|_| {}).unwrap();
+    assert_eq!(cards.representation, Representation::Address);
+    assert_eq!(
+        cards.recipe_id(),
+        recipe(),
+        "explicit cards keep their recipe"
+    );
+
+    let promoted = load(&|p| {
+        p.remove("representation");
+        p.remove("card_tokens");
+    })
+    .unwrap();
+    assert_eq!(
+        promoted.representation,
+        Representation::Hierarchy { parent_tokens: 64 }
+    );
+    assert_eq!(promoted.card_tokens, 512);
+    std::fs::write(&path, serde_json::to_vec(&promoted).unwrap()).unwrap();
+    assert_eq!(SemanticProfile::load(&path).unwrap(), promoted);
+
+    // A legacy implicit-cards profile: refused at 128 tokens, where the
+    // 64-token parent does not fit; read as hierarchy from 256, where it does.
+    let legacy = load(&|p| {
+        p.remove("representation");
+    })
+    .unwrap_err();
+    assert!(legacy.to_string().contains("cards-v1"), "{legacy}");
+    let wider = load(&|p| {
+        p.remove("representation");
+        p.insert("card_tokens".into(), 256.into());
+    })
+    .unwrap();
+    assert_eq!(
+        wider.representation,
+        Representation::Hierarchy { parent_tokens: 64 }
+    );
 }
 
 struct Env {
@@ -1154,7 +1208,7 @@ fn serving_limit_is_checked_before_any_model_work() {
     // card limit each.
     let limits = DocumentLimits {
         inputs: context_foundry::neural::profile::DEFAULT_BATCH as usize,
-        tokens: context_foundry::neural::profile::DEFAULT_CARD_TOKENS as usize,
+        tokens: testkit::FIXTURE_CARD_TOKENS as usize,
         total_tokens: provider::SERVING_LIMIT_TOKENS,
     };
     let batch: Vec<TokenizedInput> = (0..limits.inputs)

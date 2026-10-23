@@ -396,7 +396,8 @@ and complete-task economics, with a pinned Prakarana comparison.
 Exact paths and identifiers take precedence on locator queries. Lexical retrieval
 is always available. Neural preparation/reuse and dense retrieval are implemented
 under 009. T004 supplies address cards through the llama.cpp worker and selects Gemma
-using the recorded G2/G1 checks; signed installed-artifact checks remain open.
+using the recorded G2/G1 checks; F4 made complete `hierarchy-v1` the default
+representation on 2026-10-22. Signed installed-artifact checks remain open.
 Graph expansion enriches selected evidence rather than generating another long
 sequence of tool calls.
 

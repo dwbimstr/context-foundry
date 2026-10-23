@@ -1,8 +1,9 @@
 //! 009 T004 card partition, recipe `cards-v1` (spec 009 § T004 "Cards, not
 //! bodies").
 //!
-//! T009's opt-in body/parent recipe lives in [`body`]. The address recipe
-//! described below remains the default, with its exact model inputs unchanged.
+//! T009's body/parent recipe lives in [`body`] and its complete hierarchy in
+//! [`hierarchy`]. Address cards were the default until F4 promoted complete
+//! `hierarchy-v1` (2026-10-22); their exact model inputs are unchanged.
 //!
 //! One card per definition (001 T007's definitions: a named
 //! programming-language unit, a Rust `impl` excluded) and per Markdown
@@ -38,11 +39,12 @@ use crate::syntax::{self, Lang, Unit, UnitKind};
 pub mod body;
 pub mod hierarchy;
 
-/// Address cards remain the default and retain their exact model inputs.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// A profile without a representation selects complete `hierarchy-v1` with a
+/// 64-token parent, the recipe F4 promoted (2026-10-22). Address cards
+/// (`cards-v1`) keep their exact model inputs and are named explicitly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", deny_unknown_fields)]
 pub enum Representation {
-    #[default]
     #[serde(rename = "cards-v1")]
     Address,
     #[serde(rename = "body-v1")]
@@ -57,9 +59,18 @@ pub enum Representation {
     Overview,
 }
 
+impl Default for Representation {
+    fn default() -> Self {
+        Self::Hierarchy { parent_tokens: 64 }
+    }
+}
+
 impl Representation {
     pub fn is_address(&self) -> bool {
         *self == Self::Address
+    }
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
     }
     /// `+context2`: an over-budget body context keeps its own declaration, not
     /// the enclosing header or preamble. `+overview4`: overviews summarize each

@@ -309,10 +309,11 @@ Short pointers; each links to its contract.
 - **Usage import.** `foundry usage import --host omp|codex --session FILE` summarizes
   a host session's provider usage and Foundry payloads offline.
 - **Semantic retrieval** ([009](specs/009-optional-semantic-retrieval/spec.md),
-  optional). `semantic prepare|status|purge` embed one address card per definition and
-  per Markdown section with a pinned GGUF model on a statically linked llama.cpp
-  worker; dense results serve only queries without an anchor. Model execution
-  currently requires `--development-isolation`.
+  optional). `semantic prepare|status|purge` embed each definition's body with its
+  enclosing unit and file overviews (complete `hierarchy-v1`, the default since F4;
+  address cards stay selectable) using a pinned GGUF model on a statically linked
+  llama.cpp worker; dense results serve only queries without an anchor. Model
+  execution currently requires `--development-isolation`.
 - **Owned learning** ([013](specs/013-owned-learning/spec.md), frozen off) and the
   **model gateway** (`foundry gateway`, `gateway-omp`;
   [003 T004](specs/003-agent-retrieval-context/spec.md#t004--forward-and-meter-an-actual-supported-model-workflow)):

@@ -40,7 +40,7 @@ fn profile(dir: &Path) -> SemanticProfile {
         descriptor,
         query_template: "query: {text}".into(),
         card_tokens: 128,
-        representation: Default::default(),
+        representation: context_foundry::neural::partition::Representation::Address,
         batch: 8,
         memory_ceiling_bytes: 512 * 1024 * 1024,
         load_timeout_seconds: 10,

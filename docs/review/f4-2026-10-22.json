@@ -1,0 +1,26 @@
+{
+  "date": "2026-10-22",
+  "preregistration": "d29314d (FOLLOWUP.md F4)",
+  "rule": "scripts/g2.sh compare at 0f74809, K = 1: one-sided exact McNemar p < 0.05 on located, no net verbatim-body loss, 2,048-token cap, errored/retried/refused/missing rows INVALID",
+  "set": {
+    "questions_sha256": "0083fd2a1ba9d39d339b1f6fd9adb238dd6a60de900a36faf5e37b508407bf12",
+    "rows": {"rust": 150, "bun": 150},
+    "corpora": {"rust": "b940084d7eb6a299eb4bfeb8e34901bc051e7ac4", "bun": "5b8d5b8a15ab1711597584aadbdc112c55befed1"},
+    "authors": ["anthropic/claude-opus-5-5 x3", "openai-codex/gpt-6-astra x3"],
+    "sealer": "openai-codex/gpt-6-astra",
+    "skips": {"walked": 357, "cap": 54, "not_unique": 3},
+    "g2_overlap": 0,
+    "verify_py": "unmodified, --partial, exit 0, self-test 46/46",
+    "audit": {"sampled": 30, "correct_unique": 29, "wrong": 1, "ambiguous": 0},
+    "captain_read_questions": false
+  },
+  "binary_sha256": "d1e3b3651d06d3c8674d044a5f4a51bdfad0f87da3da88e7b77a6f66e85630d1",
+  "worker_sha256": "b0f7e02009ae31d622240469f9eddb4d580a170141f537e76e09e35ba31b0cb3",
+  "located_bodies_mean_tokens": {"cards": [100, 97, 2022.7], "hierarchy": [130, 128, 2021.5]},
+  "per_corpus_located_bodies": {"cards": {"rust": [44, 43], "bun": [56, 54]}, "hierarchy": {"rust": [51, 50], "bun": [79, 78]}},
+  "located_gained_lost_p": [64, 34, 0.00159],
+  "bodies_gained_lost": [64, 33],
+  "errors": 0,
+  "verdict": "PASS",
+  "promoted_default_reproduces_explicit_hierarchy": {"f4": "300/300", "g2_same_session": "388/388"}
+}
