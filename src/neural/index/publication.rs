@@ -1,11 +1,11 @@
 //! One immutable base, one bounded overlay, and a content-bound location map.
 //! redb remains authoritative. Only generation.json is replaced at commit.
 use super::*;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 pub(crate) struct Plan {
     coverage: cache::CoverageSnapshot,
-    pub scope: GenerationScope,
+    scope: GenerationScope,
     units: Locations,
     previous: Option<Generation>,
     delta_keys: Vec<String>,
@@ -66,20 +66,24 @@ impl Plan {
             mapping_revision: mapping.mapping_revision,
         }
     }
-    pub fn needed(&self) -> BTreeMap<String, Vec<UnitLocation>> {
+    /// The keys whose vectors this publication decodes, ascending, with their
+    /// locations.
+    pub fn needed(&self) -> Vec<(&str, &[UnitLocation])> {
         if self.previous.is_none() {
-            return self
-                .units
-                .iter()
-                .map(|(key, units)| (key.clone(), (**units).clone()))
-                .collect();
+            let mut needed = Vec::with_capacity(self.units.len());
+            needed.extend(
+                self.units
+                    .iter()
+                    .map(|(key, units)| (key.as_str(), units.as_slice())),
+            );
+            return needed;
         }
         if !self.delta_changed {
-            return BTreeMap::new();
+            return Vec::new();
         }
         self.delta_keys
             .iter()
-            .map(|key| (key.clone(), (*self.units[key]).clone()))
+            .map(|key| (key.as_str(), self.units[key].as_slice()))
             .collect()
     }
     pub fn stage(
@@ -91,17 +95,17 @@ impl Plan {
         built: &dyn Fn(),
     ) -> FResult<(Staged, cache::CoverageSnapshot, Publication)> {
         let full = self.previous.is_none();
-        let loaded: BTreeSet<_> = build.keys.iter().map(String::as_str).collect();
+        let loaded = |key: &String| build.keys.binary_search(key).is_ok();
         let missing: Vec<_> = if full {
             self.units
                 .keys()
-                .filter(|key| !loaded.contains(key.as_str()))
+                .filter(|key| !loaded(key))
                 .cloned()
                 .collect()
         } else if self.delta_changed {
             self.delta_keys
                 .iter()
-                .filter(|key| !loaded.contains(key.as_str()))
+                .filter(|key| !loaded(key))
                 .cloned()
                 .collect()
         } else {
@@ -156,16 +160,31 @@ impl Plan {
         } else {
             None
         };
-        let delta_keys =
-            (!full && self.delta_changed && !build.keys.is_empty()).then(|| build.keys.clone());
-        let mut build = Some(build);
         let mut manifest = match self.previous {
-            Some(previous) => previous.manifest,
+            Some(previous) => {
+                let mut manifest = previous.manifest;
+                if self.delta_changed {
+                    manifest.delta = if build.keys.is_empty() {
+                        None
+                    } else {
+                        let (bytes, entries) = build.finish(built)?;
+                        within_publication_limit(bytes.len() as u64, MAX_DELTA_BYTES, "delta")?;
+                        let hash = crate::digest(&bytes);
+                        artifacts.push((format!("ann-{hash}.usearch"), bytes));
+                        Some(DeltaManifest {
+                            sha256: hash,
+                            entries,
+                        })
+                    };
+                }
+                manifest
+            }
             None => {
-                let bytes = build.take().expect("one index build").finish(built)?;
+                // Every unloaded key was removed above: the build's keys are
+                // exactly the mapping's.
+                let (bytes, keys) = build.finish(built)?;
                 let hash = crate::digest(&bytes);
                 artifacts.push((format!("ann-{hash}.usearch"), bytes));
-                let keys: Vec<_> = self.units.keys().cloned().collect();
                 let members = serde_json::to_vec(&keys)?;
                 let members_sha256 = crate::digest(&members);
                 artifacts.push((format!("members-{members_sha256}.json"), members));
@@ -191,21 +210,6 @@ impl Plan {
                 }
             }
         };
-        if !full && self.delta_changed {
-            manifest.delta = match delta_keys {
-                None => None,
-                Some(entries) => {
-                    let bytes = build.take().expect("one index build").finish(built)?;
-                    within_publication_limit(bytes.len() as u64, MAX_DELTA_BYTES, "delta")?;
-                    let hash = crate::digest(&bytes);
-                    artifacts.push((format!("ann-{hash}.usearch"), bytes));
-                    Some(DeltaManifest {
-                        sha256: hash,
-                        entries,
-                    })
-                }
-            };
-        }
         if let Some(table) = labels {
             let bytes = table.encode()?;
             manifest.labels_sha256 = crate::digest(&bytes);
@@ -247,7 +251,6 @@ pub(super) fn full(
     entries: &[GenerationEntry],
     scope: GenerationScope,
     control: &Control,
-    built: &dyn Fn(),
 ) -> FResult<Staged> {
     // Validate all direct callers before cloning potentially oversized mappings
     // or allocating ANN storage.
@@ -256,7 +259,7 @@ pub(super) fn full(
     sorted.sort_by(|a, b| a.input_key.cmp(&b.input_key));
     let mut build = IndexBuild::new(identity, sorted.len())?;
     for entry in sorted {
-        build.add(entry, control)?;
+        build.add(&entry.input_key, &entry.units, &entry.vector, control)?;
     }
     let units = entries
         .iter()
@@ -285,25 +288,30 @@ pub(super) fn full(
         mapping_revision: None,
     };
     Plan::new(mapping, None)
-        .stage(store, identity, build, control, built)
+        .stage(store, identity, build, control, &|| {})
         .map(|result| result.0)
 }
 
 fn check_entries(entries: &[GenerationEntry], recipe: &str) -> FResult<()> {
     let mut seen = BTreeSet::new();
     for entry in entries {
-        check_input(entry, recipe)?;
+        check_input(&entry.input_key, &entry.units, recipe)?;
         if !seen.insert(&entry.input_key) {
             return Err(duplicate_input());
         }
     }
-    locations::LabelTable::new(entry_labels(entries)).within_bounds()
+    locations::LabelTable::new(
+        entries
+            .iter()
+            .map(|entry| (entry.input_key.as_str(), entry.units.as_slice())),
+    )
+    .within_bounds()
 }
 
 /// Publication enforces the same location contract as a fresh load, and
 /// refuses before staging can replace the last readable generation.
-fn check_input(entry: &GenerationEntry, recipe: &str) -> FResult<()> {
-    if !is_hex64(&entry.input_key) || !locations::valid_units(&entry.units, recipe) {
+fn check_input(key: &str, units: &[UnitLocation], recipe: &str) -> FResult<()> {
+    if !is_hex64(key) || !locations::valid_units(units, recipe) {
         return Err(FoundryError::Semantic {
             code: "cache_corrupt",
             message: "invalid input key or locations in generation input".into(),
@@ -381,34 +389,37 @@ impl IndexBuild {
     }
 
     /// Add the next input; keys must strictly ascend.
-    pub(crate) fn add(&mut self, entry: &GenerationEntry, control: &Control) -> FResult<()> {
+    pub(crate) fn add(
+        &mut self,
+        key: &str,
+        units: &[UnitLocation],
+        vector: &[f32],
+        control: &Control,
+    ) -> FResult<()> {
         let ordinal = self.keys.len();
         if ordinal.is_multiple_of(256) {
             control.check()?;
         }
-        check_input(entry, &self.recipe)?;
-        if self
-            .keys
-            .last()
-            .is_some_and(|last| *last >= entry.input_key)
-        {
+        check_input(key, units, &self.recipe)?;
+        if self.keys.last().is_some_and(|last| last.as_str() >= key) {
             return Err(duplicate_input());
         }
-        if entry.vector.len() != self.dimensions || entry.vector.iter().any(|v| !v.is_finite()) {
+        if vector.len() != self.dimensions || vector.iter().any(|v| !v.is_finite()) {
             return Err(FoundryError::Semantic {
                 code: "provider_malformed",
                 message: format!("invalid vector for entry {ordinal}"),
             });
         }
         self.native()?
-            .add(ordinal as u64, entry.vector.as_slice())
+            .add(ordinal as u64, vector)
             .map_err(|e| usearch_failed(&e))?;
-        self.keys.push(entry.input_key.clone());
+        self.keys.push(key.to_owned());
         Ok(())
     }
 
-    /// The serialized segment, within the reader's bound.
-    fn finish(mut self, built: &dyn Fn()) -> FResult<Vec<u8>> {
+    /// The serialized segment, within the reader's bound, and its keys by
+    /// ordinal.
+    fn finish(mut self, built: &dyn Fn()) -> FResult<(Vec<u8>, Vec<String>)> {
         built();
         let index = self.native()?;
         let len = index.serialized_length();
@@ -417,7 +428,7 @@ impl IndexBuild {
         index
             .save_to_buffer(&mut bytes)
             .map_err(|e| usearch_failed(&e))?;
-        Ok(bytes)
+        Ok((bytes, self.keys))
     }
 }
 
@@ -657,7 +668,11 @@ mod tests {
         let prior = validate(store);
         let plan = Plan::new(mapping(entries, revision), Some(prior));
         let needed = plan.needed();
-        let build = build_of(entries.iter().filter(|e| needed.contains_key(&e.input_key)));
+        let build = build_of(entries.iter().filter(|e| {
+            needed
+                .binary_search_by_key(&e.input_key.as_str(), |&(key, _)| key)
+                .is_ok()
+        }));
         let (stage, _, result) = plan
             .stage(store, &identity(), build, &Control::unbounded(), &|| {})
             .unwrap();
@@ -670,7 +685,14 @@ mod tests {
         sorted.sort_by(|a, b| a.input_key.cmp(&b.input_key));
         let mut build = IndexBuild::new(&identity(), sorted.len()).unwrap();
         for entry in sorted {
-            build.add(entry, &Control::unbounded()).unwrap();
+            build
+                .add(
+                    &entry.input_key,
+                    &entry.units,
+                    &entry.vector,
+                    &Control::unbounded(),
+                )
+                .unwrap();
         }
         build
     }
@@ -686,7 +708,6 @@ mod tests {
             &current,
             mapping(&current, 1).scope,
             &Control::unbounded(),
-            &|| {},
         )
         .unwrap()
         .publish(&Control::unbounded())
@@ -777,7 +798,6 @@ mod tests {
             &initial,
             mapping(&initial, 1).scope,
             &Control::unbounded(),
-            &|| {},
         )
         .unwrap()
         .publish(&Control::unbounded())
@@ -838,7 +858,6 @@ mod tests {
             &current,
             mapping(&current, 1).scope,
             &Control::unbounded(),
-            &|| {},
         )
         .unwrap()
         .publish(&Control::unbounded())
@@ -944,7 +963,6 @@ mod tests {
             &current,
             mapping(&current, 1).scope,
             &Control::unbounded(),
-            &|| {},
         )
         .unwrap()
         .publish(&Control::unbounded())
@@ -1016,7 +1034,6 @@ mod tests {
             &initial,
             mapping(&initial, 1).scope,
             &Control::unbounded(),
-            &|| {},
         )
         .unwrap()
         .publish(&Control::unbounded())

@@ -1279,7 +1279,7 @@ impl<'a> Run<'a> {
             self.step(|engine| engine.semantic_record_coverage(mapping.coverage))?;
             return Ok(Publication::Nothing);
         }
-        let mut plan = index::publication::Plan::new(mapping, previous);
+        let plan = index::publication::Plan::new(mapping, previous);
         let needed = plan.needed();
         let mut build =
             index::publication::IndexBuild::new(&identity, needed.len()).map_err(Failed::Step)?;
@@ -1293,14 +1293,15 @@ impl<'a> Run<'a> {
                     engine,
                     &mut keys,
                     &identity,
-                    &mut plan.scope,
                     &mut page,
                     control,
                     Some(Instant::now() + STEP_TIME),
                 )
             })?;
-            for entry in page.drain(..) {
-                build.add(&entry, control).map_err(Failed::Step)?;
+            for (key, units, vector) in page.drain(..) {
+                build
+                    .add(key, units, &vector, control)
+                    .map_err(Failed::Step)?;
             }
             !done
         } {}
