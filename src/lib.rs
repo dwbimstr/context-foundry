@@ -90,6 +90,21 @@ pub fn lower_hex(bytes: &[u8]) -> String {
     out
 }
 
+/// An `io::Write` that keeps only the number of bytes written: serializing
+/// into it measures the exact compact `serde_json` length without building it.
+pub(crate) struct ByteCount(pub(crate) u64);
+
+impl std::io::Write for ByteCount {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0 += bytes.len() as u64;
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 /// The engine moves across threads (tokio spawn_blocking behind a mutex in
 /// MCP); keep this guarantee at compile time.
 const _: fn() = || {

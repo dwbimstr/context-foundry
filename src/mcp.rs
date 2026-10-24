@@ -89,7 +89,7 @@ use tokio_util::{
 };
 
 use crate::{
-    Control, Engine, FResult, FoundryError, Strategy,
+    ByteCount, Control, Engine, FResult, FoundryError, Strategy,
     adapter_error::{AResult, AdapterError},
     config::BudgetConfig,
     graph::{REFERENCES_DEFAULT_LIMIT, REFERENCES_MAX_LIMIT, ReferencesRequest, ReferencesSeed},
@@ -860,20 +860,6 @@ fn text_result(text: String) -> CallToolResult {
 static SUCCESS_ENVELOPE_BYTES: LazyLock<usize> =
     LazyLock::new(|| serialize_result(&text_result(String::new())).len() - 2);
 
-/// An `io::Write` that keeps only the number of bytes written.
-struct ByteCount(usize);
-
-impl std::io::Write for ByteCount {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0 += bytes.len();
-        Ok(bytes.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
 /// The MCP boundary's byte measure handed to the core packers: the length
 /// of the serialized `CallToolResult` carrying a success text, so the
 /// 256 KiB cap covers JSON escaping and the envelope. It adds the text's
@@ -883,7 +869,8 @@ impl std::io::Write for ByteCount {
 fn emitted_bytes(text: &str) -> usize {
     let mut escaped = ByteCount(0);
     serde_json::to_writer(&mut escaped, text).expect("a str serializes into a byte count");
-    *SUCCESS_ENVELOPE_BYTES + escaped.0
+    let escaped = usize::try_from(escaped.0).expect("a str's escaped length fits usize");
+    *SUCCESS_ENVELOPE_BYTES + escaped
 }
 
 fn error_shape_text(text: String) -> CallToolResult {
