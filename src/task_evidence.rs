@@ -5,7 +5,8 @@ use crate::task_context::{Entry, Kind};
 use crate::{Control, Engine, FResult, FoundryError, SourceHandle, Strategy};
 use redb::ReadableDatabase;
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, BTreeSet};
+use std::borrow::Cow;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 pub(crate) mod reference;
 
 const MAX_ITEMS: usize = 32;
@@ -218,6 +219,25 @@ fn add(
     }
     items.insert(first.min(items.len()), Candidate { handle, support });
     true
+}
+/// The stored hash and body of `path` in the final snapshot `tx`: borrowed
+/// from the parsed or compiler file cache when either holds it, else read.
+/// Every cached body was verified in this same `tx`, so it equals what
+/// `boundary::source_in` would rebuild.
+fn final_source<'a>(
+    tx: &redb::ReadTransaction,
+    parsed: &'a BTreeMap<String, Option<(String, String, tree_sitter::Tree)>>,
+    files: &'a HashMap<String, Option<crate::graph::FileView>>,
+    path: &str,
+) -> FResult<Option<(Cow<'a, str>, Cow<'a, str>)>> {
+    if let Some(Some((hash, body, _))) = parsed.get(path) {
+        return Ok(Some((hash.into(), body.into())));
+    }
+    if let Some(Some(view)) = files.get(path) {
+        return Ok(Some((view.hash.as_str().into(), view.body.as_str().into())));
+    }
+    let source = crate::boundary::source_in(tx, path)?;
+    Ok(source.map(|(meta, body)| (meta.hash.into(), body.into())))
 }
 
 impl Engine {
@@ -569,10 +589,11 @@ impl Engine {
                 plan.discovery_limited = true;
             }
         }
-        let mut reference_sources = BTreeMap::new();
+        let mut reference_sources: BTreeMap<String, Option<(String, String, tree_sitter::Tree)>> =
+            BTreeMap::new();
         // Every seed's window reads `tx`, so one verified-file cache serves
         // them all.
-        let mut reference_files = std::collections::HashMap::new();
+        let mut reference_files: HashMap<String, Option<crate::graph::FileView>> = HashMap::new();
         for seed in compiler_seeds {
             control.check()?;
             let found = match self.references_in(
@@ -672,10 +693,12 @@ impl Engine {
         let mut definitions = BTreeMap::new();
         let mut paths = Vec::new();
         for (seed, definition) in syntax_seeds {
-            let Some((meta, body)) = crate::boundary::source_in(&tx, &seed.path)? else {
+            let Some((hash, body)) =
+                final_source(&tx, &reference_sources, &reference_files, &seed.path)?
+            else {
                 continue;
             };
-            if meta.hash == seed.sha256
+            if *hash == seed.sha256
                 && let Some(name) = body.get(seed.start as usize..seed.end as usize)
             {
                 names.insert(name.to_owned());
@@ -736,10 +759,10 @@ impl Engine {
             for path in paths.into_iter().take(8) {
                 control.check()?;
                 if !reference_sources.contains_key(&path) {
-                    let parsed =
-                        crate::boundary::source_in(&tx, &path)?.and_then(|(meta, body)| {
+                    let parsed = final_source(&tx, &reference_sources, &reference_files, &path)?
+                        .and_then(|(hash, body)| {
                             let tree = crate::syntax::parse_reference_source(&path, &body)?;
-                            Some((meta.hash, body, tree))
+                            Some((hash.into_owned(), body.into_owned(), tree))
                         });
                     reference_sources.insert(path.clone(), parsed);
                 }
@@ -888,10 +911,12 @@ impl Engine {
         for i in order {
             control.check()?;
             let c = &candidates[i];
-            let Some((meta, body)) = crate::boundary::source_in(&tx, &c.handle.path)? else {
+            let Some((hash, body)) =
+                final_source(&tx, &reference_sources, &reference_files, &c.handle.path)?
+            else {
                 continue;
             };
-            if meta.hash != c.handle.sha256 {
+            if *hash != c.handle.sha256 {
                 context.batch.counters.stale += 1;
                 continue;
             }
