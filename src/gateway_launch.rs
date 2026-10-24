@@ -29,7 +29,7 @@ use serde_json::Value;
 
 use crate::{
     adapter_error::{AResult, AdapterError},
-    gateway::{HOST_ENV, MODEL_ID, TOKEN_ENV, TRANSPORT_ENV, parse_config},
+    gateway::{HOST_ENV, MODEL_ID, TOKEN_ENV, TRANSPORT_ENV, read_config},
 };
 
 pub struct Options {
@@ -528,11 +528,7 @@ pub fn run(options: &Options) -> AResult<i32> {
             "the OMP profile already exists; refusing to overwrite it",
         ));
     }
-    let mut config_bytes = Vec::new();
-    std::fs::File::open(&options.config)
-        .and_then(|file| file.take(64 * 1024 + 1).read_to_end(&mut config_bytes))
-        .map_err(|e| invalid(&format!("cannot read the gateway config: {e}")))?;
-    let config = parse_config(&config_bytes)?;
+    let config = read_config(&options.config)?;
     let key = match &options.key_file {
         Some(path) => read_key_file(path)?,
         None => std::env::var(&config.credential_env)
