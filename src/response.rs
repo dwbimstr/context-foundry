@@ -12,6 +12,7 @@ use crate::store::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::fmt::Write as _;
 
 pub const TOKENIZER: &str = "o200k_base";
 pub const BYTE_CAP: usize = 256 * 1024;
@@ -269,6 +270,46 @@ impl RootHeader {
     }
 }
 
+/// The header segments every v2 header opens with (context-v2 § Header line),
+/// joined by ` · `: `foundry <op>`, the single-root `r<rev>` plus `scan:` and
+/// `pending:` when not at their default (or, with `roots`, each root's own
+/// segment), then `budget:<n>` with its limiter suffix.
+fn header_prefix(
+    op: &str,
+    roots: Option<&[RootHeader]>,
+    revision: u64,
+    scan_state: &str,
+    pending: u64,
+    budget: usize,
+    limited_by: BudgetLimiter,
+) -> String {
+    let mut line = format!("foundry {op}");
+    match roots {
+        None => {
+            let _ = write!(line, " · r{revision}");
+            if scan_state != "complete" {
+                let _ = write!(line, " · scan:{}", single_line(scan_state));
+            }
+            if pending > 0 {
+                let _ = write!(line, " · pending:{pending}");
+            }
+        }
+        Some(roots) => {
+            for root in roots {
+                line.push_str(" · ");
+                line.push_str(&root.render());
+            }
+        }
+    }
+    let _ = write!(line, " · budget:{budget}");
+    line.push_str(match limited_by {
+        BudgetLimiter::Request => "",
+        BudgetLimiter::Ceiling => "(ceiling)",
+        BudgetLimiter::Session => "(session)",
+    });
+    line
+}
+
 /// Header facts that do not depend on packing; `line` adds the budget and counts.
 struct HeaderV2<'a> {
     /// Mandatory experimental task-view line, counted in every packing trial.
@@ -322,8 +363,8 @@ impl HeaderV2<'_> {
         Ok(())
     }
 
-    /// Segments in contract order joined by ` · `; optional segments appear
-    /// only when not at their default.
+    /// [`header_prefix`], then the remaining segments in contract order, each
+    /// after ` · `; optional segments appear only when not at their default.
     fn line(
         &self,
         budget: usize,
@@ -331,59 +372,45 @@ impl HeaderV2<'_> {
         shown: usize,
         omitted: usize,
     ) -> String {
-        let mut segments = vec![format!("foundry {}", self.op)];
-        match self.roots {
-            None => {
-                segments.push(format!("r{}", self.revision));
-                if self.scan_state != "complete" {
-                    segments.push(format!("scan:{}", single_line(self.scan_state)));
-                }
-                if self.pending > 0 {
-                    segments.push(format!("pending:{}", self.pending));
-                }
-            }
-            Some(roots) => {
-                for root in roots {
-                    segments.push(root.render());
-                }
-            }
-        }
-        segments.push(match limited_by {
-            BudgetLimiter::Request => format!("budget:{budget}"),
-            BudgetLimiter::Ceiling => format!("budget:{budget}(ceiling)"),
-            BudgetLimiter::Session => format!("budget:{budget}(session)"),
-        });
+        let mut line = header_prefix(
+            self.op,
+            self.roots,
+            self.revision,
+            self.scan_state,
+            self.pending,
+            budget,
+            limited_by,
+        );
         if self.lists {
-            segments.push(format!("shown:{shown}"));
+            let _ = write!(line, " · shown:{shown}");
             if omitted > 0 {
-                segments.push(format!("omitted:{omitted}"));
+                let _ = write!(line, " · omitted:{omitted}");
             }
         }
         if self.capped > 0 {
-            segments.push(format!("capped:{}", self.capped));
+            let _ = write!(line, " · capped:{}", self.capped);
         }
         if self.stale > 0 {
-            segments.push(format!("stale:{}", self.stale));
+            let _ = write!(line, " · stale:{}", self.stale);
         }
         if self.candidates_full {
-            segments.push("candidates:full".into());
+            line.push_str(" · candidates:full");
         }
         if let Some(semantic) = self.semantic {
-            segments.push(format!("semantic:{}", single_line(semantic)));
+            let _ = write!(line, " · semantic:{}", single_line(semantic));
         }
         if let Some(route) = self.route {
-            segments.push(format!("route:{}", single_line(route)));
+            let _ = write!(line, " · route:{}", single_line(route));
         }
         if let Some(defs) = self.defs {
-            segments.push(format!("defs:{defs}"));
+            let _ = write!(line, " · defs:{defs}");
         }
         if let Some(doors) = self.doors {
-            segments.push(format!("doors:{doors}"));
+            let _ = write!(line, " · doors:{doors}");
         }
         if self.anchored {
-            segments.push("anchored".into());
+            line.push_str(" · anchored");
         }
-        let mut line = segments.join(" · ");
         line.push('\n');
         if let Some(task) = self.task_view {
             line.push_str(task);
@@ -1891,44 +1918,29 @@ struct ReferencesHeader<'a> {
 
 impl ReferencesHeader<'_> {
     fn line(&self, budget: usize, limited_by: BudgetLimiter, omitted: usize) -> String {
-        let mut segments = vec!["foundry references".to_owned()];
-        match self.roots {
-            None => {
-                segments.push(format!("r{}", self.revision));
-                if self.scan_state != "complete" {
-                    segments.push(format!("scan:{}", single_line(self.scan_state)));
-                }
-                if self.pending > 0 {
-                    segments.push(format!("pending:{}", self.pending));
-                }
-            }
-            Some(roots) => {
-                for root in roots {
-                    segments.push(root.render());
-                }
-            }
-        }
-        segments.push(match limited_by {
-            BudgetLimiter::Request => format!("budget:{budget}"),
-            BudgetLimiter::Ceiling => format!("budget:{budget}(ceiling)"),
-            BudgetLimiter::Session => format!("budget:{budget}(session)"),
-        });
+        let mut line = header_prefix(
+            "references",
+            self.roots,
+            self.revision,
+            self.scan_state,
+            self.pending,
+            budget,
+            limited_by,
+        );
         if omitted > 0 {
-            segments.push(format!("omitted:{omitted}"));
+            let _ = write!(line, " · omitted:{omitted}");
         }
         if self.stale > 0 {
-            segments.push(format!("stale:{}", self.stale));
+            let _ = write!(line, " · stale:{}", self.stale);
         }
         if self.candidates_full {
-            segments.push("candidates:full".into());
+            line.push_str(" · candidates:full");
         }
-        segments.push(format!("examined:{}", self.examined));
+        let _ = write!(line, " · examined:{}", self.examined);
         if self.unresolved > 0 {
-            segments.push(format!("unresolved:{}", self.unresolved));
+            let _ = write!(line, " · unresolved:{}", self.unresolved);
         }
-        segments.push(format!("coverage:{}", self.coverage));
-        let mut line = segments.join(" · ");
-        line.push('\n');
+        let _ = writeln!(line, " · coverage:{}", self.coverage);
         line
     }
 }
