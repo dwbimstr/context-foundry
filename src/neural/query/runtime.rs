@@ -421,13 +421,7 @@ impl QueryRuntime {
     ) -> Result<DocumentCall, ProviderError> {
         provider::check_document_batch(&inputs, self.profile.document_limits())?;
         let _ = neural_fault!(DOCUMENT_ADMISSION, Some(&control), "");
-        {
-            let _admission = self.admission();
-            if self.dispatching.load(Ordering::SeqCst) > 0 {
-                return Err(ProviderError::Busy);
-            }
-            self.claim_document_slot()?;
-        }
+        self.claim_background(Holder::Documents, "documents")?;
         let (reply, answer) = mpsc::channel();
         let sent = self.send(Job::Documents {
             inputs,
@@ -444,6 +438,20 @@ impl QueryRuntime {
     }
 
     pub(crate) fn admit_knowledge(&self) -> Result<KnowledgeCall, ProviderError> {
+        self.claim_background(Holder::Knowledge, "knowledge")?;
+        Ok(KnowledgeCall {
+            slot: self.slot.clone(),
+        })
+    }
+
+    /// Claim a free slot for a background `holder` (a document batch or a
+    /// knowledge call), never waiting, under the admission lock query
+    /// registration takes too: `Busy` while a foreground query is being
+    /// dispatched, or while the slot is held or promised to a waiting
+    /// query. The slot FIRST, then the provider's late call
+    /// ([`Self::probe_late_call`]), both under that lock. Nothing is created
+    /// or sent on a refusal.
+    fn claim_background(&self, holder: Holder, detail: &str) -> Result<(), ProviderError> {
         let _admission = self.admission();
         if self.dispatching.load(Ordering::SeqCst) > 0 {
             return Err(ProviderError::Busy);
@@ -453,27 +461,9 @@ impl QueryRuntime {
             if slot.holder.is_some() || slot.waiter {
                 return Err(ProviderError::Busy);
             }
-            slot.holder = Some(Holder::Knowledge);
+            slot.holder = Some(holder);
         }
-        self.probe_late_call("knowledge")?;
-        Ok(KnowledgeCall {
-            slot: self.slot.clone(),
-        })
-    }
-
-    /// Claim a free slot for a document batch, never waiting: the slot
-    /// FIRST, then the provider's late call ([`Self::probe_late_call`]). A
-    /// slot that is held, or promised to a waiting query, is `Busy`.
-    /// Nothing is created or sent on a refusal.
-    fn claim_document_slot(&self) -> Result<(), ProviderError> {
-        {
-            let mut slot = self.slot.lock();
-            if slot.holder.is_some() || slot.waiter {
-                return Err(ProviderError::Busy);
-            }
-            slot.holder = Some(Holder::Documents);
-        }
-        self.probe_late_call("documents")
+        self.probe_late_call(detail)
     }
 
     /// Claim the slot for a query, then probe the provider's late call. A
