@@ -5,7 +5,8 @@
 # clippy under the actual Rust 1.90 toolchain (its bin directory first on PATH,
 # never `cargo +1.90.0`). Prints one `GATE <name> exit=<n>` line per gate; logs
 # go to OUTDIR. TGT and TGT_MSRV override the two target directories;
-# MSRV_BIN overrides the 1.90 bin directory.
+# MSRV_BIN overrides the 1.90 bin directory. On macOS the 1.90 gates link
+# against SDKROOT, by default the selected developer directory's macOS SDK.
 set -u
 TREE=$1
 OUT=$2
@@ -24,6 +25,12 @@ HOST=$(rustc -vV | sed -n 's/^host: //p')
 MSRV_BIN=${MSRV_BIN:-${RUSTUP_HOME:-$HOME/.rustup}/toolchains/1.90.0-$HOST/bin}
 export PATH="$MSRV_BIN:$PATH"
 export CARGO_TARGET_DIR=${TGT_MSRV:-target/gates-msrv}
-{ command -v rustc cargo clippy-driver; rustc --version; cargo --version; clippy-driver --version; } > "$OUT/msrv-versions.log" 2>&1
+# Rust 1.90 passes `cc` no macOS SDK root (1.92+ pass the selected developer
+# directory's SDK), so `cc` falls back to its default SDK, which can be newer
+# than the selected linker parses. Link against the SDK newer rustc uses.
+if [ "$(uname -s)" = Darwin ] && [ -z "${SDKROOT:-}" ]; then
+  SDKROOT=$(xcrun --sdk macosx --show-sdk-path) && export SDKROOT
+fi
+{ command -v rustc cargo clippy-driver; rustc --version; cargo --version; clippy-driver --version; echo "SDKROOT=${SDKROOT:-}"; } > "$OUT/msrv-versions.log" 2>&1
 run msrv-check cargo check --all-targets --locked
 run msrv-clippy cargo clippy --locked --all-targets -- -D warnings

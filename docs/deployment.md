@@ -360,7 +360,8 @@ Normal training admission returns `isolation_unavailable`. `foundry learning tra
   ```sh
   export LIBTORCH=$HOME/VSC_DEV/vendor/libtorch-2.13.0/libtorch
   cargo build --release --locked --features learning-worker --bin foundry-learn
-  # Rust 1.90 floor:
+  # Rust 1.90 floor; 1.90 passes the linker no SDK, so use the one newer rustc uses:
+  SDKROOT=$(xcrun --sdk macosx --show-sdk-path) \
   PATH=$HOME/.rustup/toolchains/1.90.0-aarch64-apple-darwin/bin:$PATH \
     cargo check --locked --features learning-worker --all-targets
   ```
