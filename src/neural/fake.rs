@@ -94,15 +94,17 @@ struct FakeProvider {
 /// the ids and the component index.
 fn deterministic_vector(descriptor: &FunctionDescriptor, ids: &[u32]) -> Vec<f32> {
     let dims = descriptor.dims();
+    // The constant prefix (function digest and ids), absorbed once.
+    let mut prefix = Sha256::new();
+    prefix.update(descriptor.digest().as_bytes());
+    prefix.update((ids.len() as u64).to_le_bytes());
+    for id in ids {
+        prefix.update(id.to_le_bytes());
+    }
     let mut vector = Vec::with_capacity(dims);
     let mut counter = 0u32;
     while vector.len() < dims {
-        let mut hasher = Sha256::new();
-        hasher.update(descriptor.digest().as_bytes());
-        hasher.update((ids.len() as u64).to_le_bytes());
-        for id in ids {
-            hasher.update(id.to_le_bytes());
-        }
+        let mut hasher = prefix.clone();
         hasher.update(counter.to_le_bytes());
         let digest = hasher.finalize();
         for chunk in digest.chunks_exact(4) {
@@ -117,7 +119,10 @@ fn deterministic_vector(descriptor: &FunctionDescriptor, ids: &[u32]) -> Vec<f32
     // L2-normalize: finite, exact dimension, stable across processes.
     let norm: f64 = vector.iter().map(|v| (*v as f64) * (*v as f64)).sum();
     let norm = norm.sqrt().max(f64::EPSILON) as f32;
-    vector.iter().map(|v| v / norm).collect()
+    for v in &mut vector {
+        *v /= norm;
+    }
+    vector
 }
 
 impl EmbeddingProvider for FakeProvider {
