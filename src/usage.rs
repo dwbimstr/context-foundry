@@ -383,7 +383,7 @@ fn bounded_entry(id: &str) -> String {
 /// The OMP recipe: assistant `usage` records deduplicated by entry id,
 /// `role:"toolResult"` entries joined by `toolCallId` to the assistant's
 /// tool calls.
-fn import_omp(lines: &[&[u8]], out: &mut Import) -> AResult<()> {
+fn import_omp<'a>(lines: impl Iterator<Item = &'a [u8]>, out: &mut Import) -> AResult<()> {
     let mut seen: HashMap<String, Option<[Option<u64>; 5]>> = HashMap::new();
     for line in lines {
         let Some(value) = parse_line(line, &mut out.unparsed_lines) else {
@@ -493,7 +493,7 @@ fn import_omp(lines: &[&[u8]], out: &mut Import) -> AResult<()> {
 /// values are cumulative; tool results are `response_item`
 /// `function_call_output`/`custom_tool_call_output` entries joined by
 /// `call_id` to `function_call`/`custom_tool_call` names.
-fn import_codex(lines: &[&[u8]], out: &mut Import) -> AResult<()> {
+fn import_codex<'a>(lines: impl Iterator<Item = &'a [u8]>, out: &mut Import) -> AResult<()> {
     let mut last: Option<RecordUsage> = None;
     for line in lines {
         let Some(value) = parse_line(line, &mut out.unparsed_lines) else {
@@ -591,15 +591,15 @@ pub fn import_session(host: UsageHost, path: &Path) -> AResult<UsageSummary> {
         return Err(too_large("file", SESSION_MAX_BYTES));
     }
     let session_sha256 = crate::digest(&bytes);
-    let mut lines: Vec<&[u8]> = Vec::new();
-    for line in bytes.split(|b| *b == b'\n') {
-        if line.is_empty() {
-            continue;
-        }
+    let lines = bytes
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty());
+    // Every line's length is checked before either recipe runs, so an
+    // oversized line refuses ahead of any recipe error.
+    for line in lines.clone() {
         if line.len() > SESSION_MAX_LINE_BYTES {
             return Err(too_large("line", SESSION_MAX_LINE_BYTES));
         }
-        lines.push(line);
     }
     let mut out = Import {
         totals: Totals::default(),
@@ -610,8 +610,8 @@ pub fn import_session(host: UsageHost, path: &Path) -> AResult<UsageSummary> {
         unparsed_lines: 0,
     };
     match host {
-        UsageHost::Omp => import_omp(&lines, &mut out)?,
-        UsageHost::Codex => import_codex(&lines, &mut out)?,
+        UsageHost::Omp => import_omp(lines, &mut out)?,
+        UsageHost::Codex => import_codex(lines, &mut out)?,
     }
     if out.totals.records == 0 {
         return Err(AdapterError::runtime(
