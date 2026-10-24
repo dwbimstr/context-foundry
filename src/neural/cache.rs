@@ -336,8 +336,8 @@ impl SemanticState {
 /// What one cache lookup found. `Corrupt` rows are disabled by name and
 /// counted; they are never served and never silently reset.
 #[derive(Clone, Debug)]
-pub enum CacheLookup {
-    Hit(Vec<f32>),
+pub enum CacheLookup<V = Vec<f32>> {
+    Hit(V),
     Miss,
     Corrupt(String),
 }
@@ -1050,14 +1050,41 @@ impl Engine {
     /// lookup: named, never served, never reset. This is the lookup that
     /// catches a payload tampered with after commit (a same-length
     /// NaN/infinity row passes the metadata probe but not this decode);
-    /// preparation and the index rebuild both use it, disable the row by
-    /// name and re-embed it.
+    /// preparation (through its servable form) and the index rebuild both
+    /// use it, disable the row by name and re-embed it.
     pub fn semantic_cache_lookup(
         &self,
         key: &str,
         function_digest: &str,
         dims: usize,
     ) -> FResult<CacheLookup> {
+        self.cache_row(key, function_digest, dims, provider::decode_finite_f32_le)
+    }
+
+    /// [`Self::semantic_cache_lookup`]'s classification without decoding the
+    /// vector: `Hit(())` exactly when the lookup would serve the row.
+    #[cfg(feature = "semantic")]
+    pub(crate) fn semantic_cache_servable(
+        &self,
+        key: &str,
+        function_digest: &str,
+        dims: usize,
+    ) -> FResult<CacheLookup<()>> {
+        self.cache_row(key, function_digest, dims, |payload| {
+            provider::finite_f32_le(payload).then_some(())
+        })
+    }
+
+    /// One cache row classified under the current function digest and
+    /// dimension; `payload` reads a current row's vector bytes, `None` when
+    /// they are nonfinite.
+    fn cache_row<V>(
+        &self,
+        key: &str,
+        function_digest: &str,
+        dims: usize,
+        payload: impl FnOnce(&[u8]) -> Option<V>,
+    ) -> FResult<CacheLookup<V>> {
         let tx = self.db.begin_read()?;
         let table = tx.open_table(CACHE)?;
         let Some(raw) = table.get(key)? else {
@@ -1067,7 +1094,7 @@ impl Engine {
         let short = key.get(..8).unwrap_or(key);
         match (probe_row(bytes, function_digest), layout(bytes)) {
             (CacheProbe::Current, Layout::Dims(stored)) if stored == dims => {
-                match provider::decode_finite_f32_le(&bytes[68..]) {
+                match payload(&bytes[68..]) {
                     Some(vector) => Ok(CacheLookup::Hit(vector)),
                     None => Ok(CacheLookup::Corrupt(format!(
                         "semantic_cache[{short}…] holds a nonfinite vector"

@@ -363,6 +363,15 @@ pub(crate) fn decode_finite_f32_le(bytes: &[u8]) -> Option<Vec<f32>> {
     Some(vector)
 }
 
+/// Whether every f32 LE value in `bytes` (a multiple of 4) is finite:
+/// [`decode_finite_f32_le`]'s test without the decode.
+#[cfg(feature = "semantic")]
+pub(crate) fn finite_f32_le(bytes: &[u8]) -> bool {
+    bytes
+        .chunks_exact(4)
+        .all(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]).is_finite())
+}
+
 /// A thread-safe probe of a call the provider already returned from that
 /// still runs in the model (see [`EmbeddingProvider::late_call`]).
 pub type LateCall = std::sync::Arc<dyn Fn() -> bool + Send + Sync>;

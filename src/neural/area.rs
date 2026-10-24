@@ -94,7 +94,7 @@ pub(crate) fn snapshot(
 
 pub(crate) fn cached(engine: &Engine, profile: &SemanticProfile, input: &Input) -> FResult<bool> {
     Ok(matches!(
-        engine.semantic_cache_lookup(
+        engine.semantic_cache_servable(
             input.key(),
             &profile.descriptor.digest(),
             profile.descriptor.dims()
