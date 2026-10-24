@@ -2998,14 +2998,15 @@ pub(crate) fn revision_in(tx: &WriteTransaction) -> FResult<u64> {
     read_counter(&tx.open_table(META)?, "source_revision")
 }
 
-fn bump_revision(tx: &WriteTransaction, by: u64) -> FResult<()> {
+/// Advance the source revision by one; returns the revision written.
+fn bump_revision(tx: &WriteTransaction) -> FResult<u64> {
     let mut meta = tx.open_table(META)?;
     let current = read_counter(&meta, "source_revision")?;
     let next = current
-        .checked_add(by)
+        .checked_add(1)
         .ok_or(FoundryError::RevisionExhausted)?;
     meta.insert("source_revision", next.to_string().as_str())?;
-    Ok(())
+    Ok(next)
 }
 
 impl Engine {
