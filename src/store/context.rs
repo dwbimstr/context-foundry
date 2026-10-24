@@ -481,35 +481,15 @@ impl Engine {
         }
         // 008: memory rows validate in this same transaction; their stale
         // drops and a filled candidate window join the batch's counters.
-        let hits = match &memory {
+        let hits = match memory {
             Some(plan) => {
                 let table = tx.open_table(MEMORY)?;
-                let mut hits = Vec::with_capacity(
-                    crate::memory::CONTEXT_MEMORY_HITS.min(plan.candidates.len()),
-                );
-                for candidate in &plan.candidates {
-                    let record = match table.get(candidate.id.as_str())? {
-                        // Same checked decoder as standalone search: the row
-                        // must decode AND name this table key.
-                        Some(raw) => crate::memory::decode_row(&candidate.id, raw.value())?,
-                        None => {
-                            counters.stale += 1;
-                            continue;
-                        }
-                    };
-                    if record.revision != candidate.revision {
-                        counters.stale += 1;
-                        continue;
-                    }
-                    if hits.len() < crate::memory::CONTEXT_MEMORY_HITS {
-                        hits.push(crate::memory::MemoryHit {
-                            id: record.id,
-                            revision: record.revision,
-                            author: record.author,
-                            text: record.text,
-                        });
-                    }
-                }
+                let (hits, stale) = crate::memory::validate_hits(
+                    &table,
+                    plan.candidates,
+                    crate::memory::CONTEXT_MEMORY_HITS,
+                )?;
+                counters.stale += stale;
                 if plan.window_full {
                     counters.candidates_full = true;
                 }
