@@ -197,7 +197,9 @@ pub(crate) fn changed(
             next_epoch(&mut state)?;
         }
         if path.len() as u64 <= MAX_PATH_BYTES {
-            if table.get(path)?.is_none() {
+            // `new` still holds: the overflow clear above runs only for a new
+            // path, which it leaves absent.
+            if new {
                 state.path_bytes += path.len() as u64;
             }
             table.insert(path, version.as_str())?;

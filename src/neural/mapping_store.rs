@@ -87,12 +87,11 @@ pub(crate) fn changed(
             .chain(keys.iter().map(|v| ("k:", v)))
         {
             let key = format!("{kind}{value}");
-            if work.get(key.as_str())?.is_none() {
+            let absent = work.get(key.as_str())?.is_none();
+            if absent {
                 bytes += key.len() as u64;
             }
-            if work.len()? >= MAX_DIRTY as u64 && work.get(key.as_str())?.is_none()
-                || bytes > MAX_BYTES as u64
-            {
+            if work.len()? >= MAX_DIRTY as u64 && absent || bytes > MAX_BYTES as u64 {
                 work.retain(|_, _| false)?;
                 bytes = 0;
                 meta.insert(FLOOR, revision.to_string().as_str())?;

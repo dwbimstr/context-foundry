@@ -672,7 +672,7 @@ pub fn hash_regular_file_until(
     }
     let file = open_regular(path)?;
     let version = file.metadata().map_err(|e| invalid(e.to_string()))?;
-    let (digest, bytes, _) = hash_open_file(&file, path, control, false)?;
+    let (digest, bytes, _) = hash_open_file(&file, path, control)?;
     check_version(&file, &version, path)?;
     Ok((digest, bytes))
 }
@@ -681,14 +681,13 @@ fn hash_open_file(
     file: &std::fs::File,
     path: &Path,
     control: &Control,
-    retain: bool,
 ) -> Result<(String, u64, Vec<u8>), ProviderError> {
     if let Some(stop) = control_stop(control) {
         return Err(stop);
     }
     neural_fault!(ARTIFACT_HASH, Some(control), &path.to_string_lossy())
         .map_err(|e| invalid(e.to_string()))?;
-    hash_contents(file, path, control, retain)
+    hash_contents(file, path, control, false)
 }
 fn hash_contents(
     file: &std::fs::File,

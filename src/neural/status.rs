@@ -42,14 +42,7 @@ pub mod fault_names {
 #[cfg(feature = "test-faults")]
 macro_rules! status_fault {
     ($name:ident, $control:expr) => {
-        crate::fault::hit(
-            fault_names::$name,
-            &crate::fault::Ctx {
-                engine: None,
-                control: Some($control),
-                detail: "",
-            },
-        )
+        crate::neural::hit_fault(fault_names::$name, Some($control), "")
     };
 }
 
