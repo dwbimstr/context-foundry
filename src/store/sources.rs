@@ -158,6 +158,8 @@ impl Engine {
             let mut pending = tx.open_table(PENDING)?;
             let mut seen = tx.open_table(SEEN)?;
             let mut meta = tx.open_table(META)?;
+            // Read at the first retirement; nothing writes it before the final insert.
+            let mut initial: Option<u64> = None;
             for path in &page {
                 let seen_now = seen
                     .get(path.as_str())?
@@ -173,14 +175,17 @@ impl Engine {
                     seen.remove(path.as_str())?;
                     retired += 1;
                     changed_paths.push(path.as_str());
-                    let revision = read_counter(&meta, "source_revision")?
+                    let base = match initial {
+                        Some(base) => base,
+                        None => *initial.insert(read_counter(&meta, "source_revision")?),
+                    };
+                    let revision = base
                         .checked_add(retired)
                         .ok_or(FoundryError::RevisionExhausted)?;
                     crate::neural::work::changed(&tx, path, None, revision)?;
                 }
             }
-            if retired > 0 {
-                let revision = read_counter(&meta, "source_revision")?;
+            if let Some(revision) = initial {
                 let next = revision
                     .checked_add(retired)
                     .ok_or(FoundryError::RevisionExhausted)?;
@@ -295,8 +300,8 @@ impl Engine {
             )?;
             tx.open_table(PENDING)?
                 .insert(source_pending_key(path).as_str(), hash)?;
-            bump_revision(tx, 1)?;
-            crate::neural::work::changed(tx, path, Some(hash), revision_in(tx)?)?;
+            let revision = bump_revision(tx)?;
+            crate::neural::work::changed(tx, path, Some(hash), revision)?;
         }
         Ok(true)
     }
@@ -307,11 +312,8 @@ impl Engine {
         {
             let mut sources = tx.open_table(SOURCES)?;
             let old = match sources.remove(path)? {
-                Some(v) => Some(decode::<SourceMeta>(v.value(), "source")?),
+                Some(v) => decode::<SourceMeta>(v.value(), "source")?,
                 None => return Ok(false),
-            };
-            let Some(old) = old else {
-                return Ok(false);
             };
             let mut stored = tx.open_table(CHUNKS)?;
             for i in 0..old.chunks {
@@ -319,8 +321,8 @@ impl Engine {
             }
             tx.open_table(PENDING)?
                 .insert(source_pending_key(path).as_str(), "deleted")?;
-            bump_revision(&tx, 1)?;
-            crate::neural::work::changed(&tx, path, None, revision_in(&tx)?)?;
+            let revision = bump_revision(&tx)?;
+            crate::neural::work::changed(&tx, path, None, revision)?;
         }
         fault!(SOURCE_BEFORE_COMMIT, Some(self), None, path)?;
         self.semantic_commit(tx, [path], std::iter::empty(), false)?;
