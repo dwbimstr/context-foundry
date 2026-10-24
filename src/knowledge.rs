@@ -424,11 +424,11 @@ impl Engine {
         profile: &Profile,
         node: &Node,
         children: &[brief::Record],
+        derivation: Derivation,
         control: &Control,
     ) -> FResult<Snapshot> {
         fault!(KNOWLEDGE_INPUT, Some(self), Some(control), &node.id)?;
         let mut selections = node.sources.clone();
-        let derivation = lineage(profile, node, children)?;
         for child in children {
             for handle in &child.brief.cited_spans {
                 let h = HandleRef::parse(handle)?;
@@ -724,7 +724,7 @@ pub(crate) async fn prepare_access<A: Access>(
                 return Ok("current");
             }
             let snapshot = access.step(control, |engine| {
-                engine.knowledge_snapshot(profile, node, &children, control)
+                engine.knowledge_snapshot(profile, node, &children, expected_lineage, control)
             })?;
             let mut prepared = snapshot.render(profile, node, &children)?;
             let cached = access.step(control, |engine| {
