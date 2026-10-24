@@ -63,8 +63,9 @@ impl Engine {
         };
         let outliner = crate::syntax::Outliner::new(&read.body, lang);
         let range = read.start as usize..read.end as usize;
+        let span = &read.body.as_bytes()[range.clone()];
         let end_line = read.start_line
-            + read.span[..read.span.len().saturating_sub(1)]
+            + span[..span.len().saturating_sub(1)]
                 .iter()
                 .filter(|&&b| b == b'\n')
                 .count() as u64;
@@ -125,8 +126,6 @@ impl Engine {
             None => (start as usize, end as usize),
             Some(lines) => lines.clip(body.as_bytes(), start as usize, end as usize)?,
         };
-        // Boundaries were validated above; slicing the byte view is equivalent.
-        let span = body.as_bytes()[start..end].to_vec();
         let start_line = body.as_bytes()[..start]
             .iter()
             .filter(|&&b| b == b'\n')
@@ -137,7 +136,6 @@ impl Engine {
             sha256: meta.hash,
             start: start as u64,
             end: end as u64,
-            span,
             start_line,
             source_bytes: len,
             freshness,
@@ -146,16 +144,17 @@ impl Engine {
     }
 }
 
-/// The validated bytes of one handle read, their range and the stored full digest.
+/// One validated handle read: the verified source, the read's range within it
+/// and the stored full digest.
 struct HandleRead {
     sha256: String,
     start: u64,
     end: u64,
-    span: Vec<u8>,
     start_line: u64,
     source_bytes: u64,
     freshness: Freshness,
-    /// The whole verified source, for outline views.
+    /// The whole verified source. `start..end` was validated against it, so
+    /// slicing its byte view yields the read span.
     body: String,
 }
 
@@ -164,7 +163,7 @@ impl HandleRead {
         RetrieveOutcome {
             requested,
             requested_tokens,
-            span: self.span,
+            span: self.body.as_bytes()[self.start as usize..self.end as usize].to_vec(),
             start_line: self.start_line,
             source_bytes: self.source_bytes,
             freshness: self.freshness,
