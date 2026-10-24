@@ -233,7 +233,7 @@ pub mod fault_names {
 #[cfg(feature = "test-faults")]
 macro_rules! prepare_fault {
     ($name:ident, $control:expr, $detail:expr) => {
-        $crate::neural::prepare::hit_fault(
+        $crate::neural::hit_fault(
             $crate::neural::prepare::fault_names::$name,
             $control,
             $detail,
@@ -262,16 +262,3 @@ pub(crate) use steps::{
     Batch, Cards, PartitionWorkers, PausedSources, PreparedCards, Progress, Selected, Selection,
     Steps, Walk, WalkPosition, commit_batch, commit_partition, count_document_call,
 };
-
-/// The fault hook entry (test-faults only).
-#[cfg(feature = "test-faults")]
-pub(crate) fn hit_fault(name: &str, control: Option<&Control>, detail: &str) -> FResult<()> {
-    crate::fault::hit(
-        name,
-        &crate::fault::Ctx {
-            engine: None,
-            control,
-            detail,
-        },
-    )
-}
