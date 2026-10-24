@@ -59,8 +59,8 @@ fn decode(key: &str, raw: &str) -> FResult<Entry> {
         return Err(corrupt("cache row too large"));
     }
     let entry: Entry = serde_json::from_str(raw).map_err(|_| corrupt("cache row"))?;
-    let record = brief::decode_row(&entry.record.id, &serde_json::to_string(&entry.record)?)?;
-    if record.derivation.is_none() || key != record.brief.prompt_sha256 {
+    brief::check_embedded(&entry.record)?;
+    if entry.record.derivation.is_none() || key != entry.record.brief.prompt_sha256 {
         return Err(corrupt("cache identity"));
     }
     Ok(entry)

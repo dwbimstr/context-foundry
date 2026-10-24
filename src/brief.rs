@@ -217,11 +217,27 @@ pub(crate) fn pending_key(id: &str) -> String {
 }
 
 pub(crate) fn decode_row(id: &str, raw: &str) -> FResult<Record> {
-    let checked = || -> FResult<Record> {
-        if raw.len() > MAX_RECORD_BYTES {
-            return Err(invalid("oversized row"));
-        }
-        let record: Record = serde_json::from_str(raw)?;
+    if raw.len() > MAX_RECORD_BYTES {
+        return Err(corrupt_row(id));
+    }
+    let record: Record = serde_json::from_str(raw).map_err(|_| corrupt_row(id))?;
+    check_row(id, &record)?;
+    Ok(record)
+}
+/// A record embedded in another row (a knowledge cache entry), already
+/// parsed: `decode_row`'s bound on its encoding, then the same checks. The
+/// bound is not implied by the checks: escaped dependency paths can exceed it.
+pub(crate) fn check_embedded(record: &Record) -> FResult<()> {
+    if serde_json::to_string(record)?.len() > MAX_RECORD_BYTES {
+        return Err(corrupt_row(&record.id));
+    }
+    check_row(&record.id, record)
+}
+fn corrupt_row(id: &str) -> FoundryError {
+    FoundryError::CorruptStore(format!("invalid source brief {id:?}"))
+}
+fn check_row(id: &str, record: &Record) -> FResult<()> {
+    let checked = || -> FResult<()> {
         let spans = record.brief.validate()?;
         if let Some(derivation) = &record.derivation {
             derivation.validate()?;
@@ -256,9 +272,9 @@ pub(crate) fn decode_row(id: &str, raw: &str) -> FResult<Record> {
         {
             return Err(invalid("inconsistent identity"));
         }
-        Ok(record)
+        Ok(())
     };
-    checked().map_err(|_| FoundryError::CorruptStore(format!("invalid source brief {id:?}")))
+    checked().map_err(|_| corrupt_row(id))
 }
 pub(crate) fn eligible(
     record: &Record,
