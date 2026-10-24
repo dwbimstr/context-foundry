@@ -231,7 +231,15 @@ pub fn reached(name: &str) -> usize {
 }
 
 pub(crate) fn hit(name: &str, ctx: &Ctx<'_>) -> FResult<()> {
-    REACHED.with(|reached| *reached.borrow_mut().entry(name.to_owned()).or_insert(0) += 1);
+    // The owned name is allocated only on a point's first hit since `disarm_all`.
+    REACHED.with(|reached| {
+        let mut reached = reached.borrow_mut();
+        if let Some(count) = reached.get_mut(name) {
+            *count += 1;
+        } else {
+            reached.insert(name.to_owned(), 1);
+        }
+    });
     let Some(armed) = ARMED.with(|armed| armed.borrow().get(name).cloned()) else {
         // Nothing armed on this thread: the process-wide table armed for
         // spawned-process tests may still decide this hit.
