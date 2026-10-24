@@ -239,7 +239,7 @@ fn read_file(root: &std::fs::File, path: &str, control: &Control) -> Result<Read
     control
         .check()
         .map_err(|e| OpenFailure::Io(e.to_string()))?;
-    let mut file = held::open_relative(root, &path.split('/').collect::<Vec<_>>())?;
+    let mut file = held::open_relative(root, path)?;
     let before = file
         .metadata()
         .map_err(|e| OpenFailure::Io(e.to_string()))?;
@@ -301,7 +301,7 @@ fn verify_read(
         .file
         .metadata()
         .map_err(|e| OpenFailure::Io(e.to_string()))?;
-    let named = held::open_relative(root, &path.split('/').collect::<Vec<_>>())?
+    let named = held::open_relative(root, path)?
         .metadata()
         .map_err(|e| OpenFailure::Io(e.to_string()))?;
     if !same_file(&read.version, &held) || !same_file(&held, &named) {
@@ -529,21 +529,19 @@ mod held {
         Ok(())
     }
 
-    /// Open `components` relative to the held root, refusing every symlink
-    /// component (including replaced ancestors) and non-regular final files.
-    pub fn open_relative(root: &File, components: &[&str]) -> Result<File, OpenFailure> {
-        if components.is_empty() {
-            return Err(OpenFailure::UnsafeSourcePath("empty relative path".into()));
-        }
+    /// Open the `/`-separated `path` relative to the held root, refusing every
+    /// symlink component (including replaced ancestors) and non-regular final
+    /// files.
+    pub fn open_relative(root: &File, path: &str) -> Result<File, OpenFailure> {
         let mut owned: Option<File> = None;
-        let last = components.len() - 1;
-        for (i, comp) in components.iter().enumerate() {
-            let Ok(c) = CString::new(*comp) else {
+        let mut components = path.split('/').peekable();
+        while let Some(comp) = components.next() {
+            let Ok(c) = CString::new(comp) else {
                 return Err(OpenFailure::UnsafeSourcePath(format!(
                     "component contains NUL: {comp:?}"
                 )));
             };
-            let directory = i < last;
+            let directory = components.peek().is_some();
             // O_NONBLOCK on the final component: a regular file replaced by a
             // FIFO must not block in open(2) before the fstat regular-file
             // check below can refuse it. Directories open traversal-only.
@@ -613,7 +611,7 @@ mod held {
         Err(OpenFailure::Unsupported(UNSUPPORTED.into()))
     }
 
-    pub fn open_relative(_root: &File, _components: &[&str]) -> Result<File, OpenFailure> {
+    pub fn open_relative(_root: &File, _path: &str) -> Result<File, OpenFailure> {
         Err(OpenFailure::Unsupported(UNSUPPORTED.into()))
     }
 }
@@ -927,9 +925,8 @@ impl ChangeReader {
         crate::store::validate_path(path)?;
         control.check()?;
         self.check_root()?;
-        let parts: Vec<&str> = path.split('/').collect();
         fault!(WATCH_BEFORE_OPEN, Some(engine), Some(control), path)?;
-        let mut file = match held::open_relative(&self.root_fd, &parts) {
+        let mut file = match held::open_relative(&self.root_fd, path) {
             Ok(file) => file,
             Err(OpenFailure::SourceChanged(_)) => {
                 // Absence is verified through no-follow ancestors, not inferred
@@ -950,7 +947,7 @@ impl ChangeReader {
             .read_to_end(&mut bytes)?;
         fault!(WATCH_AFTER_READ, Some(engine), Some(control), path)?;
         let after = file.metadata()?;
-        let named = held::open_relative(&self.root_fd, &parts)
+        let named = held::open_relative(&self.root_fd, path)
             .map_err(|f| change_error(path, f))?
             .metadata()?;
         if !same_file(&before, &after) || !same_file(&after, &named) {
@@ -1208,7 +1205,7 @@ mod tests {
         fs::create_dir(&root).unwrap();
         std::os::unix::fs::symlink(outside.join("secret.txt"), root.join("file.txt")).unwrap();
         let held = open_root(&root.canonicalize().unwrap()).unwrap();
-        let err = open_relative(&held, &["file.txt"]).unwrap_err();
+        let err = open_relative(&held, "file.txt").unwrap_err();
         assert!(matches!(err, OpenFailure::UnsafeSourcePath(_)), "{err:?}");
     }
 
@@ -1231,7 +1228,7 @@ mod tests {
         // symlink between enumeration and open.
         fs::rename(root.join("pkg"), work.path().join("pkg.orig")).unwrap();
         std::os::unix::fs::symlink(&outside, root.join("pkg")).unwrap();
-        let err = open_relative(&held, &["pkg", "file.rs"]).unwrap_err();
+        let err = open_relative(&held, "pkg/file.rs").unwrap_err();
         assert!(
             matches!(err, OpenFailure::UnsafeSourcePath(_)),
             "expected unsafe_source_path, got {err:?}"
@@ -1246,7 +1243,7 @@ mod tests {
         fs::write(root.join("gone.txt"), "original\n").unwrap();
         let held = open_root(&root.canonicalize().unwrap()).unwrap();
         fs::remove_file(root.join("gone.txt")).unwrap();
-        let err = open_relative(&held, &["gone.txt"]).unwrap_err();
+        let err = open_relative(&held, "gone.txt").unwrap_err();
         assert!(matches!(err, OpenFailure::SourceChanged(_)), "{err:?}");
     }
 
@@ -1263,7 +1260,7 @@ mod tests {
         fs::create_dir(&root).unwrap();
         fs::write(root.join("file.txt"), "replacement bytes\n").unwrap();
         use std::io::Read;
-        let mut file = open_relative(&held, &["file.txt"]).unwrap();
+        let mut file = open_relative(&held, "file.txt").unwrap();
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes).unwrap();
         assert_eq!(bytes, b"pinned by descriptor\n");
@@ -1275,7 +1272,7 @@ mod tests {
         let root = work.path().join("root");
         fs::create_dir_all(root.join("sub")).unwrap();
         let held = open_root(&root.canonicalize().unwrap()).unwrap();
-        let err = open_relative(&held, &["sub"]).unwrap_err();
+        let err = open_relative(&held, "sub").unwrap_err();
         assert!(matches!(err, OpenFailure::UnsafeSourcePath(_)), "{err:?}");
     }
 }
