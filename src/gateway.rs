@@ -13,6 +13,7 @@
 //! force re-serialization.
 
 use std::{
+    borrow::Cow,
     io::{Read as _, Write as _},
     path::{Path, PathBuf},
     pin::Pin,
@@ -219,7 +220,7 @@ fn valid_env_name(name: &str) -> bool {
         && bytes.all(|b| b.is_ascii_alphanumeric() || b == b'_')
 }
 
-pub(crate) fn parse_config(bytes: &[u8]) -> AResult<GatewayConfig> {
+fn parse_config(bytes: &[u8]) -> AResult<GatewayConfig> {
     if bytes.len() > CONFIG_MAX_BYTES {
         return Err(invalid("gateway config exceeds 64 KiB"));
     }
@@ -897,10 +898,7 @@ impl Book {
         self.output.add(receipt.output_tokens);
         if let Some(log) = self.log.as_mut() {
             match log.append(receipt) {
-                Ok(()) => {
-                    let line = serde_json::to_string(&receipt.to_json()).unwrap_or_default();
-                    self.log_written += line.len() as u64 + 1;
-                }
+                Ok(appended) => self.log_written += appended,
                 // Counts stay in memory; the failure closes admission and is
                 // recorded for the operator without any request content.
                 Err(error) => {
@@ -1098,7 +1096,7 @@ fn emit(line: &str) {
     let _ = writeln!(std::io::stdout().lock(), "{line}");
 }
 
-fn read_config(path: &Path) -> AResult<GatewayConfig> {
+pub(crate) fn read_config(path: &Path) -> AResult<GatewayConfig> {
     let mut bytes = Vec::new();
     std::fs::File::open(path)
         .and_then(|file| {
@@ -1419,18 +1417,10 @@ fn full_body(bytes: Bytes) -> ResponseBody {
         .boxed_unsync()
 }
 
-fn json_response(
-    status: StatusCode,
-    extra: &[(&'static str, &'static str)],
-    body: &Value,
-) -> Response {
-    let mut builder = hyper::Response::builder()
+fn json_response(status: StatusCode, body: &Value) -> Response {
+    hyper::Response::builder()
         .status(status)
-        .header(CONTENT_TYPE, "application/json");
-    for (name, value) in extra {
-        builder = builder.header(*name, *value);
-    }
-    builder
+        .header(CONTENT_TYPE, "application/json")
         .body(full_body(Bytes::from(body.to_string())))
         .unwrap_or_else(|_| {
             let mut response = hyper::Response::new(full_body(Bytes::new()));
@@ -1444,7 +1434,6 @@ fn json_response(
 fn refusal(status: StatusCode, code: &str, message: &str) -> Response {
     json_response(
         status,
-        &[],
         &json!({"error": {"code": code, "message": message}}),
     )
 }
@@ -1575,7 +1564,6 @@ fn health(shared: &Shared) -> Response {
     let open = admission_open && !shared.shutdown.is_cancelled();
     json_response(
         StatusCode::OK,
-        &[],
         &json!({
             "v": 1,
             "ready": true,
@@ -1976,7 +1964,7 @@ async fn run_attempt(
                 provider_response_id: None,
             },
         );
-        let _ = head.send(json_response(relayed, &[], &json!({"error": error})));
+        let _ = head.send(json_response(relayed, &json!({"error": error})));
         return;
     }
     let event_stream = upstream
@@ -2013,7 +2001,6 @@ async fn run_attempt(
         );
         let _ = head.send(json_response(
             StatusCode::BAD_GATEWAY,
-            &[],
             &json!({"error": {
                 "code": "upstream_error",
                 "message": "the upstream reply is not the pinned event stream",
@@ -2167,7 +2154,7 @@ impl EventSplitter {
 }
 
 /// Visit each line of a complete event (LF, CRLF or CR terminated).
-fn for_each_line(event: &[u8], mut visit: impl FnMut(&[u8])) {
+fn for_each_line<'a>(event: &'a [u8], mut visit: impl FnMut(&'a [u8])) {
     let mut start = 0;
     let mut index = 0;
     while index < event.len() {
@@ -2187,11 +2174,11 @@ fn for_each_line(event: &[u8], mut visit: impl FnMut(&[u8])) {
 }
 
 /// What a complete event contains, judged line by line.
-enum EventFields {
+enum EventFields<'a> {
     /// Every line is blank, a comment or a standard SSE field; carries the
     /// `data` values joined with LF (the SSE field rule), `None` without a
-    /// data line.
-    Allowed(Option<Vec<u8>>),
+    /// data line. A single data value is borrowed from the event.
+    Allowed(Option<Cow<'a, [u8]>>),
     /// At least one line names a field outside `data`/`event`/`id`/`retry`.
     /// A stray byte (a mid-event BOM, say) can turn a `data:` line into an
     /// unknown field a lenient client then skips or reads differently, so
@@ -2203,8 +2190,8 @@ enum EventFields {
 /// `data:` lines: a line without a colon is a field name with an empty
 /// value, a leading `:` is a comment, and one optional space after the
 /// colon is not part of the value.
-fn event_fields(event: &[u8]) -> EventFields {
-    let mut data: Option<Vec<u8>> = None;
+fn event_fields(event: &[u8]) -> EventFields<'_> {
+    let mut data: Option<Cow<'_, [u8]>> = None;
     let mut foreign = false;
     for_each_line(event, |line| {
         if line.is_empty() || line.starts_with(b":") {
@@ -2220,10 +2207,11 @@ fn event_fields(event: &[u8]) -> EventFields {
         match name {
             b"data" => match data.as_mut() {
                 Some(joined) => {
+                    let joined = joined.to_mut();
                     joined.push(b'\n');
                     joined.extend_from_slice(value);
                 }
-                None => data = Some(value.to_vec()),
+                None => data = Some(Cow::Borrowed(value)),
             },
             b"event" | b"id" | b"retry" => {}
             _ => foreign = true,
@@ -2306,7 +2294,7 @@ fn observe(event: &[u8], seen: &mut Seen, stream_start: bool) -> Observed {
         EventFields::Allowed(None) => return Observed::Plain,
         EventFields::Allowed(Some(data)) => data,
     };
-    if data.as_slice() == b"[DONE]" {
+    if data.as_ref() == b"[DONE]" {
         return Observed::Done;
     }
     // The same strict parser the request side uses: serde_json's own
@@ -3000,7 +2988,7 @@ mod tests {
     /// The joined `data` value of an event whose every line is allowed.
     fn event_data(event: &[u8]) -> Option<Vec<u8>> {
         match event_fields(event) {
-            EventFields::Allowed(data) => data,
+            EventFields::Allowed(data) => data.map(Cow::into_owned),
             EventFields::Foreign => panic!("unexpected foreign field in a test event"),
         }
     }

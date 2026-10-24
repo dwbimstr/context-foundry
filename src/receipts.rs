@@ -552,9 +552,12 @@ impl ReceiptLog {
         })
     }
 
-    pub fn append(&mut self, receipt: &Receipt) -> AResult<()> {
+    /// Append one receipt line; returns the bytes this call appended,
+    /// newline included.
+    pub fn append(&mut self, receipt: &Receipt) -> AResult<u64> {
         let line = serde_json::to_string(&receipt.to_json()).unwrap_or_default();
-        if line.len() > RECEIPT_MAX_BYTES || self.written + line.len() as u64 + 1 > self.cap {
+        let appended = line.len() as u64 + 1;
+        if line.len() > RECEIPT_MAX_BYTES || self.written + appended > self.cap {
             return Err(AdapterError::runtime(
                 "usage_log_full",
                 "the receipt log cannot fit another bounded receipt",
@@ -563,8 +566,8 @@ impl ReceiptLog {
         writeln!(self.file, "{line}")
             .and_then(|()| self.file.flush())
             .map_err(|e| AdapterError::runtime("usage_log_write_failed", e.to_string()))?;
-        self.written += line.len() as u64 + 1;
-        Ok(())
+        self.written += appended;
+        Ok(appended)
     }
 }
 
