@@ -1253,21 +1253,6 @@ pub struct ManifestFile {
     pub rows: u64,
 }
 
-fn encode_jsonl_row<T: Serialize>(row: &T) -> FResult<String> {
-    let mut line = serde_json::to_string(row).map_err(FoundryError::from)?;
-    line.push('\n');
-    if line.len() > ROW_MAX_BYTES {
-        return Err(fail(
-            "dataset_bounds",
-            format!(
-                "a dataset row is {} bytes; the limit is {ROW_MAX_BYTES}",
-                line.len()
-            ),
-        ));
-    }
-    Ok(line)
-}
-
 // ---------------------------------------------------------------------------
 // Named fault points (test-faults only)
 // ---------------------------------------------------------------------------
@@ -1432,10 +1417,27 @@ impl Sink {
         })
     }
 
-    /// Append one compact-JSON row plus LF. `total` is the running size of
-    /// every data file, refused (never truncated) past the combined bound.
-    fn append<T: Serialize>(&mut self, row: &T, total: &mut u64) -> FResult<()> {
-        let line = encode_jsonl_row(row)?;
+    /// Append one compact-JSON row plus LF, serialized into `line` (one
+    /// buffer shared by every sink). `total` is the running size of every
+    /// data file, refused (never truncated) past the combined bound.
+    fn append<T: Serialize>(
+        &mut self,
+        row: &T,
+        line: &mut Vec<u8>,
+        total: &mut u64,
+    ) -> FResult<()> {
+        line.clear();
+        serde_json::to_writer(&mut *line, row).map_err(FoundryError::from)?;
+        line.push(b'\n');
+        if line.len() > ROW_MAX_BYTES {
+            return Err(fail(
+                "dataset_bounds",
+                format!(
+                    "a dataset row is {} bytes; the limit is {ROW_MAX_BYTES}",
+                    line.len()
+                ),
+            ));
+        }
         *total += line.len() as u64;
         if *total > FILES_MAX_BYTES {
             return Err(fail(
@@ -1443,9 +1445,9 @@ impl Sink {
                 format!("dataset files exceed the {FILES_MAX_BYTES}-byte bound"),
             ));
         }
-        self.hasher.update(line.as_bytes());
+        self.hasher.update(line.as_slice());
         self.writer
-            .write_all(line.as_bytes())
+            .write_all(line.as_slice())
             .map_err(|e| fail("output_write", format!("write {}: {e}", self.name)))?;
         self.bytes += line.len() as u64;
         self.rows += 1;
@@ -2192,6 +2194,7 @@ pub fn prepare(
     // ---- Pass 2: stream the rows, in example-ID order, into the owned
     // partial sibling.
     let (partial, guard) = target.create_partial()?;
+    let mut line = Vec::new();
     let mut total_bytes = 0u64;
     let mut train = Sink::create(&partial, "train.jsonl")?;
     let mut calibration = Sink::create(&partial, "calibration.jsonl")?;
@@ -2222,7 +2225,7 @@ pub fn prepare(
             markers: exact.markers,
             feedback: row,
         };
-        sink.append(&dataset_row, &mut total_bytes)
+        sink.append(&dataset_row, &mut line, &mut total_bytes)
     })?;
     if cursor != eligible.len() {
         return Err(FoundryError::CorruptStore(
@@ -2237,6 +2240,7 @@ pub fn prepare(
                 split: split_of(group).to_owned(),
                 examples: members.iter().map(|member| member.contribution()).collect(),
             },
+            &mut line,
             &mut total_bytes,
         )?;
     }
@@ -2254,23 +2258,14 @@ pub fn prepare(
     ];
     file_entries.sort_by(|a, b| a.name.cmp(&b.name));
 
-    let file_sha = |name: &str| -> String {
-        file_entries
-            .iter()
-            .find(|f| f.name == name)
-            .map(|f| f.sha256.clone())
-            .unwrap_or_default()
-    };
     let parent_manifest_sha256 = base.as_ref().map(|b| b.manifest_sha256.clone());
-    let dataset_id = compact_digest(&serde_json::json!([
-        workspace_id,
-        parent_manifest_sha256,
-        model_function,
-        policy_sha256,
-        file_sha("train.jsonl"),
-        file_sha("calibration.jsonl"),
-        file_sha("evaluation.jsonl"),
-    ]));
+    let dataset_id = dataset_id_of(
+        &workspace_id,
+        parent_manifest_sha256.as_deref(),
+        &model_function,
+        &policy_sha256,
+        &file_entries,
+    )?;
     let manifest = Manifest {
         schema: 4,
         recipe: RECIPE.to_owned(),
@@ -2627,18 +2622,13 @@ fn open_dataset_in(dir: Dir, name: &std::ffi::OsStr, what: &str) -> FResult<Open
         ));
     }
     // Recompute the dataset identity from the manifest's own fields.
-    let file_sha = |name: &str| -> FResult<String> {
-        manifest_entry(&manifest, name).map(|entry| entry.sha256.clone())
-    };
-    let recomputed = compact_digest(&serde_json::json!([
-        manifest.workspace_id,
-        manifest.parent_manifest_sha256,
-        manifest.model_function_sha256,
-        manifest.policy_sha256,
-        file_sha("train.jsonl")?,
-        file_sha("calibration.jsonl")?,
-        file_sha("evaluation.jsonl")?,
-    ]));
+    let recomputed = dataset_id_of(
+        &manifest.workspace_id,
+        manifest.parent_manifest_sha256.as_deref(),
+        &manifest.model_function_sha256,
+        &manifest.policy_sha256,
+        &manifest.files,
+    )?;
     if recomputed != manifest.dataset_id {
         return Err(fail(
             "dataset_invalid",
@@ -2672,7 +2662,7 @@ fn open_dataset_in(dir: Dir, name: &std::ffi::OsStr, what: &str) -> FResult<Open
             format!("the manifest declares {declared_rows} rows; the bound is {MAX_ROWS}"),
         ));
     }
-    let declared_groups = manifest_entry(&manifest, "groups.jsonl")?.rows;
+    let declared_groups = manifest_entry(&manifest.files, "groups.jsonl")?.rows;
     if declared_groups > MAX_GROUPS as u64 {
         return Err(fail(
             "dataset_bounds",
@@ -2686,12 +2676,32 @@ fn open_dataset_in(dir: Dir, name: &std::ffi::OsStr, what: &str) -> FResult<Open
     })
 }
 
-fn manifest_entry<'a>(manifest: &'a Manifest, name: &str) -> FResult<&'a ManifestFile> {
-    manifest
-        .files
+fn manifest_entry<'a>(files: &'a [ManifestFile], name: &str) -> FResult<&'a ManifestFile> {
+    files
         .iter()
         .find(|entry| entry.name == name)
         .ok_or_else(|| fail("dataset_invalid", format!("manifest lacks {name}")))
+}
+
+/// The dataset identity: the compact digest of the workspace, the parent
+/// manifest, the model function, the policy and the three data files'
+/// hashes. `prepare` writes it; every read-back recomputes it.
+fn dataset_id_of(
+    workspace_id: &str,
+    parent_manifest_sha256: Option<&str>,
+    model_function_sha256: &str,
+    policy_sha256: &str,
+    files: &[ManifestFile],
+) -> FResult<String> {
+    Ok(compact_digest(&serde_json::json!([
+        workspace_id,
+        parent_manifest_sha256,
+        model_function_sha256,
+        policy_sha256,
+        manifest_entry(files, "train.jsonl")?.sha256,
+        manifest_entry(files, "calibration.jsonl")?.sha256,
+        manifest_entry(files, "evaluation.jsonl")?.sha256,
+    ])))
 }
 
 /// Read back every member of an opened dataset. `groups.jsonl` comes first:
@@ -2725,7 +2735,7 @@ fn verify_dataset_with(
     let mut prior_group: Option<String> = None;
     stream_member(
         &dir,
-        manifest_entry(&manifest, "groups.jsonl")?,
+        manifest_entry(&manifest.files, "groups.jsonl")?,
         control,
         |line| {
             let group: GroupRow = strict_json(line, "dataset_invalid", "groups.jsonl row")?;
@@ -2821,7 +2831,8 @@ fn verify_dataset_with(
         let name = format!("{split}.jsonl");
         let what = format!("{name} row");
         let mut prior: Option<String> = None;
-        stream_member(&dir, manifest_entry(&manifest, &name)?, control, |line| {
+        let member = manifest_entry(&manifest.files, &name)?;
+        stream_member(&dir, member, control, |line| {
             let read: DatasetRow = strict_json(line, "dataset_invalid", &what)?;
             if prior
                 .as_deref()
