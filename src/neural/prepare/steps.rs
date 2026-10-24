@@ -1024,11 +1024,11 @@ impl Steps<'_> {
                             report.reused_cached_units += 1;
                             continue;
                         }
-                        // The lookup that USES a vector decodes it: a
-                        // same-length nonfinite (or otherwise tampered) row is
-                        // disabled by name here and replaced by a fresh
-                        // embedding.
-                        let needed = match self.engine.semantic_cache_lookup(
+                        // The servable check scans the payload as the serving
+                        // lookup does: a same-length nonfinite (or otherwise
+                        // tampered) row is disabled by name here and replaced
+                        // by a fresh embedding.
+                        let needed = match self.engine.semantic_cache_servable(
                             &unit.input_key,
                             self.cards.function_digest,
                             dims,
