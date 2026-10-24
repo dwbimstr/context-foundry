@@ -458,6 +458,42 @@ pub(crate) fn decode_row(id: &str, raw: &str) -> FResult<MemoryRecord> {
         })
 }
 
+/// Validate `candidates` in order against the live rows of `table`: a missing
+/// or superseded row counts as stale, a corrupt one fails. The whole candidate
+/// window is examined before the cut to `limit`: forgotten or superseded
+/// documents still in the derived index must not crowd out live records.
+pub(crate) fn validate_hits(
+    table: &redb::ReadOnlyTable<&'static str, &'static str>,
+    candidates: Vec<store::RecordCandidate>,
+    limit: usize,
+) -> FResult<(Vec<MemoryHit>, u64)> {
+    let mut hits = Vec::with_capacity(limit.min(candidates.len()));
+    let mut stale = 0u64;
+    for candidate in candidates {
+        let record = match table.get(candidate.id.as_str())? {
+            // The row must decode AND name this table key.
+            Some(raw) => decode_row(&candidate.id, raw.value())?,
+            None => {
+                stale += 1;
+                continue;
+            }
+        };
+        if record.revision != candidate.revision {
+            stale += 1;
+            continue;
+        }
+        if hits.len() < limit {
+            hits.push(MemoryHit {
+                id: record.id,
+                revision: record.revision,
+                author: record.author,
+                text: record.text,
+            });
+        }
+    }
+    Ok((hits, stale))
+}
+
 /// The bound workspace, or the refusal for a caller-named different one.
 /// The wrong-workspace check runs before any existence check: a forget of an
 /// absent id still fails with `wrong_workspace`.
@@ -875,35 +911,10 @@ impl Engine {
         if !(1..=64).contains(&limit) {
             return Err(FoundryError::InvalidArgument("limit must be 1..64".into()));
         }
-        // The whole candidate window is examined before the cut to `limit`:
-        // forgotten or superseded documents still in the derived index must
-        // not crowd out live records.
         let plan = self.memory_plan(query)?;
         let tx = self.db.begin_read()?;
         let memory = tx.open_table(MEMORY)?;
-        let mut hits = Vec::with_capacity(limit.min(plan.candidates.len()));
-        let mut stale = 0u64;
-        for candidate in plan.candidates {
-            let record = match memory.get(candidate.id.as_str())? {
-                Some(raw) => decode_row(&candidate.id, raw.value())?,
-                None => {
-                    stale += 1;
-                    continue;
-                }
-            };
-            if record.revision != candidate.revision {
-                stale += 1;
-                continue;
-            }
-            if hits.len() < limit {
-                hits.push(MemoryHit {
-                    id: record.id,
-                    revision: record.revision,
-                    author: record.author,
-                    text: record.text,
-                });
-            }
-        }
+        let (hits, stale) = validate_hits(&memory, plan.candidates, limit)?;
         let mut freshness = self.freshness_in(&tx)?;
         // The memory header's `pending:` counts memory work only (008): the
         // source namespaces report their own.
