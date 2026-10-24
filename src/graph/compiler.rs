@@ -76,9 +76,10 @@ pub(crate) fn check_compiler_tables(tx: &redb::ReadTransaction) -> FResult<()> {
     Ok(())
 }
 
-fn json_digest(value: &serde_json::Value) -> String {
-    // `Value`'s Display is compact JSON.
-    crate::digest(value.to_string().as_bytes())
+fn json_digest(parts: &impl Serialize) -> String {
+    // serde_json writes a tuple as a compact JSON array.
+    let json = serde_json::to_vec(parts).expect("an identity tuple serializes");
+    crate::digest(&json)
 }
 
 /// Lowercase SHA-256 of the compact UTF-8 JSON array
@@ -86,14 +87,9 @@ fn json_digest(value: &serde_json::Value) -> String {
 /// `[producer_namespace,"local",document_path,SCIP_symbol]`.
 pub fn symbol_id(producer_namespace: &str, document_path: &str, symbol: &str) -> String {
     if scip::symbol::is_local_symbol(symbol) {
-        json_digest(&serde_json::json!([
-            producer_namespace,
-            "local",
-            document_path,
-            symbol
-        ]))
+        json_digest(&(producer_namespace, "local", document_path, symbol))
     } else {
-        json_digest(&serde_json::json!([producer_namespace, "global", symbol]))
+        json_digest(&(producer_namespace, "global", symbol))
     }
 }
 
@@ -110,15 +106,15 @@ pub fn occurrence_id(
     end: u64,
     symbol_id: &str,
 ) -> String {
-    json_digest(&serde_json::json!([
+    json_digest(&(
         producer_namespace,
         kind.as_str(),
         path,
         source_hash,
         start,
         end,
-        symbol_id
-    ]))
+        symbol_id,
+    ))
 }
 
 /// One side of a resolved edge: the source identity (its workspace-relative
@@ -136,7 +132,7 @@ pub struct EdgeEnd<'a> {
 /// to_hash,to_start,to_end]`. It exists only for a uniquely resolved target;
 /// ambiguous and unresolved results never manufacture one.
 pub fn edge_id(producer: &str, kind: &str, from: EdgeEnd<'_>, to: EdgeEnd<'_>) -> String {
-    json_digest(&serde_json::json!([
+    json_digest(&(
         producer,
         kind,
         from.identity,
@@ -146,8 +142,8 @@ pub fn edge_id(producer: &str, kind: &str, from: EdgeEnd<'_>, to: EdgeEnd<'_>) -
         to.identity,
         to.hash,
         to.start,
-        to.end
-    ]))
+        to.end,
+    ))
 }
 
 /// The producer identity recorded in the snapshot manifest.
@@ -186,21 +182,21 @@ impl SnapshotTuple {
         manifest_sha256: String,
         source_revision: u64,
     ) -> Self {
-        let config_id = json_digest(&serde_json::json!([
-            producer.name,
-            producer.release_tag,
-            producer.commit,
-            producer.version_output,
-            producer.binary_sha256,
+        let config_id = json_digest(&(
+            &producer.name,
+            &producer.release_tag,
+            &producer.commit,
+            &producer.version_output,
+            &producer.binary_sha256,
             invocation,
-            config
-        ]));
-        let snapshot_id = json_digest(&serde_json::json!([
-            config_id,
-            artifact_sha256,
-            manifest_sha256,
-            source_revision
-        ]));
+            config,
+        ));
+        let snapshot_id = json_digest(&(
+            &config_id,
+            &artifact_sha256,
+            &manifest_sha256,
+            source_revision,
+        ));
         Self {
             snapshot_id,
             artifact_sha256,
@@ -279,8 +275,7 @@ pub(crate) struct NewOccurrence {
     pub start: u64,
     pub end: u64,
     pub symbol_id: String,
-    pub symbol: String,
-    pub roles: i32,
+    pub value: OccurrenceValue,
 }
 
 /// What one scope transaction writes.
@@ -400,10 +395,7 @@ impl Engine {
                     OccurrenceKind::Reference => references += 1,
                 }
                 max_span = max_span.max(o.end - o.start);
-                let value = serde_json::to_string(&OccurrenceValue {
-                    symbol: o.symbol.clone(),
-                    roles: o.roles,
-                })?;
+                let value = serde_json::to_string(&o.value)?;
                 occurrences.insert(
                     occurrence_key(
                         write.namespace,
