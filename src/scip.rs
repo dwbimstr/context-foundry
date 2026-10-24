@@ -34,8 +34,8 @@
 use crate::control::Control;
 use crate::error::{FResult, FoundryError};
 use crate::graph::{
-    NewOccurrence, OccurrenceKind, ProducerIdentity, ScopeRow, ScopeStatus, ScopeWrite,
-    SnapshotState, SnapshotTuple, symbol_id,
+    NewOccurrence, OccurrenceKind, OccurrenceValue, ProducerIdentity, ScopeRow, ScopeStatus,
+    ScopeWrite, SnapshotState, SnapshotTuple, symbol_id,
 };
 use crate::store::{CHUNKS, Engine, META, SOURCES, SourceMeta, decode, validate_path};
 use protobuf::CodedInputStream;
@@ -1338,28 +1338,29 @@ fn validate_document(
         Ok(body) => body,
         Err(failure) => return Ok(Err(failure)),
     };
-    let occurrences = match convert_document(namespace, path, document, &body) {
+    let occurrences = match convert_document(namespace, path, document, &body, true) {
         Ok(occurrences) => occurrences,
         Err(failure) => return Ok(Err(failure)),
     };
     Ok(Ok(occurrences
         .into_iter()
-        .filter(|occurrence| occurrence.kind == OccurrenceKind::Definition)
         .map(|occurrence| occurrence.symbol_id)
         .collect()))
 }
 
 /// Validate and convert every occurrence of a document against its source
 /// bytes: typed ranges first, UTF-8 byte ranges on codepoint boundaries,
-/// exact duplicates deduplicated. Sorted by position.
+/// exact duplicates deduplicated. Sorted by position. `definitions_only`
+/// still validates every occurrence but converts only definitions.
 fn convert_document(
     namespace: &str,
     path: &str,
     document: &SlimDocument,
     body: &str,
+    definitions_only: bool,
 ) -> Result<Vec<NewOccurrence>, DocFailure> {
     let index = LineIndex::new(body);
-    let mut unique: BTreeMap<(u64, u64, OccurrenceKind, String), NewOccurrence> = BTreeMap::new();
+    let mut unique: BTreeMap<(u64, u64, OccurrenceKind, String), OccurrenceValue> = BTreeMap::new();
     for (ordinal, occurrence) in document.occurrences.iter().enumerate() {
         let malformed = |what: String| {
             doc_failure(
@@ -1380,20 +1381,28 @@ fn convert_document(
         } else {
             OccurrenceKind::Reference
         };
+        if definitions_only && kind == OccurrenceKind::Reference {
+            continue;
+        }
         let id = symbol_id(namespace, path, &occurrence.symbol);
         let entry = unique
-            .entry((start as u64, end as u64, kind, id.clone()))
-            .or_insert_with(|| NewOccurrence {
-                kind,
-                start: start as u64,
-                end: end as u64,
-                symbol_id: id,
+            .entry((start as u64, end as u64, kind, id))
+            .or_insert_with(|| OccurrenceValue {
                 symbol: occurrence.symbol.clone(),
                 roles: 0,
             });
         entry.roles |= occurrence.symbol_roles;
     }
-    Ok(unique.into_values().collect())
+    Ok(unique
+        .into_iter()
+        .map(|((start, end, kind, symbol_id), value)| NewOccurrence {
+            kind,
+            start,
+            end,
+            symbol_id,
+            value,
+        })
+        .collect())
 }
 
 // ---------------------------------------------------------------------------
@@ -1996,7 +2005,7 @@ fn publish_document(
         Ok(body) => body,
         Err(failure) => return Ok(Published::Failed(failure)),
     };
-    let occurrences = match convert_document(&tuple.producer.name, path, document, &body) {
+    let occurrences = match convert_document(&tuple.producer.name, path, document, &body, false) {
         Ok(occurrences) => occurrences,
         Err(failure) => return Ok(Published::Failed(failure)),
     };
