@@ -34,13 +34,23 @@ pub struct GraphBundle {
     pub edges: Vec<Edge>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Deserialize)]
 struct StoredEdge {
     provider: String,
     revision: String,
     edge: Edge,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     execution: Option<Execution>,
+}
+
+/// The write-side view of [`StoredEdge`]: the field order is the stored row.
+#[derive(Serialize)]
+struct StoredEdgeRef<'a> {
+    provider: &'a str,
+    revision: &'a str,
+    edge: &'a Edge,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    execution: Option<&'a Execution>,
 }
 
 #[derive(Debug, Serialize)]
@@ -356,10 +366,8 @@ impl Engine {
                 {
                     return Err(invalid("unknown evidence class"));
                 }
-                for endpoint in [&edge.from, &edge.to]
-                    .into_iter()
-                    .chain(execution.map(|e| &e.test))
-                {
+                // The observing test was validated above, before any edge.
+                for endpoint in [&edge.from, &edge.to] {
                     validate_path(&endpoint.path)?;
                     if endpoint.line == 0 || endpoint.symbol.len() > 1024 {
                         return Err(invalid("invalid endpoint"));
@@ -379,11 +387,11 @@ impl Engine {
                         )));
                     }
                 }
-                encoded.insert(serde_json::to_string(&StoredEdge {
-                    provider: bundle.provider.clone(),
-                    revision: bundle.revision.clone(),
-                    edge: edge.clone(),
-                    execution: execution.cloned(),
+                encoded.insert(serde_json::to_string(&StoredEdgeRef {
+                    provider: &bundle.provider,
+                    revision: &bundle.revision,
+                    edge,
+                    execution,
                 })?);
             }
             let mut providers = tx.open_table(PROVIDERS)?;
