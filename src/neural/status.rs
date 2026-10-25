@@ -26,9 +26,10 @@
 //! `status` overlays its own live driver state (009 T003).
 use crate::control::Control;
 use crate::error::FResult;
-use crate::neural::cache::{self, CacheProbe, DEFAULT_CACHE_CAP_BYTES};
+use crate::neural::cache::{self, DEFAULT_CACHE_CAP_BYTES};
 use crate::neural::index::{self, GenerationError};
 use crate::store::Engine;
+use redb::ReadableDatabase;
 use serde::Serialize;
 use std::collections::HashSet;
 
@@ -171,7 +172,9 @@ impl Engine {
         let mut after: Option<String> = None;
         loop {
             control.check()?;
-            let page = cache::source_page(&self.db, after.as_deref())?;
+            // One snapshot per page: its sources, partitions and cache rows.
+            let snapshot = cache::MappingPage::open(&self.db.begin_read()?)?;
+            let page = snapshot.source_page(after.as_deref(), None, false)?;
             if page.is_empty() {
                 break;
             }
@@ -181,7 +184,7 @@ impl Engine {
                     unpartitioned += 1;
                     continue;
                 };
-                let record = self.semantic_partition(path)?;
+                let record = snapshot.recorded_partition(path)?;
                 let current = record.as_ref().is_some_and(|record| {
                     cache::partition_is_current(record, meta, recipe, digest)
                 });
@@ -193,7 +196,7 @@ impl Engine {
                 eligible += record.units.len() as u64;
                 for unit in &record.units {
                     referenced.insert(unit.input_key.clone());
-                    if self.semantic_cache_probe(&unit.input_key, digest)? == CacheProbe::Current {
+                    if snapshot.cached(&unit.input_key, digest)? {
                         cached_current += 1;
                         if indexed.contains(unit.input_key.as_str()) {
                             searchable_current += 1;
