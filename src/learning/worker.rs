@@ -583,8 +583,8 @@ pub fn serve(args: WorkerArgs, backend: &mut dyn Backend) -> i32 {
                         "a serve load starts at step 0 of its head"
                     ));
                 }
-                if !super::hex64(&candidate_sha256)
-                    || !super::hex64(&identity.model_function_sha256)
+                if !crate::is_lower_hex(&candidate_sha256, 64)
+                    || !crate::is_lower_hex(&identity.model_function_sha256, 64)
                     || !super::eval::valid_temperature(temperature)
                 {
                     refused!(Refusal::new(

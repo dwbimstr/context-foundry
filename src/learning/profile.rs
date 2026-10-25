@@ -136,7 +136,7 @@ impl LearnProfile {
                 )));
             }
         }
-        if !super::hex64(&self.worker.executable_sha256) {
+        if !crate::is_lower_hex(&self.worker.executable_sha256, 64) {
             return Err(invalid("worker.executable_sha256 must be a SHA-256"));
         }
         if self.load_timeout_seconds == 0 || self.load_timeout_seconds > MAX_LOAD_TIMEOUT_SECONDS {

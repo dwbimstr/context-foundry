@@ -571,7 +571,7 @@ Do not work around a blocker by changing a model, threshold, question set or pro
 
   | File | Next splits (bumps) | Precondition or blocker |
   | --- | --- | --- |
-  | `src/learning.rs` | `state` with its tests (0), `run_policy` (0), `feedback` (0), `strict` and `io` (0), `prep` (2), `readback` (7 if merged with `prep`) | Needs a Mac. `serve`, `supervisor` and `worker` are `#[cfg(target_os = "macos")]`, so Linux gates do not compile the items they reach (`LearningPolicy`, `fail`, `hex64`); keep those in the root or re-export them. |
+  | `src/learning.rs` | `state` with its tests (0), `run_policy` (0), `feedback` (0), `strict` and `io` (0), `prep` (2), `readback` (7 if merged with `prep`) | Needs a Mac. `serve`, `supervisor` and `worker` are `#[cfg(target_os = "macos")]`, so Linux gates do not compile the items they reach (`LearningPolicy`, `fail`); keep those in the root or re-export them. |
 
   `src/neural/query.rs` keeps the dense index, the fallback and query tokenization, and
   `src/graph.rs` keeps `invalid`, `OccurrenceKind`, the storage key codec and the test

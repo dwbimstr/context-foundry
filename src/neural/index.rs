@@ -343,10 +343,6 @@ pub fn generation_dir(store_dir: &Path, function_digest: &str) -> PathBuf {
     store_dir.join(SEMANTIC_DIR).join(function_digest)
 }
 
-fn is_hex64(text: &str) -> bool {
-    text.len() == 64 && text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
-}
-
 /// Open the generation directory of `function_digest` through descriptors,
 /// starting from the Engine's bound store descriptor (a duplicate passed in
 /// by the caller): `semantic/`, then the digest directory. With `create`,
@@ -358,7 +354,7 @@ pub(crate) fn open_generation_dir(
     function_digest: &str,
     create: bool,
 ) -> Result<Option<Dir>, FoundryError> {
-    if !is_hex64(function_digest) {
+    if !crate::is_lower_hex(function_digest, 64) {
         return Err(FoundryError::RepairPathConflict(format!(
             "{function_digest:?} is not a generation directory name"
         )));
@@ -569,7 +565,7 @@ fn validate_inner(
             "no generation manifest under {SEMANTIC_DIR}/{function_digest}"
         ))
     };
-    if !is_hex64(function_digest) {
+    if !crate::is_lower_hex(function_digest, 64) {
         return Err(missing());
     }
     let generation = match open_generation_dir(store, function_digest, false) {
@@ -681,13 +677,13 @@ fn validate_inner(
 }
 
 fn validate_membership(manifest: &GenerationManifest) -> Result<(), GenerationError> {
-    if !is_hex64(&manifest.index_sha256)
-        || !is_hex64(&manifest.members_sha256)
-        || !is_hex64(&manifest.labels_sha256)
+    if !crate::is_lower_hex(&manifest.index_sha256, 64)
+        || !crate::is_lower_hex(&manifest.members_sha256, 64)
+        || !crate::is_lower_hex(&manifest.labels_sha256, 64)
         || manifest
             .locations_delta
             .as_ref()
-            .is_some_and(|hash| !is_hex64(hash))
+            .is_some_and(|hash| !crate::is_lower_hex(hash, 64))
         || (manifest.base_count as u64).saturating_mul(67) > MAX_META_BYTES
     {
         return Err(unavailable(
@@ -695,9 +691,9 @@ fn validate_membership(manifest: &GenerationManifest) -> Result<(), GenerationEr
         ));
     }
     if let Some(delta) = &manifest.delta
-        && (!is_hex64(&delta.sha256)
+        && (!crate::is_lower_hex(&delta.sha256, 64)
             || delta.entries.is_empty()
-            || !delta.entries.iter().all(|key| is_hex64(key))
+            || !delta.entries.iter().all(|key| crate::is_lower_hex(key, 64))
             || !delta.entries.windows(2).all(|pair| pair[0] < pair[1])
             || delta.entries.len() > churn_limit(manifest.base_count)
             || delta.entries.len() as u64 * manifest.dimensions as u64 * 4 > MAX_DELTA_BYTES

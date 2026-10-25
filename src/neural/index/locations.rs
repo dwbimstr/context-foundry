@@ -135,7 +135,7 @@ pub(super) fn decode_labels(
                 source_sha256: source_sha256.clone(),
             });
         }
-        if !is_hex64(&key)
+        if !crate::is_lower_hex(&key, 64)
             || previous.as_ref().is_some_and(|p| p >= &key)
             || !valid_units(&locations, recipe)
         {
@@ -172,7 +172,7 @@ pub(super) fn valid_units(units: &[UnitLocation], recipe: &str) -> bool {
         && units.iter().all(|u| {
             !u.path.is_empty()
                 && u.start < u.end
-                && is_hex64(&u.source_sha256)
+                && crate::is_lower_hex(&u.source_sha256, 64)
                 && u.kind.valid_for(recipe)
         })
 }
@@ -196,7 +196,9 @@ pub(super) fn read(
         |bytes| {
             let keys: Vec<String> = serde_json::from_slice(bytes)
                 .map_err(|e| unavailable(format!("base membership: {e}")))?;
-            if !keys.iter().all(|k| is_hex64(k)) || !keys.windows(2).all(|w| w[0] < w[1]) {
+            if !keys.iter().all(|k| crate::is_lower_hex(k, 64))
+                || !keys.windows(2).all(|w| w[0] < w[1])
+            {
                 return Err(unavailable("base membership is not sorted and unique"));
             }
             Ok(Arc::new(keys))
@@ -233,7 +235,7 @@ pub(super) fn read(
                 }
                 let mut overlay = Overlay::new();
                 for change in changes {
-                    if !is_hex64(&change.key)
+                    if !crate::is_lower_hex(&change.key, 64)
                         || change
                             .units
                             .as_ref()

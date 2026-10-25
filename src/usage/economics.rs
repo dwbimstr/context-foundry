@@ -63,12 +63,6 @@ fn invalid(message: impl Into<String>) -> AdapterError {
 fn id(value: &str) -> bool {
     !value.trim().is_empty() && value.len() <= 256
 }
-fn digest(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
-}
 fn add(left: &mut u64, right: u64) -> AResult<()> {
     *left = left
         .checked_add(right)
@@ -130,7 +124,7 @@ pub fn report(path: &Path) -> AResult<Value> {
             || attempt
                 .verification_sha256
                 .as_deref()
-                .is_some_and(|s| !digest(s))
+                .is_some_and(|s| !crate::is_lower_hex(s, 64))
             || (attempt.outcome != Outcome::Unknown && attempt.verification_sha256.is_none())
         {
             return Err(invalid(

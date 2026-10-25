@@ -311,7 +311,7 @@ fn check_entries(entries: &[GenerationEntry], recipe: &str) -> FResult<()> {
 /// Publication enforces the same location contract as a fresh load, and
 /// refuses before staging can replace the last readable generation.
 fn check_input(key: &str, units: &[UnitLocation], recipe: &str) -> FResult<()> {
-    if !is_hex64(key) || !locations::valid_units(units, recipe) {
+    if !crate::is_lower_hex(key, 64) || !locations::valid_units(units, recipe) {
         return Err(FoundryError::Semantic {
             code: "cache_corrupt",
             message: "invalid input key or locations in generation input".into(),
@@ -503,7 +503,7 @@ impl Staged {
                     text.strip_prefix("location-delta-")
                         .and_then(|s| s.strip_suffix(".json"))
                 })
-                .is_some_and(is_hex64);
+                .is_some_and(|s| crate::is_lower_hex(s, 64));
             let scratch = text
                 .strip_prefix(".building-")
                 .is_some_and(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()));

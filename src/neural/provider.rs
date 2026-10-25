@@ -155,10 +155,6 @@ pub fn render(template: &str, text: &str) -> String {
     }
 }
 
-fn hex(s: &str, len: usize) -> bool {
-    s.len() == len && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
-}
-
 impl FunctionDescriptor {
     /// Structural checks that need no files: version, template, dimensions,
     /// pooling, sorted unique artifact names, hex digests and the pinned
@@ -189,7 +185,7 @@ impl FunctionDescriptor {
         if self.output != "f32" {
             return Err("output must be `f32`".into());
         }
-        if !hex(&self.llama_cpp, 40) {
+        if !crate::is_lower_hex(&self.llama_cpp, 40) {
             return Err("llama_cpp must be a 40-hex commit".into());
         }
         if self.artifact_files.is_empty() {
@@ -213,7 +209,7 @@ impl FunctionDescriptor {
                     file.name
                 ));
             }
-            if !hex(&file.sha256, 64) {
+            if !crate::is_lower_hex(&file.sha256, 64) {
                 return Err(format!("artifact file {:?} has no SHA-256", file.name));
             }
         }

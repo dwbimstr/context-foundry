@@ -78,6 +78,15 @@ pub fn digest(bytes: &[u8]) -> String {
     lower_hex(&Sha256::digest(bytes))
 }
 
+/// Exactly `len` bytes, each `0-9` or `a-f`: the shape of a stored
+/// [`lower_hex`] string.
+pub(crate) fn is_lower_hex(value: &str, len: usize) -> bool {
+    value.len() == len
+        && value
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
 /// Two lowercase hex digits per byte, in order: the encoding of every stored
 /// SHA-256 string (source hashes, cache keys, artifact pins). It does not
 /// depend on a digest type's `LowerHex` implementation.

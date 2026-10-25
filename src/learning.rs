@@ -1024,13 +1024,6 @@ pub struct TokenizerPin {
     pub config_sha256: String,
 }
 
-pub(crate) fn hex64(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
-}
-
 fn fraction(value: f64) -> bool {
     value.is_finite() && (0.0..=1.0).contains(&value)
 }
@@ -1069,7 +1062,7 @@ impl LearningPolicy {
             ("json_sha256", &policy.tokenizer.json_sha256),
             ("config_sha256", &policy.tokenizer.config_sha256),
         ] {
-            if !hex64(hash) {
+            if !crate::is_lower_hex(hash, 64) {
                 return Err(fail(
                     "policy_invalid",
                     format!("tokenizer.{name} must be 64 lowercase hex characters"),
@@ -1092,7 +1085,7 @@ impl LearningPolicy {
                 &self.model.encoder_config_sha256,
             ),
         ] {
-            if !hex64(hash) {
+            if !crate::is_lower_hex(hash, 64) {
                 return invalid(format!("{name} must be 64 lowercase hex characters"));
             }
         }
@@ -1103,7 +1096,7 @@ impl LearningPolicy {
             ));
         }
         if let Some(base) = &self.base
-            && !hex64(base)
+            && !crate::is_lower_hex(base, 64)
         {
             return invalid("base must be null or a 64-hex candidate manifest SHA-256".into());
         }
