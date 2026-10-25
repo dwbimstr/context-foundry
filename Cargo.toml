@@ -97,7 +97,7 @@ bytes = "1"
 # the pinned artifact's tokenizer.json and the USearch F16 index. Default on;
 # `--no-default-features` builds the lexical-only core.
 tokenizers = { version = "=0.23.2", default-features = false, features = ["onig"], optional = true }
-usearch = { version = "=2.26.4", optional = true }
+usearch = { version = "=2.26.5", optional = true }
 # Persistent location snapshots share unchanged tree nodes across publications (009 T008).
 imbl = "=7.0.2"
 # Bounded reusable CPU pools for ingestion/indexing and semantic preparation.

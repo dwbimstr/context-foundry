@@ -18,7 +18,13 @@ output type has no `{:x}` formatting, so first all 18 hex sites moved to
 `context_foundry::lower_hex`; [validation](validation.md#sha2-011-migration--2026-10-13)
 records the byte-identity proof. The bump adds digest 0.11, hybrid-array, block-buffer
 0.12, crypto-common 0.2 and const-oid (all MIT OR Apache-2.0). sha2 0.10.9 remains only
-under the optional `learning-worker` feature, via `tch` → `zip` → `pbkdf2`.
+under the optional `learning-worker` feature, via `tch` → `zip` → `pbkdf2`. On 2026-10-23
+six updates from Dependabot #35 were applied: libc 0.2.191, redb 4.4.0, serde_json
+1.0.154, tokio 1.53.3, usearch 2.26.5 (exact pin) and uuid 1.28.0; serde_json now also
+depends on the already locked foldhash. The declared licenses are unchanged. The same
+PR's tree-sitter-scala 0.26.3 is not applied: a grammar change can change units, which
+[§ Index version gate](../specs/001-source-state-recovery/contracts/context-v2.md#index-version-gate)
+and the partition recipes' `SOURCE_UNIT_SCHEMA` tie to schema bumps, an owner decision.
 
 | Package | Locked version | Declared license | Use |
 | --- | --- | --- | --- |
@@ -29,17 +35,17 @@ under the optional `learning-worker` feature, via `tch` → `zip` → `pbkdf2`.
 | http | 1.5.0 | MIT OR Apache-2.0 | normal |
 | ignore | 0.4.33 | Unlicense OR MIT | normal |
 | imbl | 7.0.2 | MPL-2.0+ | normal (009 T008 persistent location snapshots; unmodified) |
-| libc | 0.2.190 | MIT OR Apache-2.0 | normal (held-root opens) |
+| libc | 0.2.191 | MIT OR Apache-2.0 | normal (held-root opens) |
 | pulldown-cmark | 0.13.4 | MIT | normal (Markdown sections; default features off) |
-| redb | 4.3.0 | MIT OR Apache-2.0 | normal |
+| redb | 4.4.0 | MIT OR Apache-2.0 | normal |
 | rmcp | 3.5.1 | Apache-2.0 | normal (server, stdio, streamable HTTP server); dev adds client |
 | serde | 1.0.229 | MIT OR Apache-2.0 | normal |
-| serde_json | 1.0.151 | MIT OR Apache-2.0 | normal |
+| serde_json | 1.0.154 | MIT OR Apache-2.0 | normal |
 | sha2 | 0.11.1 | MIT OR Apache-2.0 | normal |
 | tantivy | 0.26.2 | MIT | normal |
 | tiktoken-rs | 0.12.1 | MIT | normal |
-| tokio | 1.53.2 | MIT | normal; dev adds process |
-| tokio-util | 0.7.19 | MIT | normal |
+| tokio | 1.53.3 | MIT | normal; dev adds process |
+| tokio-util | 0.7.20 | MIT | normal |
 | tree-sitter | 0.26.13 | MIT | normal (syntax runtime; third-party C) |
 | tree-sitter-c | 0.24.2 | MIT | normal (C grammar) |
 | tree-sitter-cpp | 0.23.4 | MIT | normal (C/C++ grammar) |
@@ -50,7 +56,7 @@ under the optional `learning-worker` feature, via `tch` → `zip` → `pbkdf2`.
 | tree-sitter-rust | 0.24.2 | MIT | normal (Rust grammar) |
 | tree-sitter-typescript | 0.23.2 | MIT | normal (TypeScript/TSX grammars) |
 | ureq | 3.4.2 | MIT OR Apache-2.0 | normal (legacy Laya protocol module) |
-| uuid | 1.27.0 | Apache-2.0 OR MIT | normal |
+| uuid | 1.28.0 | Apache-2.0 OR MIT | normal |
 | reqwest | 0.13.5 | MIT OR Apache-2.0 | dev |
 | tempfile | 3.27.0 | MIT OR Apache-2.0 | dev |
 | toml | 1.1.8 | MIT OR Apache-2.0 | dev |
@@ -137,7 +143,7 @@ LibTorch from default-feature builds. Its optional `learning-worker` and the sep
 [probe crate](../tools/feasibility/README.md) now pin experimental tch 0.26.0 with
 LibTorch 2.13.0; see the [compatibility review](review/tch-026.md).
 The probe also pins PyO3 0.29.2, USearch 2.26.2 and rmcp 3.5.0 (the product has
-since moved to rmcp 3.5.1 and USearch 2.26.4); its lock is not the product lock. Contract 013 v4's accepted
+since moved to rmcp 3.5.1 and USearch 2.26.5); its lock is not the product lock. Contract 013 v4's accepted
 baseline was tch 0.24.0/LibTorch 2.11.0; that acceptance does not transfer to this
 migration. USearch has a third-party native C++ core;
 this does not introduce first-party C++ code. Libkrun remains conditional.
