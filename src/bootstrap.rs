@@ -607,6 +607,11 @@ pub struct ConnectInfo {
     /// the launch arguments as `--budget FILE`, which the server enforces:
     /// a printed comment is not enforcement.
     pub budget_file: Option<PathBuf>,
+    /// Explicit serving profiles, forwarded without loading or preparation.
+    pub semantic_profile: Option<PathBuf>,
+    pub knowledge_profile: Option<PathBuf>,
+    /// Admit the selected semantic profile's development worker at launch.
+    pub development_isolation: bool,
     pub http_port: Option<u16>,
     pub token_env: Option<String>,
     /// `--reference ROOT=STORE` admissions (007) exactly as given; the
@@ -667,6 +672,12 @@ fn toml_string(value: &str) -> String {
 
 /// The exact `foundry` arguments (after the binary) for this configuration.
 fn launch_args(info: &ConnectInfo, store: &Path, root: &Path) -> AResult<Vec<String>> {
+    if info.development_isolation && info.semantic_profile.is_none() {
+        return Err(FoundryError::InvalidArgument(
+            "--development-isolation requires --semantic-profile".into(),
+        )
+        .into());
+    }
     let mut args = vec![
         "--store".to_owned(),
         store.display().to_string(),
@@ -689,6 +700,19 @@ fn launch_args(info: &ConnectInfo, store: &Path, root: &Path) -> AResult<Vec<Str
     }
     if let Some(file) = &info.budget_file {
         args.extend(["--budget".to_owned(), file.display().to_string()]);
+    }
+    for (flag, file) in [
+        ("--semantic-profile", &info.semantic_profile),
+        ("--knowledge-profile", &info.knowledge_profile),
+    ] {
+        if let Some(file) = file {
+            let absolute = std::path::absolute(file)
+                .map_err(|e| FoundryError::InvalidArgument(format!("{flag}: {e}")))?;
+            args.extend([flag.to_owned(), absolute.display().to_string()]);
+        }
+    }
+    if info.development_isolation {
+        args.push("--development-isolation".to_owned());
     }
     for reference in &info.references {
         args.extend(["--reference".to_owned(), reference.clone()]);

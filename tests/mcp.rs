@@ -1848,6 +1848,9 @@ fn connect_info(
         store,
         budget: context_foundry::config::BudgetConfig::default(),
         budget_file: None,
+        semantic_profile: None,
+        knowledge_profile: None,
+        development_isolation: false,
         http_port: None,
         token_env: None,
         references: Vec::new(),
@@ -1888,6 +1891,10 @@ fn connect_prints_parseable_omp_configuration_with_policy_and_timeouts() {
         "escaped root round-trips"
     );
     assert!(args.contains(&std::path::absolute(&store).unwrap().to_str().unwrap()));
+    assert!(!args.iter().any(|a| matches!(
+        *a,
+        "--semantic-profile" | "--knowledge-profile" | "--development-isolation"
+    )));
     let at = args
         .iter()
         .position(|a| *a == "--budget")
@@ -2010,6 +2017,212 @@ fn connect_refuses_unknown_hosts_with_the_named_code() {
     .expect("an unimplemented host is refused");
     assert_eq!(error.code(), "host_unsupported");
     assert_eq!(error.exit_code(), 2);
+}
+
+#[test]
+fn connect_forwards_profiles_without_loading_or_maintaining() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = hostile_root(dir.path());
+    let store = dir.path().join("new store");
+    let semantic = "semantic \"é日本\\.json";
+    let knowledge = "knowledge \"é日本\\.json";
+    // Deliberately nonexistent: configuration generation must not load profiles.
+    for host in ["omp", "codex"] {
+        let output = std::process::Command::new(BIN)
+            .current_dir(dir.path())
+            .arg("--store")
+            .arg(&store)
+            .args(["connect", "--host", host, "--root"])
+            .arg(&root)
+            .args([
+                "--print-config",
+                "--semantic-profile",
+                semantic,
+                "--knowledge-profile",
+                knowledge,
+                "--development-isolation",
+            ])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        let printed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let launch = printed["launch"].as_array().unwrap();
+        let args: Vec<String> = if host == "omp" {
+            let config: serde_json::Value =
+                serde_json::from_str(printed["config"].as_str().unwrap()).unwrap();
+            config["mcpServers"]["context-foundry"]["args"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_str().unwrap().into())
+                .collect()
+        } else {
+            let config: toml::Table = printed["config"].as_str().unwrap().parse().unwrap();
+            config["mcp_servers"]["context-foundry"]["args"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_str().unwrap().into())
+                .collect()
+        };
+        assert_eq!(
+            serde_json::to_value(&args).unwrap(),
+            serde_json::Value::Array(launch[1..].to_vec())
+        );
+        for (flag, path) in [
+            ("--semantic-profile", semantic),
+            ("--knowledge-profile", knowledge),
+        ] {
+            let at = args.iter().position(|a| a == flag).unwrap();
+            assert_eq!(args[at + 1], dir.path().join(path).to_str().unwrap());
+        }
+        assert!(args.iter().any(|a| a == "--development-isolation"));
+        assert!(!args.iter().any(|a| a.ends_with("-maintain")));
+        assert!(!store.exists());
+    }
+    for args in [
+        vec!["--development-isolation"],
+        vec!["--knowledge-profile", knowledge, "--development-isolation"],
+        vec![
+            "--remove-config",
+            "host.toml",
+            "--semantic-profile",
+            semantic,
+        ],
+        vec![
+            "--remove-config",
+            "host.toml",
+            "--knowledge-profile",
+            knowledge,
+        ],
+    ] {
+        let mut command = std::process::Command::new(BIN);
+        command.current_dir(dir.path()).arg("connect");
+        // Removal must fail because of the profile option itself, without
+        // unrelated host/root/print flags also triggering the conflict.
+        if !args.contains(&"--remove-config") {
+            command
+                .args(["--host", "omp", "--root"])
+                .arg(&root)
+                .arg("--print-config");
+        }
+        let output = command.args(&args).output().unwrap();
+        assert!(!output.status.success());
+        if args.contains(&"--remove-config") {
+            assert!(String::from_utf8_lossy(&output.stderr).contains("--remove-config"));
+        }
+    }
+    let mut info = connect_info("omp", &root, store);
+    info.development_isolation = true;
+    assert!(context_foundry::bootstrap::connect(&info).is_err());
+    info.knowledge_profile = Some(dir.path().join(knowledge));
+    assert!(context_foundry::bootstrap::connect(&info).is_err());
+    info.development_isolation = false;
+    let printed = context_foundry::bootstrap::connect(&info).unwrap();
+    assert!(printed.launch.iter().any(|a| a == "--knowledge-profile"));
+    assert!(!printed.launch.iter().any(|a| a == "--semantic-profile"));
+}
+
+#[cfg(feature = "semantic")]
+#[tokio::test]
+async fn connect_generated_argv_serves_fallback_and_knowledge_without_generation() {
+    for host in ["omp", "codex"] {
+        let dir = tempfile::tempdir().unwrap();
+        let root = hostile_root(dir.path());
+        let store = dir.path().join("store \"é日本");
+        bootstrap_apply(&store, &root);
+        let engine = context_foundry::Engine::open_existing(&store).unwrap();
+        let wid = engine.workspace_id().unwrap();
+        drop(engine);
+        // A valid fixture descriptor with an absent worker bundle is unusable.
+        // This proves fallback admission, never real-model readiness.
+        let semantic =
+            context_foundry::testkit::write_semantic_profile(dir.path(), "é \"fallback", |_| {});
+        let scratch = dir.path().join("scratch");
+        let endpoint = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        endpoint.set_nonblocking(true).unwrap();
+        let knowledge = dir.path().join("knowledge \"é日本.json");
+        std::fs::write(&knowledge, serde_json::to_vec(&serde_json::json!({
+            "v":1,"workspace_id":wid,"recipe":"fixture-v1","model":"fixture-model",
+            "artifact_sha256":"a".repeat(64),
+            "endpoint":format!("http://{}/v1/chat/completions",endpoint.local_addr().unwrap()),
+            "allow_remote":false,"token_env":null,"source_scope":["mod_0000.rs"],
+            "instructions":"Use supplied evidence.","max_request_tokens":8192,
+            "max_request_bytes":131072,"output_tokens":512,"call_seconds":5,"cache_bytes":1048576,
+            "nodes":[{"id":"one","sources":[{"path":"mod_0000.rs","start":0,"end":null}],"children":[]}]
+        })).unwrap()).unwrap();
+        let printed = std::process::Command::new(BIN)
+            .arg("--store")
+            .arg(&store)
+            .args(["connect", "--host", host, "--root"])
+            .arg(&root)
+            .args(["--print-config", "--semantic-profile"])
+            .arg(&semantic)
+            .arg("--knowledge-profile")
+            .arg(&knowledge)
+            .arg("--development-isolation")
+            .output()
+            .unwrap();
+        assert!(printed.status.success(), "{printed:?}");
+        let printed: serde_json::Value = serde_json::from_slice(&printed.stdout).unwrap();
+        assert_eq!(printed["launch"][0], BIN);
+        let argv = printed["launch"].as_array().unwrap()[1..]
+            .iter()
+            .map(|v| v.as_str().unwrap().to_owned())
+            .collect();
+        let mut server = RawStdio::launch(argv, None).await;
+        let catalog: serde_json::Value =
+            serde_json::from_str(&server.rpc("tools/list", serde_json::json!({})).await).unwrap();
+        let context = catalog["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == "context")
+            .unwrap();
+        assert!(
+            context["inputSchema"]["properties"]
+                .get("include_briefs")
+                .is_some()
+        );
+        let status = server.call("status", serde_json::json!({})).await.json();
+        assert!(
+            status["semantic"]["runtime"]
+                .as_str()
+                .unwrap()
+                .starts_with("fallback:"),
+            "{status}"
+        );
+        assert_eq!(status["knowledge"]["maintenance"]["continuous"], false);
+        assert_eq!(
+            status["knowledge"]["maintenance"]["completed_pass_usage"]["calls"],
+            0
+        );
+        let response = server
+            .call(
+                "context",
+                serde_json::json!({"query":"records split","tokens":2048,"include_briefs":true}),
+            )
+            .await;
+        assert!(!response.is_error(), "{}", response.text());
+        assert!(response.text().contains("fallback:"));
+        assert!(count_tokens(&response.text()) <= 2048);
+        assert_eq!(
+            endpoint.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+        let RawStdio {
+            mut _child, stdin, ..
+        } = server;
+        drop(stdin);
+        let exit = tokio::time::timeout(Duration::from_secs(10), _child.wait())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(exit.success(), "{exit}");
+        assert!(!scratch.exists() || std::fs::read_dir(&scratch).unwrap().next().is_none());
+        let engine = context_foundry::Engine::open_existing(&store).unwrap();
+        assert_eq!(engine.knowledge_status().unwrap()["cache"]["entries"], 0);
+    }
 }
 
 fn owned_block() -> String {

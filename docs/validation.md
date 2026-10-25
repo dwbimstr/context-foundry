@@ -1,5 +1,38 @@
 # Validation
 
+## Preserve retrieved evidence and selected profiles — 2026-10-25
+
+The fixes are isolated on a branch from `main` at `2f6b4ea`. Its source tree is
+identical to the earlier experimental base `4954fab`, so no experimental commits
+or additional feature prerequisites are included.
+
+- Brief enrichment retains retrieved spans and their order. Exact source-handle
+  duplicates are suppressed; disjoint same-file spans remain. A missing primary
+  citation is appended only while the existing 32-source window has room.
+- Brief orientation requires its cited bytes in a delivered body or excerpt,
+  including when a containing retrieved span provides support at a full window.
+  Signatures, outlines, addresses, partial coverage and different source identities
+  cannot provide that support. Freshness and delivery budgets remain authoritative.
+- Generated OMP/Codex launch arguments forward explicit semantic and knowledge
+  profiles and semantic development admission. Profile paths are absolute and
+  escaped; printing does not load profiles/models or enable maintenance. Invalid
+  development/removal combinations are refused, and no-profile launches are preserved.
+
+The regressions exercise the real store, production tokenizer and delivery packer,
+including oversized orientation, exact duplicates, disjoint ranges, a full candidate
+window and rejected forms/identities. Generated OMP JSON and Codex TOML round-trip
+spaces, quotes, backslashes and Unicode; the full generated argv is launched through
+MCP to verify named fallback, knowledge capability without generation, and owner/store/
+scratch cleanup. These use synthetic fixtures and an unusable embedding worker;
+they do not establish real-model readiness, retrieval-quality or economic gains.
+
+The PR and its local validation receipt record the tested commit, focused checks,
+full gate results and ignored-test counts. No ranking, invalidation, model or
+dependency policy is changed by these repairs.
+Focused checks on this `main`-based worktree pass: 211 tests, 0 failures, 3 ignored,
+plus all 5 connection tests. The lexical-only library check and documentation link
+check also pass. The install target has no runnable tests on Linux.
+
 ## Architecture refactor and dependency updates — 2026-10-25
 
 `4475f9f..38dc370` on `experimental/context-ecosystem`. By owner instruction the

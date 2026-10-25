@@ -45,6 +45,13 @@ below are history.
 - **Open.** No CI runs; local gates are the receipt. The 6,000-file watcher test is
   intermittent on this Mac (F18). After a reboot, repeat G2 runs differ in 36 of 388
   rows with equal totals; compare arms within one session.
+- **Evidence/profile repairs, 2026-10-25.** Brief enrichment preserves retrieved
+  spans/order and the 32-source cap; delivered containing bodies/excerpts can support
+  a brief citation. Host configuration forwards explicit semantic/knowledge profiles
+  and development admission without enabling maintenance. See the
+  [scoped repair receipt](validation.md#preserve-retrieved-evidence-and-selected-profiles--2026-10-25).
+  These are correctness repairs; retrieval quality, economics and real-model readiness
+  are not inferred from their fixture checks.
 
 **Representation repair continuation, 2026-10-17:** body-window contexts keep the
 region's own declaration when over budget (`+context2`), and long overviews keep

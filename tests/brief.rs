@@ -120,6 +120,210 @@ fn pack(context: &context_foundry::memory::MemoryContext, tokens: usize) -> resp
     )
     .unwrap()
 }
+
+fn source_handles(context: &context_foundry::memory::MemoryContext) -> Vec<String> {
+    context
+        .batch
+        .items
+        .iter()
+        .filter(|item| {
+            item.forms
+                .iter()
+                .any(|form| matches!(form, context_foundry::store::RenderedForm::Verbatim(_)))
+        })
+        .map(|item| item.handle.as_ref().unwrap().to_v2())
+        .collect()
+}
+
+fn single_span_brief(wid: &str, citation: String) -> Value {
+    let mut value = input(wid);
+    value["cited_spans"] = json!([citation]);
+    value["purpose"][0]["identifiers"] = json!([]);
+    value["tests"] = json!([]);
+    value
+}
+
+#[test]
+fn enrichment_preserves_retrieved_order_and_disjoint_same_file_spans() {
+    let e = env();
+    let mut engine = Engine::open_existing(&e.store).unwrap();
+    let body = "pub fn first() -> &'static str { \"capacity eviction first\" }\npub fn second() -> &'static str { \"capacity eviction second\" }\n";
+    engine.replace_source("opaque.rs", body).unwrap();
+    drain(&mut engine);
+    let baseline = context(&engine, QUERY, false);
+    let handles = source_handles(&baseline);
+    assert!(
+        handles.len() >= 2,
+        "fixture retrieves disjoint functions: {handles:?}"
+    );
+    // The citation is an exact duplicate of one source, never of the other.
+    let brief = single_span_brief(&e.wid, handles[0].clone());
+    call(&engine, json!({"op":"put","brief":brief})).unwrap();
+    drain(&mut engine);
+    let enriched = context(&engine, QUERY, true);
+    assert_eq!(source_handles(&enriched), handles);
+    let text = pack(&enriched, 2048).text;
+    assert!(body.lines().all(|line| text.contains(line)));
+    assert!(text.contains("brief:"));
+}
+
+#[test]
+fn enrichment_omits_oversized_brief_without_losing_retrieved_implementation() {
+    for oversized in [false, true] {
+        let e = env();
+        let mut engine = Engine::open_existing(&e.store).unwrap();
+        let other = "pub fn second() -> &'static str { \"capacity eviction implementation\" }\n";
+        let body = format!("{BODY}{other}");
+        engine.replace_source("opaque.rs", &body).unwrap();
+        drain(&mut engine);
+        let baseline = context(&engine, QUERY, false);
+        let handles = source_handles(&baseline);
+        assert!(pack(&baseline, 2048).text.contains(other.trim()));
+        let citation = format!(
+            "opaque.rs#0-{}@{}.{}",
+            BODY.len(),
+            &context_foundry::digest(body.as_bytes())[..32],
+            &e.wid[..16]
+        );
+        let mut brief = single_span_brief(&e.wid, citation.clone());
+        if oversized {
+            brief["behavior"][0]["text"] = json!("z ".repeat(6000));
+        }
+        call(&engine, json!({"op":"put","brief":brief})).unwrap();
+        drain(&mut engine);
+        let enriched = context(&engine, QUERY, true);
+        let merged = source_handles(&enriched);
+        assert_eq!(&merged[..handles.len()], handles.as_slice());
+        assert_eq!(merged.last(), Some(&citation));
+        let out = pack(&enriched, 2048);
+        assert!(out.tokens <= 2048);
+        assert!(out.text.contains(other.trim()));
+        assert_eq!(out.text.contains("brief:"), !oversized);
+        if !oversized {
+            assert!(out.text.contains(BODY));
+        }
+    }
+}
+
+#[test]
+fn enrichment_does_not_evict_a_full_32_source_window_for_a_brief_citation() {
+    let e = env();
+    let mut engine = Engine::open_existing(&e.store).unwrap();
+    for i in 0..40 {
+        engine
+            .replace_source(
+                &format!("hit{i:02}.rs"),
+                &format!("pub fn item_{i}() -> &'static str {{ \"capacity eviction\" }}\n"),
+            )
+            .unwrap();
+    }
+    put(&engine);
+    drain(&mut engine);
+    let baseline = source_handles(&context(&engine, QUERY, false));
+    assert_eq!(baseline.len(), 32);
+    let enriched = context(&engine, QUERY, true);
+    assert_eq!(source_handles(&enriched), baseline);
+    assert_eq!(enriched.briefs.len(), 1);
+    let out = pack(&enriched, 2048);
+    assert!(out.tokens <= 2048);
+    assert!(
+        !out.text.contains("brief:"),
+        "no brief without its supporting span"
+    );
+}
+
+#[test]
+fn full_window_brief_support_uses_delivered_citation_bytes_not_an_exact_candidate() {
+    use context_foundry::store::{HandleRef, RenderedForm};
+    let e = env();
+    let mut engine = Engine::open_existing(&e.store).unwrap();
+    for i in 0..40 {
+        engine
+            .replace_source(
+                &format!("hit{i:02}.rs"),
+                &format!("pub fn item_{i}() -> &'static str {{ \"capacity eviction\" }}\n"),
+            )
+            .unwrap();
+    }
+    drain(&mut engine);
+    let baseline = context(&engine, QUERY, false);
+    let original = source_handles(&baseline);
+    assert_eq!(original.len(), 32);
+    let first = &baseline.batch.items[0];
+    let handle = first.handle.as_ref().unwrap().clone();
+    let RenderedForm::Verbatim(body) = &first.forms[0] else {
+        panic!("verbatim fixture")
+    };
+    let cited = body[1..body.len() - 1].to_owned();
+    let mut span = HandleRef::parse(&original[0]).unwrap();
+    span.start += 1;
+    span.end -= 1;
+    let citation = format!(
+        "{}#{}-{}@{}.{}",
+        span.path, span.start, span.end, span.sha32, span.ws16
+    );
+    assert!(!original.contains(&citation));
+    call(
+        &engine,
+        json!({"op":"put","brief":single_span_brief(&e.wid,citation)}),
+    )
+    .unwrap();
+    drain(&mut engine);
+    let mut enriched = context(&engine, QUERY, true);
+    assert_eq!(source_handles(&enriched), original);
+    // The primary citation has no candidate slot, but its bytes are delivered
+    // inside the first retrieved function. No larger window or duplicate body.
+    for (form, supported) in [
+        (RenderedForm::Verbatim(body.clone()), true),
+        (
+            RenderedForm::Excerpt {
+                start: span.start,
+                start_line: 1,
+                body: cited.clone(),
+            },
+            true,
+        ),
+        (
+            RenderedForm::Excerpt {
+                start: span.start + 1,
+                start_line: 1,
+                body: cited[1..].into(),
+            },
+            false,
+        ),
+        (RenderedForm::Signature("fn item_0()".into()), false),
+        (RenderedForm::Outline(body.clone()), false),
+        (RenderedForm::Address, false),
+    ] {
+        enriched.batch.items[0].forms = vec![form];
+        for budget in [2048, 8192] {
+            let out = pack(&enriched, budget);
+            assert!(out.tokens <= budget);
+            if budget == 8192 || !supported {
+                assert_eq!(
+                    out.text.contains("brief:"),
+                    supported,
+                    "{budget}: {}",
+                    out.text
+                );
+            }
+            if out.text.contains("brief:") {
+                assert!(out.text.contains(&cited));
+            }
+        }
+    }
+    enriched.batch.items[0].forms = vec![RenderedForm::Verbatim(body.clone())];
+    for changed in ["sha256", "workspace_id", "path"] {
+        let mut other = handle.clone();
+        match changed {
+            "sha256" => other.sha256 = "0".repeat(64),
+            "workspace_id" => other.workspace_id = "0".repeat(64),
+            _ => other.path = "another.rs".into(),
+        }
+        enriched.batch.items[0].handle = Some(other);
+        assert!(!pack(&enriched, 8192).text.contains("brief:"), "{changed}");
+    }
+}
 #[test]
 fn conceptual_vocabulary_recovers_opaque_source_and_tests_without_changing_exact_names() {
     let e = env();

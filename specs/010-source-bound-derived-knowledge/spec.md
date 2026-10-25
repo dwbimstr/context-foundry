@@ -114,9 +114,17 @@ The search schema remains 5. Old binaries refuse schema 8 before reading its typ
   stale candidates, a filled candidate window and output omissions are visible.
   A first record that cannot fit causes a refusal, not a successful empty answer.
 - CLI `context --include-briefs` and library `ContextOptions.briefs` augment only
-  anchorless queries. Supporting primary source spans precede ordinary candidates.
+  anchorless queries. Retrieved source candidates retain their order and spans.
+  A validated primary citation is appended only if its exact source handle is
+  absent and the existing 32-source window has room; same-file disjoint spans
+  remain independent evidence. Briefs cannot evict retrieved candidates or enlarge
+  the cap, including when the brief itself cannot fit. Derived-record grouping by
+  primary source still applies to brief search, not to retrieved source spans.
   [response.rs](../../src/response.rs) permits a `brief:` line only when its primary
-  span is delivered, using the same complete-response tokenizer and byte allowance
+  span is delivered. A containing verbatim body or exact excerpt can supply those
+  bytes even when the citation has no separate candidate slot; an outline,
+  signature, address, partial range or different source identity cannot. It uses
+  the same complete-response tokenizer and byte allowance
   as source, explicit project memory and a selected task view. Records are explicitly
   `kind:derived`; test/dependency citations remain exactly recoverable. This does
   not assert that primary source plus orientation is a complete editing packet.
