@@ -764,7 +764,7 @@ impl<'a> BudgetedText<'a> {
 fn pack(
     items: &[Vec<String>],
     source_items: &[RankedItem],
-    tail: (&[String], &[(usize, usize)]),
+    tail: (&[String], &[(usize, Option<SourceHandle>)]),
     header: &HeaderV2,
     budget: Budget,
     boundary: ByteMeasure,
@@ -829,19 +829,16 @@ fn pack(
     // `tail_kept` stays sorted.
     let mut tail_kept: Vec<usize> = Vec::new();
     for index in 0..tail.len() {
-        if required.iter().any(|&(tail_index, source_index)| {
-            tail_index == index
-                && !source_items
-                    .get(source_index)
-                    .and_then(|item| item.handle.as_ref())
-                    .is_some_and(|required| {
-                        included.iter().any(|&(i, f)| {
-                            source_items
-                                .get(i)
-                                .and_then(|item| form_source(item, f))
-                                .is_some_and(|delivered| source_covers(&delivered, required))
-                        })
+        if required.iter().any(|(tail_index, source)| {
+            *tail_index == index
+                && !source.as_ref().is_some_and(|required| {
+                    included.iter().any(|&(i, f)| {
+                        source_items
+                            .get(i)
+                            .and_then(|item| form_source(item, f))
+                            .is_some_and(|delivered| source_covers(&delivered, required))
                     })
+                })
         }) {
             continue;
         }
@@ -1149,24 +1146,34 @@ pub fn pack_enriched_context(
         .iter()
         .map(|brief| serde_json::to_string(brief).map(|json| format!("brief: {json}\n")))
         .collect::<Result<_, _>>()?;
-    let required: Vec<(usize, usize)> = context
+    let required: Vec<(usize, Option<SourceHandle>)> = context
         .briefs
         .iter()
         .enumerate()
         .map(|(i, brief)| {
+            let span = HandleRef::parse(&brief.brief.cited_spans[0])?;
+            // The citation need not occupy a candidate slot: a retrieved body
+            // or excerpt may already deliver these exact bytes. Bind its full
+            // identity from the validated batch and check actual form coverage
+            // below; a matching outline/signature alone is never support.
             let source = context
                 .batch
                 .items
                 .iter()
-                .position(|item| {
-                    item.handle
-                        .as_ref()
-                        .is_some_and(|handle| handle.to_v2() == brief.brief.cited_spans[0])
+                .filter_map(|item| item.handle.as_ref())
+                .find(|handle| {
+                    handle.workspace_id.starts_with(&span.ws16)
+                        && handle.path == span.path
+                        && handle.sha256.starts_with(&span.sha32)
                 })
-                .unwrap_or(usize::MAX);
-            (i, source)
+                .map(|handle| SourceHandle {
+                    start: span.start,
+                    end: span.end,
+                    ..handle.clone()
+                });
+            Ok((i, source))
         })
-        .collect();
+        .collect::<FResult<_>>()?;
     tail.extend(context.hits.iter().map(memory_line));
     pack_task_tail(
         &context.batch,
@@ -1181,7 +1188,7 @@ pub fn pack_enriched_context(
 fn pack_task_tail(
     batch: &CandidateBatch,
     roots: Option<&[RootHeader]>,
-    tail: (&[String], &[(usize, usize)]),
+    tail: (&[String], &[(usize, Option<SourceHandle>)]),
     task_view: Option<&crate::task_context::ContextView>,
     budget: Budget,
     boundary: ByteMeasure,
@@ -1242,7 +1249,7 @@ fn context_header<'a>(
 fn pack_context_guarded(
     batch: &CandidateBatch,
     roots: Option<&[RootHeader]>,
-    tail: (&[String], &[(usize, usize)]),
+    tail: (&[String], &[(usize, Option<SourceHandle>)]),
     task_view: Option<&str>,
     budget: Budget,
     boundary: ByteMeasure,

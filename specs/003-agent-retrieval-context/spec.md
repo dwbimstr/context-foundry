@@ -231,6 +231,16 @@ default export.
 
 ## Interface and lifecycle
 
+`connect --print-config` forwards explicitly selected `--semantic-profile FILE`,
+`--knowledge-profile FILE` and `--development-isolation` into the generated owner
+argv for both OMP and Codex. Profile paths become absolute before JSON/TOML
+escaping. Development isolation requires a semantic profile, as in the launched
+MCP interface; knowledge-local worker isolation remains in its own profile.
+Printing loads no profile, opens no store, starts no model and enables no
+maintenance. Omitting profiles preserves the ordinary launch. An unusable semantic
+profile retains the existing named lexical fallback; knowledge capability alone
+does not start generation. Config removal conflicts with these launch options.
+
 Command: `foundry --store DIR mcp --root ROOT`. Root is canonicalized and
 bound once; requests cannot switch it. [007](../007-multi-workspace-context/spec.md)
 adds `--reference ROOT=STORE` (at most 8), admitted only at launch; `root` and `roots`
