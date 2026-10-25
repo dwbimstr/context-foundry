@@ -61,7 +61,7 @@ impl Config {
         if !self.development
             || !absolute(&self.executable)
             || !absolute(&self.gguf)
-            || !super::digest(&self.executable_sha256)
+            || !crate::is_lower_hex(&self.executable_sha256, 64)
             || self.llama_cpp != LLAMA_CPP
             || self.chat_template.is_empty()
             || self.chat_template.len() > 64

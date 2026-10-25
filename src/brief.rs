@@ -99,12 +99,6 @@ pub enum Command {
 fn invalid(message: &str) -> FoundryError {
     FoundryError::InvalidArgument(message.into())
 }
-fn is_digest(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-}
 pub fn parse(bytes: &[u8]) -> FResult<Request> {
     if bytes.len() > MAX_REQUEST_BYTES {
         return Err(invalid("brief request exceeds 256 KiB"));
@@ -137,7 +131,7 @@ impl Input {
                 &self.artifact_sha256,
             ]
             .into_iter()
-            .all(|v| is_digest(v))
+            .all(|v| crate::is_lower_hex(v, 64))
         {
             return Err(invalid(
                 "brief requires purpose, behavior, 1..32 spans and generator digests",
@@ -245,8 +239,8 @@ fn check_row(id: &str, record: &Record) -> FResult<()> {
                 return Err(invalid("cyclic lineage"));
             }
         }
-        if !is_digest(id)
-            || !is_digest(&record.workspace_id)
+        if !crate::is_lower_hex(id, 64)
+            || !crate::is_lower_hex(&record.workspace_id, 64)
             || record.revision == 0
             || record.id != id
             || identity(
@@ -264,10 +258,9 @@ fn check_row(id: &str, record: &Record) -> FResult<()> {
                 != spans.iter().map(|h| &h.path).collect::<BTreeSet<_>>().len()
             || spans.iter().any(|h| {
                 !record.workspace_id.starts_with(&h.ws16)
-                    || !record
-                        .dependencies
-                        .get(&h.path)
-                        .is_some_and(|sha| is_digest(sha) && sha.starts_with(&h.sha32))
+                    || !record.dependencies.get(&h.path).is_some_and(|sha| {
+                        crate::is_lower_hex(sha, 64) && sha.starts_with(&h.sha32)
+                    })
             })
         {
             return Err(invalid("inconsistent identity"));
@@ -338,7 +331,7 @@ impl Engine {
                 expected_revision,
             } => self.put_brief(workspace, brief, *expected_revision, None, control),
             Command::Get { id } | Command::Export { id } => {
-                if !is_digest(id) {
+                if !crate::is_lower_hex(id, 64) {
                     return Err(invalid("brief id must be a SHA-256 digest"));
                 }
                 let tx = self.db.begin_read()?;
@@ -362,7 +355,7 @@ impl Engine {
                 id,
                 expected_revision,
             } => {
-                if !is_digest(id) {
+                if !crate::is_lower_hex(id, 64) {
                     return Err(invalid("brief id must be a SHA-256 digest"));
                 }
                 let tx = self.db.begin_write()?;

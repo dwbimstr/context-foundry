@@ -86,7 +86,7 @@ pub fn serve(
         || hello.model_fd == hello.liveness_fd
         || hello.owner_pid == 0
         || hello.model.len() > 256
-        || !crate::knowledge::digest(&hello.artifact_sha256)
+        || !crate::is_lower_hex(&hello.artifact_sha256, 64)
         || hello.config.validate().is_err()
     {
         failed(&mut output, 0, "knowledge_profile_invalid");

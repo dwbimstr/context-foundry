@@ -274,7 +274,7 @@ fn parse_id(map: &Map<String, Value>) -> FResult<String> {
 
 fn parse_workspace_id(map: &Map<String, Value>) -> FResult<String> {
     let ws = require_str(map, "workspace_id")?;
-    if ws.len() != 64 || !ws.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+    if !crate::is_lower_hex(&ws, 64) {
         return Err(invalid("workspace_id must be 64 lowercase hex digits"));
     }
     Ok(ws)

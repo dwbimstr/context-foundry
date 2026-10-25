@@ -533,7 +533,7 @@ pub fn validate_units(
                 "card {index} claims file provenance for a partial range"
             ));
         }
-        if !is_key(&unit.input_key) {
+        if !crate::is_lower_hex(&unit.input_key, 64) {
             return Err(format!("card {index} has a malformed input key"));
         }
         if index > 0 {
@@ -1235,7 +1235,7 @@ impl Engine {
         }
         for (key, vector) in entries {
             provider::validate_vector(vector, dims).map_err(FoundryError::from)?;
-            if !is_key(key) {
+            if !crate::is_lower_hex(key, 64) {
                 return Err(FoundryError::InvalidArgument(format!(
                     "cache key {key:?} is not a 64-hex digest"
                 )));
@@ -1437,10 +1437,6 @@ pub(crate) fn plan_generation_removal(store: &Dir) -> FResult<Option<(Dir, Vec<O
         }
     }
     Ok(Some((root, names)))
-}
-
-pub(crate) fn is_key(key: &str) -> bool {
-    key.len() == 64 && key.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 #[cfg(test)]

@@ -128,7 +128,7 @@ fn parse_occurrence_key(key: &str) -> FResult<OccurrenceKey> {
         return Err(corrupt_key("compiler occurrence"));
     }
     let kind = parts.next().and_then(OccurrenceKind::from_tag);
-    let symbol_id = parts.next().filter(|id| is_symbol_id(id));
+    let symbol_id = parts.next().filter(|id| crate::is_lower_hex(id, 64));
     match (kind, symbol_id, parts.next()) {
         (Some(kind), Some(symbol_id), None) => Ok(OccurrenceKey {
             start,
@@ -138,11 +138,6 @@ fn parse_occurrence_key(key: &str) -> FResult<OccurrenceKey> {
         }),
         _ => Err(corrupt_key("compiler occurrence")),
     }
-}
-
-/// A stored symbol id is exactly 64 lowercase hex characters.
-fn is_symbol_id(text: &str) -> bool {
-    text.len() == 64 && text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 struct SymbolKey {

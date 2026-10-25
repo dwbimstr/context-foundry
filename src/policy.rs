@@ -204,7 +204,7 @@ impl EnabledConfig {
             ("model_function_sha256", &self.model_function_sha256),
             ("report_sha256", &self.report_sha256),
         ] {
-            if !crate::learning::hex64(digest) {
+            if !crate::is_lower_hex(digest, 64) {
                 return invalid(format!("{name} must be 64 lowercase hex characters"));
             }
         }

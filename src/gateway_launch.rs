@@ -462,11 +462,7 @@ fn verify_profile(
 fn read_token(token_file: &Path) -> AResult<String> {
     let raw = std::fs::read_to_string(token_file).unwrap_or_default();
     let token = raw.trim();
-    if token.len() == 64
-        && token
-            .bytes()
-            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
-    {
+    if crate::is_lower_hex(token, 64) {
         Ok(token.to_owned())
     } else {
         Err(AdapterError::runtime(

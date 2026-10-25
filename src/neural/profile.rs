@@ -129,10 +129,6 @@ fn invalid(message: impl Into<String>) -> ProviderError {
     ProviderError::ProfileInvalid(message.into())
 }
 
-fn hex64(s: &str) -> bool {
-    s.len() == 64 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
-}
-
 /// The version fields alone, read before the strict parse so a profile this
 /// build no longer serves is refused by name, not as a decode failure.
 #[derive(Deserialize)]
@@ -212,7 +208,7 @@ impl SemanticProfile {
                 )));
             }
         }
-        if !hex64(&self.worker.executable_sha256) {
+        if !crate::is_lower_hex(&self.worker.executable_sha256, 64) {
             return Err(invalid("worker.executable_sha256 must be a SHA-256"));
         }
         if self.memory_ceiling_bytes == 0 || self.load_timeout_seconds == 0 {

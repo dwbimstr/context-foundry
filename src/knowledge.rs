@@ -39,12 +39,6 @@ pub(crate) fn now_ms() -> u64 {
 fn hash<T: Serialize>(value: &T) -> FResult<String> {
     Ok(crate::digest(&serde_json::to_vec(value)?))
 }
-fn digest(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-}
 fn path_valid(path: &str) -> bool {
     !path.is_empty()
         && path.len() <= 4096
@@ -154,8 +148,8 @@ impl Profile {
     }
     pub fn validate(&self) -> FResult<Vec<usize>> {
         if self.v != 1
-            || !digest(&self.workspace_id)
-            || !digest(&self.artifact_sha256)
+            || !crate::is_lower_hex(&self.workspace_id, 64)
+            || !crate::is_lower_hex(&self.artifact_sha256, 64)
             || self.recipe.trim().is_empty()
             || self.recipe.len() > 128
             || self.model.trim().is_empty()
@@ -318,13 +312,13 @@ impl Derivation {
     pub(crate) fn validate(&self) -> FResult<()> {
         if self.node.is_empty()
             || self.node.len() > 64
-            || !digest(&self.config_sha256)
+            || !crate::is_lower_hex(&self.config_sha256, 64)
             || self.depth > 4
             || self.children.len() > 128
             || self
                 .children
                 .iter()
-                .any(|(id, input)| !digest(id) || !digest(input))
+                .any(|(id, input)| !crate::is_lower_hex(id, 64) || !crate::is_lower_hex(input, 64))
             || (self.depth == 0) != self.children.is_empty()
         {
             return Err(corrupt("invalid generation lineage"));
@@ -459,7 +453,7 @@ impl Engine {
                 .get(selection.path.as_str())?
                 .ok_or(FoundryError::NotFound)?;
             let meta: SourceMeta = store::decode(raw.value(), "source")?;
-            if !digest(&meta.hash) {
+            if !crate::is_lower_hex(&meta.hash, 64) {
                 return Err(corrupt("invalid source digest"));
             }
             let end = selection.end.unwrap_or(meta.bytes as u64);

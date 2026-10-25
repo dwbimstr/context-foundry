@@ -425,10 +425,6 @@ fn parse_manifest(path: &Path, sink: InputSink<'_>) -> FResult<ManifestHeader> {
     }
 }
 
-fn is_hex64(text: &str) -> bool {
-    text.len() == 64 && text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
-}
-
 fn invalid(message: impl Into<String>) -> FoundryError {
     FoundryError::InvalidArgument(message.into())
 }
@@ -454,13 +450,13 @@ impl ManifestHeader {
         if self.v != 1 {
             return Err(invalid("manifest v must be 1"));
         }
-        if !is_hex64(&self.workspace_id) {
+        if !crate::is_lower_hex(&self.workspace_id, 64) {
             return Err(invalid("manifest workspace_id must be 64 lowercase hex"));
         }
-        if !is_hex64(&self.artifact_sha256) {
+        if !crate::is_lower_hex(&self.artifact_sha256, 64) {
             return Err(invalid("manifest artifact_sha256 must be 64 lowercase hex"));
         }
-        if !is_hex64(&self.producer.binary_sha256) {
+        if !crate::is_lower_hex(&self.producer.binary_sha256, 64) {
             return Err(invalid(
                 "manifest producer.binary_sha256 must be 64 lowercase hex",
             ));
@@ -1578,7 +1574,7 @@ impl Run<'_> {
                     clip(&row.path, 200)
                 ))
             })?;
-            if !is_hex64(&row.sha256) {
+            if !crate::is_lower_hex(&row.sha256, 64) {
                 return Err(invalid(format!(
                     "the manifest input hash is not 64 lowercase hex: {}",
                     clip(&row.path, 200)

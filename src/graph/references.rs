@@ -202,7 +202,7 @@ fn parse_cursor(raw: &str) -> FResult<(String, u64, u64)> {
 }
 
 fn symbol_prefix(raw: &str) -> FResult<String> {
-    if raw.len() == 16 && raw.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+    if crate::is_lower_hex(raw, 16) {
         Ok(raw.to_owned())
     } else {
         Err(invalid("symbol_id must be 16 lowercase hex characters"))
@@ -425,7 +425,7 @@ fn resolve_prefix(
         }
         let id = key
             .get(..64)
-            .filter(|id| is_symbol_id(id) && key.as_bytes().get(64) == Some(&0))
+            .filter(|id| crate::is_lower_hex(id, 64) && key.as_bytes().get(64) == Some(&0))
             .ok_or_else(|| corrupt_key("compiler symbol"))?
             .to_owned();
         from = format!("{id}\u{1}");

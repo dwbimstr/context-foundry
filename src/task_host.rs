@@ -14,11 +14,6 @@ fn invalid() -> FoundryError {
 fn id(s: &str) -> bool {
     !s.trim().is_empty() && s.len() <= 256 && !s.chars().any(char::is_control)
 }
-fn hash(s: &str) -> bool {
-    s.len() == 64
-        && s.bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -56,8 +51,8 @@ impl Packet {
         if self.v != 1
             || !id(&self.entry_id)
             || !id(&self.tool_call_id)
-            || !hash(&self.original_sha256)
-            || !hash(&self.view_sha256)
+            || !crate::is_lower_hex(&self.original_sha256, 64)
+            || !crate::is_lower_hex(&self.view_sha256, 64)
             || !(256..=MAX_BODY_BYTES).contains(&self.max_request_bytes)
             || crate::json_len(self)? > MAX_PACKET_BYTES
             || digest(&serde_json::to_vec(view)?) != self.view_sha256
@@ -215,7 +210,7 @@ impl AppliedView {
                 &self.request_sha256,
             ]
             .iter()
-            .any(|s| !hash(s))
+            .any(|s| !crate::is_lower_hex(s, 64))
             || !(1..=MAX_BODY_BYTES as u64).contains(&self.incoming_bytes)
             || !(1..=MAX_BODY_BYTES as u64).contains(&self.request_bytes)
         {
