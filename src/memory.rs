@@ -341,7 +341,7 @@ fn parse_fields(map: &Map<String, Value>) -> FResult<RecordFields> {
 /// fields, nulls, type mismatches, out-of-range values and contradictory op
 /// fields are `invalid_argument` before any store is touched.
 pub fn parse_request(map: &Map<String, Value>) -> FResult<MemoryRequest> {
-    if serde_json::to_string(map).unwrap_or_default().len() > MAX_REQUEST_BYTES {
+    if crate::json_len(map).unwrap_or_default() > MAX_REQUEST_BYTES {
         return Err(invalid(format!(
             "memory request exceeds {MAX_REQUEST_BYTES} bytes"
         )));

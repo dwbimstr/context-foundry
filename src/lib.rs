@@ -105,6 +105,14 @@ impl std::io::Write for ByteCount {
     }
 }
 
+/// The exact compact `serde_json` length of `value`, without building it. A
+/// serialization error is the one `serde_json::to_vec` would return.
+pub(crate) fn json_len(value: &impl serde::Serialize) -> serde_json::Result<usize> {
+    let mut count = ByteCount(0);
+    serde_json::to_writer(&mut count, value)?;
+    Ok(usize::try_from(count.0).expect("a serialized length fits usize"))
+}
+
 /// The engine moves across threads (tokio spawn_blocking behind a mutex in
 /// MCP); keep this guarantee at compile time.
 const _: fn() = || {

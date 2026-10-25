@@ -210,14 +210,11 @@ impl FeedbackRowV4 {
                 ));
             }
         }
-        let encoded = serde_json::to_string(self).map_err(FoundryError::from)?;
-        if encoded.len() > WHOLE_ROW_MAX_BYTES {
+        let bytes = crate::json_len(self).map_err(FoundryError::from)?;
+        if bytes > WHOLE_ROW_MAX_BYTES {
             return Err(fail(
                 "row_invalid",
-                format!(
-                    "whole row is {} bytes; the limit is {WHOLE_ROW_MAX_BYTES}",
-                    encoded.len()
-                ),
+                format!("whole row is {bytes} bytes; the limit is {WHOLE_ROW_MAX_BYTES}"),
             ));
         }
         Ok(())
