@@ -530,6 +530,33 @@ fn context_charges_exact_chosen_source_ranges_once_and_keeps_disjoint_evidence()
 }
 
 #[test]
+fn retrieve_preserves_both_caps_when_escaping_then_tokens_limit_the_prefix() {
+    let mut fx = new_fixture();
+    let body = format!("é{}\n", "\t".repeat(1022)).repeat(160);
+    fx.add(&[("tabs.rs", &body)]);
+    let handle = whole(&fx.engine.workspace_id().unwrap(), "tabs.rs", &body).to_v2();
+    for tokens in [4096, 32768] {
+        let out = fx.engine.retrieve(&handle, None, tokens).unwrap();
+        let packed = response::pack_retrieve(&out, Budget::request(tokens), &mcp_bytes).unwrap();
+        assert!(mcp_bytes(&packed.text) <= BYTE_CAP);
+        assert_eq!(packed.tokens, count_tokens(&packed.text));
+        let parsed = assert_v2_success(&packed, tokens, "retrieve");
+        let item = &parsed.items[0];
+        let range = HandleRef::parse(&item.handle).unwrap();
+        assert_eq!(item.body, body[..range.end as usize]);
+        assert_eq!(
+            HandleRef::parse(&parsed.next.unwrap()).unwrap().start,
+            range.end
+        );
+        if tokens == 4096 {
+            assert!(packed.tokens >= tokens - 8);
+        } else {
+            assert!(mcp_bytes(&packed.text) >= BYTE_CAP - 8);
+        }
+    }
+}
+
+#[test]
 fn retrieve_refines_between_halving_rungs_without_wasting_the_allowance() {
     let mut fx = new_fixture();
     let body = "    let 東京 = \"quoted\\value\";\r\n".repeat(900);

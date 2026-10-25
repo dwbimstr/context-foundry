@@ -342,20 +342,19 @@ impl Engine {
                     self.brief_hits_in(&tx, plan, crate::brief::CONTEXT_HITS, control)?;
                 counters.stale += stale;
                 counters.candidates_full |= plan.window_full;
-                let mut evidence = Vec::new();
                 for hit in &hits {
+                    if units.len() == CONTEXT_UNITS {
+                        break;
+                    }
                     let source = self.brief_source_in(&tx, hit)?;
-                    // One primary representation per source; generated forms do
-                    // not displace independent files in the source window.
-                    units.retain(|unit| {
-                        unit.handle.as_ref().map(|h| &h.path)
-                            != source.handle.as_ref().map(|h| &h.path)
-                    });
-                    evidence.push(source);
+                    // Preserve retrieved evidence and its order. Only an exact
+                    // handle is redundant; another span in this file may be the
+                    // implementation the caller needs. A brief never evicts a
+                    // retrieved unit, even when its orientation cannot fit.
+                    if !units.iter().any(|unit| unit.handle == source.handle) {
+                        units.push(source);
+                    }
                 }
-                evidence.append(&mut units);
-                evidence.truncate(CONTEXT_UNITS);
-                units = evidence;
                 hits
             }
             None => Vec::new(),

@@ -137,6 +137,7 @@ pub enum AdapterCommand {
             conflicts_with_all = [
                 "host", "root", "print_config", "apply_config", "http_port",
                 "token_env", "budget", "reference",
+                "semantic_profile", "knowledge_profile", "development_isolation",
             ]
         )]
         remove_config: Option<PathBuf>,
@@ -153,6 +154,15 @@ pub enum AdapterCommand {
         /// (repeat for up to 8 references); recorded in the printed argv.
         #[arg(long = "reference", value_name = "ROOT=STORE")]
         reference: Vec<String>,
+        /// Forward this semantic serving profile; printing does not load it.
+        #[arg(long, value_name = "FILE")]
+        semantic_profile: Option<PathBuf>,
+        /// Forward this knowledge profile without enabling generation maintenance.
+        #[arg(long, value_name = "FILE")]
+        knowledge_profile: Option<PathBuf>,
+        /// Explicitly admit the selected semantic profile's development worker at launch.
+        #[arg(long, requires = "semantic_profile")]
+        development_isolation: bool,
     },
     /// Foreground owned-model gateway (003 T004): a loopback-only SSE
     /// forwarder for the pinned OMP 18.6.0 / glm-5.3-flash profile, with
@@ -455,6 +465,9 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
             token_env,
             budget,
             reference,
+            semantic_profile,
+            knowledge_profile,
+            development_isolation,
         } => {
             if let Some(file) = remove_config {
                 let removed = crate::bootstrap::remove_owned_block(&file)?;
@@ -500,6 +513,9 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
                 store,
                 budget: read_budget(budget.as_deref())?,
                 budget_file,
+                semantic_profile,
+                knowledge_profile,
+                development_isolation,
                 http_port,
                 token_env,
                 references: reference,
