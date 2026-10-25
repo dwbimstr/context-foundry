@@ -40,8 +40,9 @@ use super::candidate::{self, Base, CandidateManifest, Contributions, Lineage};
 use super::eval::{self, CaseInput, Output};
 use super::profile::LearnProfile;
 use super::{
-    Contribution, LearningPolicy, OutputTarget, Publication, VerifiedDataset, compact_digest, fail,
-    load_renderer, model_function_of, open_dataset, verify_dataset_with, verify_lineage,
+    Contribution, LearningPolicy, OutputTarget, Publication, VerifiedDataset, compact_digest,
+    contribution_change, fail, load_renderer, model_function_of, open_dataset, verify_dataset_with,
+    verify_lineage,
 };
 use crate::control::Control;
 use crate::decision_model::arch::HEAD_DROPOUT;
@@ -164,19 +165,11 @@ fn permission_gate(
                 format!("example {id} is no longer in the store"),
             ));
         };
-        let changed = if !current.allow_training {
-            Some("its training consent was withdrawn")
-        } else if current.permission_sha256() != contribution.permission_sha256 {
-            Some("its permission (rights assertion) changed")
-        } else if current.input_sha256() != contribution.input_sha256 {
-            Some("its exact input changed")
-        } else if current.correct_option_id != contribution.correct_option_id {
-            Some("its label changed")
-        } else if group.is_some_and(|group| current.task_group_id != group) {
-            Some("its group changed")
-        } else {
-            None
-        };
+        let changed = contribution_change(&current, contribution).or_else(|| {
+            group
+                .is_some_and(|group| current.task_group_id != group)
+                .then_some("its group changed")
+        });
         match changed {
             Some(what) => Err(fail(
                 code,

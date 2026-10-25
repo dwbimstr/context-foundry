@@ -43,6 +43,7 @@ use crate::error::{FResult, FoundryError};
 use crate::learning::candidate::{self, CandidateManifest, VerifiedCandidate};
 use crate::learning::ipc::{PredictReply, Probabilities};
 use crate::learning::profile::LearnProfile;
+use crate::learning::{consent_change, contribution_change};
 use crate::neural::anchor::Dir;
 use crate::response::Strategy;
 use crate::store::Engine;
@@ -520,17 +521,7 @@ fn check_current_consent(
         let id = &contribution.example_id;
         let what = match engine.learning_current_row(id)? {
             None => Some("it is no longer in the store"),
-            Some(row) if !row.allow_training => Some("its training consent was withdrawn"),
-            Some(row) if row.permission_sha256() != contribution.permission_sha256 => {
-                Some("its permission (rights assertion) changed")
-            }
-            Some(row) if row.input_sha256() != contribution.input_sha256 => {
-                Some("its exact input changed")
-            }
-            Some(row) if row.correct_option_id != contribution.correct_option_id => {
-                Some("its label changed")
-            }
-            Some(_) => None,
+            Some(row) => contribution_change(&row, contribution),
         };
         if let Some(what) = what {
             return changed(id, what);
@@ -541,16 +532,10 @@ fn check_current_consent(
         let id = &case.example_id;
         let what = match engine.learning_current_row(id)? {
             None => Some("it is no longer in the store"),
-            Some(row) if !row.allow_training => Some("its training consent was withdrawn"),
-            Some(row) if row.permission_sha256() != case.permission_sha256 => {
-                Some("its permission (rights assertion) changed")
-            }
-            Some(row)
-                if row.correct_option_id != case.expected || row.option_ids != case.option_ids =>
-            {
-                Some("its label or options changed")
-            }
-            Some(_) => None,
+            Some(row) => consent_change(&row, &case.permission_sha256).or_else(|| {
+                (row.correct_option_id != case.expected || row.option_ids != case.option_ids)
+                    .then_some("its label or options changed")
+            }),
         };
         if let Some(what) = what {
             return changed(id, what);

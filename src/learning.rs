@@ -1207,6 +1207,37 @@ pub struct Contribution {
     pub permission_sha256: String,
 }
 
+/// The first way the current `row` no longer grants the permission it was
+/// used under (`recorded`, a [`FeedbackRowV4::permission_sha256`]): training
+/// consent withdrawn, then a changed permission. `None` when it still does.
+pub(crate) fn consent_change(row: &FeedbackRowV4, recorded: &str) -> Option<&'static str> {
+    if !row.allow_training {
+        Some("its training consent was withdrawn")
+    } else if row.permission_sha256() != recorded {
+        Some("its permission (rights assertion) changed")
+    } else {
+        None
+    }
+}
+
+/// [`consent_change`] against `contribution`'s permission, then a changed
+/// exact input, then a changed label. A digest is computed only when every
+/// earlier check passed.
+pub(crate) fn contribution_change(
+    row: &FeedbackRowV4,
+    contribution: &Contribution,
+) -> Option<&'static str> {
+    consent_change(row, &contribution.permission_sha256).or_else(|| {
+        if row.input_sha256() != contribution.input_sha256 {
+            Some("its exact input changed")
+        } else if row.correct_option_id != contribution.correct_option_id {
+            Some("its label changed")
+        } else {
+            None
+        }
+    })
+}
+
 /// One groups-file row: the group's split and its COMPLETE coverage, sorted
 /// by example ID. The train file may hold only new rows plus bounded replay;
 /// this coverage still names every contributing example, inherited ones
