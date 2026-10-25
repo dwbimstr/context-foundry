@@ -36,11 +36,7 @@ impl RetrievalTrace {
         if data.truncated {
             return;
         }
-        let mut count = crate::ByteCount(0);
-        let bytes = match serde_json::to_writer(&mut count, &event) {
-            Ok(()) => usize::try_from(count.0).unwrap_or(usize::MAX),
-            Err(_) => EVENT_BYTES + 1,
-        };
+        let bytes = crate::json_len(&event).unwrap_or(EVENT_BYTES + 1);
         if data.events.len() == EVENT_COUNT || data.bytes.saturating_add(bytes) > EVENT_BYTES {
             data.truncated = true;
             return;

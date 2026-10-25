@@ -183,7 +183,7 @@ impl Profile {
                 "invalid generation identity, limits, scope or plan size",
             ));
         }
-        if serde_json::to_vec(self)?.len() > MAX_PROFILE_BYTES {
+        if crate::json_len(self)? > MAX_PROFILE_BYTES {
             return Err(fail("knowledge_profile_invalid", "profile exceeds 64 KiB"));
         }
         if let Some(local) = &self.local {

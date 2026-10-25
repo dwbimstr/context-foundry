@@ -174,7 +174,7 @@ impl Input {
             }
             text_bytes = text_bytes.saturating_add(unknown.len());
         }
-        if text_bytes > MAX_TEXT || serde_json::to_vec(self)?.len() > MAX_REQUEST_BYTES - 1024 {
+        if text_bytes > MAX_TEXT || crate::json_len(self)? > MAX_REQUEST_BYTES - 1024 {
             return Err(invalid("brief exceeds 16 KiB of text or 256 KiB of JSON"));
         }
         Ok(spans)
@@ -228,7 +228,7 @@ pub(crate) fn decode_row(id: &str, raw: &str) -> FResult<Record> {
 /// parsed: `decode_row`'s bound on its encoding, then the same checks. The
 /// bound is not implied by the checks: escaped dependency paths can exceed it.
 pub(crate) fn check_embedded(record: &Record) -> FResult<()> {
-    if serde_json::to_string(record)?.len() > MAX_RECORD_BYTES {
+    if crate::json_len(record)? > MAX_RECORD_BYTES {
         return Err(corrupt_row(&record.id));
     }
     check_row(&record.id, record)
@@ -328,7 +328,7 @@ impl Engine {
         if self.workspace_id().as_deref() != Some(&request.workspace_id) {
             return Err(FoundryError::WrongWorkspace);
         }
-        if serde_json::to_vec(request)?.len() > MAX_REQUEST_BYTES {
+        if crate::json_len(request)? > MAX_REQUEST_BYTES {
             return Err(invalid("brief request exceeds 256 KiB"));
         }
         let workspace = &request.workspace_id;
@@ -434,7 +434,7 @@ impl Engine {
                         "candidates_full":plan.window_full,"omitted":omitted,
                         "pending_briefs":store::count_pending_prefix(&tx, "brief:")?,
                         "source_revision":self.freshness_in(&tx)?.source_revision});
-                    if serde_json::to_vec(&result)?.len() < *max_bytes {
+                    if crate::json_len(&result)? < *max_bytes {
                         return Ok(result);
                     }
                     if hits.len() <= 1 {

@@ -133,7 +133,7 @@ pub fn serve(
         };
         if request.id <= last
             || request.body["model"] != hello.model
-            || serde_json::to_vec(&request.body).is_ok_and(|body| body.len() > 131072)
+            || crate::json_len(&request.body).is_ok_and(|bytes| bytes > 131072)
         {
             failed(&mut output, request.id, "knowledge_provider_malformed");
             return 65;

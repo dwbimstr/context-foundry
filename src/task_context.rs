@@ -423,7 +423,7 @@ fn decode(raw: &str, task_id: &str, workspace_id: &str) -> FResult<Task> {
     Ok(task)
 }
 pub fn parse(value: Value) -> FResult<Request> {
-    if serde_json::to_vec(&value)?.len() > MAX_REQUEST_BYTES {
+    if crate::json_len(&value)? > MAX_REQUEST_BYTES {
         return Err(invalid("task request exceeds 1 MiB"));
     }
     serde_json::from_value(value).map_err(|_| invalid("invalid task request fields"))
@@ -528,7 +528,7 @@ impl Engine {
             return Err(FoundryError::WrongWorkspace);
         }
         id(&request.task_id)?;
-        if serde_json::to_vec(request)?.len() > MAX_REQUEST_BYTES {
+        if crate::json_len(request)? > MAX_REQUEST_BYTES {
             return Err(invalid("task request exceeds 1 MiB"));
         }
         match &request.command {
@@ -613,7 +613,7 @@ impl Engine {
                             } else {
                                 Value::Null
                             };
-                            if serde_json::to_vec(&candidate)?.len() + 1 > *max_bytes {
+                            if crate::json_len(&candidate)? + 1 > *max_bytes {
                                 if index == 0 {
                                     return Err(invalid(
                                         "search hit cannot fit; increase max_bytes",
@@ -623,7 +623,7 @@ impl Engine {
                             }
                             result = candidate;
                         }
-                        if serde_json::to_vec(&result)?.len() + 1 > *max_bytes {
+                        if crate::json_len(&result)? + 1 > *max_bytes {
                             return Err(invalid("search envelope exceeds max_bytes"));
                         }
                     }
@@ -683,7 +683,7 @@ impl Engine {
                             candidate["advice"].as_array_mut().unwrap().push(json!({"trigger":trigger,"entry_id":item.entry.id,"sha256":item.sha256,"text":item.entry.text,"author":item.entry.author,"provenance":item.entry.provenance,"source_links":source_links}));
                             // Reserve enough bytes for final counts; never truncate originals.
                             if candidate["advice"].as_array().unwrap().len() > 8
-                                || serde_json::to_vec(&candidate)?.len() + 32 > *max_bytes
+                                || crate::json_len(&candidate)? + 32 > *max_bytes
                             {
                                 omitted += 1;
                             } else {
@@ -692,7 +692,7 @@ impl Engine {
                         }
                         result["omitted"] = json!(omitted);
                         result["stale"] = json!(stale);
-                        if serde_json::to_vec(&result)?.len() + 1 > *max_bytes {
+                        if crate::json_len(&result)? + 1 > *max_bytes {
                             return Err(invalid("review envelope exceeds byte budget"));
                         }
                     }
@@ -720,12 +720,12 @@ impl Engine {
                             let mut candidate = result.clone();
                             candidate["silence"] = json!(false);
                             candidate["advice"] = json!({"trigger":"repeat_failed_action","entry_id":item.entry.id,"sha256":item.sha256,"text":item.entry.text,"author":item.entry.author,"provenance":item.entry.provenance,"source_links":source_links});
-                            if serde_json::to_vec(&candidate)?.len() < *max_bytes {
+                            if crate::json_len(&candidate)? < *max_bytes {
                                 result = candidate;
                                 break;
                             }
                         }
-                        if serde_json::to_vec(&result)?.len() + 1 > *max_bytes {
+                        if crate::json_len(&result)? + 1 > *max_bytes {
                             return Err(invalid("advice envelope exceeds byte budget"));
                         }
                     }
@@ -776,7 +776,7 @@ impl Engine {
                             return Err(invalid("render max_bytes must be 256..1048576"));
                         }
                         result = render_view(&tx, &task)?;
-                        if serde_json::to_vec(&result)?.len() + 1 > *max_bytes {
+                        if crate::json_len(&result)? + 1 > *max_bytes {
                             return Err(invalid(
                                 "selected view exceeds byte budget; explicitly fold or deselect unprotected entries",
                             ));

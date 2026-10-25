@@ -59,7 +59,7 @@ impl Packet {
             || !hash(&self.original_sha256)
             || !hash(&self.view_sha256)
             || !(256..=MAX_BODY_BYTES).contains(&self.max_request_bytes)
-            || serde_json::to_vec(self)?.len() > MAX_PACKET_BYTES
+            || crate::json_len(self)? > MAX_PACKET_BYTES
             || digest(&serde_json::to_vec(view)?) != self.view_sha256
             || !view["workspace_id"].as_str().is_some_and(id)
             || !view["task_id"].as_str().is_some_and(id)
