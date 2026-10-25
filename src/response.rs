@@ -929,7 +929,42 @@ fn pack_retrieve_impl(
         }
         text
     };
+    // First resolve the byte ceiling without repeatedly tokenizing large
+    // prefixes. Escaping can bind well before the token allowance; refining
+    // both at once used to encode nearly the same text up to 18 times.
     let lengths = prefix_lengths(span);
+    let mut byte_failure = None;
+    let mut byte_fit = None;
+    for &length in &lengths {
+        if boundary(&render(length, budget.tokens, budget.limited_by)) <= BYTE_CAP {
+            byte_fit = Some(length);
+            break;
+        }
+        byte_failure = Some(length);
+    }
+    let Some(mut byte_fit) = byte_fit else {
+        return Err(too_small(budget.tokens, &|shown, limited_by| {
+            render(*lengths.last().unwrap(), shown, limited_by)
+        }));
+    };
+    let mut upper = byte_failure.unwrap_or(byte_fit);
+    for _ in 0..18 {
+        let mut trial = byte_fit + (upper - byte_fit) / 2;
+        while !span.is_char_boundary(trial) {
+            trial -= 1;
+        }
+        if trial <= byte_fit {
+            break;
+        }
+        if boundary(&render(trial, budget.tokens, budget.limited_by)) <= BYTE_CAP {
+            byte_fit = trial;
+        } else {
+            upper = trial;
+        }
+    }
+    // Token fitting still validates the exact rendered text and emitted bytes.
+    // It may retreat further because BPE counts need not be monotone.
+    let lengths = prefix_lengths(&span[..byte_fit]);
     let mut packed = BudgetedText::new(budget, boundary);
     let mut failed_length = None;
     for &length in &lengths {

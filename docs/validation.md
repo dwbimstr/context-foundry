@@ -1,5 +1,31 @@
 # Validation
 
+## CI boundary repairs — 2026-10-25
+
+The profile-forwarding fixture compares absolute paths under the canonical working
+directory; macOS may report `/private/var` for a temporary directory created under
+`/var`. The profiles remain nonexistent, so configuration generation still proves
+it does not load them.
+
+The MCP escaped-byte fixture's operation deadline was reproduced with two competing
+processes on one CPU. A local Rust 1.90 diagnostic with the production tokenizer
+measured packing at 2.93 seconds before and 0.43 seconds after separating byte-only
+prefix fitting from token fitting. These are single fixture observations, not task
+economics. Final text still receives exact token and serialized-byte checks; the
+five-second deadline and 256 KiB cap are unchanged. A mixed Unicode/escaping test
+checks both token-limited and byte-limited continuation.
+
+A concurrent fork can retain a snapshot's writable descriptor until exec and cause
+`ETXTBSY` after the owner closes its writer. This failure was reproduced separately;
+worker startup now retries only that errno within the existing load/cancellation
+bound. Regressions cover eventual startup, deadline exhaustion and unrelated errors.
+Resource-limit reply classification is unchanged. The original CI log recorded only
+`knowledge_worker_failed`, so it does not prove this race caused that particular
+failure. The memory-limit test passed in isolation, 18 stress repetitions and the
+ordinary full knowledge suite. A deliberately oversubscribed 16-thread diagnostic
+instead hit the separate CPU-limit test's enclosing deadline; that run is not a pass
+and did not justify changing its production limits.
+
 ## Preserve retrieved evidence and selected profiles — 2026-10-25
 
 The fixes are isolated on a branch from `main` at `2f6b4ea`. Its source tree is

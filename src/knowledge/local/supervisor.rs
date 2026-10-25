@@ -152,7 +152,12 @@ impl Provider {
             && profile.model == self.model_name
             && profile.artifact_sha256 == self.model_hash
     }
-    fn spawn(&mut self, profile: &Profile, observed: &mut Observation) -> FResult<Vec<u8>> {
+    async fn spawn(
+        &mut self,
+        profile: &Profile,
+        control: &Control,
+        observed: &mut Observation,
+    ) -> FResult<Vec<u8>> {
         // Inherited descriptors share their offset across worker launches.
         self.model.seek(SeekFrom::Start(0))?;
         let (reader, writer) = std::io::pipe()?;
@@ -187,7 +192,7 @@ impl Provider {
         unsafe {
             command.pre_exec(move || child_setup(owner, &[model_fd, executable_fd, life_fd]));
         }
-        let mut child = command.spawn().map_err(io_failure)?;
+        let mut child = spawn_command(&mut command, control).await?;
         let input = child.stdin.take().expect("piped input");
         let output = child.stdout.take().expect("piped output");
         // From here on every error drops the child guard and reaps it.
@@ -348,7 +353,7 @@ impl Provider {
             let bound =
                 control.bounded_by(Instant::now() + Duration::from_secs(self.config.load_seconds));
             bound.check()?;
-            let frame = self.spawn(profile, observed)?;
+            let frame = self.spawn(profile, &bound, observed).await?;
             match self.exchange(frame, &bound, observed).await? {
                 protocol::Answer::Ready {
                     identity,
@@ -496,6 +501,24 @@ fn worker_failure(code: &str) -> crate::FoundryError {
     )
 }
 
+async fn spawn_command(command: &mut Command, control: &Control) -> FResult<Child> {
+    loop {
+        control.check()?;
+        match command.spawn() {
+            Ok(child) => return Ok(child),
+            // A concurrent fork can briefly retain a writable descriptor from
+            // snapshot creation until its exec closes CLOEXEC descriptors.
+            // The owner has already closed its writer. Retry only this errno,
+            // within the existing load/cancellation bound, without reclassifying
+            // arbitrary worker failures as resource limits.
+            Err(error) if error.raw_os_error() == Some(libc::ETXTBSY) => {
+                tokio::time::sleep(POLL).await;
+            }
+            Err(error) => return Err(io_failure(error)),
+        }
+    }
+}
+
 fn child_setup(owner: u32, keep: &[i32]) -> std::io::Result<()> {
     // This is pre_exec: no allocation, locks, filesystem parsing or Rust I/O.
     if unsafe { libc::setpgid(0, 0) } != 0 {
@@ -526,6 +549,65 @@ fn child_setup(owner: u32, keep: &[i32]) -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod spawn_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn busy_executable() -> (tempfile::TempDir, File, File) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("worker");
+        std::fs::copy("/bin/true", &path).unwrap();
+        let writer = OpenOptions::new().write(true).open(&path).unwrap();
+        let reader = File::open(&path).unwrap();
+        writer
+            .set_permissions(std::fs::Permissions::from_mode(0o500))
+            .unwrap();
+        std::fs::remove_file(path).unwrap();
+        (dir, writer, reader)
+    }
+
+    #[tokio::test]
+    async fn transient_snapshot_writer_does_not_turn_worker_startup_into_failure() {
+        let (_dir, writer, reader) = busy_executable();
+        let mut command = Command::new(format!("/proc/self/fd/{}", reader.as_raw_fd()));
+        assert_eq!(
+            command.spawn().unwrap_err().raw_os_error(),
+            Some(libc::ETXTBSY)
+        );
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            drop(writer);
+        });
+        let control = Control::with_deadline(Instant::now() + Duration::from_secs(10));
+        let mut child = spawn_command(&mut command, &control).await.unwrap();
+        assert!(child.wait().unwrap().success());
+        release.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn busy_snapshot_retries_keep_the_existing_deadline_and_other_errors() {
+        let (_dir, _writer, reader) = busy_executable();
+        let mut command = Command::new(format!("/proc/self/fd/{}", reader.as_raw_fd()));
+        let control = Control::with_deadline(Instant::now() + Duration::from_millis(50));
+        assert_eq!(
+            spawn_command(&mut command, &control)
+                .await
+                .unwrap_err()
+                .code(),
+            "deadline_exceeded"
+        );
+        let mut missing = Command::new("/nonexistent/context-foundry-worker");
+        assert_eq!(
+            spawn_command(&mut missing, &Control::unbounded())
+                .await
+                .unwrap_err()
+                .code(),
+            "knowledge_worker_failed"
+        );
+    }
 }
 
 #[cfg(all(test, target_os = "linux"))]
