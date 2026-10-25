@@ -2074,7 +2074,18 @@ fn connect_forwards_profiles_without_loading_or_maintaining() {
             ("--knowledge-profile", knowledge),
         ] {
             let at = args.iter().position(|a| a == flag).unwrap();
-            assert_eq!(args[at + 1], dir.path().join(path).to_str().unwrap());
+            // The process working directory may resolve an alias such as macOS
+            // /var -> /private/var. Profiles need not exist, so compare their
+            // absolute names under the canonical directory, not canonicalized files.
+            assert_eq!(
+                args[at + 1],
+                dir.path()
+                    .canonicalize()
+                    .unwrap()
+                    .join(path)
+                    .to_str()
+                    .unwrap()
+            );
         }
         assert!(args.iter().any(|a| a == "--development-isolation"));
         assert!(!args.iter().any(|a| a.ends_with("-maintain")));

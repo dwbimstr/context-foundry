@@ -853,12 +853,14 @@ delivered token on each later turn.
 ### Retrieve views
 
 `view:"text"` keeps v1's bounded prefix fit. Start with at most 128 KiB of the
-requested range (after any `lines` clipping), ending at a UTF-8 boundary. If the
-rendered result with its `next:` line does not fit, halve that byte length, retreat to
-a UTF-8 boundary and retry, always trying the first complete codepoint before failure.
-This establishes a fitting bracket in at most 19 nonempty trials. Refine between
-that fit and the previous failure with at most 18 UTF-8-aligned midpoint trials,
-retaining only exact token/byte-checked fits. BPE need not be monotone: this improves
+requested range (after any `lines` clipping), ending at a UTF-8 boundary. First find
+a byte-fitting prefix of the rendered result, including its `next:` line: halve
+the length until it fits, then refine with at most 18 UTF-8-aligned midpoint trials.
+These byte-only probes do not tokenize. Within that prefix, fit the token allowance
+by halving, retreating to a UTF-8 boundary and always trying the first complete
+codepoint before failure. Each halving phase has at most 19 nonempty trials.
+Refine the token fit with at most 18 UTF-8-aligned midpoint trials, retaining only
+exact token/byte-checked fits. BPE need not be monotone: this improves
 utilization without promising the longest possible prefix. Return the longest
 verified fit found and start `next` exactly at its end. Requested ranges remain bounded to one 2 MiB source; no
 byte-by-byte quadratic tokenization loop. If no nonempty tested prefix fits, return
