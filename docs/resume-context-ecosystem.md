@@ -1,6 +1,6 @@
 # Experimental ecosystem checkpoint — 2026-10-11
 
-## Current status — 2026-10-22
+## Current status — 2026-10-25
 
 This section owns current status; other documents link here, and dated paragraphs
 below are history.
@@ -37,6 +37,11 @@ below are history.
   density the next bounds are the mapping-view estimate near 120k files, then the label
   map near 240k and the ANN near 253k. A v5 store needs `semantic prepare` once. That
   rebuilds its ANN, which on G2 located 166 against the original build's 169.
+- **Since then.** 48 refactor commits with no intended retrieval change, and six
+  dependency updates ([validation](validation.md#architecture-refactor-and-dependency-updates--2026-10-25)).
+  usearch 2.26.5 builds a different ANN graph than 2.26.4 from the same cache, so the
+  next republish can move G2 as the v6 rebuild did; G2 was not rerun.
+  tree-sitter-scala 0.26.3 awaits the owner's decision on the schema bumps it needs.
 - **Open.** No CI runs; local gates are the receipt. The 6,000-file watcher test is
   intermittent on this Mac (F18). After a reboot, repeat G2 runs differ in 36 of 388
   rows with equal totals; compare arms within one session.

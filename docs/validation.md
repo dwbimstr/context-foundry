@@ -1,5 +1,59 @@
 # Validation
 
+## Architecture refactor and dependency updates — 2026-10-25
+
+`4475f9f..38dc370` on `experimental/context-ecosystem`. By owner instruction the
+refactor ran without measurements or long tests, so nothing here measures retrieval,
+latency or memory.
+
+**Refactor, 2026-10-23 and 24.** 48 commits in six review rounds give duplicated
+logic one owner, remove forwarding layers, borrow instead of cloning and stream
+instead of buffering. Examples: one placement stage for lexical and dense search, one
+source-admission rule, one f32 vector codec, one JSON byte counter, one lowercase-hex
+predicate, and borrowed views for knowledge, graph and SCIP output. Each commit passed
+Clippy with `-D warnings` in the default, `test-faults` and no-default-features
+library configurations, Rust 1.90 check and Clippy, and its focused test binaries,
+and had a GPT-6.1 Sol cross-lab review that ended in SHIP (author: Anthropic Opus
+5.5). Behavior is unchanged except:
+
+- `a35926f`: decoded locations share their path and hash strings, so the 1 GiB
+  expansion cap of [§ Interned label map](#interned-label-map-generation-v6--2026-10-22)
+  is gone;
+- `1c1895f`: a poisoned knowledge-maintenance lock reports "engine state was poisoned
+  by an earlier panic";
+- `da6c5d2`, in `test-faults` builds only: each preparation-selection and status page
+  reads one snapshot, so a `PARTITION_READ` fault callback that writes the store is
+  not seen by the rest of its page.
+
+`f270c9e` links the Rust 1.90 gates against the selected Xcode's macOS SDK. Rust 1.90
+passes `cc` no SDK root, and Xcode 26.6's linker rejects the `arm64e.x1` entries of
+the Command Line Tools' macOS 27 SDK.
+
+**Dependencies, `38dc370`.** Six of Dependabot #35's seven updates: libc 0.2.191,
+redb 4.4.0, serde_json 1.0.154, tokio 1.53.3, usearch 2.26.5 and uuid 1.28.0
+([dependencies](dependencies.md)). Their upstream diffs were read against our use,
+and a GPT-6.1 Sol review returned SHIP:
+
+- redb keeps file format 3; its new niche encodings need flags that are not enabled;
+- serde_json's serializer is unchanged, so output bytes are identical;
+- usearch keeps its file format and filtered search, so published generations load and
+  search as before. It now draws HNSW node levels from fixed-seed splitmix64 streams
+  that survive `reserve` and copies, so the next republish builds a different graph
+  than 2.26.4 would from the same cache. The last such rebuild located 166 against 169
+  on G2 (above); this one was not measured.
+
+tree-sitter-scala 0.26.3 is held: it changes Scala parse trees, and
+[§ Index version gate](../specs/001-source-state-recovery/contracts/context-v2.md#index-version-gate)
+ties unit changes to schema bumps, an owner decision.
+
+**Gates.** `scripts/gates.sh` at `38dc370` on a clean tree, Rust 1.97.1 and 1.90.0
+(SDKROOT: Xcode's macOS 26.5 SDK). All five exit 0: 1,287 tests passed, 0 failed, 34
+ignored, and the gateway target passes 54. Log SHA-256: clippy `2c0892a7…`, test
+`a975a789…`, msrv-check `98bf8871…`, msrv-clippy `d7ff6ad4…`. Not run: the worker
+features (`embed-worker`, `generate-worker`, `learning-worker`), whose binaries import
+no item the refactor changed, and loading a 2.26.4-built segment under 2.26.5. No CI
+ran.
+
 ## Interned label map (generation v6) — 2026-10-22
 
 Step 2 of the [scale plan](../specs/009-optional-semantic-retrieval/spec.md) is in.
@@ -1148,6 +1202,7 @@ directly.
 
 | Commit | fmt | clippy 1.97 | test 1.97 | msrv-check | msrv-clippy |
 | --- | --- | --- | --- | --- | --- |
+| `38dc370` | 0 | 0 | 0: 1,287 passed, 34 ignored; gateway 54 passed ([receipt and log digests](#architecture-refactor-and-dependency-updates--2026-10-25)) | 0 | 0 |
 | `d72f3bb` | 0 | 0 | 0: 1,174 passed, 28 ignored; gateway 54 passed; two test threads ([receipt and log digests](review/evidence-selection-2026-10-17.json)) | 0 | 0 |
 | `81c20ad` | 0 | 0 | 101: 1,172 passed, 2 failed, 28 ignored; ownership race and MCP deadline, retained in the same receipt | 0 | 0 |
 | `f782dda` | 0 | 0 | 0: 1,173 passed, 28 ignored; gateway 54 passed under uid 1000 ([receipt and log digests](review/owner-retrieval-2026-10-16.json)) | 0 | 0 |
