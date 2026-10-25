@@ -3,6 +3,8 @@
 //! and the batch and partition commits, with their tests. Scheduling and the
 //! CLI run are siblings.
 use super::*;
+use crate::store::{CHUNKS, SOURCES, reconstruct_verified};
+use redb::ReadableDatabase;
 
 /// Lazily started CPU workers, reused across waves (and MCP prepare runs).
 /// No store, profile or source is retained here. `install` joins each wave,
@@ -882,26 +884,6 @@ impl Steps<'_> {
         self.partition_inputs_in(after, None, false, max_new, until, report, halt)
     }
 
-    fn source_page(
-        &self,
-        after: Option<&str>,
-        scope: Option<&str>,
-        exact: bool,
-    ) -> FResult<Vec<(String, crate::store::SourceMeta)>> {
-        if !exact {
-            return cache::source_page_in(&self.engine.db, after, scope);
-        }
-        if after.is_some() {
-            return Ok(Vec::new());
-        }
-        let path = scope.expect("exact source cursor has a path");
-        Ok(self
-            .engine
-            .source(path)?
-            .map(|meta| vec![(path.to_owned(), meta)])
-            .unwrap_or_default())
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn partition_inputs_in(
         &self,
@@ -917,7 +899,12 @@ impl Steps<'_> {
         if let Some(stop) = halt() {
             return Ok((Progress::Halted(stop), inputs));
         }
-        let page = self.source_page(after.as_deref(), scope, exact)?;
+        let page = cache::source_page_in(
+            &self.engine.db.begin_read()?.open_table(SOURCES)?,
+            after.as_deref(),
+            scope,
+            exact,
+        )?;
         if page.is_empty() {
             return Ok((Progress::Done, inputs));
         }
@@ -977,8 +964,14 @@ impl Steps<'_> {
             if selection.len >= room {
                 return Ok(Selected::Full);
             }
+            // One snapshot per page: its sources, partitions, cache rows and
+            // selected bodies. Only its table handles are held.
+            let (snapshot, chunks) = {
+                let tx = self.engine.db.begin_read()?;
+                (cache::MappingPage::open(&tx)?, tx.open_table(CHUNKS)?)
+            };
             let page =
-                self.source_page(walk.after.as_deref(), walk.scope.as_deref(), walk.exact)?;
+                snapshot.source_page(walk.after.as_deref(), walk.scope.as_deref(), walk.exact)?;
             if page.is_empty() {
                 return Ok(Selected::End);
             }
@@ -1000,7 +993,7 @@ impl Steps<'_> {
                     || position.as_ref().map_or(0, |position| position.next),
                     |(_, next)| *next,
                 );
-                if let Some(record) = self.engine.semantic_partition(path)?
+                if let Some(record) = snapshot.recorded_partition(path)?
                     && cache::partition_is_current(
                         &record,
                         meta,
@@ -1028,7 +1021,7 @@ impl Steps<'_> {
                         // lookup does: a same-length nonfinite (or otherwise
                         // tampered) row is disabled by name here and replaced
                         // by a fresh embedding.
-                        let needed = match self.engine.semantic_cache_servable(
+                        let needed = match snapshot.servable(
                             &unit.input_key,
                             self.cards.function_digest,
                             dims,
@@ -1066,7 +1059,7 @@ impl Steps<'_> {
                                         SourceCards::Prepared(walk.retained.swap_remove(index))
                                     }
                                     None => SourceCards::Body {
-                                        body: self.engine.semantic_source_body(path, meta)?,
+                                        body: reconstruct_verified(&chunks, path, meta)?.body,
                                         units: OnceCell::new(),
                                     },
                                 };

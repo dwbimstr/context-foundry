@@ -367,23 +367,26 @@ pub struct CacheCensus {
     pub legacy: u64,
 }
 
-/// The bounded page of admitted sources after `after`.
-pub(crate) fn source_page(
-    db: &Database,
-    after: Option<&str>,
-) -> FResult<Vec<(String, SourceMeta)>> {
-    source_page_in(db, after, None)
-}
-
-/// One path or subtree, preserving the same ordered source cursor. No siblings
-/// are enumerated for an explicitly requested area.
+/// The bounded page of admitted sources after `after` in `sources`. A `scope`
+/// keeps one path or subtree, preserving the same ordered source cursor; no
+/// siblings are enumerated for an explicitly requested area. An `exact`
+/// cursor reads its scope path alone, once.
 pub(crate) fn source_page_in(
-    db: &Database,
+    sources: &impl ReadableTable<&'static str, &'static str>,
     after: Option<&str>,
     scope: Option<&str>,
+    exact: bool,
 ) -> FResult<Vec<(String, SourceMeta)>> {
-    let tx = db.begin_read()?;
-    let sources = tx.open_table(SOURCES)?;
+    if exact {
+        if after.is_some() {
+            return Ok(Vec::new());
+        }
+        let path = scope.expect("exact source cursor has a path");
+        return Ok(match sources.get(path)? {
+            Some(raw) => vec![(path.to_owned(), decode(raw.value(), "source")?)],
+            None => Vec::new(),
+        });
+    }
     let mut page = Vec::with_capacity(PAGE);
     let prefix = scope.map(|path| format!("{path}/"));
     if after.is_none()
@@ -462,6 +465,17 @@ pub fn decode_partition(raw: &str) -> FResult<PartitionRecord> {
     serde_json::from_str(raw).map_err(|e| {
         FoundryError::CorruptStore(format!("semantic partition row cannot be decoded: {e}"))
     })
+}
+
+/// One source's recorded partition in `partitions`, if any.
+fn partition_row(
+    partitions: &impl ReadableTable<&'static str, &'static str>,
+    path: &str,
+) -> FResult<Option<PartitionRecord>> {
+    match partitions.get(path)? {
+        None => Ok(None),
+        Some(raw) => decode_partition(raw.value()).map(Some),
+    }
 }
 
 fn decode_state(raw: &str) -> FResult<SemanticState> {
@@ -652,6 +666,59 @@ fn probe_row(bytes: &[u8], function_digest: &str) -> CacheProbe {
     }
 }
 
+/// One row of `cache` classified under the current function digest and
+/// dimension; `payload` reads a current row's vector bytes, `None` when they
+/// are nonfinite.
+fn cache_row<V>(
+    cache: &impl ReadableTable<&'static str, &'static [u8]>,
+    key: &str,
+    function_digest: &str,
+    dims: usize,
+    payload: impl FnOnce(&[u8]) -> Option<V>,
+) -> FResult<CacheLookup<V>> {
+    let Some(raw) = cache.get(key)? else {
+        return Ok(CacheLookup::Miss);
+    };
+    let bytes = raw.value();
+    let short = key.get(..8).unwrap_or(key);
+    match (probe_row(bytes, function_digest), layout(bytes)) {
+        (CacheProbe::Current, Layout::Dims(stored)) if stored == dims => {
+            match payload(&bytes[68..]) {
+                Some(vector) => Ok(CacheLookup::Hit(vector)),
+                None => Ok(CacheLookup::Corrupt(format!(
+                    "semantic_cache[{short}…] holds a nonfinite vector"
+                ))),
+            }
+        }
+        (CacheProbe::Current, Layout::Dims(stored)) => Ok(CacheLookup::Corrupt(format!(
+            "semantic_cache[{short}…] holds {stored} values; the profile has {dims}"
+        ))),
+        (CacheProbe::Retained, Layout::Legacy) => Ok(CacheLookup::Corrupt(format!(
+            "semantic_cache[{short}…] is a descriptor v1 row"
+        ))),
+        (CacheProbe::Retained, _) => Ok(CacheLookup::Corrupt(format!(
+            "semantic_cache[{short}…] carries a foreign function digest"
+        ))),
+        _ => Ok(CacheLookup::Corrupt(format!(
+            "semantic_cache[{short}…] has an invalid layout ({} bytes)",
+            bytes.len()
+        ))),
+    }
+}
+
+/// [`Engine::semantic_cache_servable`]'s classification in `cache`.
+#[cfg(feature = "semantic")]
+fn cache_servable(
+    cache: &impl ReadableTable<&'static str, &'static [u8]>,
+    key: &str,
+    function_digest: &str,
+    dims: usize,
+) -> FResult<CacheLookup<()>> {
+    cache_row(cache, key, function_digest, dims, |payload| {
+        provider::finite_f32_le(payload).then_some(())
+    })
+}
+
 /// One self-describing row: digest, dimension, values.
 fn encode_row(function_digest: &str, vector: &[f32]) -> Vec<u8> {
     let mut value = Vec::with_capacity(row_bytes(vector.len()));
@@ -662,24 +729,62 @@ fn encode_row(function_digest: &str, vector: &[f32]) -> Vec<u8> {
 }
 
 /// A page shares one redb snapshot across source, partition and cache metadata.
-#[cfg(feature = "semantic")]
 pub(crate) struct MappingPage {
     sources: redb::ReadOnlyTable<&'static str, &'static str>,
     partitions: redb::ReadOnlyTable<&'static str, &'static str>,
     cache: redb::ReadOnlyTable<&'static str, &'static [u8]>,
 }
-#[cfg(feature = "semantic")]
 impl MappingPage {
+    #[cfg(feature = "semantic")]
     pub(crate) fn new(engine: &Engine, _control: &Control) -> FResult<Self> {
         neural_fault!(MAPPING_READ_SNAPSHOT, Some(_control), "page")?;
-        let tx = engine.db.begin_read()?;
+        Self::open(&engine.db.begin_read()?)
+    }
+
+    /// This page's tables in `tx`, with no fault point: the status census and
+    /// preparation selection read each page of sources through one.
+    pub(crate) fn open(tx: &redb::ReadTransaction) -> FResult<Self> {
         Ok(Self {
             sources: tx.open_table(SOURCES)?,
             partitions: tx.open_table(PARTITIONS)?,
             cache: tx.open_table(CACHE)?,
         })
     }
+
+    /// The source cursor's next page in this snapshot ([`source_page_in`]).
+    pub(crate) fn source_page(
+        &self,
+        after: Option<&str>,
+        scope: Option<&str>,
+        exact: bool,
+    ) -> FResult<Vec<(String, SourceMeta)>> {
+        source_page_in(&self.sources, after, scope, exact)
+    }
+
+    /// One source's recorded partition in this snapshot, if any, behind the
+    /// same fault point as [`Engine::semantic_partition`]. As in the query
+    /// path's `partition_with_source_len`, the point fires inside the page
+    /// snapshot: a test callback that writes the store is not seen by the rest
+    /// of the page. Production has no writer then; selection and status hold
+    /// the store or its engine slot.
+    pub(crate) fn recorded_partition(&self, path: &str) -> FResult<Option<PartitionRecord>> {
+        neural_fault!(PARTITION_READ, None, path)?;
+        partition_row(&self.partitions, path)
+    }
+
+    /// [`Engine::semantic_cache_servable`] in this snapshot.
+    #[cfg(feature = "semantic")]
+    pub(crate) fn servable(
+        &self,
+        key: &str,
+        function_digest: &str,
+        dims: usize,
+    ) -> FResult<CacheLookup<()>> {
+        cache_servable(&self.cache, key, function_digest, dims)
+    }
+
     /// Point-read size guard for selected query mappings, before JSON allocation.
+    #[cfg(feature = "semantic")]
     pub(crate) fn partition_bytes(&self, path: &str) -> FResult<usize> {
         Ok(self
             .partitions
@@ -687,6 +792,7 @@ impl MappingPage {
             .map_or(0, |raw| raw.value().len()))
     }
 
+    #[cfg(feature = "semantic")]
     pub(crate) fn partition(
         &self,
         path: &str,
@@ -701,6 +807,7 @@ impl MappingPage {
 
     /// Current mapping and source length from the same point-read snapshot.
     /// Query owner ranges must fit this source, not a stale lexical document.
+    #[cfg(feature = "semantic")]
     pub(crate) fn partition_with_source_len(
         &self,
         path: &str,
@@ -820,11 +927,7 @@ impl Engine {
     pub fn semantic_partition(&self, path: &str) -> FResult<Option<PartitionRecord>> {
         neural_fault!(PARTITION_READ, None, path)?;
         let tx = self.db.begin_read()?;
-        let table = tx.open_table(PARTITIONS)?;
-        match table.get(path)? {
-            None => Ok(None),
-            Some(raw) => decode_partition(raw.value()).map(Some),
-        }
+        partition_row(&tx.open_table(PARTITIONS)?, path)
     }
 
     /// Accept one completed card mapping (possibly without cards) for the
@@ -1058,7 +1161,14 @@ impl Engine {
         function_digest: &str,
         dims: usize,
     ) -> FResult<CacheLookup> {
-        self.cache_row(key, function_digest, dims, provider::decode_finite_f32_le)
+        let tx = self.db.begin_read()?;
+        cache_row(
+            &tx.open_table(CACHE)?,
+            key,
+            function_digest,
+            dims,
+            provider::decode_finite_f32_le,
+        )
     }
 
     /// [`Self::semantic_cache_lookup`]'s classification without decoding the
@@ -1070,51 +1180,8 @@ impl Engine {
         function_digest: &str,
         dims: usize,
     ) -> FResult<CacheLookup<()>> {
-        self.cache_row(key, function_digest, dims, |payload| {
-            provider::finite_f32_le(payload).then_some(())
-        })
-    }
-
-    /// One cache row classified under the current function digest and
-    /// dimension; `payload` reads a current row's vector bytes, `None` when
-    /// they are nonfinite.
-    fn cache_row<V>(
-        &self,
-        key: &str,
-        function_digest: &str,
-        dims: usize,
-        payload: impl FnOnce(&[u8]) -> Option<V>,
-    ) -> FResult<CacheLookup<V>> {
         let tx = self.db.begin_read()?;
-        let table = tx.open_table(CACHE)?;
-        let Some(raw) = table.get(key)? else {
-            return Ok(CacheLookup::Miss);
-        };
-        let bytes = raw.value();
-        let short = key.get(..8).unwrap_or(key);
-        match (probe_row(bytes, function_digest), layout(bytes)) {
-            (CacheProbe::Current, Layout::Dims(stored)) if stored == dims => {
-                match payload(&bytes[68..]) {
-                    Some(vector) => Ok(CacheLookup::Hit(vector)),
-                    None => Ok(CacheLookup::Corrupt(format!(
-                        "semantic_cache[{short}…] holds a nonfinite vector"
-                    ))),
-                }
-            }
-            (CacheProbe::Current, Layout::Dims(stored)) => Ok(CacheLookup::Corrupt(format!(
-                "semantic_cache[{short}…] holds {stored} values; the profile has {dims}"
-            ))),
-            (CacheProbe::Retained, Layout::Legacy) => Ok(CacheLookup::Corrupt(format!(
-                "semantic_cache[{short}…] is a descriptor v1 row"
-            ))),
-            (CacheProbe::Retained, _) => Ok(CacheLookup::Corrupt(format!(
-                "semantic_cache[{short}…] carries a foreign function digest"
-            ))),
-            _ => Ok(CacheLookup::Corrupt(format!(
-                "semantic_cache[{short}…] has an invalid layout ({} bytes)",
-                bytes.len()
-            ))),
-        }
+        cache_servable(&tx.open_table(CACHE)?, key, function_digest, dims)
     }
 
     /// Committed cache totals, without walking rows. Legacy state falls back
@@ -1310,15 +1377,6 @@ impl Engine {
             false,
         )?;
         Ok(())
-    }
-
-    /// Reconstruct and verify one source's current bytes inside a read
-    /// transaction (preparation input; never a query or status side effect).
-    #[cfg(feature = "semantic")]
-    pub(crate) fn semantic_source_body(&self, path: &str, meta: &SourceMeta) -> FResult<String> {
-        let tx = self.db.begin_read()?;
-        let chunks = tx.open_table(CHUNKS)?;
-        Ok(reconstruct_verified(&chunks, path, meta)?.body)
     }
 
     /// Offline purge under sole ownership: partitions, cache and state in one
