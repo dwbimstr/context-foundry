@@ -69,6 +69,22 @@ unchanged, with an additional regression over misleading metadata. This correcti
 follow-up belongs to the preceding selection-diagnostics feature, not retrieval
 ranking or dependency behavior.
 
+**Accepted local receipt, `16b1e39`.** All five `scripts/gates.sh` gates pass:
+formatting, all-target Clippy and the full test suite on Rust 1.97.1, then all-target
+check and Clippy on Rust 1.90.0 against Xcode's macOS 26.5 SDK. Final totals:
+**1,307 passed, 0 failed, 34 ignored**. Log SHA-256 prefixes: Clippy `619e18e9…`,
+test `32315f0e…`, MSRV check `f41a6db4…`, MSRV Clippy `00628e2b…`.
+The focused attribution target also passes 3 tests with its 2 explicit diagnostics
+ignored; Sol's cross-lab review accepts the GLM corrective follow-up under the
+original task-specific author approval.
+
+The rebuilt production CLI and a real stdio MCP owner completed initialize, memory
+get, context and clean EOF against an owned synthetic workspace. Source bytes,
+memory revision/provenance and `[links:none]` were delivered correctly; CLI
+trace-on/off bytes matched. No model profile or weights were used.
+Only this receipt changed after the accepted source tree was checked. No G1/G2,
+retrieval-quality, model-parity, Windows-exploit or performance claim is made.
+
 ## Memory freshness and selection diagnostics — 2026-10-25
 
 Local work on `experimental/context-ecosystem`, based on `add7627`, which merges
@@ -1381,6 +1397,7 @@ directly.
 
 | Commit | fmt | clippy 1.97 | test 1.97 | msrv-check | msrv-clippy |
 | --- | --- | --- | --- | --- | --- |
+| `16b1e39` | 0 | 0 | 0: 1,307 passed, 34 ignored ([dependency cleanup receipt and log digests](#dependency-and-branch-cleanup--2026-10-26)) | 0 | 0 |
 | `38dc370` | 0 | 0 | 0: 1,287 passed, 34 ignored; gateway 54 passed ([receipt and log digests](#architecture-refactor-and-dependency-updates--2026-10-25)) | 0 | 0 |
 | `d72f3bb` | 0 | 0 | 0: 1,174 passed, 28 ignored; gateway 54 passed; two test threads ([receipt and log digests](review/evidence-selection-2026-10-17.json)) | 0 | 0 |
 | `81c20ad` | 0 | 0 | 101: 1,172 passed, 2 failed, 28 ignored; ownership race and MCP deadline, retained in the same receipt | 0 | 0 |
