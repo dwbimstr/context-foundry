@@ -1,9 +1,9 @@
 annotated-doc==0.0.5
 anyio==4.15.1
-certifi==2026.7.22
+certifi==2026.10.19
 charset-normalizer==3.5.1
 click==8.5.0
-filelock==4.0.6
+filelock==4.2.1
 fsspec==2026.9.0
 h11==0.16.0
 hf-xet==1.6.0
@@ -30,7 +30,7 @@ requests==2.34.2
 rich==15.0.0
 safetensors==0.8.0
 sentencepiece==0.2.2
-setuptools==81.0.0
+setuptools==84.1.0
 shellingham==1.5.4
 sympy==1.14.0
 tokenizers==0.23.2
