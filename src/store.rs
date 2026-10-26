@@ -787,6 +787,11 @@ pub struct CandidateBatch {
     /// its final read (a 007 merge decides its doors target from every
     /// root's); `None` otherwise, for search and for a merged batch.
     pub collected: Option<CollectedAnchor>,
+    /// The request's opt-in trace (009 T005), set from `Control` at real
+    /// engine request entry and carried unchanged through a 007 root merge
+    /// (one shared request trace, never root-local state); final packing
+    /// records its settled decisions there. `None` on every off-trace path.
+    pub trace: Option<crate::retrieval_trace::RetrievalTrace>,
 }
 
 impl CandidateBatch {

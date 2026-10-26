@@ -256,6 +256,360 @@ fn relationship_proofs_and_their_source_dependencies_share_one_budget_decision()
     assert_eq!(report(&stale.text)["complete"], false);
 }
 
+/// 009 T005: every proof carries exactly one settled verdict — emitted after
+/// the final tail retry — with an individual key and the citations it
+/// requires; every DELIVERED proof's requirements are covered by delivered
+/// verbatim bodies (never the reverse claim: refused proofs do not prune
+/// independently eligible sources). Each packing attempt uses a fresh trace.
+#[test]
+fn task_proofs_and_their_bodies_are_traced_as_one_decision() {
+    let e = fixture();
+    let compose = |trace: Option<context_foundry::retrieval_trace::RetrievalTrace>| {
+        e.engine
+            .context_candidates_with(
+                "items",
+                Strategy::Auto,
+                &Control::unbounded().with_trace(trace),
+                &ContextOptions {
+                    task: Some(task_context::Scope {
+                        workspace_id: &e.wid,
+                        task_id: "contract",
+                        expected_revision: e.revision,
+                    }),
+                    compose_evidence: true,
+                    boundary_config: Some("boundary.json"),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+    };
+    // One packing attempt: a fresh compose with its own trace, packed once
+    // (a refused allowance simply yields nothing to inspect).
+    let attempt = |tokens: usize| -> Option<(response::PackedText, Vec<Value>)> {
+        let trace = context_foundry::retrieval_trace::RetrievalTrace::default();
+        let c = compose(Some(trace.clone()));
+        let packed = response::pack_enriched_context(
+            &c,
+            None,
+            Budget::request(tokens),
+            &response::stdout_bytes,
+        )
+        .ok()?;
+        let events = trace.snapshot()["events"].as_array().unwrap().clone();
+        Some((packed, events))
+    };
+    fn proof_events(events: &[Value]) -> Vec<&Value> {
+        events
+            .iter()
+            .filter(|ev| ev["stage"] == "packing" && ev["proof"] == "relationship")
+            .collect()
+    }
+
+    // An ample allowance: the two relationships are delivered, each with one
+    // verdict and its own key, and every delivered proof's citations are
+    // covered by delivered verbatim bodies.
+    let Some((delivered, events)) = attempt(3072) else {
+        panic!("the ample allowance must deliver");
+    };
+    let delivered_proofs = delivered
+        .text
+        .lines()
+        .filter(|l| l.starts_with("task-relationship: "))
+        .count();
+    assert_eq!(delivered_proofs, 2, "{}", delivered.text);
+    let proofs = proof_events(&events);
+    assert_eq!(proofs.len(), 2, "{events:?}");
+    assert!(
+        proofs.iter().all(|ev| ev["outcome"] == "selected"),
+        "{events:?}"
+    );
+    let keys: Vec<&Value> = proofs.iter().map(|ev| &ev["proof_key"]).collect();
+    assert_ne!(keys[0], keys[1], "the proofs are individually keyed");
+    let delivered_bodies: Vec<&Value> = events
+        .iter()
+        .filter(|ev| {
+            ev["stage"] == "packing"
+                && ev["outcome"] == "selected"
+                && ev["form"] == "verbatim"
+                && ev["unit"]["path"].is_string()
+        })
+        .map(|ev| &ev["unit"])
+        .collect();
+    let covers = |required: &Value| {
+        let (Some(req_start), Some(req_end)) =
+            (required["start"].as_u64(), required["end"].as_u64())
+        else {
+            panic!("a proof's required citation carries a numeric range: {required:?}")
+        };
+        delivered_bodies.iter().any(|unit| {
+            let (Some(start), Some(end)) = (unit["start"].as_u64(), unit["end"].as_u64()) else {
+                return false;
+            };
+            unit["workspace_id"] == required["workspace_id"]
+                && unit["path"] == required["path"]
+                && unit["sha256"] == required["sha256"]
+                && start <= req_start
+                && end >= req_end
+        })
+    };
+    for ev in &proofs {
+        let required = ev["requires"].as_array().unwrap();
+        assert!(
+            !required.is_empty() && required.iter().all(&covers),
+            "a delivered proof has all required coverage: {ev:?} in {events:?}"
+        );
+    }
+
+    // An intermediate allowance where the bodies fit without the proof line:
+    // the atomic trial refuses the proof, ordinary admission keeps the
+    // bodies, the tail retry refuses it again — still exactly ONE verdict,
+    // now with the settled refusal.
+    let minimum = match response::pack_enriched_context(
+        &compose(None),
+        None,
+        Budget::request(1),
+        &response::stdout_bytes,
+    ) {
+        Err(FoundryError::BudgetTooSmall { minimum_tokens }) => minimum_tokens,
+        result => panic!("expected minimum budget refusal: {result:?}"),
+    };
+    let mut intermediate = None;
+    let mut tokens = 3072usize;
+    while tokens > minimum {
+        tokens -= 96;
+        let Some((packed, events)) = attempt(tokens) else {
+            continue;
+        };
+        let proofs = proof_events(&events);
+        if packed
+            .text
+            .lines()
+            .any(|l| l.starts_with("task-relationship: "))
+        {
+            assert_eq!(
+                proofs.len(),
+                2,
+                "one verdict per proof at every allowance: {events:?}"
+            );
+            continue;
+        }
+        // The bodies can still be independently eligible here.
+        if events.iter().any(|ev| {
+            ev["stage"] == "packing" && ev["outcome"] == "selected" && ev["form"] == "verbatim"
+        }) {
+            intermediate = Some((packed, events));
+            break;
+        }
+    }
+    let Some((_packed, events)) = intermediate else {
+        panic!("no intermediate allowance refused proofs while admitting bodies");
+    };
+    let proofs = proof_events(&events);
+    assert!(
+        !proofs.is_empty(),
+        "the refused proofs are still reported: {events:?}"
+    );
+    assert!(
+        proofs
+            .iter()
+            .all(|ev| ev["outcome"] == "dropped" && ev["reason"] == "budget"),
+        "{events:?}"
+    );
+    // Exactly one verdict per identified proof, never a duplicate from the
+    // retried tail pass.
+    for ev in &proofs {
+        let key = &ev["proof_key"];
+        assert_eq!(
+            proofs
+                .iter()
+                .filter(|other| other["proof_key"] == *key)
+                .count(),
+            1,
+            "one settled verdict per proof: {events:?}"
+        );
+    }
+    // Refused proofs do not prune independently eligible source evidence.
+    assert!(
+        events.iter().any(|ev| ev["stage"] == "packing"
+            && ev["outcome"] == "selected"
+            && ev["form"] == "verbatim"
+            && ev["unit"]["path"] == "client.py"),
+        "a required body stays eligible without its proof: {events:?}"
+    );
+
+    // The minimum: nothing is delivered and the proofs' single verdict is
+    // the token refusal.
+    let Some((empty, events)) = attempt(minimum) else {
+        panic!("the minimum budget packs the empty response");
+    };
+    assert!(!empty.text.contains("task-relationship:"));
+    let proofs = proof_events(&events);
+    assert_eq!(proofs.len(), 2, "{events:?}");
+    assert!(
+        proofs.iter().all(|ev| ev["outcome"] == "dropped"
+            && ev["reason"] == "budget"
+            && ev["limiter"] == "token"),
+        "{events:?}"
+    );
+}
+
+/// 008: composed memory validates in the composition's OWN final read. A
+/// linked memory's marker follows that snapshot: replacing its linked
+/// source at the final-read fault turns the marker stale, the record's text
+/// and revision stay untouched, and the stale source evidence itself is
+/// gone. No preliminary read can predate the marker.
+#[test]
+fn composed_memory_links_follow_the_composition_final_read() {
+    let mut e = fixture();
+    // `refresh` takes `&mut Engine`; everything else in this fixture is `&self`.
+    let link = format!(
+        "service.py#0-{}@{}.{}",
+        SERVICE.len(),
+        &context_foundry::digest(SERVICE.as_bytes())[..32],
+        &e.wid[..16]
+    );
+    e.engine
+        .memory_put(&context_foundry::memory::PutInput {
+            workspace_id: e.wid.clone(),
+            fields: context_foundry::memory::RecordFields {
+                id: "linked".to_owned(),
+                text: "items contract observed".to_owned(),
+                author: "operator".to_owned(),
+                provenance: "sandbox task".to_owned(),
+                source_links: vec![link],
+            },
+        })
+        .unwrap();
+    while e.engine.pending().unwrap() != 0 {
+        e.engine.refresh(&Control::unbounded()).unwrap();
+    }
+    fault::arm(
+        names::TASK_EVIDENCE_BEFORE_FINAL,
+        0,
+        Action::Call(Box::new(|ctx| {
+            ctx.engine
+                .unwrap()
+                .replace_source("service.py", "# changed after discovery\n")
+                .unwrap();
+        })),
+    );
+    let c = e
+        .engine
+        .context_candidates_with(
+            "items",
+            Strategy::Auto,
+            &Control::unbounded(),
+            &ContextOptions {
+                task: Some(task_context::Scope {
+                    workspace_id: &e.wid,
+                    task_id: "contract",
+                    expected_revision: e.revision,
+                }),
+                compose_evidence: true,
+                memory: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    fault::disarm_all();
+    assert_eq!(c.hits.len(), 1);
+    let hit = &c.hits[0];
+    assert_eq!(hit.id, "linked");
+    assert_eq!(hit.revision, 1, "a changed status never edits the record");
+    assert_eq!(hit.text, "items contract observed");
+    assert_eq!(hit.source_links[0].status, "stale");
+    assert!(
+        !c.batch
+            .items
+            .iter()
+            .any(|i| i.handle.as_ref().unwrap().path == "service.py"),
+        "the stale source evidence is gone"
+    );
+    let packed =
+        response::pack_enriched_context(&c, None, Budget::request(4096), &response::stdout_bytes)
+            .unwrap();
+    assert!(
+        packed.text.contains("[links:stale]"),
+        "the marker names the composed snapshot: {}",
+        packed.text
+    );
+}
+
+/// 009 T005: a composed brief whose citation no delivered item covers —
+/// here because composition truncates the cited span to its 32 KiB
+/// delivery limit — is reported once as `unsupported_citation` at the
+/// exclusion itself, with its citation, and never enters the response.
+#[test]
+fn a_composed_brief_citing_a_truncated_span_is_unsupported() {
+    let mut e = fixture();
+    let big = format!("{}\n", "pub fn filler() -> u32 { 7 }\n".repeat(2400));
+    e.engine.replace_source("big.rs", &big).unwrap();
+    e.engine.refresh(&Control::unbounded()).unwrap();
+    let citation = format!(
+        "big.rs#0-{}@{}.{}",
+        big.len(),
+        &context_foundry::digest(big.as_bytes())[..32],
+        &e.wid[..16]
+    );
+    let brief = json!({
+        "cited_spans": [citation],
+        "recipe_sha256": "d".repeat(64),
+        "model": "synthetic-fixture/no-provider",
+        "artifact_sha256": "e".repeat(64),
+        "prompt_sha256": "f".repeat(64),
+        "generated_at_unix_ms": 1,
+        "purpose": [{"text": "giant span orientation items",
+            "citations": [0], "identifiers": ["filler"]}],
+        "behavior": [{"text": "The filler body repeats without behavior.",
+            "citations": [0], "identifiers": []}],
+        "provides": [], "consumes": [], "constraints": [],
+        "tests": [], "unknowns": ["Nothing else is known."]
+    });
+    let request = context_foundry::brief::parse(
+        &serde_json::to_vec(&json!({
+            "workspace_id": e.wid,
+            "command": {"op": "put", "brief": brief}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    e.engine.brief(&request, &Control::unbounded()).unwrap();
+    while e.engine.pending().unwrap() != 0 {
+        e.engine.refresh(&Control::unbounded()).unwrap();
+    }
+    let trace = context_foundry::retrieval_trace::RetrievalTrace::default();
+    let c = e
+        .engine
+        .context_candidates_with(
+            "giant span orientation items",
+            Strategy::Search,
+            &Control::unbounded().with_trace(Some(trace.clone())),
+            &ContextOptions {
+                task: Some(task_context::Scope {
+                    workspace_id: &e.wid,
+                    task_id: "contract",
+                    expected_revision: e.revision,
+                }),
+                compose_evidence: true,
+                briefs: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let packed =
+        response::pack_enriched_context(&c, None, Budget::request(12000), &response::stdout_bytes)
+            .unwrap();
+    assert!(!packed.text.contains("brief:"), "{}", packed.text);
+    let events = trace.snapshot()["events"].as_array().unwrap().clone();
+    assert!(
+        events.iter().any(|ev| ev["stage"] == "packing"
+            && ev["outcome"] == "dropped"
+            && ev["reason"] == "unsupported_citation"
+            && ev["brief"] == citation),
+        "{events:?}"
+    );
+}
+
 #[test]
 fn composition_discovers_unresolved_calls_and_attributed_tests_without_compiler_data() {
     let mut e = fixture();

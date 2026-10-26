@@ -170,7 +170,7 @@ pub struct ForgetReport {
 /// One source link of a `get` result with its status against the indexed
 /// snapshot: `fresh` (same digest), `stale` (source changed) or `missing`
 /// (source gone). A changed status never edits the record.
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct LinkStatus {
     pub handle: String,
     pub status: &'static str,
@@ -190,13 +190,48 @@ pub struct MemoryGet {
 }
 
 /// One validated memory hit for rendering: the live row carries the whole
-/// text; the compact line cuts its first line at the boundary.
+/// text; the compact line cuts its first line at the boundary. The links
+/// carry their statuses against the same final read that validated the row.
 #[derive(Clone, Debug)]
 pub struct MemoryHit {
     pub id: String,
     pub revision: u64,
     pub author: String,
     pub text: String,
+    pub source_links: Vec<LinkStatus>,
+}
+
+impl MemoryHit {
+    /// The hit's link statuses as one fixed-order name: `none` when the
+    /// record has no links, otherwise each present status exactly once in
+    /// fresh+stale+missing order joined by `+` (for example
+    /// `fresh+missing`). It names the linked sources' state in the same
+    /// final read that validated the row — never an assertion that the
+    /// record itself was revalidated, and no invented timestamp. Returns a
+    /// `&'static str` so every compact line can carry it without a fresh
+    /// allocation.
+    pub fn links_status(&self) -> &'static str {
+        let mut fresh = false;
+        let mut stale = false;
+        let mut missing = false;
+        for link in &self.source_links {
+            match link.status {
+                "fresh" => fresh = true,
+                "stale" => stale = true,
+                _ => missing = true,
+            }
+        }
+        match (fresh, stale, missing) {
+            (false, false, false) => "none",
+            (true, false, false) => "fresh",
+            (false, true, false) => "stale",
+            (false, false, true) => "missing",
+            (true, true, false) => "fresh+stale",
+            (true, false, true) => "fresh+missing",
+            (false, true, true) => "stale+missing",
+            (true, true, true) => "fresh+stale+missing",
+        }
+    }
 }
 
 /// The outcome of a memory search: hits validated against one final read,
@@ -458,19 +493,55 @@ pub(crate) fn decode_row(id: &str, raw: &str) -> FResult<MemoryRecord> {
         })
 }
 
-/// Validate `candidates` in order against the live rows of `table`: a missing
-/// or superseded row counts as stale, a corrupt one fails. The whole candidate
-/// window is examined before the cut to `limit`: forgotten or superseded
-/// documents still in the derived index must not crowd out live records.
+/// Evaluate one stored source link against `sources`, the SOURCES table of
+/// the same read transaction as the row read: `fresh` (same digest), `stale`
+/// (source changed) or `missing` (source gone). A stored link was a valid
+/// handle at put time, so one that no longer parses is corruption of the row
+/// named by `id`; a linked source row that cannot be decoded is store
+/// corruption, not a stale link. A reported status never edits the record.
+/// The stored handle moves in and back out — no second allocation.
+fn evaluate_link(
+    sources: &redb::ReadOnlyTable<&'static str, &'static str>,
+    id: &str,
+    handle: String,
+) -> FResult<LinkStatus> {
+    let parsed = store::HandleRef::parse(&handle).map_err(|_| {
+        FoundryError::CorruptMemory(format!("{id}: stored source link is malformed"))
+    })?;
+    let status = match sources.get(parsed.path.as_str())? {
+        None => "missing",
+        Some(meta) => {
+            let meta: store::SourceMeta = serde_json::from_str(meta.value()).map_err(|e| {
+                FoundryError::CorruptStore(format!("source record cannot be decoded: {e}"))
+            })?;
+            if meta.hash.starts_with(&parsed.sha32) {
+                "fresh"
+            } else {
+                "stale"
+            }
+        }
+    };
+    Ok(LinkStatus { handle, status })
+}
+
+/// Validate `candidates` in order against the live rows of `memory`: a
+/// missing or superseded row counts as stale, a corrupt one fails. The whole
+/// candidate window is examined before the cut to `limit`: forgotten or
+/// superseded documents still in the derived index must not crowd out live
+/// records. An accepted hit's link statuses evaluate against `sources` — the
+/// SOURCES table of the SAME read transaction — so a hit's row, text and
+/// links describe one snapshot. Links are read only for hits inside the
+/// limit; candidates beyond it cost no source reads.
 pub(crate) fn validate_hits(
-    table: &redb::ReadOnlyTable<&'static str, &'static str>,
+    memory: &redb::ReadOnlyTable<&'static str, &'static str>,
+    sources: &redb::ReadOnlyTable<&'static str, &'static str>,
     candidates: Vec<store::RecordCandidate>,
     limit: usize,
 ) -> FResult<(Vec<MemoryHit>, u64)> {
     let mut hits = Vec::with_capacity(limit.min(candidates.len()));
     let mut stale = 0u64;
     for candidate in candidates {
-        let record = match table.get(candidate.id.as_str())? {
+        let record = match memory.get(candidate.id.as_str())? {
             // The row must decode AND name this table key.
             Some(raw) => decode_row(&candidate.id, raw.value())?,
             None => {
@@ -483,11 +554,16 @@ pub(crate) fn validate_hits(
             continue;
         }
         if hits.len() < limit {
+            let mut source_links = Vec::with_capacity(record.source_links.len());
+            for handle in record.source_links {
+                source_links.push(evaluate_link(sources, &record.id, handle)?);
+            }
             hits.push(MemoryHit {
                 id: record.id,
                 revision: record.revision,
                 author: record.author,
                 text: record.text,
+                source_links,
             });
         }
     }
@@ -690,35 +766,11 @@ impl Engine {
             Some(raw) => decode_row(id, raw.value())?,
             None => return Err(FoundryError::NotFound),
         };
+        // The same evaluator as search/context hits, against this
+        // transaction's source state; the stored handles move through.
         let mut source_links = Vec::with_capacity(record.source_links.len());
-        for handle in &record.source_links {
-            // A stored link was a valid handle at put time; one that no
-            // longer parses is corruption of this row, named as such.
-            let parsed = store::HandleRef::parse(handle).map_err(|_| {
-                FoundryError::CorruptMemory(format!("{id}: stored source link is malformed"))
-            })?;
-            let status = match sources.get(parsed.path.as_str())? {
-                None => "missing",
-                Some(meta) => {
-                    // A linked source row that cannot be decoded is store
-                    // corruption, not a stale link.
-                    let meta: store::SourceMeta =
-                        serde_json::from_str(meta.value()).map_err(|e| {
-                            FoundryError::CorruptStore(format!(
-                                "source record cannot be decoded: {e}"
-                            ))
-                        })?;
-                    if meta.hash.starts_with(&parsed.sha32) {
-                        "fresh"
-                    } else {
-                        "stale"
-                    }
-                }
-            };
-            source_links.push(LinkStatus {
-                handle: handle.clone(),
-                status,
-            });
+        for handle in record.source_links {
+            source_links.push(evaluate_link(&sources, id, handle)?);
         }
         Ok(MemoryGet {
             id: record.id,
@@ -914,7 +966,9 @@ impl Engine {
         let plan = self.memory_plan(query)?;
         let tx = self.db.begin_read()?;
         let memory = tx.open_table(MEMORY)?;
-        let (hits, stale) = validate_hits(&memory, plan.candidates, limit)?;
+        // The hits' link statuses evaluate in this same final read.
+        let sources = tx.open_table(SOURCES)?;
+        let (hits, stale) = validate_hits(&memory, &sources, plan.candidates, limit)?;
         let mut freshness = self.freshness_in(&tx)?;
         // The memory header's `pending:` counts memory work only (008): the
         // source namespaces report their own.

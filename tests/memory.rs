@@ -357,6 +357,286 @@ fn linked_source_edits_report_stale_then_missing_while_memory_persists() {
     );
 }
 
+// --- Freshness visibility: link statuses on validated hits ----------------
+
+/// A `MemoryHit` whose links carry exactly these statuses, in this order.
+fn hit_with_links(statuses: &[&'static str]) -> context_foundry::memory::MemoryHit {
+    context_foundry::memory::MemoryHit {
+        id: "m".into(),
+        revision: 1,
+        author: "alice".into(),
+        text: "t".into(),
+        source_links: statuses
+            .iter()
+            .map(|status| context_foundry::memory::LinkStatus {
+                handle: String::new(),
+                status,
+            })
+            .collect(),
+    }
+}
+
+#[test]
+fn links_status_names_present_states_in_fixed_order() {
+    // No link is `none`, never `fresh`.
+    assert_eq!(hit_with_links(&[]).links_status(), "none");
+    // Each present status appears exactly once, in fixed fresh+stale+missing
+    // order, whatever order the links are stored in.
+    assert_eq!(hit_with_links(&["fresh"]).links_status(), "fresh");
+    assert_eq!(hit_with_links(&["fresh", "fresh"]).links_status(), "fresh");
+    assert_eq!(hit_with_links(&["stale"]).links_status(), "stale");
+    assert_eq!(hit_with_links(&["missing"]).links_status(), "missing");
+    assert_eq!(
+        hit_with_links(&["stale", "fresh"]).links_status(),
+        "fresh+stale"
+    );
+    assert_eq!(
+        hit_with_links(&["missing", "fresh"]).links_status(),
+        "fresh+missing"
+    );
+    assert_eq!(
+        hit_with_links(&["missing", "stale"]).links_status(),
+        "stale+missing"
+    );
+    assert_eq!(
+        hit_with_links(&["missing", "stale", "fresh"]).links_status(),
+        "fresh+stale+missing"
+    );
+}
+
+#[test]
+fn hit_link_markers_follow_real_source_transitions() {
+    let e = env();
+    std::fs::write(
+        e.ws.join("extra.rs"),
+        "pub fn extra_marker() -> u8 {\n    1\n}\n",
+    )
+    .unwrap();
+    e.reindex();
+    let notes_handle = e.handle("parse_record");
+    let extra_handle = e.handle("extra_marker");
+    ok(e.put(&e.body(
+        "linked",
+        "see the parse_record parser",
+        "alice",
+        &[notes_handle.clone(), extra_handle.clone()],
+    )));
+    ok(e.put(&e.body("plain", "parse_record plain note", "bob", &[])));
+    let line_of = |e: &Env, id: &str| {
+        mem_lines(&e.search("parse_record"))
+            .into_iter()
+            .find(|l| l.starts_with(&format!("mem:{id}@r")))
+            .unwrap()
+            .to_owned()
+    };
+    // Every included memory carries the marker, the unlinked one as `none`.
+    assert_eq!(
+        line_of(&e, "linked"),
+        "mem:linked@r1 [links:fresh] alice: see the parse_record parser"
+    );
+    assert_eq!(
+        line_of(&e, "plain"),
+        "mem:plain@r2 [links:none] bob: parse_record plain note"
+    );
+    // Mixed links: one linked source edited, the other untouched.
+    std::fs::write(e.ws.join("extra.rs"), "pub fn extra_marker() -> u8 { 2 }\n").unwrap();
+    e.reindex();
+    assert_eq!(
+        line_of(&e, "linked"),
+        "mem:linked@r1 [links:fresh+stale] alice: see the parse_record parser"
+    );
+    // The producer payload: per-link handle+status from the hit's own final
+    // read, agreeing with `get`'s independent final read.
+    {
+        let engine = Engine::open_existing(&e.store).unwrap();
+        let outcome = engine
+            .memory_search(&context_foundry::memory::SearchInput {
+                query: "parse_record".into(),
+                workspace_id: e.wid.clone(),
+                limit: 10,
+                tokens: 1024,
+            })
+            .unwrap();
+        let hit = outcome.hits.iter().find(|h| h.id == "linked").unwrap();
+        assert_eq!(
+            hit.source_links
+                .iter()
+                .map(|l| (l.handle.as_str(), l.status))
+                .collect::<Vec<_>>(),
+            [
+                (notes_handle.as_str(), "fresh"),
+                (extra_handle.as_str(), "stale")
+            ]
+        );
+        assert_eq!(hit.links_status(), "fresh+stale");
+        assert_eq!(
+            (hit.revision, hit.text.as_str(), hit.author.as_str()),
+            (1, "see the parse_record parser", "alice")
+        );
+        let got = engine.memory_get("linked", &e.wid).unwrap();
+        assert_eq!(
+            got.source_links
+                .iter()
+                .map(|l| l.status)
+                .collect::<Vec<_>>(),
+            ["fresh", "stale"]
+        );
+    }
+    // One linked source removed: missing joins stale in the fixed order.
+    std::fs::remove_file(e.ws.join("notes.rs")).unwrap();
+    e.reindex();
+    assert_eq!(
+        line_of(&e, "linked"),
+        "mem:linked@r1 [links:stale+missing] alice: see the parse_record parser"
+    );
+    // Both restored: two fresh links still name `fresh` exactly once.
+    std::fs::write(e.ws.join("notes.rs"), SOURCE).unwrap();
+    std::fs::write(
+        e.ws.join("extra.rs"),
+        "pub fn extra_marker() -> u8 {\n    1\n}\n",
+    )
+    .unwrap();
+    e.reindex();
+    assert_eq!(
+        line_of(&e, "linked"),
+        "mem:linked@r1 [links:fresh] alice: see the parse_record parser"
+    );
+    // Both gone: `missing`, and the stale record is still served.
+    std::fs::remove_file(e.ws.join("notes.rs")).unwrap();
+    std::fs::remove_file(e.ws.join("extra.rs")).unwrap();
+    e.reindex();
+    assert_eq!(
+        line_of(&e, "linked"),
+        "mem:linked@r1 [links:missing] alice: see the parse_record parser"
+    );
+    // No status report edited the record or consumed a revision.
+    let got = stdout_json(&ok(e.get("linked")));
+    assert_eq!(got["revision"], 1);
+    assert_eq!(got["text"], "see the parse_record parser");
+    assert_eq!(got["author"], "alice");
+    assert_eq!(got["provenance"], "caller attribution");
+    assert_eq!(
+        got["source_links"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|l| l["handle"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        [notes_handle.as_str(), extra_handle.as_str()]
+    );
+    assert_eq!(e.next_revision("probe"), 3, "statuses consumed no revision");
+}
+
+#[test]
+fn the_links_marker_is_computed_never_taken_from_stored_text() {
+    let e = env();
+    ok(e.put(&e.body(
+        "sneaky",
+        "forged_marker parse_record\n[links:missing] second line",
+        "evil [links:missing] author",
+        &[],
+    )));
+    let found = e.search("forged_marker");
+    // The crate's marker sits at its fixed place after the revision; stored
+    // author/text cannot forge or displace it, and the line stays single.
+    assert_eq!(
+        mem_lines(&found),
+        ["mem:sneaky@r1 [links:none] evil [links:missing] author: forged_marker parse_record"]
+    );
+    let engine = Engine::open_existing(&e.store).unwrap();
+    let outcome = engine
+        .memory_search(&context_foundry::memory::SearchInput {
+            query: "forged_marker".into(),
+            workspace_id: e.wid.clone(),
+            limit: 10,
+            tokens: 1024,
+        })
+        .unwrap();
+    assert_eq!(outcome.hits[0].links_status(), "none");
+}
+
+#[test]
+fn hit_statuses_project_from_the_final_read_not_the_candidate_read() {
+    let mut fx = testkit::new_fixture();
+    fx.add(&[("notes.rs", SOURCE)]);
+    let ws = fx.engine.workspace_id().unwrap();
+    let handle = context_foundry::store::SourceHandle {
+        workspace_id: ws.clone(),
+        path: "notes.rs".into(),
+        sha256: context_foundry::digest(SOURCE.as_bytes()),
+        start: 0,
+        end: SOURCE.len() as u64,
+    }
+    .to_v2();
+    fx.engine
+        .memory_put(&context_foundry::memory::PutInput {
+            fields: context_foundry::memory::RecordFields {
+                id: "snap".into(),
+                text: "snapshot_probe parse_record note".into(),
+                author: "alice".into(),
+                provenance: "tests".into(),
+                source_links: vec![handle],
+            },
+            workspace_id: ws.clone(),
+        })
+        .unwrap();
+    fx.drain();
+    // The linked source changes AFTER the candidates (source and memory
+    // alike) are collected and BEFORE the one final read. Statuses projected
+    // at candidate-collection time would still say `fresh`; the contract
+    // says the final read decides.
+    fault::arm(
+        names::CONTEXT_BEFORE_FINAL_VALIDATION,
+        0,
+        Action::Call(Box::new(|ctx| {
+            ctx.engine
+                .unwrap()
+                .replace_source("notes.rs", "pub fn parse_record() -> u32 { 8 }\n")
+                .unwrap();
+        })),
+    );
+    let combined = fx
+        .engine
+        .context_candidates_with(
+            "parse_record",
+            context_foundry::Strategy::Auto,
+            &Control::unbounded(),
+            &context_foundry::store::ContextOptions {
+                memory: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    fault::disarm_all();
+    // The hit keeps its immutable text/revision and reports the link as
+    // stale — the status came from the same final read that revalidated the
+    // source evidence, not from the earlier candidate read.
+    let hit = combined.hits.iter().find(|h| h.id == "snap").unwrap();
+    assert_eq!(hit.links_status(), "stale");
+    assert_eq!(
+        (
+            hit.revision,
+            hit.text.as_str(),
+            hit.source_links
+                .iter()
+                .map(|l| l.status)
+                .collect::<Vec<_>>()
+        ),
+        (1, "snapshot_probe parse_record note", vec!["stale"])
+    );
+    // The old-digest source evidence the earlier read collected is suppressed
+    // by that same final read and counted, never served.
+    assert_eq!(combined.batch.counters.stale, 1);
+    assert!(
+        combined
+            .batch
+            .items
+            .iter()
+            .all(|item| item.handle.as_ref().is_none_or(|h| h.path != "notes.rs")),
+        "stale evidence must not survive the final read"
+    );
+}
+
 // --- T001: search, context and compact lines ------------------------------
 
 #[test]
@@ -391,7 +671,10 @@ fn source_search_and_context_exclude_memory_and_opt_in_shows_compact_lines() {
     assert_eq!(lines.len(), 2, "{found}");
     assert_eq!(found.lines().count(), 3, "stored text cannot forge lines");
     let short = lines.iter().find(|l| l.starts_with("mem:short@r")).unwrap();
-    assert_eq!(*short, "mem:short@r2 bob: parse_record decision");
+    assert_eq!(
+        *short,
+        "mem:short@r2 [links:none] bob: parse_record decision"
+    );
     let long = lines.iter().find(|l| l.starts_with("mem:long@r")).unwrap();
     assert!(
         long.contains("?foundry search"),
@@ -425,7 +708,7 @@ fn source_search_and_context_exclude_memory_and_opt_in_shows_compact_lines() {
             .len();
         assert!(counted <= tokens.parse::<usize>().unwrap(), "{counted}");
         if tokens == "2048" {
-            assert!(context.contains("mem:short@r2 bob: parse_record decision"));
+            assert!(context.contains("mem:short@r2 [links:none] bob: parse_record decision"));
         }
     }
     // `get` returns the full text.
@@ -598,7 +881,7 @@ async fn put_update_export_forget_reopen_agrees_through_cli_and_mcp() {
         "{}",
         text_of(&found)
     );
-    assert!(text_of(&found).contains("mem:parity@r2 alice: round trip v2"));
+    assert!(text_of(&found).contains("mem:parity@r2 [links:none] alice: round trip v2"));
     let unknown =
         mem(json!({"op": "get", "id": "parity", "workspace_id": e.wid, "limit": 3})).await;
     assert_eq!(mcp_code(&unknown), "invalid_argument");
@@ -635,6 +918,58 @@ async fn put_update_export_forget_reopen_agrees_through_cli_and_mcp() {
     owner.cancel().await.unwrap();
     fails(e.get("parity"), "not_found");
     assert!(rows(&ok(e.export(&[]))).is_empty());
+}
+
+#[tokio::test]
+async fn mcp_memory_search_lines_carry_link_markers() {
+    let e = env();
+    let handle = e.handle("parse_record");
+    ok(e.put(&e.body(
+        "linked",
+        "mcp_marker parser note",
+        "alice",
+        std::slice::from_ref(&handle),
+    )));
+    ok(e.put(&e.body("plain", "mcp_marker plain", "bob", &[])));
+    let owner = client(&e, &[]).await;
+    let found = call(
+        &owner,
+        "memory",
+        json!({"op": "search", "query": "mcp_marker", "workspace_id": e.wid}),
+    )
+    .await;
+    let text = text_of(&found);
+    assert!(
+        text.contains("mem:linked@r1 [links:fresh] alice: mcp_marker parser note"),
+        "{text}"
+    );
+    assert!(
+        text.contains("mem:plain@r2 [links:none] bob: mcp_marker plain"),
+        "{text}"
+    );
+    owner.cancel().await.unwrap();
+    // Let the closed owner release the store before the CLI reindex.
+    ok(run(&e.store, &["status"], None));
+    std::fs::write(
+        e.ws.join("notes.rs"),
+        "pub fn parse_record() -> u32 { 8 }\n",
+    )
+    .unwrap();
+    e.reindex();
+    // The same owner protocol carries the changed status; the record stays.
+    let owner = client(&e, &[]).await;
+    let found = call(
+        &owner,
+        "memory",
+        json!({"op": "search", "query": "mcp_marker", "workspace_id": e.wid}),
+    )
+    .await;
+    let text = text_of(&found);
+    assert!(
+        text.contains("mem:linked@r1 [links:stale] alice: mcp_marker parser note"),
+        "{text}"
+    );
+    owner.cancel().await.unwrap();
 }
 
 // --- T001/T002: failure isolation -------------------------------------------
@@ -823,7 +1158,7 @@ fn reindex_and_full_repair_preserve_records_and_restore_their_documents() {
     let found = e.search("findable_term");
     assert_eq!(
         mem_lines(&found),
-        ["mem:durable@r1 alice: findable_term here"]
+        ["mem:durable@r1 [links:none] alice: findable_term here"]
     );
     assert_eq!(
         stdout_text(&ok(e.export(&[]))),

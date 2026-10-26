@@ -1084,6 +1084,7 @@ fn the_final_backtracking_never_splits_a_door_group() {
                 groups: vec![group(&one, "a", 0), group(&two, "b", 2)],
             }),
             collected: None,
+            trace: None,
         }
     };
     // The first anchor alone, complete, under `omitted:9`.
@@ -1337,4 +1338,423 @@ fn suffix_lookalike_paths_never_parse_as_a_different_handle() {
         .text;
     let refused = parse_v2(&text).expect_err("two complete fenced readings");
     assert!(refused.contains("ambiguous"), "{refused}\n{text}");
+}
+
+/// 009 T005: one settled event per packed candidate — the chosen form for a
+/// selection, the refusing bound (token budget or serialized-byte cap) for a
+/// shortening or drop, duplicate coverage for a repeated source — and a
+/// candidate whose only form is an excerpt is selected as such, never
+/// relabeled budget-shortened. A parent refused for its excerpt names the
+/// excerpt's actual delivered range. Trace off and on deliver identical
+/// bytes.
+#[test]
+fn packing_decisions_trace_forms_reasons_and_bounds() {
+    use context_foundry::response::Freshness;
+    use context_foundry::retrieval_trace::RetrievalTrace;
+    use context_foundry::store::{CandidateBatch, CandidateCounters, RankedItem, RenderedForm};
+    use serde_json::Value;
+
+    let handle = |path: &str, start: u64, end: u64| SourceHandle {
+        workspace_id: "a".repeat(64),
+        path: path.to_owned(),
+        sha256: "b".repeat(64),
+        start,
+        end,
+    };
+    let unit = |path: &str, start: u64, end: u64, forms: Vec<RenderedForm>| RankedItem {
+        tier: 2,
+        rank: 0,
+        score: 0.0,
+        handle: Some(handle(path, start, end)),
+        start_line: 1,
+        end_line: 1,
+        line: 1,
+        label: format!("fn {path}"),
+        lang: Some("rust".to_owned()),
+        semantic: None,
+        resolver: None,
+        forms,
+    };
+    let varied = |lines: usize| {
+        (0..lines)
+            .map(|i| format!("let v{i} = compute_{i}(a, b, c) + offset;\n"))
+            .collect::<String>()
+    };
+    let batch = |trace: Option<RetrievalTrace>| {
+        let kept = "pub fn kept() {}\n";
+        let mut items = vec![
+            unit(
+                "src/kept.rs",
+                0,
+                20,
+                vec![RenderedForm::Verbatim(kept.into())],
+            ),
+            // The same source span again: packing never repeats it.
+            unit(
+                "src/kept.rs",
+                0,
+                20,
+                vec![RenderedForm::Verbatim(kept.into())],
+            ),
+            // Its only form is an excerpt; choosing it is not a shortening.
+            unit(
+                "src/excerpt.rs",
+                4,
+                25,
+                vec![RenderedForm::Excerpt {
+                    start: 4,
+                    start_line: 1,
+                    body: "fn excerpt_only() {}".to_owned(),
+                }],
+            ),
+            unit(
+                "src/large.rs",
+                0,
+                180_000,
+                vec![RenderedForm::Verbatim(varied(4000)), RenderedForm::Address],
+            ),
+            // Fits the byte cap but not the token budget: a token drop.
+            unit(
+                "src/too_many_tokens.rs",
+                0,
+                150_000,
+                vec![RenderedForm::Verbatim(varied(3400))],
+            ),
+            // The parent is refused for a strict sub-range excerpt: the
+            // event must name the excerpt's delivered range, not the
+            // parent's.
+            unit(
+                "src/fallback_excerpt.rs",
+                0,
+                168_000,
+                vec![
+                    RenderedForm::Verbatim(varied(3800)),
+                    RenderedForm::Excerpt {
+                        start: 5,
+                        start_line: 1,
+                        body: "fn fallback() {}\n".to_owned(),
+                    },
+                ],
+            ),
+            // Larger than the byte cap on its own: a deliberate byte drop
+            // under any boundary measure.
+            unit(
+                "src/undeliverable.rs",
+                0,
+                283_000,
+                vec![RenderedForm::Verbatim(varied(7000))],
+            ),
+        ];
+        for (rank, item) in items.iter_mut().enumerate() {
+            item.rank = rank;
+        }
+        CandidateBatch {
+            freshness: Freshness {
+                workspace_id: "a".repeat(64),
+                source_revision: 7,
+                scan_state: "complete".to_owned(),
+                pending_sources: 0,
+                indexed_snapshot: "revision=7".to_owned(),
+            },
+            items,
+            counters: CandidateCounters::default(),
+            semantic: None,
+            route: None,
+            anchors: Vec::new(),
+            doors: None,
+            collected: None,
+            trace,
+        }
+    };
+    let budget = Budget::request(32768);
+    let quiet = response::pack_context(&batch(None), budget, &response::stdout_bytes).unwrap();
+    let trace = RetrievalTrace::default();
+    let traced =
+        response::pack_context(&batch(Some(trace.clone())), budget, &response::stdout_bytes)
+            .unwrap();
+    assert_eq!(quiet.text, traced.text, "tracing changes no output byte");
+    assert_eq!(quiet.tokens, traced.tokens);
+
+    let events: Vec<Value> = trace.snapshot()["events"].as_array().unwrap().clone();
+    fn of<'a>(events: &'a [Value], path: &str) -> Vec<&'a Value> {
+        events
+            .iter()
+            .filter(|e| e["stage"] == "packing" && e["unit"]["path"] == path)
+            .collect()
+    }
+    assert!(
+        of(&events, "src/kept.rs")
+            .iter()
+            .any(|e| e["outcome"] == "selected" && e["form"] == "verbatim"),
+        "{events:?}"
+    );
+    assert!(
+        of(&events, "src/kept.rs")
+            .iter()
+            .any(|e| e["outcome"] == "dropped" && e["reason"] == "duplicate"),
+        "{events:?}"
+    );
+    let excerpt = of(&events, "src/excerpt.rs");
+    assert!(
+        excerpt
+            .iter()
+            .any(|e| e["outcome"] == "selected" && e["form"] == "excerpt"),
+        "{events:?}"
+    );
+    assert!(
+        !excerpt.iter().any(|e| e["outcome"] == "shortened"),
+        "a candidate that arrived as an excerpt is not budget-shortened: {events:?}"
+    );
+    assert!(
+        of(&events, "src/large.rs")
+            .iter()
+            .any(|e| e["outcome"] == "shortened"
+                && e["reason"] == "budget"
+                && e["limiter"] == "token"
+                && e["form"] == "address"),
+        "{events:?}"
+    );
+    assert!(
+        of(&events, "src/too_many_tokens.rs")
+            .iter()
+            .any(|e| e["outcome"] == "dropped"
+                && e["reason"] == "budget"
+                && e["limiter"] == "token"),
+        "fits the cap but not the tokens: {events:?}"
+    );
+    let fallback = of(&events, "src/fallback_excerpt.rs");
+    assert!(
+        fallback.iter().any(|e| e["outcome"] == "shortened"
+            && e["reason"] == "budget"
+            && e["limiter"] == "token"
+            && e["form"] == "excerpt"
+            && e["unit"]["start"] == 5
+            && e["unit"]["end"] == 22),
+        "the event names the delivered excerpt range: {events:?}"
+    );
+    assert!(
+        fallback
+            .iter()
+            .any(|e| e["parent"]["start"] == 0 && e["parent"]["end"] == 168_000),
+        "the refused parent range stays separately identified: {events:?}"
+    );
+    assert!(
+        of(&events, "src/undeliverable.rs")
+            .iter()
+            .any(|e| e["outcome"] == "dropped"
+                && e["reason"] == "budget"
+                && e["limiter"] == "byte"),
+        "past the cap on its own bytes: {events:?}"
+    );
+
+    // The same refusal through the actual MCP serialized-byte measure.
+    let byte_trace = RetrievalTrace::default();
+    response::pack_context(&batch(Some(byte_trace.clone())), budget, &mcp_bytes).unwrap();
+    let byte_events = byte_trace.snapshot()["events"].as_array().unwrap().clone();
+    assert!(
+        of(&byte_events, "src/undeliverable.rs")
+            .iter()
+            .any(|e| e["outcome"] == "dropped"
+                && e["reason"] == "budget"
+                && e["limiter"] == "byte"),
+        "the serialized result cap refuses it: {byte_events:?}"
+    );
+}
+
+/// 009 T005: every candidate the anchored selection itself excluded carries
+/// `anchored_selection`, never a budget reason; the selection's own entries
+/// are selected with their kinds; trace off and on deliver identical bytes.
+#[test]
+fn anchored_exclusion_is_traced_as_selection_never_budget() {
+    use context_foundry::response::Freshness;
+    use context_foundry::retrieval_trace::RetrievalTrace;
+    use context_foundry::store::{
+        AnchorWindow, CandidateBatch, CandidateCounters, RankedItem, RenderedForm, Resolver,
+    };
+
+    let handle = |path: &str| SourceHandle {
+        workspace_id: "a".repeat(64),
+        path: path.to_owned(),
+        sha256: "b".repeat(64),
+        start: 0,
+        end: 22,
+    };
+    let unit = |path: &str, anchor: (u8, usize), qualifiers: u64| RankedItem {
+        tier: 1,
+        rank: 0,
+        score: 0.0,
+        handle: Some(handle(path)),
+        start_line: 1,
+        end_line: 1,
+        line: 1,
+        label: format!("fn {path}"),
+        lang: Some("rust".to_owned()),
+        semantic: None,
+        resolver: Some(Resolver {
+            anchor,
+            qualifiers,
+            exact: true,
+            role: 0,
+            name: (0, 10),
+        }),
+        forms: vec![
+            RenderedForm::Verbatim("pub fn pivot_dock() {}\n".to_owned()),
+            RenderedForm::Address,
+        ],
+    };
+    let batch = |trace: Option<RetrievalTrace>| {
+        // Two definitions whose resolver keys differ on qualifiers: the
+        // first is strictly better, so the window resolves.
+        let one = unit("src/one.rs", (1, 0), 1);
+        let two = unit("src/two.rs", (2, 0), 0);
+        let mut items = vec![one.clone(), two.clone()];
+        items.extend((0..9).map(|i| {
+            let mut out = unit(&format!("src/out{i}.rs"), (3, i), 0);
+            out.tier = 2;
+            out.resolver = None;
+            out
+        }));
+        for (rank, item) in items.iter_mut().enumerate() {
+            item.rank = rank;
+        }
+        CandidateBatch {
+            freshness: Freshness {
+                workspace_id: "a".repeat(64),
+                source_revision: 7,
+                scan_state: "complete".to_owned(),
+                pending_sources: 0,
+                indexed_snapshot: "revision=7".to_owned(),
+            },
+            items,
+            counters: CandidateCounters::default(),
+            semantic: None,
+            route: None,
+            anchors: vec![AnchorWindow {
+                anchor: "pivot_dock".to_owned(),
+                order: (1, 0),
+                definitions: 2,
+                entries: vec![one, two],
+            }],
+            doors: None,
+            collected: None,
+            trace,
+        }
+    };
+    let budget = Budget::request(32768);
+    let quiet = response::pack_context(&batch(None), budget, &response::stdout_bytes).unwrap();
+    let trace = RetrievalTrace::default();
+    let traced =
+        response::pack_context(&batch(Some(trace.clone())), budget, &response::stdout_bytes)
+            .unwrap();
+    assert_eq!(quiet.text, traced.text, "tracing changes no output byte");
+
+    let events = trace.snapshot()["events"].as_array().unwrap().clone();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| e["stage"] == "packing"
+                && e["outcome"] == "dropped"
+                && e["reason"] == "anchored_selection")
+            .count(),
+        9,
+        "{events:?}"
+    );
+    assert!(
+        events.iter().any(|e| e["stage"] == "packing"
+            && e["outcome"] == "selected"
+            && e["kind"] == "definition"
+            && e["form"] == "verbatim"),
+        "{events:?}"
+    );
+    assert!(
+        events.iter().any(|e| e["stage"] == "packing"
+            && e["outcome"] == "selected"
+            && e["kind"] == "directory"),
+        "{events:?}"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| e["stage"] == "packing" && e["reason"] == "budget"),
+        "an ample budget excludes nothing for budget: {events:?}"
+    );
+}
+
+/// 009 T005: a trace already at its bound stays explicitly truncated, records
+/// no further events, and the packing it watched is byte-identical.
+#[test]
+fn a_full_trace_stays_bounded_and_changes_no_packing() {
+    use context_foundry::response::Freshness;
+    use context_foundry::retrieval_trace::RetrievalTrace;
+    use context_foundry::store::{CandidateBatch, CandidateCounters, RankedItem, RenderedForm};
+
+    let handle = |path: &str| SourceHandle {
+        workspace_id: "a".repeat(64),
+        path: path.to_owned(),
+        sha256: "b".repeat(64),
+        start: 0,
+        end: 22,
+    };
+    let items: Vec<RankedItem> = (0..4)
+        .map(|i| RankedItem {
+            tier: 2,
+            rank: i,
+            score: 0.0,
+            handle: Some(handle(&format!("src/unit{i}.rs"))),
+            start_line: 1,
+            end_line: 1,
+            line: 1,
+            label: format!("fn unit{i}"),
+            lang: Some("rust".to_owned()),
+            semantic: None,
+            resolver: None,
+            forms: vec![RenderedForm::Verbatim("pub fn unit() {}\n".to_owned())],
+        })
+        .collect();
+    let batch = |trace: Option<RetrievalTrace>| CandidateBatch {
+        freshness: Freshness {
+            workspace_id: "a".repeat(64),
+            source_revision: 7,
+            scan_state: "complete".to_owned(),
+            pending_sources: 0,
+            indexed_snapshot: "revision=7".to_owned(),
+        },
+        items: items.clone(),
+        counters: CandidateCounters::default(),
+        semantic: None,
+        route: None,
+        anchors: Vec::new(),
+        doors: None,
+        collected: None,
+        trace,
+    };
+    let quiet =
+        response::pack_context(&batch(None), Budget::request(1024), &response::stdout_bytes)
+            .unwrap();
+    let trace = RetrievalTrace::default();
+    for _ in 0..10_000 {
+        trace.record(serde_json::json!({"stage": "warm"}));
+    }
+    let before = trace.snapshot();
+    assert_eq!(before["truncated"], true);
+    let traced = response::pack_context(
+        &batch(Some(trace.clone())),
+        Budget::request(1024),
+        &response::stdout_bytes,
+    )
+    .unwrap();
+    let after = trace.snapshot();
+    assert_eq!(
+        after["events"].as_array().unwrap().len(),
+        before["events"].as_array().unwrap().len(),
+        "a truncated trace accepts no further events"
+    );
+    assert!(
+        !after["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["stage"] == "packing")
+    );
+    assert_eq!(quiet.text, traced.text);
 }

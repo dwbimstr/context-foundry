@@ -558,6 +558,10 @@ pub fn merge_context(batches: &[RootBatch]) -> CandidateBatch {
         doors: merged_doors(batches, &anchors),
         anchors,
         collected: None,
+        // One shared request trace: every root's batch carries the same one
+        // from `Control`, so the merge never invents root-local state or
+        // duplicates a global decision.
+        trace: batches[0].batch.trace.clone(),
     }
 }
 
@@ -761,6 +765,7 @@ mod tests {
             anchors: Vec::new(),
             doors: None,
             collected: None,
+            trace: None,
         }
     }
 

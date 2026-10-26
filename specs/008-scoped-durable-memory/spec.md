@@ -138,7 +138,10 @@ Use one memory table in the authoritative store. Atomically commit the row/revis
 and a typed pending-index key `memory:<id>`; source work uses a distinct namespace.
 Derived search documents carry `kind`, ID and memory revision/hash. Validate against
 the live memory row before delivery so a forgotten or old revision never leaks through
-stale search. Reuse 001's index replay/repair; do not create another database or queue.
+stale search. A validated hit also carries its links' statuses, evaluated against the
+source rows of the same read transaction — one snapshot per hit — and links are read
+only for hits inside the accepted limit, never for candidates beyond it. Reuse 001's
+index replay/repair; do not create another database or queue.
 Code `source_revision` is unaffected by memory edits.
 Memory get/export uses 001's authoritative-only open and is available when lexical
 search is broken. A corrupt memory record is named; it cannot silently become absent
@@ -148,13 +151,20 @@ store-owned upgrade sequence; disabling memory never removes its records.
 Source search remains source-only by default. Add `include_memory` default false to
 context and the bounded `memory search` (`memory {op:"search"}`) for explicit memory
 queries. Both render a memory as one compact line,
-`mem:<id>@r<revision> <author>: <first line>`, where the first line is the record
-text's first line cut at a UTF-8 boundary to at most 120 bytes; the `mem:` prefix is
-the kind, and the line carries ID, revision and attribution. Full text comes only from
-`get`. Memory search uses shared query/hit limits; context with memory enabled obeys
-the same complete-output budget and keeps a fitting source span first. Plain memory
-get/export are bounded by bytes, not advertised as provider-token-budgeted. The MCP
-`memory` tool uses the existing serialized worker.
+`mem:<id>@r<revision> [links:<status>] <author>: <first line>`, where the first line
+is the record text's first line cut at a UTF-8 boundary to at most 120 bytes; the
+`mem:` prefix is the kind, and the line carries ID, revision, attribution and link
+freshness. `<status>` is computed for the hit in the same final read that validated
+its row: `none` when the record has no links, otherwise each present link status
+exactly once in fixed fresh+stale+missing order joined by `+` (for example
+`fresh+missing`). It names the linked sources only — no revalidation claim and no
+invented timestamp — and it is part of the line itself, so a budget cut cannot drop
+it independently of the line. Stale or missing links never remove a record from
+search or context. Full text comes only from `get`, which keeps the exact per-link
+handles and statuses. Memory search uses shared query/hit limits; context with
+memory enabled obeys the same complete-output budget and keeps a fitting source
+span first. Plain memory get/export are bounded by bytes, not advertised as
+provider-token-budgeted. The MCP `memory` tool uses the existing serialized worker.
 
 Forget is logical removal from this store, not forensic disk erasure, deletion from
 old exports/backups, or untraining model weights. No model reads this table in 013.
@@ -178,8 +188,10 @@ writing with export instructions. No predecessor knowledge migration is included
   conflicting create changes nothing; two updates expecting the same revision yield
   one newer revision and one conflict; empty/oversize/null/unknown fields and
   contradictory `op` fields fail before write without consuming a revision. Wrong
-  workspace cannot read/write. Edit/delete linked source and assert stale/missing status
-  while memory bytes persist. Source-only search/context exclude memory; enabled context
+  workspace cannot read/write. Edit/delete linked source and assert stale/missing
+  status while memory bytes persist, in `get` and in the search/context hit marker
+  (fresh, stale, missing, mixed and `none` for unlinked). Source-only search/context
+  exclude memory; enabled context
   includes compact `mem:` lines, a multi-line text and a first line longer than 120 bytes
   cut at a UTF-8 boundary, without violating token budget; `get` returns the full text.
   The MCP catalog names `memory` and none of the five replaced tool names.
@@ -394,3 +406,15 @@ explicit exported binding, resolves the current selected view for each request a
 refuses a revoked/unavailable binding. Folding stays caller-authored, original history
 stays recoverable, and a concurrent edit after resolution is outside that snapshot.
 Multiple host regions, automatic selection and real-provider task outcomes remain open.
+
+### Freshness visibility on compact memory lines — 2026-10-25
+
+Validated search/context hits carry their source-link statuses from the same final
+read transaction that validated the row: one `MemoryHit.source_links` vector of
+handle/status pairs plus a fixed-order `links_status()` name. The compact line gains
+a `[links:<status>]` marker — `none` for an unlinked record, otherwise each present
+status once in fresh+stale+missing order joined by `+` — rendered by the one shared
+`memory_line` for every compact consumer, CLI and MCP alike. Status reporting is
+read-only: no pruning, no revision consumption, no claim that the record itself was
+revalidated, no invented timestamp, and `get`'s exact per-link handles/statuses are
+unchanged. Stale or missing links never affect a record's eligibility.

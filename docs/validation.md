@@ -1,5 +1,56 @@
 # Validation
 
+## Memory freshness and selection diagnostics — 2026-10-25
+
+Local work on `experimental/context-ecosystem`, based on `add7627`, which merges
+latest `main` (`1d9a58a`) and has exactly its source tree. The incoming
+evidence/profile and MCP/worker-startup repairs are preserved.
+
+**Memory.** Compact search/context lines carry `[links:...]`: `fresh`, `stale`,
+`missing`, `none`, or mixed states joined in fresh+stale+missing order. The marker
+describes linked indexed sources, not whether the decision is true or trusted.
+Full reads and hits share one evaluator. Context, including task-evidence
+composition, projects statuses in its actual final read; record text, author,
+provenance and revision remain unchanged. Stale or missing links do not prune memory.
+
+**Selection diagnostics.** Existing opt-in private traces now include settled
+`stage:"packing"` decisions. They identify selected/shortened/dropped source forms,
+actual excerpt ranges and their parents, memory IDs/revisions, unsupported brief
+citations, and individually keyed proofs with required source handles. Budget events
+distinguish token and serialized-byte refusals. Existing selection/validation events
+retain stale-source, per-file and global candidate-cap causes. Proof retries and
+independently eligible source evidence remain unchanged; a refused proof does not
+make its source bodies ineligible.
+
+**Runtime proof.** A temporary synthetic workspace exercised the actual CLI and a
+real stdio MCP owner. Full reads and compact lines followed fresh → stale → missing;
+the retained decision stayed at revision 1 with identical text and provenance.
+Final saved CLI traces reported token-driven signature shortening, eight global
+limit exclusions in a forty-file fixture, and the selected memory's ID/revision.
+Trace-on and trace-off responses matched byte for byte, and saved response hashes
+matched the delivered text. The trace sink's existing bounds and privacy stay in force.
+
+**Checks.**
+
+- `cargo test --locked --lib --test memory --test response --test brief
+  --test task_evidence --test task_retrieval --no-fail-fast`: 383 passed, 0 failed,
+  3 ignored. `cargo test --locked --test core retrieval_trace`: 1 passed.
+- `cargo clippy --locked --all-targets -- -D warnings`: passed.
+- `cargo check --locked --no-default-features --lib`: passed.
+- Rust 1.90.0 `cargo check --locked --all-targets`, with SDKROOT set to the selected
+  Xcode's macOS 26.5 SDK: passed. The ordinary production CLI was rebuilt afterward.
+- GPT-6.1 Sol cross-lab review of the user-authorized GLM-5.3 changes: SHIP after
+  corrections. Initial review caught the composing-consumer snapshot gap,
+  premature/unkeyed proof verdicts, parent-range excerpt events and silent brief
+  exclusions. Regressions cover each. Initial fixture/type/lint failures were
+  corrected without changing ranking, caps or proof retries.
+
+This is not a retrieval-quality, performance or provider-cache claim. No G1/G2,
+full gates, real-model experiment or CI run was performed for this work. Invalidation
+explanations, cross-host resume distinctions, stable-prefix experiments and the larger
+pivots remain proposed. Store schemas, source identities, citations, reversible task
+views, model choices and instruction-trust boundaries are unchanged.
+
 ## CI boundary repairs — 2026-10-25
 
 The profile-forwarding fixture compares absolute paths under the canonical working

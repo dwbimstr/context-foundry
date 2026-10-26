@@ -664,6 +664,8 @@ impl Engine {
             anchors,
             doors: None,
             collected: None,
+            // The request's own trace, for final packing decisions.
+            trace: control.trace().cloned(),
         })
     }
 

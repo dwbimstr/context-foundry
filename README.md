@@ -292,6 +292,9 @@ Short pointers; each links to its contract.
 - **Search and context.** `search` prints one locator line per hit (`--path` restricts
   it to a subtree); `context` packs cited items under `--tokens`, with
   `--strategy auto|search|graph`. Wire format: [context-v2](specs/001-source-state-recovery/contracts/context-v2.md).
+  Add `--retrieval-trace-dir NEW_PRIVATE_DIR` to record selection and packing decisions,
+  including stale/capped candidates, shortened forms, unsupported citations, and budget
+  omissions. Traces are bounded diagnostics, not evidence of host consumption.
 - **Retrieve.** `retrieve --handle H` returns exact bytes, optionally narrowed with
   `--lines`, or `--view outline`; long spans continue with `next:`.
 - **Compiler references** ([005](specs/005-graph-evidence-lifecycle/spec.md)).
@@ -300,7 +303,10 @@ Short pointers; each links to its contract.
   them. Facts go stale when indexed source changes, until a fresh import.
 - **Project memory** ([008](specs/008-scoped-durable-memory/spec.md)).
   `foundry memory put|update|get|forget|search|export`; `context --include-memory` adds
-  validated `mem:` lines. Nothing is harvested from transcripts.
+  validated `mem:` lines with `[links:fresh]`, `[links:stale]`, `[links:missing]`, or
+  `[links:none]`; mixed states join with `+`. These describe linked sources, not the
+  truth of a decision. Stale or missing links never delete the record. Nothing is
+  harvested from transcripts.
 - **Multi-root** ([007](specs/007-multi-workspace-context/spec.md)). Admitted roots are
   merged with per-root coverage; an unavailable root is named, not skipped.
 - **Recovery** ([001](specs/001-source-state-recovery/spec.md)). Interrupted indexing

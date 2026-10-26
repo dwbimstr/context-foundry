@@ -52,6 +52,12 @@ below are history.
   [scoped repair receipt](validation.md#preserve-retrieved-evidence-and-selected-profiles--2026-10-25).
   These are correctness repairs; retrieval quality, economics and real-model readiness
   are not inferred from their fixture checks.
+- **Freshness and diagnostics, 2026-10-25.** Compact memory lines expose linked-source
+  freshness without deleting durable decisions. Existing private traces explain final
+  packing decisions, excerpt ranges, unsupported citations and keyed proof outcomes.
+  Task-composed memory uses the composition's final snapshot. See the
+  [receipt](validation.md#memory-freshness-and-selection-diagnostics--2026-10-25).
+  Ranking and caps are unchanged; the later recommendations and pivots remain proposed.
 
 **Representation repair continuation, 2026-10-17:** body-window contexts keep the
 region's own declaration when over budget (`+context2`), and long overviews keep
