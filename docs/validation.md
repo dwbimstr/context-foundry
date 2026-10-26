@@ -1,5 +1,141 @@
 # Validation
 
+## Dependency and branch cleanup — 2026-10-26
+
+The owner authorized refreshing the active probe dependencies while preserving the
+pre-refresh reproduction manifest, and merging the reviewed experimental line into
+`main` through a pull request with a merge commit. The candidate starts at `90e6c30`.
+No direct push to `main`, alert dismissal as "unused", model download or old-result
+relabeling is authorized by this receipt.
+
+| Dependency | Before | Candidate |
+| --- | --- | --- |
+| filelock | 4.0.6 | 4.2.1 |
+| setuptools | 81.0.0 | 84.1.0 |
+| certifi | 2026.7.22 | 2026.10.19 |
+| rmcp | 3.5.1 | 3.6.0 |
+| rmcp-macros | 3.5.1 | 3.7.0 |
+| tokio | 1.53.3 | 1.54.1 |
+| ureq | 3.4.2 | 3.5.0 |
+| ureq-proto | 0.6.4 | 0.6.5 |
+
+The three Python updates are PRs #38–#40. The five Cargo package updates are the
+accepted maintenance subset of PR #37; the only added dependency edge is rmcp to
+the already locked libc. Source and store schemas are unchanged.
+
+**Parser holds.** Scala 0.26.3 remains held. Pulldown-cmark 0.13.5 is also held:
+the upstream CLI, with default parser options, changes the setext heading range of
+`[a]: /url\n    \nTitle\n===\n` from `14..25` to `15..25`. Foundry uses those offsets
+for Markdown section identity. This is a real parser difference, not a retrieval
+measurement, and is not silently adopted without the source-unit/search version gate.
+
+**Python security proof.** All five currently open alerts are in the probe manifest:
+setuptools advisories GHSA-h35f-9h28-mq5c and GHSA-xmj3-9gf7-h52w, and filelock
+advisories GHSA-v4x8-3wr5-3wq8, GHSA-567q-5qvw-pf92 and GHSA-9vhv-jxww-xfm5.
+The candidate pins cover their published fixed ranges. REST and GraphQL both report
+five open alerts and no critical alert; the earlier six-alert push banner was not
+used as the authoritative inventory.
+
+A private Python 3.12.11 environment installed the complete 42-pin manifest from
+wheels; `uv pip check` passed. Imports resolved the actual ModernBERT model/config,
+AutoTokenizer, torch, safetensors.torch, mlx.core and mlx_lm consumers; a CPU tensor
+calculation passed. No model weights were loaded. A real setuptools `sdist` included
+a synthetic NFD-named excluded file under 81.0.0 and excluded it under 84.1.0, while
+retaining the public control file.
+
+FileLock, SoftFileLock, SQLite ReadWriteLock, Hugging Face WeakFileLock and the torch
+FileLock consumer acquired/released locks. Separate processes verified exclusive
+file locks, concurrent readers, reader/writer exclusion and acquisition after release.
+A symlink lock in the private fixture was refused with its canary's bytes and mode
+unchanged. The removed emSign root fingerprint was absent from certifi's bundle;
+an explicit verifying context with proxies disabled fetched PyPI's filelock metadata
+over HTTPS. These are macOS checks, not Windows exploit or cross-account race proof.
+
+The [probe README](../tools/feasibility/README.md#pins-and-preparation) links the
+immutable pre-refresh manifest and preserves the original 2.11.0/0.24.0 measurement
+disclaimer. Model parity, sandbox and native-package acceptance do not transfer.
+Scoped in-session GPT-6 Astra reviews found no remaining static blocker in the
+selected Cargo subset or Python pins; runtime acceptance remains a separate check.
+
+**Initial Rust gate result.** Formatting, Clippy, MSRV check and MSRV Clippy passed.
+The full test run passed 1,305 tests with 34 ignored and one offline attribution
+failure. An actual CLI trace established the cause: the selected lexical document
+ended at byte 4,084, but a final packing outline named the whole file and was
+mistaken for evidence that the late `10577..10589` span had been discovered.
+The consumer now restricts candidate observations to selection, materialization,
+placement and validation stages; packing and unknown-stage metadata cannot
+manufacture discovery or freshness loss. The original expected attribution stays
+unchanged, with an additional regression over misleading metadata. This corrective
+follow-up belongs to the preceding selection-diagnostics feature, not retrieval
+ranking or dependency behavior.
+
+**Accepted local receipt, `16b1e39`.** All five `scripts/gates.sh` gates pass:
+formatting, all-target Clippy and the full test suite on Rust 1.97.1, then all-target
+check and Clippy on Rust 1.90.0 against Xcode's macOS 26.5 SDK. Final totals:
+**1,307 passed, 0 failed, 34 ignored**. Log SHA-256 prefixes: Clippy `619e18e9…`,
+test `32315f0e…`, MSRV check `f41a6db4…`, MSRV Clippy `00628e2b…`.
+The focused attribution target also passes 3 tests with its 2 explicit diagnostics
+ignored; Sol's cross-lab review accepts the GLM corrective follow-up under the
+original task-specific author approval.
+
+The rebuilt production CLI and a real stdio MCP owner completed initialize, memory
+get, context and clean EOF against an owned synthetic workspace. Source bytes,
+memory revision/provenance and `[links:none]` were delivered correctly; CLI
+trace-on/off bytes matched. No model profile or weights were used.
+Only this receipt changed after the accepted source tree was checked. No G1/G2,
+retrieval-quality, model-parity, Windows-exploit or performance claim is made.
+
+## Memory freshness and selection diagnostics — 2026-10-25
+
+Local work on `experimental/context-ecosystem`, based on `add7627`, which merges
+latest `main` (`1d9a58a`) and has exactly its source tree. The incoming
+evidence/profile and MCP/worker-startup repairs are preserved.
+
+**Memory.** Compact search/context lines carry `[links:...]`: `fresh`, `stale`,
+`missing`, `none`, or mixed states joined in fresh+stale+missing order. The marker
+describes linked indexed sources, not whether the decision is true or trusted.
+Full reads and hits share one evaluator. Context, including task-evidence
+composition, projects statuses in its actual final read; record text, author,
+provenance and revision remain unchanged. Stale or missing links do not prune memory.
+
+**Selection diagnostics.** Existing opt-in private traces now include settled
+`stage:"packing"` decisions. They identify selected/shortened/dropped source forms,
+actual excerpt ranges and their parents, memory IDs/revisions, unsupported brief
+citations, and individually keyed proofs with required source handles. Budget events
+distinguish token and serialized-byte refusals. Existing selection/validation events
+retain stale-source, per-file and global candidate-cap causes. Proof retries and
+independently eligible source evidence remain unchanged; a refused proof does not
+make its source bodies ineligible.
+
+**Runtime proof.** A temporary synthetic workspace exercised the actual CLI and a
+real stdio MCP owner. Full reads and compact lines followed fresh → stale → missing;
+the retained decision stayed at revision 1 with identical text and provenance.
+Final saved CLI traces reported token-driven signature shortening, eight global
+limit exclusions in a forty-file fixture, and the selected memory's ID/revision.
+Trace-on and trace-off responses matched byte for byte, and saved response hashes
+matched the delivered text. The trace sink's existing bounds and privacy stay in force.
+
+**Checks.**
+
+- `cargo test --locked --lib --test memory --test response --test brief
+  --test task_evidence --test task_retrieval --no-fail-fast`: 383 passed, 0 failed,
+  3 ignored. `cargo test --locked --test core retrieval_trace`: 1 passed.
+- `cargo clippy --locked --all-targets -- -D warnings`: passed.
+- `cargo check --locked --no-default-features --lib`: passed.
+- Rust 1.90.0 `cargo check --locked --all-targets`, with SDKROOT set to the selected
+  Xcode's macOS 26.5 SDK: passed. The ordinary production CLI was rebuilt afterward.
+- GPT-6.1 Sol cross-lab review of the user-authorized GLM-5.3 changes: SHIP after
+  corrections. Initial review caught the composing-consumer snapshot gap,
+  premature/unkeyed proof verdicts, parent-range excerpt events and silent brief
+  exclusions. Regressions cover each. Initial fixture/type/lint failures were
+  corrected without changing ranking, caps or proof retries.
+
+This is not a retrieval-quality, performance or provider-cache claim. No G1/G2,
+full gates, real-model experiment or CI run was performed for this work. Invalidation
+explanations, cross-host resume distinctions, stable-prefix experiments and the larger
+pivots remain proposed. Store schemas, source identities, citations, reversible task
+views, model choices and instruction-trust boundaries are unchanged.
+
 ## CI boundary repairs — 2026-10-25
 
 The profile-forwarding fixture compares absolute paths under the canonical working
@@ -1261,6 +1397,7 @@ directly.
 
 | Commit | fmt | clippy 1.97 | test 1.97 | msrv-check | msrv-clippy |
 | --- | --- | --- | --- | --- | --- |
+| `16b1e39` | 0 | 0 | 0: 1,307 passed, 34 ignored ([dependency cleanup receipt and log digests](#dependency-and-branch-cleanup--2026-10-26)) | 0 | 0 |
 | `38dc370` | 0 | 0 | 0: 1,287 passed, 34 ignored; gateway 54 passed ([receipt and log digests](#architecture-refactor-and-dependency-updates--2026-10-25)) | 0 | 0 |
 | `d72f3bb` | 0 | 0 | 0: 1,174 passed, 28 ignored; gateway 54 passed; two test threads ([receipt and log digests](review/evidence-selection-2026-10-17.json)) | 0 | 0 |
 | `81c20ad` | 0 | 0 | 101: 1,172 passed, 2 failed, 28 ignored; ownership race and MCP deadline, retained in the same receipt | 0 | 0 |

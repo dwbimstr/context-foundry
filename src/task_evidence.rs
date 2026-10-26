@@ -300,6 +300,15 @@ impl Engine {
         plain.compact_evidence = false;
         plain.boundary_config = None;
         plain.briefs = false;
+        // 008: memory validates in THIS composition's final transaction
+        // below, against that read's source rows. The preliminary context
+        // collects no memory candidates at all, so nothing is counted twice
+        // and no freshness marker can predate the composed snapshot.
+        plain.memory = false;
+        let memory_plan = options
+            .memory
+            .then(|| self.memory_plan(query))
+            .transpose()?;
         let mut context = self.context_candidates_with(query, strategy, control, &plain)?;
         let syntax_seeds: Vec<_> = context
             .batch
@@ -874,16 +883,27 @@ impl Engine {
             }
         }
         plan.observed = observed;
-        let memory = tx.open_table(crate::memory::MEMORY)?;
-        let mut hits = Vec::new();
-        for hit in context.hits {
-            if let Some(raw) = memory.get(hit.id.as_str())? {
-                let row = crate::memory::decode_row(&hit.id, raw.value())?;
-                if row.revision == hit.revision {
-                    hits.push(hit);
+        // 008: memory candidates validate here, in the composition's own
+        // final read, with their link statuses evaluated against THIS
+        // transaction's source rows; their stale drops and a filled
+        // candidate window join the batch's counters exactly once.
+        let hits = match memory_plan {
+            Some(plan) => {
+                let memory = tx.open_table(crate::memory::MEMORY)?;
+                let (hits, stale) = crate::memory::validate_hits(
+                    &memory,
+                    &sources,
+                    plan.candidates,
+                    crate::memory::CONTEXT_MEMORY_HITS,
+                )?;
+                context.batch.counters.stale += stale;
+                if plan.window_full {
+                    context.batch.counters.candidates_full = true;
                 }
+                hits
             }
-        }
+            None => Vec::new(),
+        };
         context.hits = hits;
         let mut items = Vec::new();
         // Round-robin facets before remaining discoveries, so tests/consumers

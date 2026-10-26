@@ -480,11 +480,15 @@ impl Engine {
         }
         // 008: memory rows validate in this same transaction; their stale
         // drops and a filled candidate window join the batch's counters.
+        // A hit's source links are evaluated against the same final read's
+        // source rows (008 freshness), never a second snapshot.
         let hits = match memory {
             Some(plan) => {
                 let table = tx.open_table(MEMORY)?;
+                let sources = tx.open_table(SOURCES)?;
                 let (hits, stale) = crate::memory::validate_hits(
                     &table,
+                    &sources,
                     plan.candidates,
                     crate::memory::CONTEXT_MEMORY_HITS,
                 )?;
@@ -529,6 +533,9 @@ impl Engine {
                 anchors,
                 doors,
                 collected: collected.flatten(),
+                // The request's own trace, so final packing (not this
+                // assembly) records its settled decisions.
+                trace: control.trace().cloned(),
             },
             hits,
         };

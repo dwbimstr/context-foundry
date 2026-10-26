@@ -232,6 +232,89 @@ fn enrichment_does_not_evict_a_full_32_source_window_for_a_brief_citation() {
     );
 }
 
+/// 009 T005: a brief whose citation is not delivered is dropped as
+/// `unsupported_citation`, never relabeled budget — even when the budget is
+/// why its source did not fit. With room, the same brief is admitted as
+/// selected.
+#[test]
+fn a_brief_without_delivered_citation_is_unsupported_never_budget() {
+    let e = env();
+    let mut engine = Engine::open_existing(&e.store).unwrap();
+    put(&engine);
+    drain(&mut engine);
+    let traced =
+        |engine: &Engine, trace: Option<context_foundry::retrieval_trace::RetrievalTrace>| {
+            engine
+                .context_candidates_with(
+                    QUERY,
+                    Strategy::Search,
+                    &Control::unbounded().with_trace(trace),
+                    &ContextOptions {
+                        briefs: true,
+                        ..Default::default()
+                    },
+                )
+                .unwrap()
+        };
+    let citation = handle(&e.wid, "opaque.rs", BODY);
+    let trace = context_foundry::retrieval_trace::RetrievalTrace::default();
+    let enriched = traced(&engine, Some(trace.clone()));
+    assert_eq!(enriched.briefs.len(), 1);
+    // The smallest sufficient budget admits no source at all: every
+    // candidate falls to the token budget, and the brief's citation is not
+    // delivered — its own event must say so.
+    let minimum = match response::pack_enriched_context(
+        &enriched,
+        None,
+        Budget::request(1),
+        &response::stdout_bytes,
+    ) {
+        Err(FoundryError::BudgetTooSmall { minimum_tokens }) => minimum_tokens,
+        other => panic!("expected budget_too_small, got {other:?}"),
+    };
+    let empty = response::pack_enriched_context(
+        &enriched,
+        None,
+        Budget::request(minimum),
+        &response::stdout_bytes,
+    )
+    .unwrap();
+    assert!(!empty.text.contains("brief:"), "{}", empty.text);
+    let events = trace.snapshot()["events"].as_array().unwrap().clone();
+    assert!(
+        events.iter().any(|ev| ev["stage"] == "packing"
+            && ev["outcome"] == "dropped"
+            && ev["reason"] == "unsupported_citation"
+            && ev["brief"] == citation),
+        "{events:?}"
+    );
+    assert!(
+        events.iter().any(|ev| ev["stage"] == "packing"
+            && ev["outcome"] == "dropped"
+            && ev["reason"] == "budget"
+            && ev["limiter"] == "token"),
+        "the sources themselves fell to the token budget: {events:?}"
+    );
+    // With room the same citation is delivered and the brief admitted.
+    let roomy_trace = context_foundry::retrieval_trace::RetrievalTrace::default();
+    let roomy = traced(&engine, Some(roomy_trace.clone()));
+    let out = response::pack_enriched_context(
+        &roomy,
+        None,
+        Budget::request(2048),
+        &response::stdout_bytes,
+    )
+    .unwrap();
+    assert!(out.text.contains("brief:"), "{}", out.text);
+    let events = roomy_trace.snapshot()["events"].as_array().unwrap().clone();
+    assert!(
+        events.iter().any(|ev| ev["stage"] == "packing"
+            && ev["outcome"] == "selected"
+            && ev["brief"] == citation),
+        "{events:?}"
+    );
+}
+
 #[test]
 fn full_window_brief_support_uses_delivered_citation_bytes_not_an_exact_candidate() {
     use context_foundry::store::{HandleRef, RenderedForm};

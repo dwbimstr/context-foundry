@@ -9,10 +9,10 @@ Never point these executables at a live store or grant them a home/credential di
 
 The 2026-10-10 [dependency review](../../docs/review/tch-026.md) coordinates the
 proposed Python torch 2.13.0 update (PR #2) with this scratch crate's `tch` 0.26.0
-pin and the product migration (PR #9). These are the current reproduction inputs;
-the measurements below and files in `results/` used the earlier 2.11.0/0.24.0
-pairing and have **not** been regenerated or accepted for 2.13.0. Updating only
-Python breaks the documented `LIBTORCH_USE_PYTORCH=1` Rust probe build.
+pin and the product migration (PR #9). The current manifest retains that
+coordinated pairing; the measurements below and files in `results/` used the earlier
+2.11.0/0.24.0 pairing and have **not** been regenerated or accepted for 2.13.0.
+Updating only Python breaks the documented `LIBTORCH_USE_PYTORCH=1` Rust probe build.
 
 - Cargo.lock pins Rust dependencies. Local model/index builds used Rust 1.97.1.
 - MCP was built with Rust 1.90 in `rust:1.90-slim-bookworm`, image digest
@@ -21,9 +21,15 @@ Python breaks the documented `LIBTORCH_USE_PYTORCH=1` Rust probe build.
   mlx 0.32.3, mlx-metal 0.32.3, mlx-lm 0.31.3, safetensors 0.8.0.
   These third-party dependencies served the publisher loader and numerical reference;
   no first-party Python model code was written. The complete installed package capture
-  originally populated [runtime-requirements.txt](runtime-requirements.txt), now
-  updated to the coordinated reproduction inputs. It is not a distributable runtime
-  lock with wheel hashes and notices.
+  originally populated [runtime-requirements.txt](runtime-requirements.txt), later
+  updated to the coordinated reproduction inputs. The
+  [exact pre-security-refresh reproduction manifest](https://github.com/dwbimstr/context-foundry/blob/90e6c30be4007966a06125379b03138c73c8b2e0/tools/feasibility/runtime-requirements.txt)
+  preserves those inputs; it already names torch 2.13.0 and is not the original
+  measured 2.11.0 environment. The owner-authorized security refresh changes the active
+  filelock, setuptools and certifi pins prospectively. Bounded dependency/import and
+  security smoke checks do not transfer historical model or sandbox acceptance.
+  See the [refresh receipt](../../docs/validation.md#dependency-and-branch-cleanup--2026-10-26).
+  This is not a distributable runtime lock with wheel hashes and notices.
 - Download exact public revisions/files in [artifacts.json](results/artifacts.json),
   verify their SHA256, and review their separate licenses before use. Fetch config
   and unchanged `nemotron3_embed_mlx.py` from the same MLX revision. Fetch

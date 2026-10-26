@@ -9,8 +9,10 @@ The existing rows retain the `cargo metadata --locked` inventory from 2026-10-01
 `Cargo.lock` and the locally cached crate manifests/license files on 2026-10-04.
 The handed-off metadata inventory reports 13 added packages; no Cargo command,
 fetch or build was run for this documentation update.
-"dev" packages build tests only and are not linked into the shipped binary; rmcp and
-tokio add client/process features only for tests. On 2026-10-12 the Dependabot
+"dev" packages build tests only and are not linked into the shipped binary.
+Production rmcp serves MCP and resolves explicitly selected live host task views;
+its dev features add the child-process test transport. Tokio adds process support
+for tests. On 2026-10-12 the Dependabot
 updates #10, #8 and #7 were applied on the experimental line: libc, rmcp, tokio, uuid
 and the `toml` dev dependency (0.8 to 1.1) moved, plus hyper, usearch and want
 transitively. The declared licenses are unchanged. On 2026-10-13 `sha2` moved to 0.11. Its digest
@@ -26,6 +28,12 @@ PR's tree-sitter-scala 0.26.3 is not applied: a grammar change can change units,
 [§ Index version gate](../specs/001-source-state-recovery/contracts/context-v2.md#index-version-gate)
 and the partition recipes' `SOURCE_UNIT_SCHEMA` tie to schema bumps, an owner decision.
 
+The 2026-10-26 maintenance subset of PR #37 updates rmcp to 3.6.0
+(rmcp-macros 3.7.0), Tokio to 1.54.1, and ureq to 3.5.0 (ureq-proto 0.6.5).
+Licenses are unchanged; rmcp adds an edge to the already locked libc.
+Pulldown-cmark 0.13.5 and tree-sitter-scala 0.26.3 remain held because their parser
+changes can change source units; neither source-unit nor search schema is bumped.
+
 | Package | Locked version | Declared license | Use |
 | --- | --- | --- | --- |
 | anyhow | 1.0.104 | MIT OR Apache-2.0 | normal |
@@ -38,13 +46,13 @@ and the partition recipes' `SOURCE_UNIT_SCHEMA` tie to schema bumps, an owner de
 | libc | 0.2.191 | MIT OR Apache-2.0 | normal (held-root opens) |
 | pulldown-cmark | 0.13.4 | MIT | normal (Markdown sections; default features off) |
 | redb | 4.4.0 | MIT OR Apache-2.0 | normal |
-| rmcp | 3.5.1 | Apache-2.0 | normal (server, stdio, streamable HTTP server); dev adds client |
+| rmcp | 3.6.0 | Apache-2.0 | normal (server and live-host client); dev adds child-process transport |
 | serde | 1.0.229 | MIT OR Apache-2.0 | normal |
 | serde_json | 1.0.154 | MIT OR Apache-2.0 | normal |
 | sha2 | 0.11.1 | MIT OR Apache-2.0 | normal |
 | tantivy | 0.26.2 | MIT | normal |
 | tiktoken-rs | 0.12.1 | MIT | normal |
-| tokio | 1.53.3 | MIT | normal; dev adds process |
+| tokio | 1.54.1 | MIT | normal; dev adds process |
 | tokio-util | 0.7.20 | MIT | normal |
 | tree-sitter | 0.26.13 | MIT | normal (syntax runtime; third-party C) |
 | tree-sitter-c | 0.24.2 | MIT | normal (C grammar) |
@@ -55,7 +63,7 @@ and the partition recipes' `SOURCE_UNIT_SCHEMA` tie to schema bumps, an owner de
 | tree-sitter-python | 0.25.0 | MIT | normal (Python grammar) |
 | tree-sitter-rust | 0.24.2 | MIT | normal (Rust grammar) |
 | tree-sitter-typescript | 0.23.2 | MIT | normal (TypeScript/TSX grammars) |
-| ureq | 3.4.2 | MIT OR Apache-2.0 | normal (legacy Laya protocol module) |
+| ureq | 3.5.0 | MIT OR Apache-2.0 | normal (bounded gateway-launcher health check) |
 | uuid | 1.28.0 | Apache-2.0 OR MIT | normal |
 | reqwest | 0.13.5 | MIT OR Apache-2.0 | dev |
 | tempfile | 3.27.0 | MIT OR Apache-2.0 | dev |
@@ -136,14 +144,14 @@ closure are no longer product dependencies.
 
 ## Legacy prototype and planned optional components
 
-The legacy Laya protocol module (`ureq` client) remains in the library with its
-protocol test, but the CLI no longer reaches it; Laya is not a Cargo dependency and
-remains a separately licensed research reference. The product Cargo graph excludes
+Laya remains a separately licensed, read-only research reference, not a Cargo
+dependency or deployed service. The product uses ureq for the gateway launcher's
+bounded health check. The product Cargo graph excludes
 LibTorch from default-feature builds. Its optional `learning-worker` and the separate
 [probe crate](../tools/feasibility/README.md) now pin experimental tch 0.26.0 with
 LibTorch 2.13.0; see the [compatibility review](review/tch-026.md).
 The probe also pins PyO3 0.29.2, USearch 2.26.2 and rmcp 3.5.0 (the product has
-since moved to rmcp 3.5.1 and USearch 2.26.5); its lock is not the product lock. Contract 013 v4's accepted
+since moved to rmcp 3.6.0 and USearch 2.26.5); its lock is not the product lock. Contract 013 v4's accepted
 baseline was tch 0.24.0/LibTorch 2.11.0; that acceptance does not transfer to this
 migration. USearch has a third-party native C++ core;
 this does not introduce first-party C++ code. Libkrun remains conditional.

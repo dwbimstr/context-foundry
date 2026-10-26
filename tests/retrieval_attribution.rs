@@ -18,7 +18,19 @@ fn covers(unit: &Value, expected: &SourceHandle) -> bool {
 // excerpt construction. Dense locations and placement events already name their
 // actual selected ranges. Older lexical traces without document ranges cannot
 // establish this boundary and remain unknown.
+//
+// Only the PRE-packing discovery and eligibility stages can establish that a
+// span was observed. `packing` events are final delivery metadata — a selected
+// outline names a whole-file unit, a refused parent names its larger range —
+// and unknown future stages carry no discovery meaning; treating either as
+// observation would invent a candidate-window fact (90e6c30 regression).
 fn selected_covers(event: &Value, expected: &SourceHandle) -> bool {
+    if !matches!(
+        event["stage"].as_str(),
+        Some("selection" | "materialization" | "placement" | "validation")
+    ) {
+        return false;
+    }
     if !covers(&event["unit"], expected) {
         return false;
     }
@@ -327,6 +339,102 @@ fn attribution_requires_identity_correlation_and_actual_body_delivery() {
         .unwrap()
         .retain(|e| e["stage"] != "packing_input");
     assert_eq!(attribute(&lost, query, &expected)["result"], "unknown");
+}
+
+/// Final packing metadata is not discovery (90e6c30 regression): a selected
+/// outline names a whole-file unit and a refused candidate names its parent's
+/// larger range, yet the bounded candidate window never observed the span;
+/// stale-like metadata from an unknown stage creates no freshness cause
+/// either. Attribution's full outcome must stay the true one.
+#[test]
+fn attribution_ignores_packing_and_unknown_stage_metadata_as_discovery() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    std::fs::create_dir(&root).unwrap();
+    let mut engine = Engine::initialize(&dir.path().join("store"), &root).unwrap();
+    let body = format!(
+        "pub fn process() {{\n    retain_expected_records();\n{}    restore_catalog();\n{}    restore_late();\n}}\n",
+        "    ordinary_step();\n".repeat(100),
+        "    ordinary_step();\n".repeat(400)
+    );
+    engine.replace_source("lib.rs", &body).unwrap();
+    engine.refresh(&Control::unbounded()).unwrap();
+    let query = "retain expected records";
+    let trace = RetrievalTrace::default();
+    let candidates = engine
+        .context_candidates_with(
+            query,
+            Strategy::Search,
+            &Control::unbounded().with_trace(Some(trace.clone())),
+            &ContextOptions {
+                experimental_behavior: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let start = body.find("restore_late").unwrap() as u64;
+    let outside = SourceHandle {
+        workspace_id: engine.workspace_id().unwrap(),
+        path: "lib.rs".into(),
+        sha256: context_foundry::digest(body.as_bytes()),
+        start,
+        end: start + "restore_late".len() as u64,
+    };
+    let packed = response::pack_enriched_context(
+        &candidates,
+        None,
+        response::Budget::request(2048),
+        &response::stdout_bytes,
+    )
+    .unwrap();
+    let base = record(&trace, &packed.text);
+    let truth = json!({"result":"unknown",
+        "reason":"expected_span_not_observed_in_bounded_candidate_window"});
+    assert_eq!(attribute(&base, query, &outside), truth);
+
+    // A final outline selection whose unit spans the whole file.
+    let whole_file = json!({"workspace_id": outside.workspace_id, "path": outside.path,
+        "sha256": outside.sha256, "start": 0, "end": body.len()});
+    let mut outline_meta = base.clone();
+    outline_meta["trace"]["events"]
+        .as_array_mut()
+        .unwrap()
+        .push(
+            json!({"stage":"packing", "outcome":"selected", "form":"outline",
+            "rank":1, "unit": whole_file}),
+        );
+    assert_eq!(
+        attribute(&outline_meta, query, &outside),
+        truth,
+        "a selected outline's whole-file unit is delivery metadata, not observation"
+    );
+
+    // A refused candidate names its parent's larger range.
+    let mut drop_meta = base.clone();
+    drop_meta["trace"]["events"].as_array_mut().unwrap().push(
+        json!({"stage":"packing", "outcome":"dropped", "reason":"budget",
+            "limiter":"token", "form":"excerpt", "unit": whole_file,
+            "parent": whole_file}),
+    );
+    assert_eq!(
+        attribute(&drop_meta, query, &outside),
+        truth,
+        "a refused parent's range is not observation"
+    );
+
+    // Stale-like metadata from a stage attribution does not know stays
+    // meaningless: no freshness cause, no manufactured loss.
+    let mut unknown_meta = base.clone();
+    unknown_meta["trace"]["events"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"stage":"some_future_stage", "outcome":"stale",
+            "unit": whole_file}));
+    assert_eq!(
+        attribute(&unknown_meta, query, &outside),
+        truth,
+        "unknown-stage metadata creates no freshness cause"
+    );
 }
 
 /// Freeze these development labels before executing either arm. They are public

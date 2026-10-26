@@ -1306,7 +1306,22 @@ diagnostics, shared through `Control` by the ordinary selection/final-read paths
 run directory; existing paths, including symlinks, are refused. Unix directories are
 0700 and files are created exclusively as 0600. No automatic capture occurs.
 Events contain source identities, candidate origin/rank, stale/filter/dedup/cap/cut
-outcomes and packing inputs. Dense events identify the card input key. Context queries
+outcomes, packing inputs, and the final packing decisions themselves: one `stage:"packing"`
+event per settled candidate or tail line with its chosen form (a candidate delivered at
+its first form — including one that arrived as an excerpt — is `selected`, never
+re-labeled shortening; a chosen excerpt's `unit` is its delivered `start..end`, with the
+refused parent named beside it) and, for a shortening or drop, the exact reason —
+`budget` with the refusing bound (`token` budget or serialized-`byte` cap) when the
+failed trial reported it, `duplicate` coverage, `anchored_selection` exclusion, or
+`unsupported_citation` for a brief or proof whose citation no delivered source covers,
+including a composed brief excluded before the tail. A task proof carries exactly one
+settled verdict, emitted after its final tail retry, under an individual key over its
+already-built proof record together with the citations it requires. Task composition
+validates memory in its own final transaction, so a `mem:` line's `[links:...]` marker
+always names the composed snapshot.
+The optional request trace rides on `CandidateBatch` from the engine entry to final
+packing, through 007 root merges as the one shared request trace. Dense events identify
+the card input key. Context queries
 are correlated by SHA-256; MCP records also retain their request ID. The actual
 Foundry response is retained privately; it is not a host-consumption acknowledgment.
 

@@ -710,6 +710,10 @@ struct BudgetedText<'a> {
     boundary: ByteMeasure<'a>,
     text: String,
     tokens: usize,
+    /// The refusing bound of the last REJECTED trial (009 T005): `Some(true)`
+    /// the serialized-byte cap, `Some(false)` the token budget. A passive
+    /// fact of the measurement, never re-derived for tracing alone.
+    last_refusal: Option<bool>,
 }
 
 impl<'a> BudgetedText<'a> {
@@ -719,6 +723,7 @@ impl<'a> BudgetedText<'a> {
             boundary,
             text: String::new(),
             tokens: 0,
+            last_refusal: None,
         }
     }
 
@@ -726,10 +731,12 @@ impl<'a> BudgetedText<'a> {
     /// fit the budget.
     fn try_accept(&mut self, text: String) -> bool {
         if (self.boundary)(&text) > BYTE_CAP {
+            self.last_refusal = Some(true);
             return false;
         }
         let tokens = count_tokens(&text);
         if tokens > self.budget.tokens {
+            self.last_refusal = Some(false);
             return false;
         }
         self.text = text;
@@ -749,6 +756,126 @@ impl<'a> BudgetedText<'a> {
     }
 }
 
+/// What one tail line names, for 009 T005 packing events: a validated
+/// memory hit, a generated brief's citation, or one task-evidence proof
+/// kind. Borrowed and copyable, so building it never allocates.
+#[derive(Clone, Copy)]
+enum TailId<'a> {
+    Memory { id: &'a str, revision: u64 },
+    Brief { citation: &'a str },
+    Proof { kind: &'static str },
+}
+
+/// The already-rendered non-candidate lines appended after the ladder (008
+/// memory, generated briefs), each with the source coverage its citation
+/// requires and its diagnostic identity (built only under a trace).
+struct TailLines<'a> {
+    lines: &'a [String],
+    required: &'a [(usize, Option<SourceHandle>)],
+    ids: &'a [TailId<'a>],
+}
+
+impl<'a> TailLines<'a> {
+    fn none() -> Self {
+        Self {
+            lines: &[],
+            required: &[],
+            ids: &[],
+        }
+    }
+}
+
+/// The rendered label of one form for a packing event; `none` for an index
+/// outside the item's forms.
+fn form_kind(form: Option<&RenderedForm>) -> &'static str {
+    match form {
+        Some(RenderedForm::Verbatim(_)) => "verbatim",
+        Some(RenderedForm::Excerpt { .. }) => "excerpt",
+        Some(RenderedForm::Signature(_)) => "signature",
+        Some(RenderedForm::Outline(_)) => "outline",
+        Some(RenderedForm::OutlineMin(_)) => "outline-min",
+        Some(RenderedForm::Address) => "address",
+        None => "none",
+    }
+}
+
+/// One settled packing decision over a source candidate (009 T005): rank,
+/// the form chosen or denied and its identity, and — for a shortening or a
+/// drop — the exact reason with the refusing bound when the failed trial
+/// reported it. A candidate whose chosen form is its first is selected as
+/// such, never relabeled budget-shortened for arriving as an excerpt. The
+/// event's `unit` is the chosen form's DELIVERED identity — an excerpt
+/// renders `start..start + len`, not its parent unit's range — with the
+/// parent named beside it when the two differ.
+fn record_unit(
+    trace: &crate::retrieval_trace::RetrievalTrace,
+    outcome: &'static str,
+    reason: Option<&'static str>,
+    refusal: Option<bool>,
+    item: &RankedItem,
+    form: usize,
+) {
+    let (unit, parent) = match (item.handle.as_ref(), item.forms.get(form)) {
+        (Some(handle), Some(RenderedForm::Excerpt { start, body, .. })) => {
+            let delivered = SourceHandle {
+                start: *start,
+                end: *start + body.len() as u64,
+                ..handle.clone()
+            };
+            let parent = (delivered.start != handle.start || delivered.end != handle.end)
+                .then(|| handle.clone());
+            (Some(delivered), parent)
+        }
+        _ => (item.handle.clone(), None),
+    };
+    let mut event = serde_json::json!({
+        "stage": "packing", "outcome": outcome,
+        "rank": item.rank, "form": form_kind(item.forms.get(form)), "unit": unit,
+    });
+    if let Some(parent) = parent {
+        event["parent"] = serde_json::to_value(parent).unwrap_or(Value::Null);
+    }
+    if let Some(reason) = reason {
+        event["reason"] = Value::String(reason.into());
+    }
+    if let Some(byte) = refusal {
+        event["limiter"] = Value::String(if byte { "byte" } else { "token" }.into());
+    }
+    trace.record(event);
+}
+
+/// One settled packing decision over a tail line (009 T005): the memory
+/// hit, brief citation or proof kind it names, with the reason and refusing
+/// bound of a drop. A brief whose citation is not delivered is
+/// `unsupported_citation`, never relabeled budget.
+fn record_tail(
+    trace: &crate::retrieval_trace::RetrievalTrace,
+    outcome: &'static str,
+    reason: Option<&'static str>,
+    refusal: Option<bool>,
+    id: TailId<'_>,
+) {
+    let mut event = match id {
+        TailId::Memory { id, revision } => serde_json::json!({
+            "stage": "packing", "outcome": outcome, "form": "line",
+            "memory": id, "revision": revision,
+        }),
+        TailId::Brief { citation } => serde_json::json!({
+            "stage": "packing", "outcome": outcome, "form": "line", "brief": citation,
+        }),
+        TailId::Proof { kind } => serde_json::json!({
+            "stage": "packing", "outcome": outcome, "form": "line", "proof": kind,
+        }),
+    };
+    if let Some(reason) = reason {
+        event["reason"] = Value::String(reason.into());
+    }
+    if let Some(byte) = refusal {
+        event["limiter"] = Value::String(if byte { "byte" } else { "token" }.into());
+    }
+    trace.record(event);
+}
+
 /// Ladder packing (context-v2 § Ladder packing) over an already ordered list
 /// of candidates, each given as its rendered forms in ladder order: include
 /// the first form whose complete response (header updated for that
@@ -758,18 +885,22 @@ impl<'a> BudgetedText<'a> {
 /// the header cannot fit, refuse with a sufficient budget.
 ///
 /// `tail` holds already-rendered lines that are NOT ladder candidates (008
-/// memory lines): after the ladder, each tail line that fits the remaining
-/// budget is appended and one that does not is skipped — source spans keep
-/// priority — counted in `shown` but never in `omitted`.
+/// memory lines, generated briefs): after the ladder, each tail line that
+/// fits the remaining budget is appended and one that does not is skipped —
+/// source spans keep priority — counted in `shown` but never in `omitted`.
+/// Under a request trace each settled decision — selection, shortening,
+/// duplicate coverage, budget drop, unsupported citation — is recorded once
+/// from the measurements the loop already made.
 fn pack(
     items: &[Vec<String>],
     source_items: &[RankedItem],
-    tail: (&[String], &[(usize, Option<SourceHandle>)]),
+    tail: TailLines<'_>,
     header: &HeaderV2,
     budget: Budget,
     boundary: ByteMeasure,
+    trace: Option<&crate::retrieval_trace::RetrievalTrace>,
 ) -> FResult<PackedText> {
-    let (tail, required) = tail;
+    let (tail, required, ids) = (tail.lines, tail.required, tail.ids);
     let render = |included: &[(usize, usize)],
                   tail_kept: &[usize],
                   at_budget: usize,
@@ -792,6 +923,9 @@ fn pack(
     let mut packed = BudgetedText::new(budget, boundary);
     let mut included: Vec<(usize, usize)> = Vec::new();
     'candidate: for (index, forms) in items.iter().enumerate() {
+        // The bound that refused the first rung, when the descent began
+        // there (009 T005).
+        let mut first_refusal = None;
         for form in 0..forms.len() {
             // Check the chosen rung's exact source range. A fitting fallback
             // may duplicate earlier evidence even when its parent does not.
@@ -805,13 +939,51 @@ fn pack(
                         .is_some_and(|delivered| source_covers(&delivered, &source))
                 })
             {
+                if let Some(trace) = trace
+                    && let Some(item) = source_items.get(index)
+                {
+                    record_unit(trace, "dropped", Some("duplicate"), None, item, form);
+                }
                 continue 'candidate;
             }
             included.push((index, form));
             if packed.try_accept(render(&included, &[], budget.tokens, budget.limited_by)) {
+                if let Some(trace) = trace
+                    && let Some(item) = source_items.get(index)
+                {
+                    if form == 0 {
+                        record_unit(trace, "selected", None, None, item, form);
+                    } else {
+                        record_unit(
+                            trace,
+                            "shortened",
+                            Some("budget"),
+                            first_refusal,
+                            item,
+                            form,
+                        );
+                    }
+                }
                 break;
             }
             included.pop();
+            if first_refusal.is_none() {
+                first_refusal = packed.last_refusal;
+            }
+        }
+        // No rung fit: the lowest one is the denied form.
+        if !included.iter().any(|&(i, _)| i == index)
+            && let Some(trace) = trace
+            && let Some(item) = source_items.get(index)
+        {
+            record_unit(
+                trace,
+                "dropped",
+                Some("budget"),
+                packed.last_refusal,
+                item,
+                forms.len().saturating_sub(1),
+            );
         }
     }
     // A rejected trial restores the last accepted `included`, so that trial
@@ -840,6 +1012,11 @@ fn pack(
                     })
                 })
         }) {
+            // The citation is not delivered by any included source form —
+            // that is its reason, whatever else the budget refused.
+            if let (Some(trace), Some(&id)) = (trace, ids.get(index)) {
+                record_tail(trace, "dropped", Some("unsupported_citation"), None, id);
+            }
             continue;
         }
         tail_kept.push(index);
@@ -850,6 +1027,11 @@ fn pack(
             budget.limited_by,
         )) {
             tail_kept.pop();
+            if let (Some(trace), Some(&id)) = (trace, ids.get(index)) {
+                record_tail(trace, "dropped", Some("budget"), packed.last_refusal, id);
+            }
+        } else if let (Some(trace), Some(&id)) = (trace, ids.get(index)) {
+            record_tail(trace, "selected", None, None, id);
         }
     }
     let omitted = items.len().saturating_sub(included.len());
@@ -1109,7 +1291,7 @@ pub fn pack_context(
     budget: Budget,
     boundary: ByteMeasure,
 ) -> FResult<PackedText> {
-    pack_context_guarded(batch, None, (&[], &[]), None, budget, boundary)
+    pack_context_guarded(batch, None, TailLines::none(), None, budget, boundary)
 }
 
 /// [`pack_context`] with 008 memory included: after the ladder places the
@@ -1122,8 +1304,19 @@ pub fn pack_context_with_memory(
     budget: Budget,
     boundary: ByteMeasure,
 ) -> FResult<PackedText> {
-    let tail: Vec<String> = hits.iter().map(memory_line).collect();
-    pack_context_guarded(batch, None, (&tail, &[]), None, budget, boundary)
+    let (tail, ids) = memory_tail(batch.trace.is_some(), hits);
+    pack_context_guarded(
+        batch,
+        None,
+        TailLines {
+            lines: &tail,
+            required: &[],
+            ids: &ids,
+        },
+        None,
+        budget,
+        boundary,
+    )
 }
 
 /// The multi-root form of [`pack_context`]: the batch is the 007 merge of
@@ -1136,7 +1329,14 @@ pub fn pack_context_roots(
     budget: Budget,
     boundary: ByteMeasure,
 ) -> FResult<PackedText> {
-    pack_context_guarded(batch, Some(roots), (&[], &[]), None, budget, boundary)
+    pack_context_guarded(
+        batch,
+        Some(roots),
+        TailLines::none(),
+        None,
+        budget,
+        boundary,
+    )
 }
 
 /// [`pack_context_roots`] with 008 memory from the primary root.
@@ -1147,8 +1347,19 @@ pub fn pack_context_roots_with_memory(
     budget: Budget,
     boundary: ByteMeasure,
 ) -> FResult<PackedText> {
-    let tail: Vec<String> = hits.iter().map(memory_line).collect();
-    pack_context_guarded(batch, Some(roots), (&tail, &[]), None, budget, boundary)
+    let (tail, ids) = memory_tail(batch.trace.is_some(), hits);
+    pack_context_guarded(
+        batch,
+        Some(roots),
+        TailLines {
+            lines: &tail,
+            required: &[],
+            ids: &ids,
+        },
+        None,
+        budget,
+        boundary,
+    )
 }
 
 /// Compose a selected task view with ordinary source/graph/project-memory
@@ -1162,8 +1373,19 @@ pub fn pack_task_context(
     budget: Budget,
     boundary: ByteMeasure,
 ) -> FResult<PackedText> {
-    let tail: Vec<String> = hits.iter().map(memory_line).collect();
-    pack_task_tail(batch, roots, (&tail, &[]), task_view, budget, boundary)
+    let (tail, ids) = memory_tail(batch.trace.is_some(), hits);
+    pack_task_tail(
+        batch,
+        roots,
+        TailLines {
+            lines: &tail,
+            required: &[],
+            ids: &ids,
+        },
+        task_view,
+        budget,
+        boundary,
+    )
 }
 
 /// Source-first delivery with derived orientation in the same allowance.
@@ -1181,6 +1403,19 @@ pub fn pack_enriched_context(
         .iter()
         .map(|brief| serde_json::to_string(brief).map(|json| format!("brief: {json}\n")))
         .collect::<Result<_, _>>()?;
+    // 009 T005: the tail's diagnostic identities (brief citations, then
+    // memory hits) are borrowed, and built only under a trace.
+    let mut ids: Vec<TailId<'_>> = if context.batch.trace.is_some() {
+        context
+            .briefs
+            .iter()
+            .map(|brief| TailId::Brief {
+                citation: &brief.brief.cited_spans[0],
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     let required: Vec<(usize, Option<SourceHandle>)> = context
         .briefs
         .iter()
@@ -1209,11 +1444,24 @@ pub fn pack_enriched_context(
             Ok((i, source))
         })
         .collect::<FResult<_>>()?;
+    // The tail extends directly from the memory-line iterator (no temporary
+    // vector, on- or off-trace); only the diagnostic identities are built
+    // under the trace gate.
     tail.extend(context.hits.iter().map(memory_line));
+    if context.batch.trace.is_some() {
+        ids.extend(context.hits.iter().map(|hit| TailId::Memory {
+            id: &hit.id,
+            revision: hit.revision,
+        }));
+    }
     pack_task_tail(
         &context.batch,
         roots,
-        (&tail, &required),
+        TailLines {
+            lines: &tail,
+            required: &required,
+            ids: &ids,
+        },
         context.task_view.as_ref(),
         budget,
         boundary,
@@ -1223,7 +1471,7 @@ pub fn pack_enriched_context(
 fn pack_task_tail(
     batch: &CandidateBatch,
     roots: Option<&[RootHeader]>,
-    tail: (&[String], &[(usize, Option<SourceHandle>)]),
+    tail: TailLines<'_>,
     task_view: Option<&crate::task_context::ContextView>,
     budget: Budget,
     boundary: ByteMeasure,
@@ -1246,6 +1494,27 @@ fn pack_task_tail(
         budget,
         boundary,
     )
+}
+
+/// The 008 memory tail lines with their diagnostic identities; the ids are
+/// built only under a trace, so an off-trace request allocates nothing for
+/// diagnostics.
+fn memory_tail<'a>(
+    trace: bool,
+    hits: &'a [crate::memory::MemoryHit],
+) -> (Vec<String>, Vec<TailId<'a>>) {
+    let lines: Vec<String> = hits.iter().map(memory_line).collect();
+    let ids = if trace {
+        hits.iter()
+            .map(|hit| TailId::Memory {
+                id: &hit.id,
+                revision: hit.revision,
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    (lines, ids)
 }
 
 /// A resolved anchor lists at most this many of its other definitions as
@@ -1284,18 +1553,19 @@ fn context_header<'a>(
 fn pack_context_guarded(
     batch: &CandidateBatch,
     roots: Option<&[RootHeader]>,
-    tail: (&[String], &[(usize, Option<SourceHandle>)]),
+    tail: TailLines<'_>,
     task_view: Option<&str>,
     budget: Budget,
     boundary: ByteMeasure,
 ) -> FResult<PackedText> {
+    let trace = batch.trace.as_ref();
     if batch.anchored() {
-        return pack_anchored(batch, roots, tail.0, task_view, budget, boundary);
+        return pack_anchored(batch, roots, tail, task_view, budget, boundary, trace);
     }
     let items: Vec<Vec<String>> = batch.items.iter().map(ranked_forms).collect();
     let mut header = context_header(batch, roots, None, false);
     header.task_view = task_view;
-    pack(&items, &batch.items, tail, &header, budget, boundary)
+    pack(&items, &batch.items, tail, &header, budget, boundary, trace)
 }
 
 /// One entry of the anchored selection: its renderings in ladder order —
@@ -1310,12 +1580,36 @@ struct Slot {
     /// `None` when nothing renders.
     address: Option<usize>,
     chosen: Option<usize>,
+    /// 009 T005: what a packing event names for this slot — the selection
+    /// kind, the unit and the form labels (the last two only under a
+    /// trace); the outcome is plain bookkeeping that never feeds a decision.
+    kind: &'static str,
+    unit: Option<SourceHandle>,
+    labels: Option<Vec<&'static str>>,
+    outcome: SlotOutcome,
+}
+
+/// One anchored slot's settled decision, for its single 009 T005 event.
+#[derive(Clone, Copy, PartialEq)]
+enum SlotOutcome {
+    Pending,
+    Selected,
+    /// A lower rung or a refused upgrade; `refusal` is the bound that
+    /// refused, when the failed trial reported it.
+    Shortened {
+        refusal: Option<bool>,
+    },
+    Dropped {
+        reason: &'static str,
+        refusal: Option<bool>,
+    },
 }
 
 impl Slot {
     /// An anchored definition's ladder.
-    fn ladder(entry: &RankedItem) -> Self {
+    fn ladder(entry: &RankedItem, kind: &'static str, traced: bool) -> Self {
         let mut forms: Vec<String> = Vec::with_capacity(entry.forms.len());
+        let mut labels = traced.then(Vec::new);
         let (mut preferred, mut address) = (0, None);
         for form in &entry.forms {
             let rendered = rendered_form(entry, form);
@@ -1327,6 +1621,9 @@ impl Slot {
                 RenderedForm::Address => address = Some(forms.len()),
                 _ => {}
             }
+            if let Some(labels) = labels.as_mut() {
+                labels.push(form_kind(Some(form)));
+            }
             forms.push(rendered);
         }
         Slot {
@@ -1334,16 +1631,34 @@ impl Slot {
             forms,
             preferred,
             chosen: None,
+            unit: traced.then(|| entry.handle.clone()).flatten(),
+            labels,
+            outcome: SlotOutcome::Pending,
+            kind,
         }
     }
 
-    /// A directory line.
-    fn line(line: String) -> Self {
+    /// A directory or door line.
+    fn line(line: String, kind: &'static str, unit: Option<SourceHandle>) -> Self {
         Slot {
             forms: vec![line],
             preferred: 0,
             address: Some(0),
             chosen: None,
+            unit,
+            labels: None,
+            outcome: SlotOutcome::Pending,
+            kind,
+        }
+    }
+
+    /// The settled form's label for a packing event; a dropped slot names
+    /// its lowest rung, `line` when it has no ladder.
+    fn event_form(&self) -> &'static str {
+        let labels = self.labels.as_deref().unwrap_or(&[]);
+        match self.chosen {
+            Some(form) => labels.get(form).copied().unwrap_or("line"),
+            None => labels.last().copied().unwrap_or("line"),
         }
     }
 }
@@ -1351,7 +1666,7 @@ impl Slot {
 /// A tie-group entry's door group (context-v2 § Doors, `doors:each`): one
 /// door line per file, the last carrying the group's `⋯ <m> more files`
 /// line, so the group fits or is omitted whole.
-fn group_slots(group: &DoorGroup) -> Vec<Slot> {
+fn group_slots(group: &DoorGroup, traced: bool) -> Vec<Slot> {
     let mut lines: Vec<String> = group
         .lines
         .iter()
@@ -1362,7 +1677,11 @@ fn group_slots(group: &DoorGroup) -> Vec<Slot> {
     {
         last.push_str(&format!("⋯ {} more files\n", group.more_files));
     }
-    lines.into_iter().map(Slot::line).collect()
+    lines
+        .into_iter()
+        .zip(&group.lines)
+        .map(|(line, door)| Slot::line(line, "door", traced.then(|| door.unit.clone())))
+        .collect()
 }
 
 /// The anchored selection (context-v2 § Anchored context), per anchor in
@@ -1420,11 +1739,13 @@ fn behavior_support_items(batch: &CandidateBatch) -> Vec<&RankedItem> {
 fn pack_anchored(
     batch: &CandidateBatch,
     roots: Option<&[RootHeader]>,
-    tail: &[String],
+    tail: TailLines<'_>,
     task_view: Option<&str>,
     budget: Budget,
     boundary: ByteMeasure,
+    trace: Option<&crate::retrieval_trace::RetrievalTrace>,
 ) -> FResult<PackedText> {
+    let traced = trace.is_some();
     let support = behavior_support_items(batch);
     enum Plan {
         Resolved {
@@ -1471,13 +1792,13 @@ fn pack_anchored(
         // An entry's slot, then its own door group's slots.
         let entry_slots = |slots: &mut Vec<Slot>, entry: &RankedItem| {
             let at = slots.len();
-            slots.push(Slot::ladder(entry));
+            slots.push(Slot::ladder(entry, "definition", traced));
             let group = slots.len();
             if let Some(doors) = each
                 .iter()
                 .find(|group| index == 0 && group.target.is_some() && group.target == entry.handle)
             {
-                slots.extend(group_slots(doors));
+                slots.extend(group_slots(doors, traced));
             }
             (at, group..slots.len())
         };
@@ -1488,8 +1809,15 @@ fn pack_anchored(
                 window.entries[1..]
                     .iter()
                     .take(DIRECTORY_LINES)
-                    .filter_map(locator_line)
-                    .map(Slot::line),
+                    .filter_map(|entry| {
+                        locator_line(entry).map(|line| {
+                            Slot::line(
+                                line,
+                                "directory",
+                                traced.then(|| entry.handle.clone()).flatten(),
+                            )
+                        })
+                    }),
             );
             plans.push(Plan::Resolved {
                 first: at,
@@ -1513,7 +1841,7 @@ fn pack_anchored(
         if let Some(handle) = &item.handle
             && selected.insert(handle.to_v2())
         {
-            slots.push(Slot::ladder(item));
+            slots.push(Slot::ladder(item, "support", traced));
         }
     }
     let support_slots = support_start..slots.len();
@@ -1523,12 +1851,13 @@ fn pack_anchored(
     let door_slots = slots.len();
     if let Some(group) = group {
         let approx = doors.is_some_and(|doors| doors.state == DoorState::Approx);
-        slots.extend(
-            group
-                .lines
-                .iter()
-                .map(|door| Slot::line(door_line(door, approx))),
-        );
+        slots.extend(group.lines.iter().map(|door| {
+            Slot::line(
+                door_line(door, approx),
+                "door",
+                traced.then(|| door.unit.clone()),
+            )
+        }));
     }
     let door_slots = door_slots..slots.len();
     let more_files = group
@@ -1565,7 +1894,7 @@ fn pack_anchored(
                 text.push_str(line);
             }
             for &index in tail_kept {
-                text.push_str(&tail[index]);
+                text.push_str(&tail.lines[index]);
             }
             text
         };
@@ -1581,6 +1910,8 @@ fn pack_anchored(
         ))
     };
     // The first of `order`'s forms that fits, else the entry is omitted.
+    // A placement at `order`'s first form is the plan's own choice; a lower
+    // one is a budget shortening with the refusing bound of the rung above.
     let place = |packed: &mut BudgetedText,
                  slots: &mut [Slot],
                  index: usize,
@@ -1589,10 +1920,21 @@ fn pack_anchored(
         for &form in order {
             slots[index].chosen = Some(form);
             if trial(packed, slots, *dropped) {
+                slots[index].outcome = if form == order[0] {
+                    SlotOutcome::Selected
+                } else {
+                    SlotOutcome::Shortened {
+                        refusal: packed.last_refusal,
+                    }
+                };
                 return;
             }
         }
         slots[index].chosen = None;
+        slots[index].outcome = SlotOutcome::Dropped {
+            reason: "budget",
+            refusal: packed.last_refusal,
+        };
         *dropped += 1;
     };
     // A door group fits whole or is omitted, its lines counted; so is an
@@ -1602,16 +1944,27 @@ fn pack_anchored(
                        entry: usize,
                        group: &std::ops::Range<usize>,
                        dropped: &mut usize| {
+        let mut refusal = None;
         if !group.is_empty() && slots[entry].chosen.is_some() {
             for index in group.clone() {
                 slots[index].chosen = Some(0);
             }
             if trial(packed, slots, *dropped) {
+                for index in group.clone() {
+                    slots[index].outcome = SlotOutcome::Selected;
+                }
                 return;
             }
+            refusal = packed.last_refusal;
             for index in group.clone() {
                 slots[index].chosen = None;
             }
+        }
+        for index in group.clone() {
+            slots[index].outcome = SlotOutcome::Dropped {
+                reason: "budget",
+                refusal,
+            };
         }
         *dropped += group.len();
     };
@@ -1673,6 +2026,15 @@ fn pack_anchored(
                             slots[index].chosen = Some(form);
                             if !trial(&mut packed, &slots, dropped) {
                                 slots[index].chosen = Some(previous);
+                                // 009 T005: a refused upgrade shortened an
+                                // entry that otherwise sat at its base form.
+                                if slots[index].outcome == SlotOutcome::Selected {
+                                    slots[index].outcome = SlotOutcome::Shortened {
+                                        refusal: packed.last_refusal,
+                                    };
+                                }
+                            } else {
+                                slots[index].outcome = SlotOutcome::Selected;
                             }
                         }
                     }
@@ -1717,11 +2079,16 @@ fn pack_anchored(
         if trial(&mut packed, &slots, dropped) {
             break true;
         }
+        let refusal = packed.last_refusal;
         match slots.iter().rposition(|slot| slot.chosen.is_some()) {
             Some(last) => {
                 let shown = group_of[last].clone().unwrap_or(last..last + 1);
                 for index in shown.clone() {
                     slots[index].chosen = None;
+                    slots[index].outcome = SlotOutcome::Dropped {
+                        reason: "budget",
+                        refusal,
+                    };
                 }
                 dropped += shown.len();
             }
@@ -1745,7 +2112,7 @@ fn pack_anchored(
         ));
     // 008: memory lines fill the remaining budget, as after the ladder.
     let mut tail_kept: Vec<usize> = Vec::new();
-    for index in 0..tail.len() {
+    for index in 0..tail.lines.len() {
         tail_kept.push(index);
         if !packed.try_accept(render(
             &slots,
@@ -1756,6 +2123,44 @@ fn pack_anchored(
             budget.limited_by,
         )) {
             tail_kept.pop();
+            if let (Some(trace), Some(&id)) = (trace, tail.ids.get(index)) {
+                record_tail(trace, "dropped", Some("budget"), packed.last_refusal, id);
+            }
+        } else if let (Some(trace), Some(&id)) = (trace, tail.ids.get(index)) {
+            record_tail(trace, "selected", None, None, id);
+        }
+    }
+    // 009 T005: one settled event per slot, for every candidate the anchored
+    // selection itself excluded — an `anchored_selection` reason, never a
+    // budget claim — and for each tail line above. A `Pending` slot is an
+    // ambiguous pass that stopped at an earlier entry; no limiter is claimed
+    // for a trial that never ran.
+    if let Some(trace) = trace {
+        for slot in &slots {
+            let (outcome, reason, refusal) = match slot.outcome {
+                SlotOutcome::Selected => ("selected", None, None),
+                SlotOutcome::Shortened { refusal } => ("shortened", Some("budget"), refusal),
+                SlotOutcome::Dropped { reason, refusal } => ("dropped", Some(reason), refusal),
+                SlotOutcome::Pending => ("dropped", Some("budget"), None),
+            };
+            let mut event = serde_json::json!({
+                "stage": "packing", "outcome": outcome, "kind": slot.kind,
+                "form": slot.event_form(), "unit": slot.unit,
+            });
+            if let Some(reason) = reason {
+                event["reason"] = Value::String(reason.into());
+            }
+            if let Some(byte) = refusal {
+                event["limiter"] = Value::String(if byte { "byte" } else { "token" }.into());
+            }
+            trace.record(event);
+        }
+        for item in batch.items.iter().filter(|item| {
+            item.handle
+                .as_ref()
+                .is_none_or(|handle| !selected.contains(&handle.to_v2()))
+        }) {
+            record_unit(trace, "dropped", Some("anchored_selection"), None, item, 0);
         }
     }
     let omitted = outside + dropped;
@@ -1826,7 +2231,16 @@ fn pack_search_impl(
         doors: None,
         anchored: false,
     };
-    pack(&items, &[], (&[], &[]), &header, budget, boundary)
+    pack(
+        &items,
+        &[],
+        TailLines::none(),
+        &header,
+        budget,
+        boundary,
+        // A search outcome carries no batch, so no packing trace reaches it.
+        None,
+    )
 }
 
 /// 008 memory search: the v2 header exactly as `search` builds it (from the
@@ -1861,13 +2275,25 @@ pub fn pack_memory_search(
         doors: None,
         anchored: false,
     };
-    pack(&items, &[], (&[], &[]), &header, budget, boundary)
+    pack(
+        &items,
+        &[],
+        TailLines::none(),
+        &header,
+        budget,
+        boundary,
+        None,
+    )
 }
 
-/// One compact memory line (008): `mem:<id>@r<revision> <author>:
-/// <first line>`. The first line is the record text's first line cut at a
-/// UTF-8 boundary to at most 120 bytes; author and first line are
-/// single-line fields, so stored text cannot forge headers, items or fences.
+/// One compact memory line (008): `mem:<id>@r<revision> [links:<status>]
+/// <author>: <first line>`. The status marker is always present — `none`
+/// for an unlinked record — naming the link statuses of the snapshot the
+/// hit was validated in (no revalidation happened for the statement
+/// itself). The first line is the record text's first line cut at a UTF-8
+/// boundary to at most 120 bytes; author and first line are single-line
+/// fields, so stored text cannot forge headers, items or fences. The whole
+/// line is one unit: no status can be clipped off independently of it.
 pub fn memory_line(hit: &crate::memory::MemoryHit) -> String {
     let first = hit.text.split('\n').next().unwrap_or("");
     let first = first.strip_suffix('\r').unwrap_or(first);
@@ -1876,9 +2302,10 @@ pub fn memory_line(hit: &crate::memory::MemoryHit) -> String {
         cut -= 1;
     }
     format!(
-        "mem:{}@r{} {}: {}\n",
+        "mem:{}@r{} [links:{}] {}: {}\n",
         hit.id,
         hit.revision,
+        hit.links_status(),
         single_line(&hit.author),
         single_line(&first[..cut])
     )
@@ -2139,6 +2566,7 @@ fn pack_task_evidence(
 ) -> FResult<PackedText> {
     let plan = context.evidence.as_ref().expect("composition plan");
     let items = &context.batch.items;
+    let trace = context.batch.trace.as_ref();
     let forms: Vec<Vec<String>> = items.iter().map(ranked_forms).collect();
     let mut header = context_header(&context.batch, roots, None, false);
     header.task_view = context.task_view.as_ref().map(|v| v.line.as_str());
@@ -2155,7 +2583,25 @@ fn pack_task_evidence(
                 })
         })
     };
-    let mut tail = Vec::<(String, Vec<SourceHandle>, bool)>::new();
+    // 009 T005: every tail entry carries its diagnostic identity up front;
+    // the enum is borrowed and copyable, so this never allocates off-trace.
+    struct ProofTail<'a> {
+        line: String,
+        required: Vec<SourceHandle>,
+        brief: bool,
+        id: TailId<'a>,
+    }
+
+    /// One proof's final disposition, for its single deferred 009 T005
+    /// event: the atomic trial records it, the tail retry may overturn a
+    /// refusal, and only then is it emitted.
+    #[derive(Clone, Copy)]
+    struct ProofVerdict {
+        outcome: &'static str,
+        reason: Option<&'static str>,
+        refusal: Option<bool>,
+    }
+    let mut tail = Vec::<ProofTail<'_>>::new();
     if let Some(b) = &plan.boundaries {
         for r in &b.relations {
             let consumer = r.consumer.evidence.handle(&b.workspace_id);
@@ -2178,7 +2624,14 @@ fn pack_task_evidence(
             let mut required = vec![consumer, config];
             required.extend(providers);
             required.extend(dependencies);
-            tail.push((line, required, false));
+            tail.push(ProofTail {
+                line,
+                required,
+                brief: false,
+                id: TailId::Proof {
+                    kind: "relationship",
+                },
+            });
         }
     }
     let relationship_count = tail.len();
@@ -2217,28 +2670,40 @@ fn pack_task_evidence(
                 "definition":definition.to_v2(),"reference":occurrence.to_v2(),"target":"unique",
                 "syntax":{"call":call.map(SourceHandle::to_v2),"test_attribute":test.map(SourceHandle::to_v2),"runtime_call":"unverified","test_execution":"not_observed"}})
             );
-            if !tail.iter().any(|(existing, _, _)| existing == &line) {
+            if !tail.iter().any(|existing| existing.line == line) {
                 let mut required = vec![definition.clone(), occurrence];
                 required.extend(call.cloned());
                 required.extend(test.cloned());
-                tail.push((line, required, false));
+                tail.push(ProofTail {
+                    line,
+                    required,
+                    brief: false,
+                    id: TailId::Proof { kind: "reference" },
+                });
             }
         }
     }
     let compiler_end = tail.len();
     for observed in &plan.observed {
-        tail.push((format!("task-execution: {}\n", serde_json::json!({
-            "evidence":"observed_by_producer","kind":observed.observation.edge.kind,
-            "provider":observed.observation.provider,"execution":observed.observation.execution,
-            "from":observed.from.to_v2(),"to":observed.to.to_v2(),"test":observed.test.to_v2(),
-            "requirements":{"ids":plan.observed_requirements(observed),"basis":"explicit_source_link_overlap","satisfied":"not_established"},
-            "complete_coverage":false
-        })), vec![observed.from.clone(), observed.to.clone(), observed.test.clone()], false));
+        tail.push(ProofTail {
+            line: format!("task-execution: {}\n", serde_json::json!({
+                "evidence":"observed_by_producer","kind":observed.observation.edge.kind,
+                "provider":observed.observation.provider,"execution":observed.observation.execution,
+                "from":observed.from.to_v2(),"to":observed.to.to_v2(),"test":observed.test.to_v2(),
+                "requirements":{"ids":plan.observed_requirements(observed),"basis":"explicit_source_link_overlap","satisfied":"not_established"},
+                "complete_coverage":false
+            })),
+            required: vec![observed.from.clone(), observed.to.clone(), observed.test.clone()],
+            brief: false,
+            id: TailId::Proof {
+                kind: "execution",
+            },
+        });
     }
     let observed_end = tail.len();
     for (definition, alias) in &plan.import_alias_calls {
-        tail.push((
-            format!(
+        tail.push(ProofTail {
+            line: format!(
                 "task-syntax: {}\n",
                 serde_json::json!({
                     "evidence":"syntactic","kind":"import_alias_call_candidate",
@@ -2248,14 +2713,16 @@ fn pack_task_evidence(
                     "import":alias.declaration.to_v2(),"call":alias.call.to_v2()
                 })
             ),
-            vec![
+            required: vec![
                 definition.clone(),
                 alias.declaration.clone(),
                 alias.call.clone(),
             ],
-            false,
-        ));
+            brief: false,
+            id: TailId::Proof { kind: "syntax" },
+        });
     }
+
     let proof_end = tail.len();
     for b in &context.briefs {
         let p = HandleRef::parse(&b.brief.cited_spans[0])?;
@@ -2266,19 +2733,45 @@ fn pack_task_evidence(
                 && h.start <= p.start
                 && h.end >= p.end
         }) else {
+            // No composed item covers the citation (composition may have
+            // had to truncate the span it cites). The brief never reaches
+            // the tail, so its single event is emitted here — trace-gated,
+            // with no change to admission or packing.
+            if let Some(trace) = trace {
+                record_tail(
+                    trace,
+                    "dropped",
+                    Some("unsupported_citation"),
+                    None,
+                    TailId::Brief {
+                        citation: &b.brief.cited_spans[0],
+                    },
+                );
+            }
             continue;
         };
-        tail.push((
-            format!("brief: {}\n", serde_json::to_string(b)?),
-            vec![SourceHandle {
+        tail.push(ProofTail {
+            line: format!("brief: {}\n", serde_json::to_string(b)?),
+            required: vec![SourceHandle {
                 start: p.start,
                 end: p.end,
                 ..h.clone()
             }],
-            true,
-        ));
+            brief: true,
+            id: TailId::Brief {
+                citation: &b.brief.cited_spans[0],
+            },
+        });
     }
-    tail.extend(context.hits.iter().map(|h| (memory_line(h), vec![], false)));
+    tail.extend(context.hits.iter().map(|h| ProofTail {
+        line: memory_line(h),
+        required: Vec::new(),
+        brief: false,
+        id: TailId::Memory {
+            id: &h.id,
+            revision: h.revision,
+        },
+    }));
     let render = |selected: &[(usize, usize)], kept: &[usize], tokens, limiter| {
         let mut text = header.line(
             tokens,
@@ -2291,7 +2784,7 @@ fn pack_task_evidence(
             plan.report(
                 items,
                 selected,
-                kept.iter().filter(|&&i| tail[i].2).count(),
+                kept.iter().filter(|&&i| tail[i].brief).count(),
                 kept.iter().filter(|&&i| i < relationship_count).count(),
                 kept.iter()
                     .filter(|&&i| i >= relationship_count && i < compiler_end)
@@ -2305,7 +2798,7 @@ fn pack_task_evidence(
             text.push_str(&forms[i][f]);
         }
         for &i in kept {
-            text.push_str(&tail[i].0);
+            text.push_str(&tail[i].line);
         }
         text
     };
@@ -2316,13 +2809,25 @@ fn pack_task_evidence(
     let mut packed = BudgetedText::new(budget, boundary);
     let mut selected = Vec::new();
     let mut kept = Vec::new();
+    // 009 T005: one FINAL verdict per proof, emitted once after every
+    // retry below — the intermediate atomic trials all still run. The vec
+    // exists only under a trace; off-trace the packing is unchanged.
+    let mut verdicts: Vec<Option<ProofVerdict>> = if trace.is_some() {
+        vec![None; proof_end]
+    } else {
+        Vec::new()
+    };
     // A proof and the source bodies it depends on are one delivery decision.
     // Otherwise unrelated bodies can spend the allowance before the connecting
     // relationship is considered. Only source-backed proofs get this priority;
     // generated briefs and memory still use remaining capacity below.
-    for (proof, (_, required, _)) in tail[..proof_end].iter().enumerate() {
+    for (proof, entry) in tail[..proof_end].iter().enumerate() {
+        let required = &entry.required;
         let mut trial = selected.clone();
         let mut supported = true;
+        // The bodies this proof alone admits (009 T005); the vec stays empty
+        // off-trace.
+        let mut admitted: Vec<usize> = Vec::new();
         for handle in required {
             if covers(&trial, handle) {
                 continue;
@@ -2345,29 +2850,91 @@ fn pack_task_evidence(
                 break;
             };
             trial.push((index, 0));
+            // 009 T005: only a traced request ever fills this.
+            if trace.is_some() {
+                admitted.push(index);
+            }
         }
-        if !supported {
-            continue;
-        }
-        trial.sort_unstable();
-        kept.push(proof);
-        if packed.try_accept(render(&trial, &kept, budget.tokens, budget.limited_by)) {
-            selected = trial;
+        // The proof's verdict is DEFERRED (009 T005): the atomic trial
+        // records it, the tail retry below may still overturn a refusal,
+        // and only the final disposition is emitted once.
+        let verdict = if !supported {
+            // No source in the response can cover the proof's requirement;
+            // that is an unsupported citation, whatever the budget did.
+            ProofVerdict {
+                outcome: "dropped",
+                reason: Some("unsupported_citation"),
+                refusal: None,
+            }
         } else {
-            kept.pop();
+            trial.sort_unstable();
+            kept.push(proof);
+            if packed.try_accept(render(&trial, &kept, budget.tokens, budget.limited_by)) {
+                selected = trial;
+                // The bodies this proof admitted are settled with it.
+                if let Some(trace) = trace {
+                    for &index in &admitted {
+                        record_unit(trace, "selected", None, None, &items[index], 0);
+                    }
+                }
+                ProofVerdict {
+                    outcome: "selected",
+                    reason: None,
+                    refusal: None,
+                }
+            } else {
+                kept.pop();
+                ProofVerdict {
+                    outcome: "dropped",
+                    reason: Some("budget"),
+                    refusal: packed.last_refusal,
+                }
+            }
+        };
+        if let Some(slot) = verdicts.get_mut(proof) {
+            *slot = Some(verdict);
         }
     }
     for (i, forms) in forms.iter().enumerate() {
         if selected.iter().any(|&(index, _)| index == i) {
             continue;
         }
+        // The bound that refused the first rung, when the descent began
+        // there (009 T005).
+        let mut first_refusal = None;
+        let mut accepted = None;
         for f in 0..forms.len() {
             let position = selected.partition_point(|&(index, _)| index < i);
             selected.insert(position, (i, f));
             if packed.try_accept(render(&selected, &kept, budget.tokens, budget.limited_by)) {
+                accepted = Some(f);
                 break;
             }
             selected.remove(position);
+            if first_refusal.is_none() {
+                first_refusal = packed.last_refusal;
+            }
+        }
+        if let Some(trace) = trace {
+            match accepted {
+                Some(0) => record_unit(trace, "selected", None, None, &items[i], 0),
+                Some(f) => record_unit(
+                    trace,
+                    "shortened",
+                    Some("budget"),
+                    first_refusal,
+                    &items[i],
+                    f,
+                ),
+                None => record_unit(
+                    trace,
+                    "dropped",
+                    Some("budget"),
+                    packed.last_refusal,
+                    &items[i],
+                    forms.len().saturating_sub(1),
+                ),
+            }
         }
     }
     // Each admission used the full renderer, including proof metadata, and a
@@ -2381,13 +2948,83 @@ fn pack_task_evidence(
     {
         return Err(too_small(budget.tokens, &|t, l| render(&[], &[], t, l)));
     }
-    for (i, (_, required, _)) in tail.iter().enumerate() {
-        if kept.contains(&i) || !required.iter().all(|h| covers(&selected, h)) {
+    for (i, entry) in tail.iter().enumerate() {
+        if kept.contains(&i) || !entry.required.iter().all(|h| covers(&selected, h)) {
+            // 009 T005: a tail entry whose citation is not delivered is an
+            // unsupported citation — never relabeled budget. Proofs already
+            // carry their deferred verdict; briefs and memory report here.
+            if i >= proof_end
+                && !kept.contains(&i)
+                && let Some(trace) = trace
+            {
+                record_tail(
+                    trace,
+                    "dropped",
+                    Some("unsupported_citation"),
+                    None,
+                    entry.id,
+                );
+            }
             continue;
         }
         kept.push(i);
         if !packed.try_accept(render(&selected, &kept, budget.tokens, budget.limited_by)) {
             kept.pop();
+            if i < proof_end {
+                // The retried proof was refused again: this, not the
+                // atomic trial above, is its settled refusal.
+                if let Some(verdict) = verdicts.get_mut(i) {
+                    *verdict = Some(ProofVerdict {
+                        outcome: "dropped",
+                        reason: Some("budget"),
+                        refusal: packed.last_refusal,
+                    });
+                }
+            } else if let Some(trace) = trace {
+                record_tail(
+                    trace,
+                    "dropped",
+                    Some("budget"),
+                    packed.last_refusal,
+                    entry.id,
+                );
+            }
+        } else if i < proof_end {
+            // A refused proof whose bodies the ladder later admitted: the
+            // retry settled it as selected.
+            if let Some(verdict) = verdicts.get_mut(i) {
+                *verdict = Some(ProofVerdict {
+                    outcome: "selected",
+                    reason: None,
+                    refusal: None,
+                });
+            }
+        } else if let Some(trace) = trace {
+            record_tail(trace, "selected", None, None, entry.id);
+        }
+    }
+    // 009 T005: exactly one settled verdict per identified proof, after
+    // every retry: its kind, a stable key over its already-built record and
+    // the source citations it requires. No rendered response is parsed.
+    if let Some(trace) = trace {
+        for (entry, verdict) in tail[..proof_end].iter().zip(&verdicts) {
+            let Some(verdict) = *verdict else { continue };
+            let mut event = serde_json::json!({
+                "stage": "packing", "outcome": verdict.outcome, "form": "line",
+                "proof": match entry.id {
+                    TailId::Proof { kind } => kind,
+                    _ => "proof",
+                },
+                "proof_key": crate::digest(entry.line.as_bytes()),
+                "requires": entry.required,
+            });
+            if let Some(reason) = verdict.reason {
+                event["reason"] = Value::String(reason.into());
+            }
+            if let Some(byte) = verdict.refusal {
+                event["limiter"] = Value::String(if byte { "byte" } else { "token" }.into());
+            }
+            trace.record(event);
         }
     }
     let omitted = items.len() - selected.len();
