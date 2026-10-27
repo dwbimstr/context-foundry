@@ -1,5 +1,60 @@
 # Validation
 
+## Markdown parser security and unit migration — 2026-10-26
+
+The owner approved a targeted security follow-up to the cleanup below, not the
+whole dependency group in PR #44. Accepted source commit: `2651fdb`, based on
+`bb79aee`. Only pulldown-cmark moves, from 0.13.4 to 0.13.5. Scala 0.26.3,
+rmcp 3.7.0 and uuid 1.29.0 remain deferred. GLM authoring was authorized only for
+this follow-up; GPT-6.1 Sol independently reviewed its source and regressions.
+GPT-6 Astra additionally reviewed the parser exposure and migration boundaries.
+Sol and Astra share a provider; neither is counted as a second independent lab.
+
+**Exposure.** The exact 13-byte input `- [o]:u\n    \t` makes the upstream default
+offset iterator and the old production Foundry outline retrieve exit 101.
+Indexing's per-source panic catch retained the source with a parse failure, but
+does not protect later outline/context reparses. Source review identified the
+shared owner's engine-lock poisoning risk; this was not an observed before-fix
+MCP exploit. The upstream fixes also address default-parser complexity; no local
+complexity timing or disabled-wikilink exploit is claimed.
+Upstream references: [panic report #1179](https://github.com/pulldown-cmark/pulldown-cmark/issues/1179)
+and [fix #1181](https://github.com/pulldown-cmark/pulldown-cmark/pull/1181).
+
+**Migration.** The offset change observed in the preceding cleanup requires
+`SEARCH_SCHEMA` **7 → 8** and `SOURCE_UNIT_SCHEMA` **5 → 6**. Authoritative store
+schema **12** and generation format **6** do not change. Existing stores refuse
+lexical use until explicit `foundry --store <store> repair-index`. Old semantic
+recipes remain retained but ineligible until `semantic prepare` refits them.
+Profileless replay and cheap progress also reject obsolete unit identities rather
+than replaying or reporting them current. Exact matching embedding inputs remain
+reusable; no cache purge, source rewrite, automatic repair or new table is added.
+See the [unit-grammar contract](../specs/001-source-state-recovery/contracts/context-v2.md#unit-grammar-repair--2026-10-26).
+
+**Checks.** All five `scripts/gates.sh` gates pass: formatting, all-target Clippy
+and the full test suite on Rust 1.97.1, then all-target check and Clippy on Rust
+1.90.0 with the macOS 26.5 SDK. Totals: **1,314 passed, 0 failed, 34 ignored**.
+Log SHA-256 prefixes: Clippy `5530ef72…`, test `24d6d52d…`,
+MSRV check `fd3d5c5f…`, MSRV Clippy `5c40836f…`. Lexical-only
+`cargo check --locked --no-default-features --lib` also passes.
+Migration regressions use explicitly aged publications, not an old binary:
+they retain stale semantic state, reject its replay, preserve unchanged cache
+rows and submit exactly one changed input. An unchanged-source offset fixture
+refits its unit range without an embedding request.
+
+The rebuilt production CLI separately opened an owned store created by the old
+binary: `repair_required` before repair, `ready` afterward, parse failures **1 → 0**.
+Source revision **2**, exact source citation, memory revision **1**, provenance,
+and exported task revision **2** remained unchanged. A real stdio MCP owner then
+served hostile outline retrieve, status, context, memory get and final status,
+followed by clean EOF; source count stayed **2**, parse failures **0**, and
+`[links:fresh]` reached context. The first throwaway MCP check incorrectly compared
+JSON key order; structural comparison confirmed identical records and the corrected
+same-owner sequence passed. No production change was made for that harness error.
+
+The owner explicitly waived G2 promotion measurement for this security-only fix.
+No G1/G2, retrieval-quality, real-model, cache-economics or performance improvement
+is claimed. Historical measurement receipts and private corpora are untouched.
+
 ## Dependency and branch cleanup — 2026-10-26
 
 The owner authorized refreshing the active probe dependencies while preserving the
@@ -23,11 +78,11 @@ The three Python updates are PRs #38–#40. The five Cargo package updates are t
 accepted maintenance subset of PR #37; the only added dependency edge is rmcp to
 the already locked libc. Source and store schemas are unchanged.
 
-**Parser holds.** Scala 0.26.3 remains held. Pulldown-cmark 0.13.5 is also held:
-the upstream CLI, with default parser options, changes the setext heading range of
-`[a]: /url\n    \nTitle\n===\n` from `14..25` to `15..25`. Foundry uses those offsets
-for Markdown section identity. This is a real parser difference, not a retrieval
-measurement, and is not silently adopted without the source-unit/search version gate.
+**Initial parser holds.** The cleanup initially held both Scala 0.26.3 and
+pulldown-cmark 0.13.5: the upstream default-parser CLI changes the setext heading
+range of `[a]: /url\n    \nTitle\n===\n` from `14..25` to `15..25`. Foundry uses
+those offsets for Markdown section identity. The security follow-up above resolves
+the pulldown hold with the explicit source-unit/search version gate; Scala remains held.
 
 **Python security proof.** All five currently open alerts are in the probe manifest:
 setuptools advisories GHSA-h35f-9h28-mq5c and GHSA-xmj3-9gf7-h52w, and filelock
