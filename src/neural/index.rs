@@ -752,26 +752,53 @@ pub struct Prepared {
 }
 
 /// Why a state row names no servable prepared profile: none was prepared,
-/// or the recorded one is a descriptor v1 profile (its row has no
-/// dimension), whose cache rows and generation are kept, never rebuilt.
+/// the recorded one is a descriptor v1 profile (its row has no dimension),
+/// whose cache rows and generation are kept, never rebuilt, or its recorded
+/// identity is complete but its recipe uses an unsupported, obsolete or
+/// unrecognized source-unit grammar, so its partitions and generation are
+/// retained history until `semantic prepare` refits them. An incomplete
+/// identity (a row without digest or recipe) is still simply no profile.
 pub fn unprepared_reason(state: Option<&crate::neural::cache::SemanticState>) -> &'static str {
     match state {
         Some(state) if state.function_digest.is_some() && state.dimensions.is_none() => {
             "the recorded profile is descriptor v1 (profile_unsupported); its cache rows and \
              generation are kept until `semantic purge`"
         }
+        Some(state)
+            if state.function_digest.is_some()
+                && state.dimensions.is_some()
+                && state.recipe_id.as_deref().is_some_and(|recipe| {
+                    !crate::neural::partition::recipe_uses_current_units(recipe)
+                }) =>
+        {
+            "the recorded partition recipe uses an unsupported, obsolete or unrecognized \
+             source-unit grammar (unit_schema_obsolete); its partitions, generation and \
+             cache are kept until `semantic prepare` refits them, reusing unchanged \
+             cached inputs"
+        }
         _ => "no semantic profile prepared",
     }
 }
 
 /// The [`Prepared`] identity of a state row, if it names one this build
-/// serves.
+/// serves. Both gates run before any owned clone: a descriptor v1 row (no
+/// dimension), and a complete row whose recipe uses an older, malformed or
+/// missing unit grammar, are retained history and never become current
+/// identity.
 pub fn prepared(state: Option<&crate::neural::cache::SemanticState>) -> Option<Prepared> {
     let state = state?;
+    if !state
+        .recipe_id
+        .as_deref()
+        .is_some_and(crate::neural::partition::recipe_uses_current_units)
+    {
+        return None;
+    }
+    let dimensions = state.dimensions? as usize;
     Some(Prepared {
         digest: state.function_digest.clone()?,
         recipe: state.recipe_id.clone()?,
-        dimensions: state.dimensions? as usize,
+        dimensions,
     })
 }
 
@@ -1048,6 +1075,51 @@ mod tests {
         let store = Dir::open_path(scratch.path()).unwrap();
         let err = validate_generation(&store, "abc", "recipe", 768).unwrap_err();
         assert!(err.contains("no generation manifest"), "{err}");
+    }
+
+    #[test]
+    fn a_retained_unit_grammar_row_is_history_not_current_identity() {
+        let current = format!(
+            "cards-v1+kinds1+units{}:128+t",
+            crate::store::SOURCE_UNIT_SCHEMA
+        );
+        let mut state = crate::neural::cache::SemanticState {
+            function_digest: Some("ab".repeat(32)),
+            recipe_id: Some(current.clone()),
+            dimensions: Some(768),
+            ..Default::default()
+        };
+        assert_eq!(prepared(Some(&state)).unwrap().recipe, current);
+        let no_profile = unprepared_reason(None);
+        // A complete row under the previous grammar keeps its digest,
+        // dimensions and cache, but prepares nothing and names a reason of
+        // its own — distinct from no-profile and from descriptor v1.
+        state.recipe_id = Some("cards-v1+kinds1+units5:128+t".into());
+        assert!(prepared(Some(&state)).is_none());
+        let obsolete = unprepared_reason(Some(&state));
+        assert_ne!(obsolete, no_profile);
+        // A descriptor v1 row keeps its older, distinct reason first.
+        state.dimensions = None;
+        assert!(prepared(Some(&state)).is_none());
+        let descriptor_v1 = unprepared_reason(Some(&state));
+        assert_ne!(descriptor_v1, obsolete);
+        assert_ne!(descriptor_v1, no_profile);
+        // A future or unknown grammar is the same retained history.
+        state.dimensions = Some(768);
+        for recipe in [
+            "cards-v1+kinds1+units60:128+t",
+            "cards-v2+kinds1+units6:128+t",
+        ] {
+            state.recipe_id = Some(recipe.into());
+            assert!(prepared(Some(&state)).is_none(), "{recipe}");
+            assert_ne!(unprepared_reason(Some(&state)), no_profile, "{recipe}");
+        }
+        // An incomplete identity keeps the plain no-profile distinction.
+        state.recipe_id = Some("cards-v1+kinds1+units5:128+t".into());
+        state.function_digest = None;
+        state.dimensions = None;
+        assert!(prepared(Some(&state)).is_none());
+        assert_eq!(unprepared_reason(Some(&state)), no_profile);
     }
 
     #[cfg(feature = "semantic")]

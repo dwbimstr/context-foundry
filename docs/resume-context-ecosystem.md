@@ -1,6 +1,6 @@
 # Experimental ecosystem checkpoint — 2026-10-11
 
-## Current status — 2026-10-25
+## Current status — 2026-10-26
 
 This section owns current status; other documents link here, and dated paragraphs
 below are history.
@@ -58,11 +58,18 @@ below are history.
   Task-composed memory uses the composition's final snapshot. See the
   [receipt](validation.md#memory-freshness-and-selection-diagnostics--2026-10-25).
   Ranking and caps are unchanged; the later recommendations and pivots remain proposed.
-- **Dependency cleanup, 2026-10-26.** The active probe's security pins are refreshed
+- **Dependency cleanup, 2026-10-26.** PR #43 merged the active probe's security pins
   with an immutable pre-refresh manifest reference; historical model receipts stay
-  unchanged. The rmcp/Tokio/ureq maintenance subset is included, while the two parser
-  updates remain held for source-unit identity. See the
+  unchanged. The rmcp/Tokio/ureq maintenance subset is included. See the
   [cleanup receipt](validation.md#dependency-and-branch-cleanup--2026-10-26).
+- **Parser security repair, 2026-10-26.** `2651fdb` updates pulldown-cmark to 0.13.5.
+  Existing stores must explicitly run `repair-index` for search schema 8, then
+  `semantic prepare` to refit source-unit schema 6. Old semantic state/cache is
+  retained, not served or labeled current; store schema 12 and generation v6 stay
+  unchanged. Scala 0.26.3, rmcp 3.7.0 and uuid 1.29.0 remain deferred. The owner
+  authorized this security-only exception to G2 promotion measurement; no quality
+  or performance gain is claimed. See the
+  [migration and live CLI/MCP receipt](validation.md#markdown-parser-security-and-unit-migration--2026-10-26).
 
 **Representation repair continuation, 2026-10-17:** body-window contexts keep the
 region's own declaration when over budget (`+context2`), and long overviews keep

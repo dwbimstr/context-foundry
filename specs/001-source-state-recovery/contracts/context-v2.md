@@ -651,11 +651,14 @@ draws its units from this same materialized ranking.
 
 ### Index version gate
 
-The value is `"5"` since 001 T008 (units, addresses and import keys of 15 more
-languages) and was `"4"` since 001 T007 (§ City map: one definition document per unit
-and the § Definitions and addresses fields); every later change to search-document
-content bumps it again. Before it, META key `search_schema = "3"` (it was `"2"` before
-the 2026-10-04 leading-run amendment changed search-document ranges). The key is
+The current value is `"8"` (2026-10-26, [§ Unit-grammar repair](#unit-grammar-repair--2026-10-26):
+Markdown re-indexed under pulldown-cmark 0.13.5). As history: `"7"` (2026-10-11)
+enriched call-name postings with import aliases, `"6"` introduced them, `"5"` was
+the value since 001 T008 (units, addresses and import keys of 15 more languages),
+`"4"` since 001 T007 (§ City map: one definition document per unit and the
+§ Definitions and addresses fields), and `"3"` preceded the 2026-10-04 leading-run
+amendment (`"2"` before it); every later change to search-document content bumps
+the value again. The key is
 written in the store-initialization transaction for
 new stores and, for rebuilds, in the same authoritative transaction that clears
 `search_rebuild_required` after a successful commit/reload with an empty pending table.
@@ -663,9 +666,8 @@ Open also checks the actual Tantivy field set. A missing or other value, or a fi
 mismatch, makes status report `repair_required` with reason `search_schema` and makes
 search/context fail with `repair_required` ("search index format changed; run
 `foundry repair-index`"). Ordinary opens never repair or write. The search format is
-independent of the store schema. That schema has been 3 since 008, whose upgrade adds
-the memory table and types the pending keys; retrieve, status and exports keep working
-through the authoritative-only open.
+independent of the store schema, whose current authoritative version is `12`;
+retrieve, status and exports keep working through the authoritative-only open.
 
 ## Outlines and forms
 
@@ -949,12 +951,36 @@ it neither resolves runtime binding nor follows indirect aliases or dynamic muta
 A schema-5 or schema-6 index reports `repair_required` until the explicit command
 `foundry --store STORE repair-index` rebuilds derived documents from authoritative
 sources. This does not upgrade the authoritative store schema or discard sources,
-memories or tasks. `SOURCE_UNIT_SCHEMA` remains independently `"5"`; semantic
-partition recipes use that version, not search schema 7. Search-only posting changes
+memories or tasks. At THIS amendment's date, `SOURCE_UNIT_SCHEMA` remained
+independently `"5"` and the current derived search schema was `"7"`: semantic
+partition recipes used units 5, not search schema 7. Both moved together on
+2026-10-26 ([§ Unit-grammar repair](#unit-grammar-repair--2026-10-26): search
+schema `"8"`, units `"6"`). Search-only posting changes
 do not change model inputs or independently invalidate their partitions. Other
 representation-recipe changes, such as the explicit `+kinds1` component, retain their
 own invalidation rules. The bounded consumer and final identity/AST checks are in
 [003 T009](../../003-agent-retrieval-context/spec.md#t009--compose-evidence-for-a-repository-task).
+
+### Unit-grammar repair — 2026-10-26
+
+The current derived search schema is `"8"` and `SOURCE_UNIT_SCHEMA` is `"6"`:
+pulldown-cmark 0.13.5 fixes the Markdown list/indentation grammar (the 0.13.4
+default CLI exits 101 on the 13-byte `- [o]:u`, four spaces, tab input), which
+can change Markdown units, so the search postings and the semantic partition
+recipes move together this time. A schema-`"7"` or earlier index reports
+`repair_required` with reason `search_schema` until `foundry --store STORE
+repair-index` rebuilds derived documents from the authoritative sources; the
+repair still discards no source, memory or task data. Semantic partitions and
+generations recorded under `units5` are retained history — inspectable, never
+current: `semantic status`/progress report the recorded identity, cache and
+last observation with current partitions ineligible and the corpus unknown,
+`repair-index` republishes nothing under the old grammar, and `semantic
+prepare` refits every source (zero-card partitions included) under `units6`,
+reusing the exact cached vectors of unchanged rendered inputs. Recipe
+admission recognizes only the `cards-v1`/`body-v1`/`hierarchy-v1`/`overview-v1`
+families with exactly one current unit marker in the header before the
+parameter colon. Search-only posting changes still do not change model inputs
+on their own.
 
 ### Roles
 

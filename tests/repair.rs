@@ -243,14 +243,24 @@ fn a_positively_matched_replacement_is_reset_and_completes() {
     assert_eq!(engine.status().unwrap().index_state, "ready");
 }
 
-/// 001 index version gate (`search_schema = "7"`, including import-alias call
-/// postings, context-v2 § City map): older schemas, including `"6"` with only
-/// terminal call names, report `repair_required` with reason `search_schema` while
-/// retrieve and status work; an ordinary open writes nothing; `repair-index`
+/// 001 index version gate (context-v2 § City map): every schema older than
+/// the one this build initializes — including `"7"`, the field-compatible
+/// pre-pulldown-0.13.5 Markdown grammar (2026-10-26), and `"6"` with only
+/// terminal call names — reports `repair_required` with reason
+/// `search_schema` while retrieve and status work; an ordinary open writes
+/// nothing; `repair-index` republishes exactly the initializing marker and
 /// makes it ready with zero source changes.
 #[test]
 fn a_store_without_the_current_search_schema_needs_repair_and_repair_publishes_it() {
-    for stale in [None, Some("2"), Some("3"), Some("4"), Some("5"), Some("6")] {
+    for stale in [
+        None,
+        Some("2"),
+        Some("3"),
+        Some("4"),
+        Some("5"),
+        Some("6"),
+        Some("7"),
+    ] {
         let dir = Scratch::new();
         let root = dir.path().join("ws");
         fs::create_dir(&root).unwrap();
@@ -264,11 +274,10 @@ fn a_store_without_the_current_search_schema_needs_repair_and_repair_publishes_i
             let hit = engine.search("schema_probe", 5).unwrap().hits.remove(0);
             hit.handle.to_v2()
         };
-        assert_eq!(
-            meta_value(&store, "search_schema").as_deref(),
-            Some("7"),
-            "a new store publishes search_schema 7 at initialization"
-        );
+        // The marker this build initializes; repair must republish exactly
+        // it, whatever the current schema version literal is.
+        let fresh = meta_value(&store, "search_schema")
+            .expect("a new store publishes the search schema at initialization");
         context_foundry::testkit::set_meta(&store, "search_schema", stale);
         let before = snapshot(&store);
 
@@ -294,7 +303,11 @@ fn a_store_without_the_current_search_schema_needs_repair_and_repair_publishes_i
 
         let report = Engine::repair_index(&store, &Control::unbounded()).unwrap();
         assert!(report.repaired);
-        assert_eq!(meta_value(&store, "search_schema").as_deref(), Some("7"));
+        assert_eq!(
+            meta_value(&store, "search_schema").as_deref(),
+            Some(fresh.as_str()),
+            "repair republishes the initializing marker"
+        );
         assert_eq!(
             owned(&knowledge(&snapshot(&store))),
             owned(&knowledge(&before)),

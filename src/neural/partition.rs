@@ -107,6 +107,48 @@ pub fn recipe_id(tokenizer_identity: &str, card_tokens: u32) -> String {
     format!("{RECIPE_GRAMMAR}+kinds1+units{units}:{card_tokens}+{tokenizer_identity}")
 }
 
+/// The recipe family headers this build constructs. A recorded recipe
+/// under any other family is not this build's grammar, whatever else its
+/// header says.
+pub(crate) const RECIPE_FAMILIES: [&str; 4] =
+    ["cards-v1", "body-v1", "hierarchy-v1", "overview-v1"];
+
+/// True when `recipe_id` is one of [`RECIPE_FAMILIES`] with exactly one
+/// unit-grammar marker in its header — the `+`-separated components before
+/// the parameter colon — equal to the current [`crate::store::SOURCE_UNIT_SCHEMA`].
+///
+/// This is the eligibility policy for RECORDED recipes (the unit-grammar
+/// gate), not a validator: card kinds, budgets and the full recipe identity
+/// keep their existing guards elsewhere. A recipe under an older unit
+/// grammar is retained history — inspectable, never current — so
+/// `index::prepared`, `unprepared_reason` and cheap progress all ask this
+/// one predicate before treating a recorded recipe as current. The header
+/// before the first colon is examined component-by-component, so a missing,
+/// duplicated, malformed, obsolete or future marker, a `units60`-style
+/// prefix fake, an unknown family and a `units5`/`units6` smuggled into the
+/// tokenizer suffix after the colon are each refused on their own.
+pub(crate) fn recipe_uses_current_units(recipe_id: &str) -> bool {
+    let Some((header, _params)) = recipe_id.split_once(':') else {
+        return false;
+    };
+    let mut components = header.split('+');
+    let family = components.next().unwrap_or_default();
+    if !RECIPE_FAMILIES.contains(&family) {
+        return false;
+    }
+    let mut seen = false;
+    for component in components {
+        let Some(version) = component.strip_prefix("units") else {
+            continue; // another header component: kinds1, context2, overview4
+        };
+        if version != crate::store::SOURCE_UNIT_SCHEMA || seen {
+            return false;
+        }
+        seen = true;
+    }
+    seen
+}
+
 /// One rendered card: the unit's half-open byte range, its exact
 /// document-input key and the exact model-input token ids.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -508,6 +550,55 @@ mod tests {
             texts("m.py", source, 2048),
             ["m.py fn f\ndef f(\n    a,\n):"]
         );
+    }
+
+    /// The unit-grammar gate: every recipe this build constructs passes, and
+    /// every other shape — other grammar versions included — is refused on
+    /// its own terms, so a recorded recipe cannot fake current eligibility.
+    #[test]
+    fn recorded_recipe_unit_grammar_eligibility_boundaries() {
+        use super::recipe_uses_current_units as current;
+        let units = crate::store::SOURCE_UNIT_SCHEMA;
+        // Every builder output is eligible, whatever the tokenizer names.
+        for recipe in [
+            recipe_id("fake-bytes 1", 128),
+            recipe_id("tok+units5", 128),
+            Representation::Body { parent_tokens: 64 }.recipe_id("t", 512),
+            Representation::Hierarchy { parent_tokens: 64 }.recipe_id("t", 512),
+            Representation::Overview.recipe_id("t", 512),
+        ] {
+            assert!(current(&recipe), "{recipe}");
+        }
+        let cards = |version: &str| format!("cards-v1+kinds1+units{version}:128+t");
+        // The previous grammar is retained history, never current.
+        assert!(!current(&cards("5")));
+        assert!(!current(&cards("4")));
+        // A future grammar is not current either.
+        assert!(!current(&cards("7")));
+        // `units60` is version 60, not version 6 plus noise.
+        assert!(!current(&cards("60")));
+        assert!(!current(&cards("6x")));
+        assert!(!current(&cards("six")));
+        // Missing marker, or no parameter colon at all.
+        assert!(!current("cards-v1+kinds1:128+t"));
+        assert!(!current("cards-v1+kinds1+units6"));
+        assert!(!current(""));
+        // Exactly one marker: duplicates and obsolete-plus-current mixes fail.
+        assert!(!current(&format!(
+            "cards-v1+units{units}+kinds1+units{units}:128+t"
+        )));
+        assert!(!current("cards-v1+kinds1+units5+units6:128+t"));
+        assert!(!current("cards-v1+kinds1+units6+units5:128+t"));
+        // Unknown or misplaced families are not this build's grammar.
+        assert!(!current("cards-v2+kinds1+units6:128+t"));
+        assert!(!current("bodies-v1+kinds2+units6:512+t"));
+        assert!(!current(&format!("x+cards-v1+kinds1+units{units}:128+t")));
+        // The tokenizer suffix lives after the colon: it cannot smuggle a
+        // grammar marker into eligibility, and a marker there is ignored.
+        assert!(!current("cards-v1+kinds1+units5:128+tok+units6"));
+        assert!(current(&format!(
+            "cards-v1+kinds1+units{units}:128+tok+units5"
+        )));
     }
 
     /// 001 T008 gave shell (and 14 more languages) units. A shell source

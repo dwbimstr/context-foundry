@@ -4,7 +4,7 @@
 use context_foundry::fault::{self, Action, names};
 use context_foundry::graph::{Edge, Endpoint, GraphBundle};
 use context_foundry::learning::Feedback;
-use context_foundry::store::{CandidateBatch, HandleRef, RenderedForm};
+use context_foundry::store::{CandidateBatch, HandleRef, RenderedForm, TIER_OUTLINE};
 use context_foundry::testkit;
 use context_foundry::testkit::{
     craft_v1_store, insert_raw_edge, knowledge, new_fixture, remove_chunk, schema_marker, set_meta,
@@ -614,4 +614,163 @@ fn delay_stalls_read_boundaries_for_external_deadline_testing() {
     fault::disarm_all();
     assert!(started.elapsed() >= std::time::Duration::from_millis(120));
     assert!(mentions(&outcome, "delay_probe"));
+}
+
+// ---------------------------------------------------------------------------
+// pulldown-cmark 0.13.5 security remediation: the exact 13-byte repro
+// ---------------------------------------------------------------------------
+
+/// The exact 13 bytes that panicked pulldown-cmark 0.13.4 inside
+/// `Parser::into_offset_iter`: a list item whose content scans as a link
+/// reference definition, continued by a whitespace-only line ending in a
+/// tab. Indexing caught that unwind and left the source labeled `unparsed`;
+/// retrieve and context re-enter the same parse outside the catch, so the
+/// whole consumer path — outline views and the context outliner — died
+/// with it on the old parser.
+const PANIC_BYTES: &str = "- [o]:u\n    \t";
+
+/// A mapped Markdown file whose section body ends with those 13 bytes at
+/// EOF: a preamble, one heading, five body lines, then the repro. The
+/// section unit starts at the heading and the preamble is outside it, so
+/// the file also carries a real whole-file outline beside the section.
+fn hostile_markdown() -> String {
+    format!(
+        "recovery log preamble\n\n# Recovery notes\n\n{}\n{PANIC_BYTES}",
+        "intro line one\nintro line two\nintro line three\nintro line four\nintro line five",
+    )
+}
+
+/// Both shapes of the repro — the bare 13 bytes and the section file
+/// ending with them — index with no parse failure: the drain names no
+/// panic and the derived index holds no `unparsed` fallback document. The
+/// heading file keeps its real `section` unit with the bytes verbatim, and
+/// the heading-less exact file stays admitted as a source whose exact bytes
+/// read back under its true digest. On 0.13.4 both sources drained as
+/// `parse_panicked` plain-block fallbacks instead.
+#[test]
+fn hostile_markdown_indexes_without_a_parse_fallback() {
+    let notes = hostile_markdown();
+    let mut fx = new_fixture();
+    fx.add(&[("exact.md", PANIC_BYTES), ("notes.md", &notes)]);
+    let failures = fx.engine.take_parse_failures();
+    assert_eq!(failures.count, 0, "{:?}", failures.samples);
+    let status = fx.engine.status().unwrap();
+    assert_eq!(status.source_count, 2);
+    assert_eq!(status.parse_failures, Some(0));
+    assert!(status.parse_failure_samples.is_empty());
+    let hits = fx.engine.search("recovery", 8).unwrap().hits;
+    let section = hits
+        .iter()
+        .find(|hit| hit.path == "notes.md" && hit.label == "section Recovery notes")
+        .unwrap_or_else(|| panic!("no real section unit:\n{hits:?}"));
+    assert_eq!(
+        section.text,
+        notes[section.handle.start as usize..section.handle.end as usize]
+    );
+    assert!(section.text.ends_with(PANIC_BYTES));
+    // The bare repro file itself stays admitted: its exact 13 bytes read
+    // back under a real handle carrying the file's true digest. (A one-char
+    // term cannot probe it: every analyzer drops single-character tokens.)
+    let workspace = fx.engine.workspace_id().unwrap();
+    let bare = HandleRef {
+        path: "exact.md".into(),
+        start: 0,
+        end: PANIC_BYTES.len() as u64,
+        sha32: digest(PANIC_BYTES.as_bytes())[..32].to_owned(),
+        ws16: workspace[..16].to_owned(),
+    };
+    let raw = fx.engine.retrieve(&bare.to_string(), None, 512).unwrap();
+    assert_eq!(raw.span, PANIC_BYTES.as_bytes());
+    assert_eq!(raw.requested.sha256, digest(PANIC_BYTES.as_bytes()));
+}
+
+/// Consumer reads over the repro file keep their exact citation and budget
+/// behavior: the authoritative text read returns the 13 bytes under a real
+/// handle; the outline view renders both forms — 11 lines stay under the
+/// 60-line unfold threshold, so `outline` is the file's exact bytes while
+/// `outline-min` cites the elided interior as `⋯ 4-11`; the packing seam
+/// refuses a one-token budget whole-or-nothing; and the context outliner
+/// delivers the same file's whole-file outline beside its section unit. On
+/// 0.13.4 every outliner call here unwound out of the markdown parse.
+#[test]
+fn hostile_markdown_serves_exact_text_outline_and_context_citations() {
+    let notes = hostile_markdown();
+    let at = notes.rfind(PANIC_BYTES).expect("the repro ends the file");
+    let mut fx = new_fixture();
+    fx.add(&[("notes.md", &notes)]);
+    let section = fx
+        .engine
+        .search("recovery", 5)
+        .unwrap()
+        .hits
+        .into_iter()
+        .find(|hit| hit.label == "section Recovery notes")
+        .expect("the section unit is searchable");
+    let parsed = HandleRef::parse(&section.handle.to_v2()).unwrap();
+    let exact = HandleRef {
+        start: at as u64,
+        end: (at + PANIC_BYTES.len()) as u64,
+        ..parsed.clone()
+    };
+    let text = fx.engine.retrieve(&exact.to_string(), None, 4096).unwrap();
+    assert_eq!(text.span, PANIC_BYTES.as_bytes());
+    assert_eq!(text.requested.path, "notes.md");
+    assert_eq!(text.requested.sha256, digest(notes.as_bytes()));
+    assert_eq!(
+        (text.requested.start, text.requested.end),
+        (exact.start, exact.end)
+    );
+    let whole = HandleRef {
+        start: 0,
+        end: notes.len() as u64,
+        ..parsed
+    };
+    let outline = fx
+        .engine
+        .retrieve_outline(&whole.to_string(), None, 4096)
+        .unwrap();
+    assert_eq!(outline.lang, "markdown");
+    assert_eq!((outline.start_line, outline.end_line), (1, 11));
+    assert_eq!(outline.outline, notes);
+    assert_eq!(
+        outline.outline_min,
+        "recovery log preamble\n\n# Recovery notes\n⋯ 4-11\n"
+    );
+    assert_eq!(
+        (outline.requested.start, outline.requested.end),
+        (0, notes.len() as u64)
+    );
+    let refused = context_foundry::response::pack_retrieve_outline(
+        &outline,
+        context_foundry::response::Budget::request(1),
+        &context_foundry::response::stdout_bytes,
+    )
+    .unwrap_err();
+    assert_eq!(refused.code(), "budget_too_small");
+    let batch = fx
+        .engine
+        .context_candidates("recovery notes", Strategy::Search, &Control::unbounded())
+        .unwrap();
+    let file_outline = batch
+        .items
+        .iter()
+        .find(|item| item.tier == TIER_OUTLINE)
+        .expect("the whole-file outline item rides the batch");
+    let handle = file_outline.handle.as_ref().expect("a real handle");
+    assert_eq!(handle.path, "notes.md");
+    assert_eq!((handle.start, handle.end), (0, notes.len() as u64));
+    assert!(
+        batch
+            .items
+            .iter()
+            .any(|item| item.label == "section Recovery notes")
+    );
+    assert!(matches!(
+        file_outline.forms.first(),
+        Some(RenderedForm::Outline(body)) if *body == notes
+    ));
+    assert!(matches!(
+        file_outline.forms.get(1),
+        Some(RenderedForm::OutlineMin(body)) if *body == "recovery log preamble\n\n# Recovery notes\n⋯ 4-11\n"
+    ));
 }

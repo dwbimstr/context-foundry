@@ -1187,6 +1187,153 @@ async fn retrieve_view_outline_is_whole_or_nothing_over_stdio() {
     client.cancel().await.unwrap();
 }
 
+/// 0.13.5 security remediation, acceptance D: a real stdio owner first
+/// retrieves the outline of the Markdown file whose last 13 bytes panicked
+/// pulldown-cmark 0.13.4 mid-`into_offset_iter` — the same parse the owner
+/// re-enters outside indexing's catch, whose unwind left the engine lock
+/// poisoned and every later call dead. After that retrieve the owner still
+/// serves: status reports no parse fallback for either file, and context
+/// runs the outliner again over the same source. The 30-second bound is a
+/// deadlock guard for the vulnerable parser, whose request task dies
+/// without a reply — not a performance expectation.
+#[tokio::test]
+async fn hostile_markdown_outline_then_status_and_context_still_serve() {
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path().join("workspace");
+    let store = fixture.path().join("store");
+    std::fs::create_dir_all(&root).unwrap();
+    // The exact 13-byte repro, and a mapped section file ending with it.
+    let panic_bytes = "- [o]:u\n    \t";
+    assert_eq!(panic_bytes.len(), 13);
+    let notes = format!(
+        "recovery log preamble\n\n# Recovery notes\n\n{}\n{panic_bytes}",
+        "intro line one\nintro line two\nintro line three\nintro line four\nintro line five",
+    );
+    std::fs::write(root.join("notes.md"), &notes).unwrap();
+    std::fs::write(root.join("exact.md"), panic_bytes).unwrap();
+    bootstrap_apply(&store, &root);
+    let client = stdio_client(&store, &root).await;
+    let search = call_with(
+        &client,
+        "search",
+        Some(serde_json::json!({"query": "recovery"})),
+    )
+    .await;
+    let hit = hit_handle(&assert_single_text_success(&search), Some("notes.md"));
+    let section = context_foundry::store::HandleRef::parse(&hit).unwrap();
+    let at = notes.rfind(panic_bytes).unwrap();
+    let exact = context_foundry::store::HandleRef {
+        start: at as u64,
+        end: (at + panic_bytes.len()) as u64,
+        ..section.clone()
+    };
+    let whole = context_foundry::store::HandleRef {
+        start: 0,
+        end: notes.len() as u64,
+        ..section
+    };
+    let retrieve = |handle: String, tokens: u64, view: &'static str| {
+        let client = &client;
+        async move {
+            call_with(
+                client,
+                "retrieve",
+                Some(serde_json::json!({"handle": handle, "view": view, "tokens": tokens})),
+            )
+            .await
+        }
+    };
+    // The outline view that used to unwind through the owner's engine.
+    let outlined = tokio::time::timeout(
+        Duration::from_secs(30),
+        retrieve(whole.to_string(), 32768, "outline"),
+    )
+    .await
+    .expect("the owner answers the outline retrieve");
+    let text = assert_single_text_success(&outlined);
+    let parsed = v2(&text);
+    assert!(parsed.next.is_none(), "never paginated:\n{text}");
+    let item = &parsed.items[0];
+    assert_eq!(item.form.as_deref(), Some("outline"));
+    assert_eq!(item.lang.as_deref(), Some("markdown"));
+    assert_eq!(item.lines.as_deref(), Some("L1-11"));
+    assert_eq!(item.handle, whole.to_string());
+    // 11 lines stay under the 60-line unfold threshold, so the outline's
+    // cited payload is the file's exact bytes, repro tail included. A
+    // formed body is read to its closing fence: the boundary frames a
+    // payload with no final LF with exactly one canonical LF, so the wire
+    // body is the cited payload plus that one framing byte — asserted as
+    // an exact prefix (tab included) and an exact single-LF suffix, never
+    // trimmed.
+    let cited = (whole.end - whole.start) as usize;
+    assert_eq!(
+        item.body.len(),
+        cited + 1,
+        "the outline payload plus its one framing LF:\n{text}"
+    );
+    assert_eq!(&item.body[..cited], notes.as_str());
+    assert_eq!(&item.body[cited..], "\n");
+    // Exact text under a real handle narrowed to the 13 bytes.
+    let text_read = assert_single_text_success(&retrieve(exact.to_string(), 2048, "text").await);
+    let exact_item = &v2(&text_read).items[0];
+    assert_eq!(exact_item.handle, exact.to_string());
+    // A verbatim body is pinned by the v2 parser to its handle's cited
+    // length — the 13 repro bytes, tab included — and the boundary's one
+    // framing LF is consumed before the closing fence, so no framing byte
+    // remains in the body compared here.
+    assert_eq!(exact_item.body.len(), (exact.end - exact.start) as usize);
+    assert_eq!(exact_item.body, panic_bytes);
+    // Whole-or-nothing budget: one token refuses the outline.
+    assert_eq!(
+        bounded_error(&retrieve(whole.to_string(), 1, "outline").await).0,
+        "budget_too_small"
+    );
+    // The poisoned-lock regression: the same owner keeps serving.
+    let status = call_with(&client, "status", None).await;
+    let status: serde_json::Value =
+        serde_json::from_str(&assert_single_text_success(&status)).unwrap();
+    assert_eq!(status["source_count"].as_u64(), Some(2), "{status}");
+    assert_eq!(
+        status["parse_failures"].as_u64(),
+        Some(0),
+        "no parse fallback for either file: {status}"
+    );
+    assert_eq!(
+        status["parse_failure_samples"],
+        serde_json::json!([]),
+        "{status}"
+    );
+    let context = call_with(
+        &client,
+        "context",
+        Some(serde_json::json!({"query": "recovery notes", "tokens": 2048})),
+    )
+    .await;
+    let context = v2(&assert_single_text_success(&context));
+    assert!(
+        context.items.iter().any(|item| {
+            item.form.as_deref() == Some("outline") && item.handle.starts_with("notes.md#0-")
+        }),
+        "the whole-file outline rides the context response:\n{}",
+        context
+            .items
+            .iter()
+            .map(|item| item.handle.as_str())
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+    assert!(
+        context
+            .items
+            .iter()
+            .any(|item| item.label.as_deref() == Some("section Recovery notes")),
+        "the section unit stays a context item"
+    );
+    // The owner still answers after context ran the outliner again.
+    assert_eq!(status_counters(&client).await.1, 2);
+    client.cancel().await.unwrap();
+}
+
 // ---------------------------------------------------------------------------
 // HTTP transport: bearer on every method, Host/Origin, sessions, admission
 // ---------------------------------------------------------------------------

@@ -782,9 +782,10 @@ explicit from-import aliases enrich the same postings; shadowed, reassigned, esc
 or duplicate aliases are refused. Wildcard imports, non-ASCII identifiers and bounded
 collector overflow suppress alias enrichment with incomplete coverage. The unresolved
 alias receipt requires fresh complete definition, import and call bodies to fit.
-Search schema 7 requires explicit `repair-index`, including from field-compatible
-schema 6 which lacks alias postings; source-unit schema 5 remains a separate
-semantic-recipe dependency. The fixed window has no pagination. Unsupported syntax and dynamic resolution remain
+Search schema 8 (2026-10-26) requires explicit `repair-index`, including from
+schema 7, whose field-compatible postings predate the pulldown-cmark 0.13.5
+Markdown grammar, and from schema 6 which lacks alias postings; source-unit
+schema 6 remains a separate semantic-recipe dependency. The fixed window has no pagination. Unsupported syntax and dynamic resolution remain
 open, and these candidates cannot establish complete callers or executed tests.
 
 Execution v2 stays in the existing graph-bundle owner. An explicit producer collection
