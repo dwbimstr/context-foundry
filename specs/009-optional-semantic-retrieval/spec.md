@@ -35,6 +35,18 @@ locations span the whole source. Metadata verification caches include the recipe
 Source-unit schema 5 is independent of derived search schema 7; the schema-6 to -7
 import-alias posting repair does not change semantic input recipes.
 
+Unit-grammar migration, 2026-10-26: source-unit schema is now `"6"` and the
+derived search schema `"8"` (pulldown-cmark 0.13.5 changes Markdown units).
+Unlike the 2026-10-11 search-only repair, this one DOES change semantic
+recipes: partitions and generations recorded under `units5` are retained,
+inspectable history — never current identity, never republished by a lexical
+repair — and one explicit `semantic prepare` refits every source (zero-card
+partitions included) under the new grammar, reusing exact cached vectors for
+unchanged rendered inputs. Recorded recipes are admitted as current only when
+their family header carries exactly one current unit marker before the
+parameter colon; everything else prepares nothing and names
+`unit_schema_obsolete` (after the descriptor-v1 distinction).
+
 Experimental prose retrieval with hierarchy vectors reuses its one query embedding
 to localize independently embedded bodies within up to 64 dense-selected source paths
 plus the first 16 lexical candidates' paths. Selected partition point reads are joined

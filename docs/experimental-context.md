@@ -1328,8 +1328,11 @@ Dynamic dispatch, indirect aliases, wrappers and unsupported languages can still
 relevant evidence. At most 32 candidate spans, 32 KiB per span and the existing exact
 delivery allowance apply; each alias candidate charges both import and call spans.
 
-Existing search schemas 5 and 6 need `foundry --store STORE repair-index` for schema 7
-call postings. Schema 6 has the same fields but lacks canonical import-alias names.
-The semantic source-unit recipe remains version 5; a search-only repair does
-not itself require re-embedding. See the [Linux diagnostic results](validation.md) for
+Existing search schemas 5 through 7 need `foundry --store STORE repair-index`
+for schema 8 call postings; schema 7 has the same fields but predates the
+pulldown-cmark 0.13.5 Markdown grammar, and schema 6 additionally lacks
+canonical import-alias names. The semantic source-unit recipe is version 6
+(2026-10-26); a search-only repair still does not itself re-embed, and
+partitions recorded under units 5 refit at the next `semantic prepare`.
+See the [Linux diagnostic results](validation.md) for
 executed checks, negative retrieval/host findings, fixture scale and real CPU limits.

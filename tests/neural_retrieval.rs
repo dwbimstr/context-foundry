@@ -387,6 +387,112 @@ impl Corpus {
         report
     }
 
+    /// Synthetically age this prepared store into the environment the
+    /// previous unit grammar left behind (the pulldown-cmark 0.13.4 era,
+    /// search schema 7): EVERY partition row, the state row's recipe, its
+    /// coverage snapshot and the published generation manifest move one
+    /// unit grammar back, and the derived search marker regresses one
+    /// schema with them. The aging relabels identity strings only — the
+    /// vectors, label locations and cache rows are the retained
+    /// current-build bytes, exactly what the previous grammar's publication
+    /// looks like to this build's readers. Sources, the exact-input vector
+    /// cache, memory and pending work keep their bytes; nothing is
+    /// republished. Returns the previous recipe.
+    fn age_to_previous_unit_grammar(&mut self) -> String {
+        let digest = self.digest();
+        let current_recipe = self.profile.recipe_id();
+        let previous_recipe = previous_unit_grammar(&current_recipe);
+        assert_ne!(previous_recipe, current_recipe);
+        // Every closed-store read happens with the engine dropped: no
+        // second live open of the database.
+        self.engine = None;
+        let mut rows = testkit::table_rows(&self.store, "semantic_partitions");
+        assert!(rows.len() > 1, "the corpus partitions populate the store");
+        rows.sort_by(|left, right| left.0.cmp(&right.0));
+        let records: Vec<(String, context_foundry::neural::cache::PartitionRecord)> = rows
+            .into_iter()
+            .map(|(path, raw)| {
+                let mut record: context_foundry::neural::cache::PartitionRecord =
+                    serde_json::from_str(&raw).unwrap();
+                assert_eq!(record.recipe_id, current_recipe, "{path}");
+                record.recipe_id = previous_recipe.clone();
+                (path, record)
+            })
+            .collect();
+        self.engine = Some(Engine::open_existing(&self.store).unwrap());
+        for (path, record) in &records {
+            let claimed = record.units.clone();
+            self.engine()
+                .semantic_record_partition(
+                    path,
+                    &record.source_hash,
+                    &previous_recipe,
+                    &digest,
+                    Some(&claimed),
+                    &|body| {
+                        assert_eq!(context_foundry::digest(body.as_bytes()), record.source_hash);
+                        Ok(claimed.clone())
+                    },
+                )
+                .unwrap();
+        }
+        let revision = self.engine().source_revision().unwrap();
+        let mut state = self.engine().semantic_state().unwrap().unwrap();
+        assert_eq!(state.recipe_id.as_deref(), Some(current_recipe.as_str()));
+        state.recipe_id = Some(previous_recipe.clone());
+        let coverage = state
+            .coverage
+            .as_mut()
+            .expect("a completed preparation records a coverage snapshot");
+        assert_eq!(coverage.recipe_id, current_recipe);
+        assert_eq!(coverage.function_digest, digest);
+        assert_eq!(coverage.source_revision, revision);
+        coverage.recipe_id = previous_recipe.clone();
+        // `semantic_set_state` preserves a concurrent publication's coverage
+        // snapshot by design (do not weaken it); the aged row is a raw
+        // fixture write of the WHOLE row on a closed store, so the previous
+        // grammar's identity persists together with its snapshot.
+        let aged_state = serde_json::to_string(&state).unwrap();
+        self.engine = None;
+        testkit::tamper_semantic_state(&self.store, &aged_state);
+        self.engine = Some(Engine::open_existing(&self.store).unwrap());
+        let persisted = self.engine().semantic_state().unwrap().unwrap();
+        assert_eq!(
+            persisted.recipe_id.as_deref(),
+            Some(previous_recipe.as_str())
+        );
+        let snapshot = persisted
+            .coverage
+            .as_ref()
+            .expect("the aged row keeps its coverage snapshot");
+        assert_eq!(snapshot.recipe_id, previous_recipe);
+        assert_eq!(snapshot.function_digest, digest);
+        assert_eq!(snapshot.source_revision, revision);
+        self.engine = None;
+        let manifest = self
+            .store
+            .join("semantic")
+            .join(&digest)
+            .join(index::MANIFEST_FILE);
+        let mut document: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+        assert_eq!(
+            document["recipe_id"].as_str(),
+            Some(current_recipe.as_str())
+        );
+        document["recipe_id"] = previous_recipe.as_str().into();
+        // The recorded coverage counters name the same recipe the manifest
+        // does, or validation refuses the set.
+        if let Some(stats) = document["coverage_stats"].as_object_mut() {
+            assert_eq!(stats["recipe_id"].as_str(), Some(current_recipe.as_str()));
+            stats["recipe_id"] = previous_recipe.as_str().into();
+        }
+        std::fs::write(&manifest, serde_json::to_vec(&document).unwrap()).unwrap();
+        testkit::set_meta(&self.store, "search_schema", Some("7"));
+        self.engine = Some(Engine::open_existing(&self.store).unwrap());
+        previous_recipe
+    }
+
     fn engine(&self) -> &Engine {
         self.engine.as_ref().expect("the engine is open")
     }
@@ -6988,6 +7094,460 @@ fn container_role_upgrade_reuses_vectors_and_republishes_exact_roles() {
     }
     assert_eq!(corpus.prepare().document_calls, 0);
     assert_eq!(corpus.probe.document_calls(), calls);
+}
+
+/// The same recipe id under the previous source-unit grammar version. It
+/// builds genuine historical fixtures; production code never rewrites a
+/// recorded recipe.
+fn previous_unit_grammar(recipe: &str) -> String {
+    let (header, params) = recipe
+        .split_once(':')
+        .expect("recipes carry a parameter colon");
+    let mut components: Vec<String> = header.split('+').map(str::to_owned).collect();
+    let version = components
+        .iter_mut()
+        .find_map(|component| {
+            let version = component.strip_prefix("units")?;
+            let version: u32 = version.parse().ok()?;
+            *component = format!("units{}", version - 1);
+            Some(version)
+        })
+        .expect("the recipe header names a numeric unit grammar");
+    assert!(version > 1, "no previous grammar below 1");
+    format!("{}:{params}", components.join("+"))
+}
+
+/// 2026-10-26 unit-grammar migration (pulldown-cmark 0.13.5, search schema
+/// 8, source-unit schema 6). A populated, SYNTHETICALLY AGGED schema-7/
+/// units-5 store — every partition under the old recipe, a real published
+/// generation and a coverage snapshot naming it (identity strings relabelled
+/// over the retained current-build bytes; the parser's own range change is
+/// pinned separately below), plus sources, memory, pending work and the
+/// exact vector cache — is retained, never silently relabelled: search
+/// refuses until the explicit lexical repair, which restores derived
+/// readiness WITHOUT republishing the old grammar, and only `semantic
+/// prepare` refits to the current grammar, reusing every unchanged cached
+/// input byte for byte and republishing genuinely changed Markdown under
+/// new offsets. The 13-byte input that made pulldown-cmark 0.13.4 exit 101
+/// indexes cleanly as a reconsidered zero-card partition.
+#[test]
+fn unit_grammar_migration_retains_old_state_then_refits_on_explicit_prepare() {
+    let pathological = "- [o]:u\n    \t";
+    assert_eq!(pathological.len(), 13);
+    let heading = "# Heading\n\nbody text\n";
+    let mut corpus = Corpus::unprepared(&[
+        ("doc/heading.md".into(), heading.into()),
+        ("doc/pathological.md".into(), pathological.into()),
+    ]);
+    let report = corpus.prepare();
+    assert!(!report.partial && report.index_published);
+    assert_eq!(
+        corpus
+            .engine()
+            .status()
+            .unwrap()
+            .parse_failures
+            .unwrap_or(0),
+        0,
+        "the 13-byte Markdown parses under pulldown-cmark 0.13.5"
+    );
+    let digest = corpus.digest();
+    let current_recipe = corpus.profile.recipe_id();
+    let control = Control::unbounded();
+    let heading_card = corpus
+        .engine()
+        .semantic_partition("doc/heading.md")
+        .unwrap()
+        .unwrap();
+    assert_eq!(heading_card.units.len(), 1);
+    let old_key = heading_card.units[0].input_key.clone();
+    let old_start = heading_card.units[0].start;
+    let zero_card = corpus
+        .engine()
+        .semantic_partition("doc/pathological.md")
+        .unwrap()
+        .unwrap();
+    assert!(
+        zero_card.units.is_empty(),
+        "the 13-byte list item holds no section card"
+    );
+    corpus
+        .engine()
+        .memory_put(&context_foundry::memory::PutInput {
+            fields: context_foundry::memory::RecordFields {
+                id: "migration-note".into(),
+                text: "kept migration memory".into(),
+                author: "tests".into(),
+                provenance: "tests".into(),
+                source_links: vec![],
+            },
+            workspace_id: corpus.engine().workspace_id().unwrap(),
+        })
+        .unwrap();
+    corpus.engine = None;
+    let cache_before = testkit::semantic_cache_rows(&corpus.store);
+    assert!(!cache_before.is_empty(), "the initial run embedded inputs");
+    assert!(
+        testkit::pending_value(&corpus.store, "memory:migration-note").is_some(),
+        "the memory's reversible index task is pending"
+    );
+
+    // A) the aged schema-7/units-5 environment, retained and refused.
+    let previous_recipe = corpus.age_to_previous_unit_grammar();
+    corpus.engine = None;
+    let aged_authority = testkit::snapshot(&corpus.store);
+    corpus.engine = Some(Engine::open_existing(&corpus.store).unwrap());
+    {
+        let engine = corpus.engine();
+        let status = engine.status().unwrap();
+        assert_eq!(status.index_state, "repair_required");
+        assert!(
+            status
+                .index_reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("search_schema"))
+        );
+        assert_eq!(
+            engine.search("body", 8).unwrap_err().code(),
+            "repair_required"
+        );
+        assert_eq!(
+            engine.source("doc/heading.md").unwrap().unwrap().hash,
+            context_foundry::digest(heading.as_bytes())
+        );
+        // The precondition the stale verdicts below stand on: the stored
+        // row AND its coverage snapshot are the previous grammar, under
+        // this profile's digest at the current revision — only the
+        // unit-grammar gate can call them not current.
+        let state = engine.semantic_state().unwrap().unwrap();
+        assert_eq!(state.recipe_id.as_deref(), Some(previous_recipe.as_str()));
+        let snapshot = state.coverage.as_ref().unwrap();
+        assert_eq!(snapshot.recipe_id, previous_recipe);
+        assert_eq!(snapshot.function_digest, digest);
+        assert_eq!(snapshot.source_revision, engine.source_revision().unwrap());
+        let status = engine.semantic_status(&control).unwrap();
+        let profile = status.profile.as_ref().unwrap();
+        assert_eq!(profile.recipe_id, previous_recipe);
+        assert_eq!(profile.function_digest, digest);
+        assert!(profile.dimensions.is_some());
+        assert!(!status.index.available, "an obsolete grammar never serves");
+        assert!(status.index.reason.is_some());
+        assert_eq!(
+            status.sources, status.unpartitioned_sources,
+            "every source is unpartitioned under the old grammar"
+        );
+        assert_eq!(status.corpus, "unknown");
+        assert_eq!(status.partition_coverage, "partial");
+        let progress = engine.semantic_progress(&control).unwrap();
+        assert_eq!(progress["coverage_observation"], "stale");
+        assert_eq!(progress["eligible_units"], serde_json::Value::Null);
+        assert_eq!(progress["index"]["available"], serde_json::Value::Null);
+        assert!(progress["index"]["reason"].is_string());
+        assert_eq!(
+            progress["profile"]["recipe_id"].as_str(),
+            Some(previous_recipe.as_str())
+        );
+    }
+    // An ordinary open is read-only, including through a restart: the
+    // closed-store comparisons run with the engine dropped.
+    corpus.engine = None;
+    assert_eq!(
+        testkit::snapshot(&corpus.store),
+        aged_authority,
+        "an ordinary open writes nothing"
+    );
+    assert_eq!(
+        testkit::semantic_cache_rows(&corpus.store),
+        cache_before,
+        "no vector is purged or added"
+    );
+    assert!(testkit::pending_value(&corpus.store, "memory:migration-note").is_some());
+    corpus.engine = Some(Engine::open_existing(&corpus.store).unwrap());
+    // The retained generation stays inspectable history under the generic
+    // validation API; it simply is not current identity.
+    let store = context_foundry::neural::anchor::Dir::open_path(&corpus.store).unwrap();
+    let retained =
+        index::validate_generation_with(&store, &digest, &previous_recipe, DIMENSIONS, &control)
+            .unwrap();
+    assert_eq!(retained.manifest.coverage, index::COVERAGE_COMPLETE);
+
+    // B) the explicit lexical repair restores derived readiness and names,
+    // rather than performs, the semantic refit.
+    corpus.engine = None;
+    let repair = Engine::repair_index(&corpus.store, &Control::unbounded()).unwrap();
+    assert!(repair.repaired);
+    let semantic = repair.semantic_index.as_ref().unwrap();
+    assert!(
+        !semantic.rebuilt && semantic.entries == 0,
+        "the old grammar is not republished: {semantic:?}"
+    );
+    assert!(semantic.reason.is_some(), "{semantic:?}");
+    corpus.engine = Some(Engine::open_existing(&corpus.store).unwrap());
+    assert_eq!(corpus.engine().status().unwrap().index_state, "ready");
+    assert!(!corpus.engine().search("body", 8).unwrap().hits.is_empty());
+    corpus.engine = None;
+    assert!(
+        testkit::pending_value(&corpus.store, "memory:migration-note").is_none(),
+        "the repair drains the reversible index task"
+    );
+    corpus.engine = Some(Engine::open_existing(&corpus.store).unwrap());
+    let memory = corpus
+        .engine()
+        .memory_get("migration-note", &corpus.engine().workspace_id().unwrap())
+        .unwrap();
+    assert_eq!(memory.text, "kept migration memory");
+    assert_eq!(memory.provenance, "tests");
+    assert_eq!(memory.revision, 1);
+    let state = corpus.engine().semantic_state().unwrap().unwrap();
+    assert_eq!(
+        state.recipe_id.as_deref(),
+        Some(previous_recipe.as_str()),
+        "repair never rewrites the semantic identity"
+    );
+    let status = corpus.engine().semantic_status(&control).unwrap();
+    assert!(!status.index.available);
+    assert_eq!(status.corpus, "unknown");
+    let progress = corpus.engine().semantic_progress(&control).unwrap();
+    assert_eq!(progress["coverage_observation"], "stale");
+    assert_eq!(progress["eligible_units"], serde_json::Value::Null);
+
+    // Between repair and refit, the CURRENT profile's runtime query is
+    // refused by name on the old grammar BEFORE any query embedding, while
+    // the lexical baseline B just repaired still serves: this is the
+    // profile-backed admission gate, not the lexical repair gate and not a
+    // not-eligible query.
+    let queries = corpus.probe.query_calls();
+    let slot = corpus.slot();
+    let baseline = corpus.baseline("body text", BUDGET);
+    let answer = corpus.context(&slot, "body text", BUDGET);
+    let word = answer.word().expect("a semantic segment");
+    assert!(
+        word.starts_with("fallback:profile_mismatch"),
+        "{word}: the units-6 profile cannot serve the units-5 row"
+    );
+    assert_eq!(answer.facts.paths, baseline.facts.paths);
+    assert_eq!(
+        corpus.probe.query_calls(),
+        queries,
+        "a refused grammar spends no query embedding"
+    );
+
+    // C) explicit prepare refits to the current grammar: unchanged inputs
+    // reuse their exact cached vectors, the changed Markdown is republished
+    // under new offsets and key, and the zero-card partition is
+    // reconsidered.
+    let moved = "preface line\n\n# Heading moved\n\nbody text\n";
+    std::fs::write(corpus.root.join("doc/heading.md"), moved).unwrap();
+    corpus
+        .engine()
+        .replace_source("doc/heading.md", moved)
+        .unwrap();
+    // document_calls counts BATCHES: one batch could re-embed unchanged
+    // Rust beside the changed Markdown. Submitted inputs and their exact
+    // keys are counted below, beside the changed card's new key.
+    let calls = corpus.probe.document_calls();
+    let inputs = corpus.probe.document_inputs();
+    let keys_before = corpus.probe.document_keys.lock().unwrap().clone();
+    let refit = corpus.prepare();
+    assert!(!refit.partial && refit.index_published);
+    let state = corpus.engine().semantic_state().unwrap().unwrap();
+    assert_eq!(state.recipe_id.as_deref(), Some(current_recipe.as_str()));
+    let heading_after = corpus
+        .engine()
+        .semantic_partition("doc/heading.md")
+        .unwrap()
+        .unwrap();
+    assert_eq!(heading_after.recipe_id, current_recipe);
+    assert_eq!(heading_after.units.len(), 1);
+    let new_unit = &heading_after.units[0];
+    assert_ne!(
+        new_unit.input_key, old_key,
+        "the changed input is not bound to the old vector"
+    );
+    assert!(
+        new_unit.start > old_start,
+        "the heading moved to new offsets"
+    );
+    // Exactly one input is submitted — the changed card's NEW key — so no
+    // batching can mask reuse of the unchanged rows.
+    assert_eq!(corpus.probe.document_calls(), calls + 1);
+    assert_eq!(corpus.probe.document_inputs(), inputs + 1);
+    {
+        let submitted = corpus.probe.document_keys.lock().unwrap();
+        assert_eq!(submitted.len(), keys_before.len() + 1);
+        assert_eq!(
+            submitted.last(),
+            Some(&new_unit.input_key),
+            "the one newly submitted input is the changed card's new key"
+        );
+    }
+    assert_eq!(
+        corpus.prepare().document_calls,
+        0,
+        "unchanged replay embeds nothing"
+    );
+    let reconsidered = corpus
+        .engine()
+        .semantic_partition("doc/pathological.md")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        reconsidered.recipe_id, current_recipe,
+        "the zero-card partition is reconsidered"
+    );
+    assert!(reconsidered.units.is_empty());
+    let generation =
+        index::validate_generation_with(&store, &digest, &current_recipe, DIMENSIONS, &control)
+            .unwrap();
+    assert_eq!(generation.manifest.coverage, index::COVERAGE_COMPLETE);
+    assert!(generation.labels.contains_key(&new_unit.input_key));
+    assert!(
+        !generation.labels.contains_key(&old_key),
+        "the old key no longer serves"
+    );
+    assert!(
+        generation.labels[&new_unit.input_key]
+            .iter()
+            .any(|location| {
+                &*location.path == "doc/heading.md"
+                    && location.start == new_unit.start as u64
+                    && location.end == new_unit.end as u64
+            })
+    );
+    // The refit adds exactly one cache row — the changed card's — and every
+    // retained row keeps its exact bytes (presence alone proves nothing).
+    corpus.engine = None;
+    let cache_after = testkit::semantic_cache_rows(&corpus.store);
+    let before: std::collections::BTreeMap<&str, &[u8]> = cache_before
+        .iter()
+        .map(|(key, bytes)| (key.as_str(), bytes.as_slice()))
+        .collect();
+    let added: Vec<&String> = cache_after
+        .iter()
+        .filter(|(key, _)| !before.contains_key(key.as_str()))
+        .map(|(key, _)| key)
+        .collect();
+    assert_eq!(added.len(), 1, "{added:?}");
+    assert_eq!(added[0], &new_unit.input_key);
+    assert_eq!(
+        cache_after.len(),
+        cache_before.len() + 1,
+        "nothing is evicted or silently relabelled"
+    );
+    for (key, bytes) in &cache_after {
+        if key == &new_unit.input_key {
+            continue;
+        }
+        assert_eq!(
+            before.get(key.as_str()).copied(),
+            Some(bytes.as_slice()),
+            "unchanged row {}… keeps its exact bytes",
+            key.get(..8).unwrap_or(key)
+        );
+    }
+    assert!(
+        before.contains_key(old_key.as_str()),
+        "the old vector stays cached, only unbound"
+    );
+    corpus.engine = Some(Engine::open_existing(&corpus.store).unwrap());
+    let status = corpus.engine().semantic_status(&control).unwrap();
+    assert!(status.index.available);
+    assert_eq!(status.corpus, "nonempty");
+    assert_eq!(status.unpartitioned_sources, 0);
+    let progress = corpus.engine().semantic_progress(&control).unwrap();
+    assert_eq!(progress["coverage_observation"], "current");
+}
+
+/// The parser discriminator itself, which the synthetically aged
+/// whole-publication fixture above cannot show (it edits a source):
+/// `[a]: /url`, an indented blank line and a setext `Title` start the
+/// section unit at 14 under the pulldown-cmark 0.13.4 grammar and at 15
+/// under 0.13.5 — with the source bytes and hash unchanged. One stale
+/// units-5 partition row recording the old range (a raw retained row, NOT a
+/// genuine old publication; it supplements the populated fixture above) is
+/// refit by `semantic prepare` to the current parser's actual range, and
+/// the unchanged input reuses its exact cached vector.
+#[test]
+fn parser_unit_change_refits_a_stale_range_under_an_identical_source_hash() {
+    let source = "[a]: /url\n    \nTitle\n===\n";
+    let mut corpus = Corpus::unprepared(&[("doc/setext.md".into(), source.into())]);
+    assert!(!corpus.prepare().partial);
+    let current_recipe = corpus.profile.recipe_id();
+    let stale_recipe = previous_unit_grammar(&current_recipe);
+    let hash = context_foundry::digest(source.as_bytes());
+    let revision = corpus.engine().source_revision().unwrap();
+    assert_eq!(
+        corpus
+            .engine()
+            .source("doc/setext.md")
+            .unwrap()
+            .unwrap()
+            .hash,
+        hash
+    );
+    let record = corpus
+        .engine()
+        .semantic_partition("doc/setext.md")
+        .unwrap()
+        .unwrap();
+    assert_eq!(record.recipe_id, current_recipe);
+    assert_eq!(record.units.len(), 1);
+    let current_unit = record.units[0].clone();
+    assert_eq!(
+        current_unit.start, 15,
+        "pulldown-cmark 0.13.5 starts the setext section at 15"
+    );
+    // The stale row the 0.13.4 era left behind: same source, same input,
+    // the previous grammar and the old range — raw-written on a closed
+    // store, never validated against the current renderer.
+    let mut stale = serde_json::to_value(&record).unwrap();
+    stale["recipe_id"] = stale_recipe.as_str().into();
+    stale["units"][0]["start"] = 14.into();
+    corpus.engine = None;
+    testkit::write_raw_partition(&corpus.store, "doc/setext.md", &stale.to_string());
+    corpus.engine = Some(Engine::open_existing(&corpus.store).unwrap());
+    let aged = corpus
+        .engine()
+        .semantic_partition("doc/setext.md")
+        .unwrap()
+        .unwrap();
+    assert_eq!(aged.recipe_id, stale_recipe);
+    assert_eq!(aged.units[0].start, 14);
+    // Refit: the current parser's range and recipe — not a relabelled field
+    // and no source edit — with the exact cached input reused.
+    let calls = corpus.probe.document_calls();
+    let inputs = corpus.probe.document_inputs();
+    let refit = corpus.prepare();
+    assert!(!refit.partial);
+    assert_eq!(refit.document_calls, 0, "the unchanged input is reused");
+    assert_eq!(corpus.probe.document_calls(), calls);
+    assert_eq!(corpus.probe.document_inputs(), inputs);
+    let refitted = corpus
+        .engine()
+        .semantic_partition("doc/setext.md")
+        .unwrap()
+        .unwrap();
+    assert_eq!(refitted.recipe_id, current_recipe);
+    assert_eq!(
+        refitted.units,
+        vec![current_unit],
+        "the citation range is the parser's actual unit, start 15"
+    );
+    assert_eq!(
+        corpus
+            .engine()
+            .source("doc/setext.md")
+            .unwrap()
+            .unwrap()
+            .hash,
+        hash,
+        "the source bytes never changed"
+    );
+    assert_eq!(
+        corpus.engine().source_revision().unwrap(),
+        revision,
+        "no source revision moved"
+    );
 }
 
 #[test]

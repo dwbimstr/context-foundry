@@ -1060,10 +1060,12 @@ delivered facets still depend on exact bodies that fit the budget. Compiler
 relationships and imported execution observations keep separate provenance.
 Dynamic dispatch, indirect wrappers, unsupported languages, broader framework behavior
 and requirement satisfaction remain open. Task-word test selection still searches
-only selected files; it is discovery, not observed coverage. Search schema 7 requires
-explicit derived-index repair, including from schema 6 whose identical fields lack
-canonical import-alias postings; source-unit schema 5 is independent of these postings
-(see [001](../001-source-state-recovery/contracts/context-v2.md#call-name-postings--2026-10-11)).
+only selected files; it is discovery, not observed coverage. Search schema 8
+(2026-10-26) requires explicit derived-index repair, including from schema 7,
+whose field-compatible postings predate the pulldown-cmark 0.13.5 Markdown
+grammar, and from schema 6, whose identical fields lack canonical import-alias
+postings; source-unit schema 6 is a separate semantic-recipe dependency
+(see [001](../001-source-state-recovery/contracts/context-v2.md#unit-grammar-repair--2026-10-26)).
 
 An opt-in free-form OMP parser calibration now complements the scripted host integration
 and earlier fixed-choice model tests: two initial-context arms, one attempt each,

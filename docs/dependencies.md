@@ -31,8 +31,16 @@ and the partition recipes' `SOURCE_UNIT_SCHEMA` tie to schema bumps, an owner de
 The 2026-10-26 maintenance subset of PR #37 updates rmcp to 3.6.0
 (rmcp-macros 3.7.0), Tokio to 1.54.1, and ureq to 3.5.0 (ureq-proto 0.6.5).
 Licenses are unchanged; rmcp adds an edge to the already locked libc.
-Pulldown-cmark 0.13.5 and tree-sitter-scala 0.26.3 remain held because their parser
-changes can change source units; neither source-unit nor search schema is bumped.
+
+On 2026-10-26 pulldown-cmark moved to 0.13.5 (security remediation, default
+features still off): 0.13.4's default parser exits 101 on a 13-byte
+Markdown list/indentation input, and its complexity fixes are upstream, not
+locally timed. Because the fix changes Markdown units, the same change bumps
+the derived search schema to `"8"` and `SOURCE_UNIT_SCHEMA` to `"6"`
+([§ Unit-grammar repair](../specs/001-source-state-recovery/contracts/context-v2.md#unit-grammar-repair--2026-10-26));
+older stores repair explicitly and semantic partitions under `units5` refit
+at the next `semantic prepare`. tree-sitter-scala 0.26.3 remains held: its
+grammar change can change units the same way, an owner decision.
 
 | Package | Locked version | Declared license | Use |
 | --- | --- | --- | --- |
@@ -44,7 +52,7 @@ changes can change source units; neither source-unit nor search schema is bumped
 | ignore | 0.4.33 | Unlicense OR MIT | normal |
 | imbl | 7.0.2 | MPL-2.0+ | normal (009 T008 persistent location snapshots; unmodified) |
 | libc | 0.2.191 | MIT OR Apache-2.0 | normal (held-root opens) |
-| pulldown-cmark | 0.13.4 | MIT | normal (Markdown sections; default features off) |
+| pulldown-cmark | 0.13.5 | MIT | normal (Markdown sections; default features off) |
 | redb | 4.4.0 | MIT OR Apache-2.0 | normal |
 | rmcp | 3.6.0 | Apache-2.0 | normal (server and live-host client); dev adds child-process transport |
 | serde | 1.0.229 | MIT OR Apache-2.0 | normal |

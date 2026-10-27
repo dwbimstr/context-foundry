@@ -288,20 +288,41 @@ impl Engine {
     /// partition walk, source body reads or cache census; audit remains explicit.
     pub fn semantic_progress(&self, control: &Control) -> FResult<serde_json::Value> {
         control.check()?;
-        let row = self
-            .semantic_state()?
-            .unwrap_or_else(cache::SemanticState::stopped);
+        let state = self.semantic_state()?;
+        let row = state.unwrap_or_else(cache::SemanticState::stopped);
         let revision = self.source_revision()?;
         let sources = cache::source_count(&self.db)?;
         let observed = row.coverage.as_ref();
+        // The unit-grammar gate (MC01), behind the same prerequisites
+        // `index::prepared` demands: a coverage snapshot is current only for
+        // a complete recorded identity (digest and dimension) whose recipe
+        // uses the current unit grammar. A descriptor v1 or incomplete row,
+        // or one under an older grammar, is retained history — its snapshot
+        // is stale even when it matches the row exactly. The borrowed
+        // predicate allocates nothing and walks no source.
+        let identity = row.function_digest.is_some() && row.dimensions.is_some();
+        let units_current = row
+            .recipe_id
+            .as_deref()
+            .is_some_and(crate::neural::partition::recipe_uses_current_units);
         let current = observed.filter(|snapshot| {
-            snapshot.version == 1
+            identity
+                && units_current
+                && snapshot.version == 1
                 && snapshot.source_revision == revision
                 && Some(&snapshot.function_digest) == row.function_digest.as_ref()
                 && Some(&snapshot.recipe_id) == row.recipe_id.as_ref()
         });
         let known = row.cache_accounting_version == Some(1);
         let provider = row.provider.as_ref();
+        // A complete recorded identity under an unrecognized grammar names
+        // the preparation this row still needs; every other row keeps
+        // pointing at the audit.
+        let index_reason = if identity && row.recipe_id.is_some() && !units_current {
+            index::unprepared_reason(Some(&row))
+        } else {
+            "use semantic status --audit for on-disk validation"
+        };
         let mut value = serde_json::json!({
             "snapshot_version": 1,
             "coverage_basis": "last_recorded_publication",
@@ -322,7 +343,7 @@ impl Engine {
             "searchable_current_units": current.map(|s| s.searchable_current_units),
             "missing_units": current.map(|s| s.eligible_units.saturating_sub(s.cached_current_units)),
             "cache": { "entries": if known { row.cache_entries } else { None }, "bytes": known.then_some(row.cache_bytes), "cap_bytes": row.cache_cap_bytes.unwrap_or(DEFAULT_CACHE_CAP_BYTES), "accounting": if known { "committed" } else { "reconciliation_required" }, "corrupt_entries": null, "orphan_entries": null, "legacy_entries": null },
-            "index": { "available": null, "entries": current.map(|s| s.index_entries), "validation": "not_checked", "reason": "use semantic status --audit for on-disk validation" },
+            "index": { "available": null, "entries": current.map(|s| s.index_entries), "validation": "not_checked", "reason": index_reason },
             "pending": self.derivation_pending(crate::neural::work::Lane::Semantic)?,
         });
         // No current observation can claim zero unknown work as ready.

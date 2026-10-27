@@ -49,7 +49,7 @@ tree-sitter-lua = "0.5.0"
 tree-sitter-dart = "0.2.0"
 tree-sitter-elixir = "0.3.5"
 tree-sitter-haskell = "0.24.1"
-pulldown-cmark = { version = "0.13", default-features = false }
+pulldown-cmark = { version = "0.13.5", default-features = false }
 
 # 005 T001 compiler-fact import: the SCIP protobuf types and the streaming
 # wire reader. rust-analyzer 2026-08-31 builds its artifact with scip 0.7.1
