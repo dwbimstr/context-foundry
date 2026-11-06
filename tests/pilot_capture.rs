@@ -1055,3 +1055,149 @@ fn full_pilot_pipeline_qualifies_without_provider() {
     // Every planned arm left its archived workspace or its live one.
     assert!(root.root.join("archive/after-1B").is_dir());
 }
+
+/// Every live gate refuses by name, in order, before any credential is
+/// read; an authority receipt admits one run only. Synthetic evidence only.
+#[test]
+fn live_gates_refuse_in_order_and_claim_the_authority_once() {
+    use pilot_capture::{
+        AuthorityReceipt, LaunchManifest, ManifestSlot, ManifestView, PinEntry, Ratecard,
+        RenderCommitments,
+    };
+    require_host();
+    let e = env();
+    let dir = e.run_dir.parent().unwrap().to_path_buf();
+    let write = |name: &str, bytes: &[u8]| {
+        let p = dir.join(name);
+        std::fs::write(&p, bytes).unwrap();
+        p
+    };
+    let sha = |p: &Path| pilot_capture::sha256_hex(&std::fs::read(p).unwrap());
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let contract = repo.join("specs/003-agent-retrieval-context/contracts/bounded-pilot-v1.md");
+    let pinned = write("pinned.txt", b"pinned input");
+    let views: Vec<ManifestView> = (1..=4u8)
+        .map(|pair| {
+            let p = write(
+                &format!("view-{pair}.txt"),
+                format!("view {pair}").as_bytes(),
+            );
+            ManifestView {
+                pair,
+                sha256: sha(&p),
+                path: p,
+                delivered_o200k_tokens: 3,
+                store_revision: "r5".into(),
+                citations_sha256: "0".repeat(64),
+                recipe_id: "recipe".into(),
+            }
+        })
+        .collect();
+    let manifest = LaunchManifest {
+        kind: "bounded-pilot-v1-launch".into(),
+        contract_sha256: policy::CONTRACT_SHA256.into(),
+        omp_sha256: policy::OMP_SHA256.into(),
+        slots: vec![ManifestSlot {
+            slot_id: policy::PROBE_SLOT.into(),
+            arm: "probe".into(),
+            workspace: e.workspace.clone(),
+            prompt_sha256: pilot_capture::sha256_hex(policy::PROBE_INSTRUCTION.as_bytes()),
+            sources: sources(&e.workspace),
+            render: RenderCommitments {
+                system_sha256: String::new(),
+                tools_sha256: String::new(),
+                settings_sha256: String::new(),
+                stable_prefix_sha256: String::new(),
+                beta: String::new(),
+                cache_layout: vec![],
+                initial_user_sha256: String::new(),
+            },
+        }],
+        pins: vec![PinEntry {
+            name: "pinned".into(),
+            sha256: sha(&pinned),
+            path: pinned,
+        }],
+        allocation_sha256: "0".repeat(64),
+        views,
+        isolation_root: dir.clone(),
+    };
+    let manifest_path = write("manifest.json", &serde_json::to_vec(&manifest).unwrap());
+    let card = |account: &str| Ratecard {
+        kind: "bounded-pilot-v1-ratecard".into(),
+        model: policy::MODEL.into(),
+        service: "standard".into(),
+        input_usd_per_mtok: "2".into(),
+        cache_write_usd_per_mtok: "2.5".into(),
+        cache_read_usd_per_mtok: "0.1".into(),
+        output_usd_per_mtok: "10".into(),
+        account_identity_sha256: account.into(),
+        evidence_sha256: "a".repeat(64),
+    };
+    let exe = sha(&std::env::current_exe().unwrap());
+    let receipt = |rights: bool, implementation: &str, ratecard: &Path| AuthorityReceipt {
+        kind: "bounded-pilot-v1-authority".into(),
+        contract_sha256: policy::CONTRACT_SHA256.into(),
+        implementation_sha256: implementation.into(),
+        launch_manifest_sha256: sha(&manifest_path),
+        ratecard_sha256: sha(ratecard),
+        scope: Scope::Probe,
+        authorized_by: "synthetic test owner".into(),
+        authorized_at: "2026-11-06".into(),
+        rights_approved: rights,
+    };
+    let open = |authority: &Path, ratecard: &Path, run: &str| {
+        CaptureSession::open(LaunchAdmission::Live(LiveAdmission {
+            run_dir: dir.join(run),
+            omp: OMP.into(),
+            scope: Scope::Probe,
+            contract: contract.clone(),
+            authority: authority.to_path_buf(),
+            launch_manifest: manifest_path.clone(),
+            ratecard: ratecard.to_path_buf(),
+            compatibility: None,
+            credential_file: dir.join("no-such-credential"),
+        }))
+        .err()
+        .unwrap()
+        .code
+    };
+    let unbound = write(
+        "ratecard-unbound.json",
+        &serde_json::to_vec(&card("")).unwrap(),
+    );
+    let bound = write(
+        "ratecard.json",
+        &serde_json::to_vec(&card(&"b".repeat(64))).unwrap(),
+    );
+    let a1 = write(
+        "authority-1.json",
+        &serde_json::to_vec(&receipt(false, &exe, &bound)).unwrap(),
+    );
+    assert_eq!(open(&a1, &bound, "run-1"), "rights_not_approved");
+    let a2 = write(
+        "authority-2.json",
+        &serde_json::to_vec(&receipt(true, &"c".repeat(64), &bound)).unwrap(),
+    );
+    assert_eq!(open(&a2, &bound, "run-2"), "implementation_digest_mismatch");
+    let a3 = write(
+        "authority-3.json",
+        &serde_json::to_vec(&receipt(true, &exe, &unbound)).unwrap(),
+    );
+    assert_eq!(open(&a3, &unbound, "run-3"), "ratecard_account_unbound");
+    std::fs::write(dir.join("view-2.txt"), b"tampered").unwrap();
+    let a4 = write(
+        "authority-4.json",
+        &serde_json::to_vec(&receipt(true, &exe, &bound)).unwrap(),
+    );
+    assert_eq!(open(&a4, &bound, "run-4"), "launch_view_changed");
+    std::fs::write(dir.join("view-2.txt"), b"view 2").unwrap();
+    // Every gate passes; the credential is the last thing read and is
+    // absent, after the authority and the run were claimed exclusively.
+    assert_eq!(open(&a4, &bound, "run-5"), "credential_missing");
+    assert!(dir.join("authority-4.json.claim").is_file());
+    assert_eq!(open(&a4, &bound, "run-6"), "authority_already_claimed");
+    for run in ["run-1", "run-2", "run-3", "run-4", "run-6"] {
+        assert!(!dir.join(run).exists(), "{run} claimed despite refusal");
+    }
+}

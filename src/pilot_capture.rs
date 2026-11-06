@@ -584,6 +584,9 @@ pub struct AuthorityReceipt {
     pub scope: Scope,
     pub authorized_by: String,
     pub authorized_at: String,
+    /// The owner approved task-data rights and the account's provider
+    /// retention/training terms for this run (gate 3). Never implied.
+    pub rights_approved: bool,
 }
 
 /// One frozen slot of the launch manifest.
@@ -753,6 +756,9 @@ fn validate_live(
     {
         return Err(authority("authority_receipt_invalid"));
     }
+    if !receipt.rights_approved {
+        return Err(authority("rights_not_approved"));
+    }
     if receipt.contract_sha256 != policy::CONTRACT_SHA256 {
         return Err(authority("authority_contract_mismatch"));
     }
@@ -800,6 +806,13 @@ fn validate_live(
         || card.service != "standard"
     {
         return Err(authority("ratecard_invalid"));
+    }
+    // The account the run bills and the pricing evidence are pinned by
+    // digest (gate 3); an unbound draft cannot admit a run.
+    if !protocol::is_sha256_hex(&card.account_identity_sha256)
+        || !protocol::is_sha256_hex(&card.evidence_sha256)
+    {
+        return Err(authority("ratecard_account_unbound"));
     }
     let input_cap = policy::INPUT_MICRO_USD_PER_TOKEN * 1_000_000;
     let output_cap = policy::OUTPUT_MICRO_USD_PER_TOKEN * 1_000_000;
