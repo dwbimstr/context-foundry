@@ -126,8 +126,8 @@ templates; no stage is mandatory.
   request must cite its receipt: the commit, the toolchains, each `GATE` line and the
   log digests. Name any check you could not run. CI is unavailable, so it is neither
   required nor waited on.
-- Maintainers request a cross-lab review (a reviewer from a different model lab than
-  the author) for substantial changes, and may ask for changes before merging.
+- Maintainers review substantial changes and may ask for changes before merging.
+  Independent (cross-lab) review is not required.
 - Update the docs and the owning spec's status when behavior changes.
 
 ## What not to submit

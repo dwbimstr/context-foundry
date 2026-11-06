@@ -215,5 +215,6 @@ Then follow the [measurement handoff](measurement-handoff.md) for the rows still
 ## Continuing code work
 
 Code work needs only steps 2, 4 (toolchains) and 6. The working rules (focused tests
-while developing, `scripts/gates.sh` once per merge, cross-lab review before merge, link
-check before each Markdown commit) are in the [context packet](context-packet.md).
+while developing, `scripts/gates.sh` once per merge, proportional review before merge
+with no independent-review gate, link check before each Markdown commit) are in the
+[context packet](context-packet.md).

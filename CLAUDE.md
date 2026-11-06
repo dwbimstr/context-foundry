@@ -63,6 +63,15 @@ if the sandbox is unavailable. The environment is defined in
   owner-approved pull request merged with a merge commit (first done 2026-10-12). Run
   `node scripts/check-links.mjs` before committing Markdown.
 
+## Independent review is not a gate
+
+Owner decision, 2026-11-05: "no independent reviews needed - go complete and remove
+the gate of independent reviews". Cross-lab or other independent review is not
+required before acceptance, merge or any contract gate, and no work waits for one.
+Review proportionally in-session, fix what survives, label self-review honestly
+(AGENTS.md) and check consequential evidence yourself. Request an independent review
+only when the owner asks for one.
+
 ## GitHub Actions is unavailable
 
 Owner decision, 2026-10-12: GitHub Actions is out of budget for the foreseeable

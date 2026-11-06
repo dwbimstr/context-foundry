@@ -81,7 +81,7 @@ It is **not**:
 
 ## Status
 
-"Stable core" means implemented, cross-lab reviewed, gated and merged on `main`.
+"Stable core" means implemented, reviewed, gated and merged on `main`.
 "Experimental, opt-in" means merged on `main` by owner decision (2026-10-12) while its
 acceptance gates stay open ([follow-ups](FOLLOWUP.md)); defaults do not use it.
 Nothing is released, so no compatibility promise is made yet; store and index

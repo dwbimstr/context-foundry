@@ -1,6 +1,6 @@
 # Context Foundry constitution
 
-Version 0.5.0 · 2026-10-04 · Working project policy. User instructions take precedence.
+Version 0.6.0 · 2026-11-05 · Working project policy. User instructions take precedence.
 This is the single owner of project policy; templates are aids, not extra gates.
 
 ## Purpose
@@ -102,8 +102,9 @@ budget and stop rule. Reuse valid evidence; repeat only what changed inputs inva
 There is no mandatory benchmark per spec or phase. Correctness and complete usage
 matter for economic claims, including provider caching when known.
 
-Review proportionally. Seek independent review for costly durable/protocol/privacy
-commitments when available and authorized; label self-review honestly. Do not install
+Review proportionally. Independent (cross-lab) review is not a gate for acceptance,
+merge or any contract gate; run it only when the owner asks. Label self-review
+honestly, and check consequential evidence yourself. Do not install
 orchestration or spawn reviewers against user preferences. Further rounds need a
 specific unresolved question, not another blanket audit. Publication needs explicit
 intent; local preparation does not imply upload.
@@ -126,3 +127,6 @@ remain historical, not requirements.
 0.5.0 follows the owner's 2026-10-04 decision: a version is released only when every
 active spec is complete. The earlier rule of releasing the working scope, and the local
 `v0.1.0` tag made under it the same day, are withdrawn and remain only as history.
+0.6.0 follows the owner's 2026-11-05 decision ("no independent reviews needed - go
+complete and remove the gate of independent reviews"): independent review is no
+longer a gate. Earlier cross-lab reviews remain as history.

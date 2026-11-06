@@ -171,10 +171,10 @@ development host*. The raw results, logs and frozen identities are outside Git:
   `tests/policy.rs`.
 - **Docs.** `node scripts/check-links.mjs` from the repository root must report no
   errors before every commit that touches Markdown.
-- **Review.** Every implementer change gets a cross-lab code review (a reviewer from a
-  different model lab than the author) and a SHIP before merge. Design changes that
-  matter get a refuter pair from two labs first. Agreement is not proof: the merging
-  agent checks consequential evidence itself.
+- **Review.** Review proportionally before merge; an in-session adversarial review is
+  enough. Independent (cross-lab) review is not a gate (owner, 2026-11-05) and runs
+  only when the owner asks. Label self-review honestly. Agreement is not proof: the
+  merging agent checks consequential evidence itself.
 - **Isolation.** One writer per tree. Parallel slices use separate `git worktree`s and
   separate `CARGO_TARGET_DIR`s, and implementers do not commit; the integrating agent
   commits and pushes. Never run two heavy jobs (full suite, G1, preparation) at once on
