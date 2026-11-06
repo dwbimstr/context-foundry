@@ -1,6 +1,6 @@
 # Experimental ecosystem checkpoint — 2026-10-11
 
-## Current status — 2026-10-31
+## Current status — 2026-11-05
 
 This section owns current status; other documents link here, and dated paragraphs
 below are history.
@@ -93,6 +93,14 @@ below are history.
   materialization or provider calls. Live-capture acceptance, compatibility,
   account/ratecard/launch evidence and explicit scoped owner authorization are still required.
   T006 and economic acceptance remain open.
+- **Live-capture implementation, 2026-11-05.** The approved Rust-owned capture
+  boundary exists behind the opt-in `pilot-capture` feature and passes its
+  actual-host no-provider qualification (14 real-host and 58 unit tests); an
+  in-session review's 26 surviving findings are fixed. The owner removed the
+  independent-review gate the same day, so missing gate 1 is complete. No provider
+  call, credential, view materialization or coding trial occurred; live execution
+  stays locked behind gates 2–5. See the
+  [receipt](validation.md#live-capture-implementation-and-no-provider-qualification--2026-11-05).
 
 
 **Representation repair continuation, 2026-10-17:** body-window contexts keep the

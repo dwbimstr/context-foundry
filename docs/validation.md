@@ -1,5 +1,90 @@
 # Validation
 
+## Live-capture implementation and no-provider qualification — 2026-11-05
+
+**Verdict: the approved capture boundary is implemented and passes its actual-host
+no-provider qualification; missing gate 1 of the
+[bounded pilot v1 contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v1.md)
+(SHA-256 `1a00758f…502d`, byte-unchanged) is complete by owner decision.** It made
+no provider request, read no real credential, materialized no Foundry view and ran
+no coding trial. Gates 2–5 (real compatibility, ratecard/account/rights, launch
+manifest, owner authorization) remain open, so live execution is still locked.
+
+The opt-in `pilot-capture` feature adds one module and one helper; the default
+build and the release `foundry` binary are unchanged:
+
+- [`src/pilot_capture.rs`](../src/pilot_capture.rs): the non-cloneable
+  `CaptureSession` (strictly separate verification and live admissions, live
+  gates refused by name before any credential read, one-run authority claim,
+  hash-chained fsynced journal, checked microUSD reservations, permits,
+  deadlines, monotonic halt, slot driver, preview `render_binding`, independent
+  check seals, probe seal and clean probe-to-coding handoff).
+- [`protocol.rs`](../src/pilot_capture/protocol.rs) (closed frames over the
+  existing `neural::protocol` framing), [`host.rs`](../src/pilot_capture/host.rs)
+  (network-denied `sandbox-exec` launch, inode-bound pipes on fds 3/4, RPC, tool
+  admission ported from the accepted apparatus guard, native session read-back),
+  [`wire.rs`](../src/pilot_capture/wire.rs) (final-body validation, CountTokens
+  projection, direct HTTPS without proxy/redirect/retry, whole-event SSE judging
+  with error withholding, lossless `u64` usage) and the thin
+  [`bridge.ts`](../src/pilot_capture/bridge.ts) (credential-free, delegates to the
+  host-bundled `streamAnthropic`).
+- [`foundry-pilot-capture`](../src/bin/foundry_pilot_capture.rs): `preflight`,
+  `render` and the future `probe`, which today refuses with
+  `authority_receipt_missing` before claiming anything.
+
+Qualification used the pinned OMP 18.13.2 (`38c36452…3d0f`), the embedded bridge,
+a fresh private host root per slot and an owned numeric-loopback TLS fixture
+(throwaway CA minted per test) with an owned synthetic credential. Results:
+
+| Stage 1 case | Evidence |
+| --- | --- |
+| Native bootstrap | Bundled import, keyless catalog clone (custom API, `max_tokens` 4096, `xhigh`, exactly `read`/`edit`) and settings verified through `get_state`; a bridge load failure aborts host startup before RPC ready (`--trusted-extension`) |
+| Ready and private descriptors | Ready precedes the sole prompt; fds 3/4 bound to Rust's pipe inodes; EOF/truncation fail closed |
+| Keyless / no bypass | No registry credential; the host's own network attempts (local-model discovery and an unconditional connection prewarm `HEAD` to the model origin) are denied by the sandbox before name resolution |
+| Count → Messages | Exactly one CountTokens then one unchanged Messages body per permit; projection omits output/transport controls and the thinking binding |
+| Native response path | Native SDK consumes accepted bytes; `responseId` joins the SSE message id exactly once |
+| Retry refusal | Failed status, withheld error event, failed count and input-cap refusal each produce no second request |
+| Credential-echo privacy | Canary in non-success body/headers/`request-id` and in split or coalesced SSE error events never reaches the host root, journal or capture; failure is never a clean EOF |
+| Normal exit and containment | RPC EOF → normal exit, process group gone, no forced kill |
+
+The bounded suite also covers a legitimate tool followup with a fresh permit, a
+blocked out-of-scope edit (behaviour failure, protected files unchanged), missing
+final usage (reservation retained, halt), journal failure before transmission,
+preview rendering with no request, pair render matching, independent check seals
+and recipe/truncation provenance faults, and the sealed handoff (tampered or
+inflated seals and non-owned verification keys refused).
+
+Pinned-host behaviours the implementation now handles explicitly:
+request bodies are gzipped unless `PI_REQUEST_COMPRESSION=0` (disabled; any
+`content-encoding` is refused, which also removes the host's silent uncompressed
+re-send); the native client cancels the body right after `message_stop` (Rust
+keeps reading upstream to a verified terminal); blocked tool calls get no
+`tool_result` hook (Rust's refusal completes them); the reminder shows the
+working directory without macOS's `/private` prefix (exact display mapping).
+
+An in-session four-lens adversarial review raised 34 findings; 26 survived
+per-finding refutation and all 26 are fixed, including tool completions erased at
+settlement, unbounded reuse of one authority receipt, a probe seal invalidated by a
+later record, non-halting pin/launch faults, the probe wall and a
+credential-shaped upstream `request-id`. That review is self-review, not
+independent review, and it is the implementation's review: on 2026-11-05 the owner
+decided "no independent reviews needed - go complete and remove the gate of independent reviews". Gate 1 (implementation and review of the capture boundary) is
+therefore complete; no cross-lab review ran or is pending.
+
+Receipt (Rust 1.97.1 Homebrew; source as committed on base `957aacb`):
+
+| Gate | Result | Log SHA-256 |
+| --- | --- | --- |
+| `cargo fmt --check` | pass | `e3b0c442…b855` |
+| `cargo clippy --locked --all-targets -- -D warnings` | pass | `f2066ca2…49ec` |
+| `cargo clippy --locked --features pilot-capture … -- -D warnings` | pass | `fecede7c…2ffe` |
+| Unit tests (`--features pilot-capture --lib pilot_capture`) | 58 passed | `1fe1d804…84ce` |
+| Actual-host suite (`--test pilot_capture`) | 14 passed | `705087d1…2b6b` |
+
+Not run: `scripts/gates.sh` (no merge), the Rust 1.90 MSRV clippy and the full
+default test suite; native macOS acceptance is out of scope. The private
+implementation receipt and logs are in the live-capture evidence root.
+
 ## No-provider apparatus preflight — 2026-10-29
 
 **Verdict: the full no-provider fixture preflight passes.** These are

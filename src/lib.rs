@@ -48,6 +48,8 @@ pub mod mcp;
 pub mod memory;
 pub mod model_resources;
 pub mod neural;
+#[cfg(all(feature = "pilot-capture", unix))]
+pub mod pilot_capture;
 pub mod policy;
 pub mod receipts;
 pub mod response;

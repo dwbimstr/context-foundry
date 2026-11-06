@@ -131,6 +131,12 @@ learning-worker = ["dep:tch"]
 # Named deterministic fault points for recovery tests. Never enabled by
 # default; release builds contain no hook code or fault-name strings.
 test-faults = []
+# Bounded pilot v1 live-capture boundary (003 T006 contract
+# `bounded-pilot-v1.md`): the Rust-owned capture session, its native OMP
+# bridge and the `foundry-pilot-capture` helper. Opt-in only; the default
+# build and the release `foundry` binary never contain it. `raw_value` keeps
+# exact request slices for byte-commitment evidence.
+pilot-capture = ["serde_json/raw_value"]
 
 [build-dependencies]
 bindgen = { version = "0.73", optional = true }
@@ -153,10 +159,19 @@ rmcp = { version = "=3.6.0", features = [
     "transport-streamable-http-client-reqwest",
 ] }
 tokio = { version = "1", features = ["process"] }
+# Pilot-capture verification fixture only: an owned numeric-loopback HTTPS
+# endpoint (same rustls/aws-lc-rs stack reqwest already links).
+tokio-rustls = { version = "0.26", default-features = false, features = ["aws_lc_rs", "tls12"] }
+rustls-pki-types = { version = "1", features = ["std"] }
 
 [[bin]]
 name = "foundry"
 path = "src/main.rs"
+
+[[bin]]
+name = "foundry-pilot-capture"
+path = "src/bin/foundry_pilot_capture.rs"
+required-features = ["pilot-capture"]
 
 [[bin]]
 name = "foundry-faults"
