@@ -118,8 +118,8 @@ below are history.
     pair 1 reverses this, and slot order and cache confound cost. The
     calculated charge at the pinned ratecard was about USD 0.35, against a
     budget-rate spend of 36% of the USD 10 envelope.
-  - **Open:** two arm-A reads of `.` were blocked and are recorded as
-    constraint violations; the owner may reclassify them. T006 remains
+  - **Classification:** two arm-A reads of `.` were blocked. The owner kept
+    them as constraint violations (2026-11-06), so A stays 4/4. T006 remains
     unaccepted, and the claim ceiling holds. See the
     [receipt](validation.md#paid-transport-probe-and-bounded-coding-pilot--2026-11-06).
 

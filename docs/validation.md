@@ -134,11 +134,12 @@ guard refused both calls, with no effect. The prompt does not forbid the read.
 
 - Only arm A saw these refusals, which plausibly follows from its "inspect the
   workspace" placeholder.
-- **Reading applied here:** these are constraint violations under §10. The tool
-  was the advertised `read`, so they are not "forbidden-tool attempts" under
-  §9/§11, and the oracle outcomes stand.
-- **Stricter reading:** if the owner classifies them as forbidden-tool
-  attempts, arm A becomes 2/4 and B−A becomes +1 in pairs 3 and 4.
+- **Owner decision, 2026-11-06:** "Keep as recorded". They are constraint
+  violations under §10. The tool was the advertised `read`, so they are not
+  "forbidden-tool attempts" under §9/§11, and the oracle outcomes stand
+  (A 4/4).
+- **Stricter reading, not applied:** counting them as forbidden-tool attempts
+  would have made arm A 2/4 and B−A +1 in pairs 3 and 4.
 
 One journaled consumer cancellation (2A, final generation) was drained to the
 terminal event and reconciled with complete usage.

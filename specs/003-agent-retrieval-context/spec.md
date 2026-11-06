@@ -715,7 +715,8 @@ credential, workspace identity, rights approval and scoped probe and coding
 authorizations. The paid probe sealed, and all eight frozen slots completed
 without a halt.
 - The oracle passed all 8 (A 4/4, B 4/4), so B−A = 0 in every pair; both arms
-  made the same repair.
+  made the same repair. The owner kept two blocked arm-A reads of `.` as
+  constraint violations, not behavior failures.
 - The pilot is complete and interpretable. Its claim ceiling forbids T006
   acceptance, causal savings and default promotion, so T006 stays unaccepted.
 
