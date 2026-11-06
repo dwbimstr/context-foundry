@@ -710,6 +710,32 @@ not hidden work inside packing; T005 carries the owner's 2026-10-03 economics pr
 
 **Status:** authorized 2026-10-09 (owner: “go for 1 then 2 and onwards”); in progress, not accepted.
 
+**Bounded pilot contract frozen, 2026-10-31:** the
+[v1 contract](contracts/bounded-pilot-v1.md) is the sole owner of the selected
+pilot's capture, accounting, cache, sampling and spending rules.
+SHA-256: `1a00758ffdafbfa18a59dd69e0b9912ef8beca9f7010f375bab8e553c554502d`.
+This is a planning freeze only, not permission for pilot implementation,
+materialization, credential access, a compatibility probe or coding/provider calls.
+The contract's live-capture, launch-evidence and explicit-authorization gates remain.
+
+**Apparatus continuation, 2026-10-29:** the owner authorized apparatus-only fixes
+and a no-provider preflight, removing the Anthropic-only author restriction.
+The full actual installed-host fixture preflight now passes; both earlier failed
+attempts and the original calibration evidence are retained. See the
+[receipt](../../docs/validation.md#no-provider-apparatus-preflight--2026-10-29)
+and [current handoff](../../docs/resume-context-ecosystem.md#current-status--2026-10-31).
+The guard remains fixture-only. This does not authorize another coding comparison,
+establish live-provider capture or amend T006's acceptance.
+
+**Measured host continuation, 2026-10-28:** OMP 18.13.2 with Anthropic Sonnet 5.5
+completed the public seeded `percent-encoding` repair in both ordinary-file and
+semantic-context-assisted arms; both pass the frozen external oracle. Actual
+input/output/cache totals reconcile across session, event stream and usage import.
+The host exceeded the frozen tool recipe, reasoning categories are missing and
+hosted cache state is uncontrolled, so this is calibration only, not T006 or
+economic acceptance. See the
+[receipt](../../docs/validation.md#paired-coding-task-and-actual-host-usage--2026-10-28).
+
 **Managed host continuation, 2026-10-16:** the owner selected the running managed
 Codex agent runtime. A public `percent-encoding` repair passes the external oracle
 in both ordinary-discovery and lexical Foundry CLI arms. This does not require OMP

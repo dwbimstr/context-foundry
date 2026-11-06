@@ -1,6 +1,6 @@
 # Experimental ecosystem checkpoint — 2026-10-11
 
-## Current status — 2026-10-26
+## Current status — 2026-10-31
 
 This section owns current status; other documents link here, and dated paragraphs
 below are history.
@@ -70,6 +70,30 @@ below are history.
   authorized this security-only exception to G2 promotion measurement; no quality
   or performance gain is claimed. See the
   [migration and live CLI/MCP receipt](validation.md#markdown-parser-security-and-unit-migration--2026-10-26).
+- **Task calibration and local activation, 2026-10-28.** This checkout now has its
+  own prepared `.context-foundry` store; release CLI queries with the existing
+  explicit profile and development-isolation flag were exercised, including
+  exact citation retrieval. The public upstream coding-task pair produced two
+  externally correct repairs and actual host usage. Extra native-tool exposure,
+  missing reasoning categories and uncontrolled hosted cache prevent clean paired
+  economic acceptance; T006 remains open. See the
+  [dated calibration receipt](validation.md#paired-coding-task-and-actual-host-usage--2026-10-28).
+- **Apparatus-only continuation, 2026-10-29.** The Anthropic-only author restriction
+  is removed. The full actual-host no-provider preflight now passes after strict
+  delivery, request-accounting, lossless-counter and enforcement-boundary repairs;
+  both failed attempts and original calibration evidence are retained. See the
+  [dated receipt](validation.md#no-provider-apparatus-preflight--2026-10-29).
+  The guard remains fixture-only, not an authorized live-capture adapter; no new
+  coding trial is authorized. The pilot's planning choices now have the single
+  owner linked below, while live implementation, evidence and authorization remain gated.
+- **Pilot contract freeze, 2026-10-31.** The
+  [bounded pilot v1 contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v1.md)
+  owns the frozen policy and input pins; [T006](../specs/003-agent-retrieval-context/spec.md#t006--validate-retrieval-repairs-in-real-coding-tasks)
+  records its external digest. This freeze authorizes no pilot implementation,
+  materialization or provider calls. Live-capture acceptance, compatibility,
+  account/ratecard/launch evidence and explicit scoped owner authorization are still required.
+  T006 and economic acceptance remain open.
+
 
 **Representation repair continuation, 2026-10-17:** body-window contexts keep the
 region's own declaration when over budget (`+context2`), and long overviews keep

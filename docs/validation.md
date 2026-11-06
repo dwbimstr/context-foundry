@@ -1,5 +1,200 @@
 # Validation
 
+## No-provider apparatus preflight — 2026-10-29
+
+**Verdict: the full no-provider fixture preflight passes.** These are
+installed-consumer apparatus runs with fixed scripted loopback responses—not
+model-written coding trials or measurements of provider consumption/economics.
+The owner removed the Anthropic-only author restriction; scoped corrections used
+GLM-5.3, with OpenAI Sol/Astra review. Those reviewers share one provider and are
+independent of the Z.ai author.
+
+| Attempt | Passed / declared cases | Wall seconds | Outcome |
+| --- | ---: | ---: | --- |
+| First | 6 / 25 | 1,276.32 | Undeclared SSE encoder; startup catalog-control accounting |
+| Corrected | 23 / 25 | 268.42 | JavaScript-safe integer/import domain and native-refusal attribution |
+| Final | 25 / 25 | 268.14 | Full declared inventory and final reconciliation pass |
+
+The pinned OMP 18.13.2, release Foundry and Rust 1.97.1 binaries ran with fresh
+private HOME/XDG/TMP directories, a cleared child environment and dummy credentials.
+The process-birth macOS policy allowed only the fixture TCP port, denied other
+network destinations and restricted real-home data access. Live fixture/decoy and
+harmless canary controls passed; no actual credential contents were opened.
+The policy includes named securityd denials, but no dynamic keychain proof is claimed.
+This controlled apparatus is not a production jail.
+
+All three runs passed the four controller checks: network isolation, home-data isolation,
+real launch-pin tamper refusal, and externally compiled positive/seeded-negative
+oracle controls. The host passed later-payload-mutation and wrong-role-prompt
+rejection before transport. Admitted request bytes showed exactly `read`/`edit`,
+the selected model, adaptive thinking and `output_config.effort: "xhigh"`.
+
+The first run's fixture writer referenced an undeclared encoder. Startup
+`GET /v1/models` discovery was also recorded as an unexpected path. The corrected
+run delivered SSE and exercised actual read/edit effects, selector-shadow refusal,
+usage missingness, split frames and open-body completion. Late/cancelled Messages
+attempts are now checked against the immutable inventory used by each case, again
+after bounded handler shutdown; final catalog-auth and persistence state is reconciled.
+The open-body case completed through independent client cancellation before normal
+host exit; it does not prove that the HTTP body remained open until exit.
+
+The second run exposed two apparatus mismatches. The final controller losslessly
+parses Rust's valid `u64` import aggregates through original JSON integer lexemes,
+checks exact BigInt arithmetic and retains oversized evidence as tagged decimal
+strings plus complete raw stdout. Guard normalization still remains unknown at
+its JavaScript-safe overflow boundary; production accounting is unchanged.
+The clean host's identity-bound `Tool locate not found` result is accepted only
+with the exact single-plain-text-block shape and refusal digest. The recorded
+boundary is the host registry, not a fictional guard hook; the out-of-scope read
+is separately vetoed by the guard. No fake native tool or ambient plugin was added.
+
+In the successful baseline fixture, the actual wire thinking count is captured,
+but the native host still omits `reasoningTokens`; production import correctly
+remains `complete:false`. A separate, explicitly derived fixture session imports
+as complete only with strictly correlated observed wire counters. Native JSONL is
+unchanged; missing native reasoning is not a measured zero, and reasoning is not
+added again to inclusive output. This synthetic proof does not establish what
+the provider emitted in the earlier live calibration.
+Native usage-record counts are not request counts: the overflow fixture retained
+two usage-bearing native entries for one endpoint response. Their arithmetic is
+imported as recorded, not rewritten into request parity or billed consumption.
+
+The final receipt reconciles all Messages attempts with no pending handlers,
+late inventory drift, unexpected catalog auth or evidence-append failures. The
+operator additionally verified the hashes of all 29 complete raw import-output
+artifacts. Native and derived imports remain separate.
+A post-run Sol review inspected the manifest, selected raw transport/native/tool
+and oracle proofs, and accepted only this bounded no-provider apparatus scope.
+
+All cleanups reported no unresolved owned groups and stopped listeners. The
+operator confirmed all three canary paths absent with `lstat` and all 135 original
+calibration file pins unchanged. Evidence and exact executed source snapshots remain
+outside Git under `datasets/context-foundry-task-validation/apparatus-v2-DkGJgT/`;
+run directories are `preflight-runs/run-mvt80879-mfwlf/`,
+`preflight-runs/run-mvtgh5lg-2ayg4z/` and
+`preflight-runs/run-mvthtmxg-vpxs7/`. The final controller/guard SHA-256 prefixes
+are `112d1aa1…` / `d8999597…`. Failed attempts remain failed and retained.
+Elapsed times are diagnostic apparatus time, not coding latency.
+
+This closes the approved apparatus-only preflight, not T006 or a clean coding
+comparison. The guard remains fixture-only, with dummy auth and live origins
+rejected; it is not an authorized live-capture adapter. A live comparison still
+needs an approved capture/claim boundary, cache treatment, sampling/repetition and
+uncertainty plan, complete phase/usage accounting, spend/stop rules and explicit
+authorization. No real inference, forwarding, production accounting change or
+coding-comparison authorization follows from these fixture runs.
+
+## Paired coding task and actual host usage — 2026-10-28
+
+**Verdict:** both model-written repairs pass a frozen, hash-pinned external
+correctness oracle, and actual host input/output/cache usage is captured and reconciled.
+This is one public seeded calibration, not held-out task-quality acceptance.
+The frozen read/edit-only tool recipe was not enforced by the host, and its
+reasoning-token breakdown is missing. T006 and economic acceptance remain open.
+
+**Apparatus.** OMP 18.13.2 (`38c36452…`) ran Anthropic
+`claude-sonnet-5-5` at `xhigh` in both arms, with no model fallback. The task reuses
+the public `percent-encoding` 2.3.2 scenario from
+[`tests/gateway/host_task.rs`](../tests/gateway/host_task.rs): malformed escapes
+must not consume bytes, while valid escapes, no-alloc support, UTF-8 conversion
+and unchanged borrowing remain correct. The pinned upstream archive is
+`9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220`.
+Only private copies were seeded or edited; the registry and project code were not.
+
+The operator recorded protocol `3e55bde1…` before model execution, with matching
+seeded files, task, model, settings and checker; the recorded random draw selected
+baseline then assisted. Freeze chronology and the draw procedure are operator
+provenance, not independently attested by the saved runner, which rechecks seed
+hashes but not every launch pin. Each arm had one attempt, a 600-second host limit
+and a USD 5 host-reported admission ceiling, not a guarantee about invoiced or
+in-flight cost. The intended baseline was ordinary file tools without injected
+evidence. Assisted received the release CLI's 2,031-`o200k_base`-token semantic view.
+Both actually exposed the larger catalog described below. The operator reports no
+synthetic source expansion, manual arm retry, post-outcome query retuning or ranking change.
+
+The external oracle (`f5ac14d3…`) passed the untouched upstream control and
+rejected both seeded inputs before the runs. Afterward, both candidates compiled
+with no-alloc and alloc, passed 131,598 byte-case invocations plus UTF-8/encoding checks, and
+kept every protected file unchanged. Actual model reads/edits stayed within the
+five-file workspace; neither model saw the checker or another repository's source.
+The host's filesystem scope was instruction-based and audited, not an OS jail.
+The compilation JSON retains results, not compiler argv/version or an explicit
+candidate/linkage manifest; those invocations are operator execution evidence,
+not a self-contained compiler replay bundle.
+
+
+| Observation | Baseline (intended file tools) | Assisted (injected context) |
+| --- | ---: | ---: |
+| External correctness oracle | PASS | PASS |
+| Completed assistant usage records | 5 | 4 |
+| Source read calls | 2 | 1 |
+| Input tokens, including cache | 70,724 | 60,576 |
+| Cache-read tokens, input subset | 52,062 | 51,744 |
+| Cache-write tokens, input subset | 18,650 | 8,822 |
+| Output tokens | 1,595 | 1,287 |
+| Input plus output tokens | 72,319 | 61,863 |
+| Host wall time, seconds | 16.743 | 12.739 |
+| Known execution subtotal, seconds | 17.065 | 16.991 |
+| Host-catalog estimated USD, not billed charges | 0.0957802 | 0.0533524 |
+
+The execution subtotal adds the external after-check and, for assisted, 2.666 s
+of fresh indexing/preparation and 1.364 s of retrieval. Experiment construction,
+positive/negative controls, operator model work and energy are outside that subtotal,
+not zero. Local preparation separately embedded 112 vectors through 15 document
+calls and 18,841 input tokens. These are not Anthropic tokens or equivalent costs.
+Query-embedding token usage and local energy are not exposed by this CLI and remain
+unknown. No model acquisition was performed.
+
+**Receipt reconciliation.** All nine completed assistant records have actual
+input/output/cache counts; native totals match their sums and the usage objects
+in persisted sessions match those in the final JSON events. Complete messages
+are not field-identical: persisted messages also contain `contextSnapshot`.
+Production `usage import --host omp` returns the same normalized totals with no
+unparsed or unattributed results. Reasoning-token counts—not reasoning activity—
+are absent from the retained host usage objects: import correctly reports
+`complete:false` with 5/4 missing reasoning categories. Its numeric zero is not a
+measured zero, and the current completeness contract is unchanged.
+Anthropic [documents inclusive output usage](https://platform.claude.com/docs/en/build-with-claude/thinking-steering-and-cost#pricing)
+and an `output_tokens_details.thinking_tokens` subset on the final streaming
+event. Missing host breakdown does not itself prove missing aggregate output or
+provider omission; no raw provider stream was captured in this calibration.
+Host-catalog prices and the one-hour cache-write TTL do not establish billed charges.
+Hosted cache state was not reset; first-request cache conditions differed.
+The exact provenance and causal contribution of cache reuse are not identified.
+The apparent differences therefore do not establish causal or general savings.
+
+**Protocol deviation.** Despite `--tools read,edit`, OMP advertised those tools
+plus native `locate`, `context`, `status`, `remember`, `retrieve` and `history`.
+Both models attempted `locate` once; each returned a no-daemon error and no source.
+Those failed tool turns and their usage remain included. Effective catalogs matched
+between arms, but neither run satisfies the frozen read/edit-only recipe. The host
+filtering issue was reported; the pair was not rerun to erase that result.
+
+**Context boundary.** Release Foundry (`9dcbec8f…`), the existing pinned local
+profile and `--development-isolation` produced `semantic:ready`; its trace records
+64 dense candidates at revision 5. The injected view matches the assisted host's
+persisted user message. It includes the iterator caller, but does not cover the
+repair helper at bytes `8535..8747`; the model still read source. This is operator-
+injected CLI context, not proof of autonomous tool adoption, enforced host routing
+or provider-wire application hooks.
+
+**Post-repair freshness diagnostic.** The pre-edit handle still retrieves the
+accepted revision-5 snapshot before re-indexing, as
+[001 FR-003](../specs/001-source-state-recovery/spec.md) requires; an initial
+diagnostic incorrectly expected live-file invalidation. After explicit indexing
+accepts revision 6, that handle returns `stale_handle` with no source bytes.
+Semantic maintenance then completes with one new vector/197 document tokens,
+retaining the old cached input. This additional re-index/probe/refit work took
+1.299 s and is reported separately, not hidden in the primary paired subtotal.
+
+Raw prompts, sessions, patches, controls, protocol, checker, traces, imports and
+`report.json` are retained outside Git under
+`datasets/context-foundry-task-validation/paired-lFCMwZ/`. Session SHA-256 prefixes
+are baseline `3c5b0a54…` and assisted `01241341…`. No credentials, raw transcripts,
+weights or upstream sources were added to Git. No product default, persistent/global
+host configuration, product code or acceptance threshold changed; command-local
+overlay settings and flags were used as recorded.
+
 ## Markdown parser security and unit migration — 2026-10-26
 
 The owner approved a targeted security follow-up to the cleanup below, not the

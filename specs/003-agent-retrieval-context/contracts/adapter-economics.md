@@ -309,6 +309,15 @@ token-economics tranche are labeled "bundled Foundry adoption (v2 + instructions
 hook), n=1 per task/arm, these tasks only; not an isolated v2 causal or general savings
 result".
 
+The [bounded pilot v1 contract](bounded-pilot-v1.md) alone owns the label
+`pilot-only live wire aggregate observation`: it permits a separately reported,
+identity-bound four-category transport observation for that pilot, not a
+delivered-token-tranche or general economic-acceptance claim. This does not change
+`omp-v1`, its five-category completeness rule, native missingness or native record
+arithmetic; missing native reasoning still yields `complete:false`, and native
+entries are not provider-attempt counts. T006 acceptance, default promotion and
+causal/general dollar-savings claims remain out of scope.
+
 ## Acceptance and improvement claims
 
 Functional cases: tiny budgets, exhaustion, duplicate/unknown receipts, cache categories,
