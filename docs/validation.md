@@ -1,5 +1,68 @@
 # Validation
 
+## Pilot apparatus and frozen launch inputs — 2026-11-06
+
+**Verdict: everything before the first paid request is built, qualified and
+frozen.** Contract gate 4 of the
+[bounded pilot v1 contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v1.md)
+is met; gates 2, 3 and 5 wait only on owner-held inputs (credential, account
+identity, rights approval and an explicit spend authorization). No provider
+request, real credential or coding trial occurred.
+
+[`pilot_capture::apparatus`](../src/pilot_capture/apparatus.rs) and the
+`materialize`, `manifests`, `probe` and `coding` commands of
+[`foundry-pilot-capture`](../src/bin/foundry_pilot_capture.rs) add:
+
+- verification of every pinned input, including the profile-declared embedding
+  worker, model and tokenizer, which the freeze had declared but not rehashed
+  (all three match);
+- the four pair views, each from a fresh seed workspace and isolated store with
+  the pinned release Foundry, profile and development isolation;
+- real renders of all nine slots and the frozen probe and coding manifests
+  (17 re-verified pins, the views, per-slot render commitments, and the pilot
+  root as the host's isolation root);
+- a contained independent checker: the accepted four-step recipe on a copied
+  candidate under `sandbox-exec` (no network, owner home unreadable, minimal
+  environment, 60 s). The accepted positive control passes and the seeded
+  negative fails with the exact recorded assertion;
+- the executor (probe, then the eight frozen slots with workspace restore,
+  archiving, checks and seals) and a descriptive report with no inference.
+
+Live admission now also requires the billed account and pricing evidence pinned
+by SHA-256 in the ratecard, and `rights_approved` in the owner receipt; a test
+walks every live gate in order and confirms one receipt admits one run.
+
+**Full-pipeline qualification (no provider).** One run used real views,
+renders, host, sandbox and checker with only the model scripted: the probe
+sealed, the journal-verified handoff continued it, and all eight slots sealed.
+Arm B applied the upstream repair through the native edit tool and passed 4/4;
+arm A made no edit and failed 0/4; B−A was +1 in every pair; 13 permits.
+
+**Frozen inputs (private, `pilot-run-v1-69f88b`).** Each view took about 2.5 s
+to prepare and 1.4 s to deliver, all `semantic:ready`:
+
+| Pair | Bytes | o200k tokens | Shown items |
+| ---: | ---: | ---: | ---: |
+| 1 | 6,428 | 1,729 | 9 |
+| 2 | 6,428 | 1,738 | 9 |
+| 3 | 6,428 | 1,738 | 9 |
+| 4 | 7,577 | 2,041 | 10 |
+
+The views differ by pair only through the workspace identity in each evidence
+handle. That changes handle token lengths, and pair 4's packing fits one more
+item. The contract treats pair views as setup-derived facts; report this when
+interpreting arm B.
+
+Pricing evidence, from the official pricing and token-counting pages: Claude
+Sonnet 5.5 costs $2 input, $2.50 five-minute cache write, $0.10 cache read and
+$10 output per million tokens, all within the frozen $10/$25 budget rates.
+CountTokens is free, separately rate-limited, an estimate, and never uses the
+prompt cache. The release helper is frozen in the pilot root
+(`5ed9a163…64b3`); the release `foundry` binary is unchanged.
+
+Gates for this change: `cargo fmt --check` and both clippy gates pass; 62 unit
+and 16 actual-host tests pass, including the full pipeline (`29a2bcf`).
+
 ## Live-capture implementation and no-provider qualification — 2026-11-05
 
 **Verdict: the approved capture boundary is implemented and passes its actual-host

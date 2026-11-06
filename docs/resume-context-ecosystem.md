@@ -1,6 +1,6 @@
 # Experimental ecosystem checkpoint — 2026-10-11
 
-## Current status — 2026-11-05
+## Current status — 2026-11-06
 
 This section owns current status; other documents link here, and dated paragraphs
 below are history.
@@ -101,6 +101,12 @@ below are history.
   call, credential, view materialization or coding trial occurred; live execution
   stays locked behind gates 2–5. See the
   [receipt](validation.md#live-capture-implementation-and-no-provider-qualification--2026-11-05).
+- **Pilot ready for paid launch, 2026-11-06.** The views, manifests,
+  contained checker and executor are built and frozen (gate 4), and a
+  full-pipeline run without any provider sealed the probe and all eight slots.
+  Only owner inputs remain: the credential file, account identity, rights
+  approval and explicit spend authorization (probe, then coding). See the
+  [receipt](validation.md#pilot-apparatus-and-frozen-launch-inputs--2026-11-06).
 
 
 **Representation repair continuation, 2026-10-17:** body-window contexts keep the

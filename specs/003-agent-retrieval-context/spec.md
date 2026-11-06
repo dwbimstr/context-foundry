@@ -715,8 +715,10 @@ implemented behind the opt-in `pilot-capture` feature and passes actual-host
 no-provider qualification. Missing gate 1 is complete: the owner decided that no
 independent review is needed, and the in-session review's findings are fixed. See the
 [receipt](../../docs/validation.md#live-capture-implementation-and-no-provider-qualification--2026-11-05).
-Compatibility, ratecard/rights, launch-manifest and owner-authorization gates
-remain; T006 is not accepted.
+The launch manifest, views, checker and executor are frozen (gate 4, 2026-11-06;
+[receipt](../../docs/validation.md#pilot-apparatus-and-frozen-launch-inputs--2026-11-06)).
+Compatibility, ratecard/rights and owner-authorization gates remain; T006 is not
+accepted.
 
 **Bounded pilot contract frozen, 2026-10-31:** the
 [v1 contract](contracts/bounded-pilot-v1.md) is the sole owner of the selected
@@ -731,7 +733,7 @@ and a no-provider preflight, removing the Anthropic-only author restriction.
 The full actual installed-host fixture preflight now passes; both earlier failed
 attempts and the original calibration evidence are retained. See the
 [receipt](../../docs/validation.md#no-provider-apparatus-preflight--2026-10-29)
-and [current handoff](../../docs/resume-context-ecosystem.md#current-status--2026-11-05).
+and [current handoff](../../docs/resume-context-ecosystem.md#current-status--2026-11-06).
 The guard remains fixture-only. This does not authorize another coding comparison,
 establish live-provider capture or amend T006's acceptance.
 
