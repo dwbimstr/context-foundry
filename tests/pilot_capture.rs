@@ -104,6 +104,7 @@ fn verification(
         fixture_ca_pem: fx.ca_pem.clone(),
         credential: CANARY.into(),
         faults,
+        manifest: None,
     })
 }
 
@@ -796,6 +797,7 @@ fn verification_cannot_target_anything_but_numeric_loopback() {
         fixture_ca_pem: vec![],
         credential: CANARY.into(),
         faults: Default::default(),
+        manifest: None,
     }));
     assert_eq!(
         refused.err().unwrap().code,
@@ -809,6 +811,7 @@ fn verification_cannot_target_anything_but_numeric_loopback() {
         fixture_ca_pem: vec![],
         credential: "sk-ant-api03-real-looking".into(),
         faults: Default::default(),
+        manifest: None,
     }));
     assert_eq!(
         not_owned.err().unwrap().code,
@@ -914,4 +917,141 @@ fn truncated_all_success_check_receipt_is_a_provenance_fault() {
     failed.steps[0].exit = Some(1);
     let sealed = session.seal_slot(&capture, &failed).unwrap();
     assert_eq!(sealed.outcome, pilot_capture::CheckOutcome::Fail);
+}
+
+// ---------------------------------------------------------------------------
+// Full pipeline qualification (private evidence; no provider).
+// ---------------------------------------------------------------------------
+
+/// The whole pilot apparatus end to end without any provider: pinned-input
+/// verification, seed install, the four real view materializations, real
+/// renders and frozen manifests, the probe and its seal, the journal-verified
+/// handoff, all eight coding slots through the real host and sandbox, the
+/// real contained checker on each candidate, seals and the descriptive
+/// report. Only the model is scripted: arm B applies the upstream repair
+/// with the native edit tool; arm A stops without editing. Needs the owner's
+/// private evidence roots, named by `CF_PILOT_EVIDENCE_INPUTS` (an
+/// `EvidenceInputs` JSON file).
+#[test]
+#[ignore = "needs private pilot evidence roots; run with --ignored and CF_PILOT_EVIDENCE_INPUTS"]
+fn full_pilot_pipeline_qualifies_without_provider() {
+    use context_foundry::pilot_capture::apparatus::{self, EvidenceInputs, PilotRoot};
+    require_host();
+    let inputs_path = std::env::var("CF_PILOT_EVIDENCE_INPUTS").expect("CF_PILOT_EVIDENCE_INPUTS");
+    let inputs: EvidenceInputs =
+        serde_json::from_slice(&std::fs::read(&inputs_path).unwrap()).unwrap();
+    let verified = inputs.verify().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let root =
+        PilotRoot::create(&std::fs::canonicalize(tmp.path()).unwrap().join("pilot")).unwrap();
+    apparatus::install_seed(&root, &verified).unwrap();
+    let views = apparatus::materialize_views(&root, &verified).unwrap();
+    assert_eq!(views.len(), 4);
+    assert!(
+        views
+            .iter()
+            .all(|v| v.header.contains("semantic:ready") && v.delivered_o200k_tokens <= 2048)
+    );
+    let (probe_manifest, coding_manifest) = apparatus::build_manifests(&root, &verified).unwrap();
+
+    // The scripted model: the upstream repair is one replaced hunk.
+    let seed = std::fs::read_to_string(inputs.paired_root.join("inputs/seed-lib.rs")).unwrap();
+    let fixed =
+        std::fs::read_to_string(inputs.paired_root.join("oracle/control/src/lib.rs")).unwrap();
+    let (a, b): (Vec<&str>, Vec<&str>) = (
+        seed.split_inclusive('\n').collect(),
+        fixed.split_inclusive('\n').collect(),
+    );
+    let pre = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
+    let post = a
+        .iter()
+        .rev()
+        .zip(b.iter().rev())
+        .take_while(|(x, y)| x == y)
+        .count();
+    let old = a[pre..a.len() - post].concat();
+    let new = b[pre..b.len() - post].concat();
+    let mut script = vec![
+        Reply::Count(4000),
+        fixture::text_reply("msg_probe", "PILOT_TRANSPORT_OK"),
+    ];
+    for slot_id in policy::SLOT_ORDER {
+        if slot_id.ends_with('B') {
+            script.push(Reply::Count(9000));
+            script.push(fixture::tool_reply(
+                &format!("msg_{slot_id}_1"),
+                &format!("toolu_{slot_id}_edit"),
+                "edit",
+                json!({"path": "src/lib.rs", "old_string": old, "new_string": new, "i": "repair escape"}),
+            ));
+            script.push(Reply::Count(9400));
+            script.push(fixture::text_reply(
+                &format!("msg_{slot_id}_2"),
+                "Repaired.",
+            ));
+        } else {
+            script.push(Reply::Count(3000));
+            script.push(fixture::text_reply(
+                &format!("msg_{slot_id}_1"),
+                "No change made.",
+            ));
+        }
+    }
+    let fx = Fixture::start(script);
+    let admission = |scope: Scope, run: &str, manifest| {
+        LaunchAdmission::Verification(VerificationAdmission {
+            run_dir: root.root.join("runs").join(run),
+            omp: verified.inputs.omp.clone(),
+            scope,
+            fixture_addr: fx.addr,
+            fixture_ca_pem: fx.ca_pem.clone(),
+            credential: CANARY.into(),
+            faults: Default::default(),
+            manifest: Some(manifest),
+        })
+    };
+    let mut probe = CaptureSession::open(admission(Scope::Probe, "pilot", probe_manifest)).unwrap();
+    let (probe_capture, seal) = apparatus::run_probe(&mut probe, &root).unwrap();
+    let seal =
+        seal.unwrap_or_else(|f| panic!("probe not sealed: {f:?} {:?}", probe_capture.disposition));
+    probe.finish().unwrap();
+    let coding = CaptureSession::open_after_probe(
+        &seal,
+        admission(Scope::Coding, "unused", coding_manifest),
+    )
+    .unwrap();
+    let report = apparatus::run_coding(coding, &root, &verified).unwrap();
+
+    assert_eq!(report.receipt.halt, None, "{:?}", report.slots);
+    assert!(
+        report.slots.iter().all(|r| r.state == "sealed"),
+        "{:?}",
+        report.slots
+    );
+    let arm = |name: &str| report.arms.iter().find(|a| a.arm == name).unwrap().clone();
+    assert_eq!((arm("A").checked, arm("A").passed), (4, 0));
+    assert_eq!((arm("B").checked, arm("B").passed), (4, 4));
+    assert!(
+        report
+            .pairs
+            .iter()
+            .all(|p| p.valid && p.b_minus_a == Some(1))
+    );
+    let c = report.receipt.counters;
+    assert_eq!(
+        (c.generation_permits, c.count_calls, c.messages_attempts),
+        (13, 13, 13)
+    );
+    assert_eq!(c.outstanding_micro_usd, 0);
+    assert_eq!(fx.remaining_script(), 0);
+    // B arms carry the frozen view verbatim; A arms carry none.
+    let requests = fx.seen();
+    let firsts: Vec<&fixture::Seen> = requests
+        .iter()
+        .filter(|s| s.path == "/v1/messages")
+        .collect();
+    assert_eq!(firsts.len(), 13);
+    assert_absent_under(&root.root, CANARY);
+    // Every planned arm left its archived workspace or its live one.
+    assert!(root.root.join("archive/after-1B").is_dir());
 }

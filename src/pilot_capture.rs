@@ -13,6 +13,7 @@
 //! uses owned synthetic credentials and an owned TLS fixture and cannot be
 //! turned into live authority by changing a flag or URL.
 
+pub mod apparatus;
 pub mod host;
 pub mod protocol;
 pub mod wire;
@@ -306,6 +307,11 @@ fn real_home() -> Result<PathBuf, CaptureFault> {
     }
 }
 
+/// The owner's real home, for the independent checker's sandbox.
+pub(crate) fn real_home_for_checks() -> Result<PathBuf, CaptureFault> {
+    real_home()
+}
+
 /// Nanoseconds on the platform-continuous clock (advances during sleep).
 pub fn continuous_nanos() -> Result<u64, CaptureFault> {
     #[cfg(target_os = "macos")]
@@ -530,6 +536,9 @@ pub struct VerificationAdmission {
     /// Owned synthetic credential; must start with `sk-ant-verify-`.
     pub credential: String,
     pub faults: VerificationFaults,
+    /// An optional frozen launch manifest, so verification exercises the
+    /// same slot, prompt, source and render bindings as live.
+    pub manifest: Option<LaunchManifest>,
 }
 
 /// Live: every frozen gate is bound by evidence files; any missing or
@@ -586,6 +595,45 @@ pub struct ManifestSlot {
     pub workspace: PathBuf,
     pub prompt_sha256: String,
     pub sources: Vec<(String, String)>,
+    /// The actual host's rendered request commitments for this slot; the
+    /// slot's first live request must match them exactly.
+    pub render: RenderCommitments,
+}
+
+/// Stable request commitments rendered before any paid request (the
+/// volatile reminder and its date are excluded).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RenderCommitments {
+    pub system_sha256: String,
+    pub tools_sha256: String,
+    pub settings_sha256: String,
+    pub stable_prefix_sha256: String,
+    pub beta: String,
+    pub cache_layout: Vec<String>,
+    pub initial_user_sha256: String,
+}
+
+/// One verified launch pin: a named file and its SHA-256.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PinEntry {
+    pub name: String,
+    pub path: PathBuf,
+    pub sha256: String,
+}
+
+/// One frozen pair view bound by the manifest.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestView {
+    pub pair: u8,
+    pub path: PathBuf,
+    pub sha256: String,
+    pub delivered_o200k_tokens: u64,
+    pub store_revision: String,
+    pub citations_sha256: String,
+    pub recipe_id: String,
 }
 
 /// Frozen launch manifest (gate 4).
@@ -596,6 +644,15 @@ pub struct LaunchManifest {
     pub contract_sha256: String,
     pub omp_sha256: String,
     pub slots: Vec<ManifestSlot>,
+    /// Executables, profile, worker, model, oracle, task, prompts, seed and
+    /// allocation, each re-verified at admission.
+    pub pins: Vec<PinEntry>,
+    pub allocation_sha256: String,
+    pub views: Vec<ManifestView>,
+    /// The private pilot root: the host may read and write nothing under it
+    /// except its own slot workspace (other arms, stores, views, checker
+    /// roots and the oracle copy stay out of reach wherever the root is).
+    pub isolation_root: PathBuf,
 }
 
 /// Standard-service ratecard evidence (gate 3). Rates are decimal USD per
@@ -731,6 +788,7 @@ fn validate_live(
     {
         return Err(authority("launch_manifest_slot_order"));
     }
+    verify_manifest_pins(&manifest)?;
     let ratecard_bytes = read_evidence(&a.ratecard, "ratecard_missing", 64 * 1024)?;
     if sha256_hex(&ratecard_bytes) != receipt.ratecard_sha256 {
         return Err(authority("ratecard_digest_mismatch"));
@@ -775,6 +833,50 @@ fn validate_live(
         }
     };
     Ok((manifest, sha256_hex(&authority_bytes), seal))
+}
+
+/// A verification manifest gets the same structural and pin checks as live.
+fn check_verification_manifest(
+    manifest: Option<LaunchManifest>,
+    scope: Scope,
+) -> Result<Option<LaunchManifest>, CaptureFault> {
+    let Some(m) = manifest else { return Ok(None) };
+    let expected: Vec<&str> = match scope {
+        Scope::Probe => vec![policy::PROBE_SLOT],
+        Scope::Coding => policy::SLOT_ORDER.to_vec(),
+    };
+    if m.kind != "bounded-pilot-v1-launch"
+        || m.contract_sha256 != policy::CONTRACT_SHA256
+        || m.omp_sha256 != policy::OMP_SHA256
+        || m.slots
+            .iter()
+            .map(|s| s.slot_id.as_str())
+            .collect::<Vec<_>>()
+            != expected
+    {
+        return Err(authority("launch_manifest_invalid"));
+    }
+    verify_manifest_pins(&m)?;
+    Ok(Some(m))
+}
+
+/// Re-verify every file a launch manifest pins (resolved launch-pin checks)
+/// and every frozen view it binds.
+fn verify_manifest_pins(manifest: &LaunchManifest) -> Result<(), CaptureFault> {
+    if manifest.pins.is_empty() || manifest.views.len() != apparatus::pins::PAIRS.len() {
+        return Err(authority("launch_manifest_unpinned"));
+    }
+    for pin in &manifest.pins {
+        if file_sha256(&pin.path, "launch_pin_missing")? != pin.sha256 {
+            return Err(pins("launch_pin_changed"));
+        }
+    }
+    for view in &manifest.views {
+        if file_sha256(&view.path, "launch_view_missing")? != view.sha256 {
+            return Err(pins("launch_view_changed"));
+        }
+    }
+    Ok(())
 }
 
 /// Claim an owner authorization receipt exclusively: one receipt admits one
@@ -1333,6 +1435,7 @@ impl CaptureSession {
             match admission {
                 LaunchAdmission::Verification(v) => {
                     check_verification(&v)?;
+                    let manifest = check_verification_manifest(v.manifest.clone(), v.scope)?;
                     let credential = wire::Credential::new(&v.credential)?;
                     let endpoint = wire::Endpoint::Verification {
                         addr: v.fixture_addr,
@@ -1344,7 +1447,7 @@ impl CaptureSession {
                         v.run_dir,
                         v.omp,
                         (endpoint, credential),
-                        None,
+                        manifest,
                         v.faults,
                         Vec::new(),
                     )
@@ -1469,6 +1572,7 @@ impl CaptureSession {
                     return Err(authority("probe_handoff_mode_mismatch"));
                 }
                 check_verification(&v)?;
+                let manifest = check_verification_manifest(v.manifest.clone(), Scope::Coding)?;
                 let credential = wire::Credential::new(&v.credential)?;
                 let endpoint = wire::Endpoint::Verification {
                     addr: v.fixture_addr,
@@ -1479,7 +1583,7 @@ impl CaptureSession {
                     Mode::Verification,
                     v.omp,
                     wire::Transport::new(&endpoint, credential)?,
-                    None,
+                    manifest,
                     Vec::new(),
                 )
             }
@@ -1660,6 +1764,8 @@ struct SlotRun {
     purpose: Purpose,
     ledger: SlotLedger,
     expect: wire::RequestExpectation,
+    /// The manifest's frozen render for this slot, when admitted with one.
+    frozen_render: Option<RenderCommitments>,
     tool_policy: host::ToolPolicy,
     rpc_ready: bool,
     bridge_ready: bool,
@@ -1961,7 +2067,11 @@ impl Inner {
         let identity = protocol::ChannelIdentity::new(self.session_id.clone(), host_id.clone())
             .map_err(|f| CaptureFault::new(FaultClass::Protocol, f.0))?;
         let mut deny = vec![self.run_dir.clone()];
-        deny.retain(|d| !workspace.starts_with(d));
+        if let Some(m) = &self.manifest {
+            deny.push(m.isolation_root.clone());
+        }
+        // The slot's own workspace is re-allowed after these denials.
+        deny.retain(|d| !d.starts_with(&workspace));
         let spec = host::HostSpec {
             omp: self.omp.clone(),
             root: self.hosts_dir.join(&host_id),
@@ -2021,6 +2131,12 @@ impl Inner {
             seen_fetches: Vec::new(),
             partial: None,
             preview_done: false,
+            frozen_render: self
+                .manifest
+                .as_ref()
+                .filter(|_| purpose == Purpose::Capture)
+                .and_then(|m| m.slots.iter().find(|s| s.slot_id == slot.slot_id))
+                .map(|s| s.render.clone()),
         };
         let started = tokio::time::Instant::now();
         // The wall covers host startup through shutdown, so the event loop
@@ -2864,6 +2980,30 @@ impl Inner {
         )?;
         if run.render.is_none() {
             run.render = Some(RenderBinding::from_validated(&run.slot_id, &validated));
+        }
+        // Undeclared prefix or layout differences stop admission (§4): the
+        // first request must match the slot's frozen render exactly.
+        if !validated.followup
+            && let Some(frozen) = &run.frozen_render
+        {
+            let actual = RenderCommitments {
+                system_sha256: validated.system_sha256.clone(),
+                tools_sha256: validated.tools_sha256.clone(),
+                settings_sha256: validated.settings_sha256.clone(),
+                stable_prefix_sha256: validated.stable_prefix_sha256.clone(),
+                beta: validated.beta.clone(),
+                cache_layout: validated.cache_layout.clone(),
+                initial_user_sha256: validated.initial_user_sha256.clone(),
+            };
+            if &actual != frozen {
+                let _ = host
+                    .send_bridge(refuse(FaultClass::RequestBinding), Vec::new())
+                    .await;
+                return Err(CaptureFault::new(
+                    FaultClass::RequestBinding,
+                    "render_not_frozen",
+                ));
+            }
         }
         if run.purpose == Purpose::Preview {
             let _ = host
