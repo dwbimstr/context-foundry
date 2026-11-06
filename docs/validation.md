@@ -1,5 +1,185 @@
 # Validation
 
+## Paid transport probe and bounded coding pilot — 2026-11-06
+
+**Verdicts, kept separate as contract §12 requires.**
+
+- **Apparatus:** a completed, interpretable pilot. All eight slots reached a
+  terminal outcome and were retained. All 60 provider HTTP attempts are
+  accounted for, primary usage is complete for all 30 generations, and the
+  source and oracle bindings are valid. No halt occurred and no capture,
+  containment or provenance breach is unresolved. The binding gaps listed
+  below are disclosed rather than claimed closed.
+- **Coding:** all 8 slots passed the independent oracle, arm A 4/4 and arm B
+  4/4, so B−A = 0 in every pair. The model made essentially the same repair in
+  both arms, so this task is too easy to show any effect of the Foundry view on
+  correctness.
+- **Claim ceiling:** descriptive only. One task was repeated four times per
+  arm. There is no significance, interval, noninferiority, causal savings,
+  generalization, T006 acceptance, default promotion or invoiced-cost claim.
+
+Coding provider and model: Anthropic `claude-sonnet-5-5` through OMP 18.13.2,
+with adaptive thinking, `xhigh` effort, a 4,096-token output cap and standard
+service. Native sessions record `resolvedModelIsFallback=false`.
+
+The implementation and this record are by Claude Code (Opus 5.5). Every check
+below was done by in-session agents (self-review), not independently.
+
+### Authorization and probe
+
+The owner provided:
+- the credential file;
+- the billing identity, an Anthropic workspace that is pinned in the ratecard
+  only by SHA-256;
+- confirmation that the personal key is scoped to that workspace. The frozen
+  transport sends no `anthropic-workspace-id` header, so an unscoped key would
+  have failed.
+
+The owner then approved the rights and two scoped authorizations, each naming
+its pins:
+
+| Scope | Pins |
+| --- | --- |
+| Probe only | contract `1a00758f…502d`, helper `5ed9a163…64b3`, probe manifest `a15d9654…5474`, ratecard `507fe2f0…841e` |
+| Coding | the same contract, helper and ratecard, plus coding manifest `50184eb7…1cdd` and the probe seal `dcf8869d…d8f0` |
+
+Before any spend, in-session agents replayed every admission gate against the
+helper's code and files (92 of 92 passed). The helper claims a receipt before it
+reads the credential, so the credential's shape was checked locally first.
+
+The probe ran 13:14:57–13:15:06 UTC. It made two HTTP attempts, one CountTokens
+and one Messages, with no retry. It ended `end_turn` with 17 output tokens and
+no tool use. Its 5,239 input tokens matched the count exactly: 4 were uncached
+and 5,235 were five-minute cache writes. The seal binds:
+- the 17-record journal (`6d6b8ab2…d076`);
+- the returned model and settings;
+- the request and message identities;
+- the boot identity;
+- the paid clock.
+
+### Coding run
+
+The coding run took 170 s, from 13:31:51 to 13:34:41 UTC. It continued the
+probe's hash-chained journal (331 records, `801c76e7…`) through the verified
+handoff. Slot order was 1B, 1A, 2B, 2A, 3A, 3B, 4A, 4B.
+
+Every final generation ended `end_turn`. No slot hit a cap, and no request was
+truncated or refused for its input size.
+
+| Arm | Passed | Inclusive input, median (range) | Output, median (range) | Host wall, median (range) | Generations by pair | Tool calls by pair |
+| --- | ---: | --- | --- | --- | --- | --- |
+| A | 4/4 | 43,837.5 (43,494–44,126) | 1,521.5 (1,273–1,650) | 21.0 s (18.8–22.5) | 4 / 4 / 4 / 4 | 3 / 3 / 4 / 4 |
+| B | 4/4 | 32,837 (31,429–55,155) | 1,251.5 (1,207–1,590) | 16.8 s (14.4–22.5) | 4 / 3 / 3 / 3 | 3 / 2 / 2 / 2 |
+
+The denominator is 4 in every cell, with no missing or partial observations.
+
+- **Totals.** Inclusive input was 175,295 tokens for A and 152,258 for B, 13%
+  lower for B. Pair 1 reverses this: 1B used 55,155 tokens against 1A's 43,628.
+- **Cache counters.** A had 40 uncached, 37,951 cache-write and 137,304
+  cache-read tokens; B had 34, 39,857 and 112,367.
+  - The provider applied five-minute writes: native usage records them as
+    `ephemeral5m`, and the transport omits the TTL.
+  - Every request shared the same stable prefix, system, tools and settings
+    hashes.
+- **Usage scope.** These usage figures are the pilot's own live aggregate
+  observation of the wire. They are not invoice data.
+- **Money.** Budget-rate spend was 3,609,995 microUSD, 36.1% of the USD 10
+  envelope, including the probe's 52,815.
+  - The calculated charge at the pinned ratecard is about USD 0.346: A 0.168,
+    B 0.164 and probe 0.013. It is not an invoice and excludes taxes, fees and
+    discounts.
+  - OMP's native cost fields agree with it to 1e-6 USD.
+- **Limits.** Totals stayed within every cap:
+  - 30 permits, 30 counts and 60 HTTP attempts against caps of 49, 49 and 107;
+  - at most 4 generations in any slot;
+  - a highest slot spend of 591,300 against 1,000,000;
+  - at most 818 output tokens in a generation, against 4,096;
+  - a largest count of 17,164 tokens, against 30,720.
+- **Paid wall.** 1,181 s of 7,200 s were used. The 1,005 s between the probe
+  seal and the coding handoff mixes the owner's approval wait with operator
+  work, and the journal does not record the split.
+- **B's allocated subtotal.** Preparing each pair's view took 3.8–4.1 s
+  (index, prepare and context, with 112 embedded document units per pair). The
+  query-embedding count was not recorded and is unknown. Adding the preparation
+  time brings B's median wall to about 20.6 s, against A's 21.0 s.
+
+### How to read the arm differences
+
+- **Slot order and cache.** The probe did not warm the cache for 1B: the
+  1,005 s gap exceeded the five-minute TTL, and 1B's first generation read 0
+  cached tokens. 1B instead wrote the 4,849-token shared prefix that every later
+  slot read. That costs B about USD 0.0116 at the ratecard, more than the
+  A−B gap of USD 0.0044. No cache-independent effect is claimed.
+- **B is not one treatment.** Views 1–3 differ only in store-identity citation
+  suffixes. View 4 adds a tenth block, `Cargo.toml` (2,041 against about
+  1,730 tokens).
+- **Arm A's evidence slot** holds the pinned placeholder that tells the model
+  to inspect the workspace with its file tools.
+- **Budget headroom.** B's injected context limited its headroom: 1B could not
+  have admitted a fifth generation, which every A slot could have.
+- **Repairs.** Seven candidates use the upstream clone-then-commit fix, and all
+  seven compile to a byte-identical oracle binary. 3A peeks instead, which is
+  equivalent.
+- **The oracle is not vacuous.**
+  - It fails the seed with exit 101 at input `%A`.
+  - Every pass printed the full 131,598-case PASS line.
+  - An offline rerun of 1A, 1B and 3A reproduced their check binaries.
+  - Replaying each slot's single edit onto the seed reproduces its checked
+    source, which confirms each slot was restored from the seed.
+
+**Two blocked reads.** In 3A and 4A, the model's first generation issued
+`read` of `.`, a listing of the workspace root, alongside its read of
+`src/lib.rs`. Canonical read admission covers only the five corpus files, so the
+guard refused both calls, with no effect. The prompt does not forbid the read.
+
+- Only arm A saw these refusals, which plausibly follows from its "inspect the
+  workspace" placeholder.
+- **Reading applied here:** these are constraint violations under §10. The tool
+  was the advertised `read`, so they are not "forbidden-tool attempts" under
+  §9/§11, and the oracle outcomes stand.
+- **Stricter reading:** if the owner classifies them as forbidden-tool
+  attempts, arm A becomes 2/4 and B−A becomes +1 in pairs 3 and 4.
+
+One journaled consumer cancellation (2A, final generation) was drained to the
+terminal event and reconciled with complete usage.
+
+### Containment and disclosed gaps
+
+**Host startup traffic.** Each OMP host, at startup and outside any model tool
+call, tried:
+- an `api.anthropic.com` connection prewarm, which failed with `ENOTFOUND`;
+- loopback model discovery on ports 11434, 1234 and 8080, which failed with
+  `EPERM`.
+
+The sandbox denied these before any bytes were sent, and the journal does not
+record them. The host profile is `(allow default)(deny network*)` plus path
+denials. It is not a jail.
+
+**Disclosed gaps:**
+- **Checker receipts bind environment-variable names only.** They omit the
+  values and the `sandbox-exec` profile. They take the oracle and compiler
+  hashes from policy constants; the copies on disk were rehashed separately and
+  match.
+- **Every compile step wrote some stderr, and only its hash was kept.** The
+  cause is unknown; the compiled binaries are byte-identical to clean rebuilds.
+- **The coding authority digest sits outside the hash chain.** It is recorded
+  only in its claim marker. `coding-admission.json` names a `runs/coding`
+  directory that the handoff never uses; the run continued in `runs/probe`.
+- **Some files are not 0600/0700.** Store files and OMP-created files have
+  wider permissions; the pilot root is 0700.
+- **Failure paths not exercised.**
+  - A credential rejected after the receipt claim leaves only the claim marker.
+  - A workspace-restore failure exits without journaling a halt.
+- **`seal_slot` decides pass from exit codes alone.** It does not check the
+  PASS line, which matched here.
+
+**Key leak scan.** No file under the runs, checks, archives, workspaces, helper
+logs or `docs/` contains the key or any of its overlapping 24-character
+fragments: 410 files, about 1 GB, were scanned.
+
+**Private evidence:** `pilot-run-v1-69f88b`, including `runs/probe`, `checks`,
+`archive` and `authority`, plus `live-capture-v1-ztmPDT/{probe,coding}-run-2026-11-06`.
+
 ## Pilot apparatus and frozen launch inputs — 2026-11-06
 
 **Verdict: everything before the first paid request is built, qualified and

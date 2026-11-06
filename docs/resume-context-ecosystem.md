@@ -107,6 +107,21 @@ below are history.
   Only owner inputs remain: the credential file, account identity, rights
   approval and explicit spend authorization (probe, then coding). See the
   [receipt](validation.md#pilot-apparatus-and-frozen-launch-inputs--2026-11-06).
+- **Bounded pilot v1 completed, 2026-11-06.** With the owner's credential,
+  workspace identity, rights approval and two scoped authorizations, the paid
+  probe sealed and all eight coding slots ran without a halt.
+  - **Apparatus verdict:** a completed, interpretable pilot.
+  - **Coding verdict:** all 8 slots passed the independent oracle (A 4/4,
+    B 4/4, B−A 0 in every pair). Both arms made the same repair, so the task
+    cannot show an effect of the view on correctness.
+  - **Tokens and cost:** B used 13% fewer inclusive input tokens in total, but
+    pair 1 reverses this, and slot order and cache confound cost. The
+    calculated charge at the pinned ratecard was about USD 0.35, against a
+    budget-rate spend of 36% of the USD 10 envelope.
+  - **Open:** two arm-A reads of `.` were blocked and are recorded as
+    constraint violations; the owner may reclassify them. T006 remains
+    unaccepted, and the claim ceiling holds. See the
+    [receipt](validation.md#paid-transport-probe-and-bounded-coding-pilot--2026-11-06).
 
 
 **Representation repair continuation, 2026-10-17:** body-window contexts keep the

@@ -710,6 +710,18 @@ not hidden work inside packing; T005 carries the owner's 2026-10-03 economics pr
 
 **Status:** authorized 2026-10-09 (owner: “go for 1 then 2 and onwards”); in progress, not accepted.
 
+**Bounded pilot v1 run, 2026-11-06:** gates 2, 3 and 5 were met with the owner's
+credential, workspace identity, rights approval and scoped probe and coding
+authorizations. The paid probe sealed, and all eight frozen slots completed
+without a halt.
+- The oracle passed all 8 (A 4/4, B 4/4), so B−A = 0 in every pair; both arms
+  made the same repair.
+- The pilot is complete and interpretable. Its claim ceiling forbids T006
+  acceptance, causal savings and default promotion, so T006 stays unaccepted.
+
+See the
+[receipt](../../docs/validation.md#paid-transport-probe-and-bounded-coding-pilot--2026-11-06).
+
 **Live-capture implementation, 2026-11-05:** the contract's capture boundary is
 implemented behind the opt-in `pilot-capture` feature and passes actual-host
 no-provider qualification. Missing gate 1 is complete: the owner decided that no
