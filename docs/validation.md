@@ -87,6 +87,35 @@ is work to do.
   from the session scratchpad into the private pilot folder, with a SHA-256
   list of 74 files, before macOS cleanup could delete them.
 
+**Main merge preparation (decisions 2 and 17).** `8600fc0` bumps rustls to
+0.23.46; its lockfile change is identical to Dependabot PR #49 (cargo's MSRV-aware
+resolution also moves bindgen to syn 2.0.119 and tempfile to getrandom 0.3.4).
+`854cf88` adds three `pilot-capture` gates to `scripts/gates.sh` and fixes the two
+Clippy lints they found in `src/pilot_capture/wire.rs` test code; the earlier
+qualification receipt had not run Clippy on that feature's test targets. Gates ran
+on the owner's Mac (Apple M5 Max) with Rust 1.97.1 and 1.90.0, the macOS 26.5 SDK,
+on clean trees; logs are private, under
+`datasets/context-foundry-gates/<commit>-2026-11-06/`.
+
+- `8600fc0` (01:13–01:30 UTC): the five gates then in the script all exit 0;
+  **1,314 passed, 0 failed, 34 ignored**. Log SHA-256 prefixes: Clippy `2d948dd2…`,
+  test `dfb51fd8…`, MSRV check `37b27708…`, MSRV Clippy `cd0f5a0a…`. Run separately
+  afterward, `pilot-capture` Clippy failed on the two lints, and its unit tests
+  passed 62.
+- `854cf88` (01:33–01:52 UTC): fmt, Clippy, `pilot-clippy`, `pilot-test` (62
+  passed), MSRV check, MSRV Clippy and `msrv-pilot-check` exit 0. `test` exits 101:
+  **1,312 passed, 2 failed, 34 ignored**. Log SHA-256 prefixes: Clippy `35843436…`,
+  test `8bbfca51…`, pilot Clippy `b18a1c35…`, pilot tests `2f6725bb…`, MSRV check
+  `d79e2fea…`, MSRV Clippy `32d47f79…`, MSRV pilot check `2974fd84…`.
+- The two failures are timing tests. `artifact_verification_obeys_caller_cancellation`
+  passed 3 of 3 isolated reruns. The 6,000-file watcher test (F18) left 2,680, then
+  3,248 files pending index after its 180-second deadline, in the gate run and in an
+  isolated rerun. The default build is the same as at `8600fc0`, where it passed:
+  since then only feature-gated test code changed. Neither test was loosened; F18
+  stays open ("Native Mac run on rust" requires fixing it first).
+- Not run: CI (Actions unavailable), native macOS acceptance (F7, to do) and the
+  `pilot-capture` actual-host suite (not a gate).
+
 One observation for the owner, with no change made: Dependabot pull requests
 still start hosted workflow runs on their own branches (for example on
 2026-11-05 and 2026-11-06), although pushes from this line use `[skip ci]`.
@@ -2067,6 +2096,8 @@ directly.
 
 | Commit | fmt | clippy 1.97 | test 1.97 | msrv-check | msrv-clippy |
 | --- | --- | --- | --- | --- | --- |
+| `854cf88` | 0 | 0 | 101: 1,312 passed, 2 timing failures (watcher F18, cancellation), 34 ignored; pilot-capture gates 0 ([receipt](#owner-decisions--2026-11-06)) | 0 | 0 |
+| `8600fc0` | 0 | 0 | 0: 1,314 passed, 34 ignored ([receipt](#owner-decisions--2026-11-06)) | 0 | 0 |
 | `16b1e39` | 0 | 0 | 0: 1,307 passed, 34 ignored ([dependency cleanup receipt and log digests](#dependency-and-branch-cleanup--2026-10-26)) | 0 | 0 |
 | `38dc370` | 0 | 0 | 0: 1,287 passed, 34 ignored; gateway 54 passed ([receipt and log digests](#architecture-refactor-and-dependency-updates--2026-10-25)) | 0 | 0 |
 | `d72f3bb` | 0 | 0 | 0: 1,174 passed, 28 ignored; gateway 54 passed; two test threads ([receipt and log digests](review/evidence-selection-2026-10-17.json)) | 0 | 0 |
