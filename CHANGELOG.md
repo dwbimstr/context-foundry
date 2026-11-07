@@ -28,13 +28,16 @@ was never published and is not a release.
 - Multi-root context across one primary repository and up to eight admitted reference
   repositories.
 - Offline host usage import (`foundry usage import`).
-- Optional semantic retrieval (address cards on a statically linked llama.cpp worker),
-  off by default and run only under development isolation until its measurements and
-  signing pass.
+- Optional semantic retrieval (complete `hierarchy-v1` embeddings, the default since
+  F4, with address cards selectable, on a statically linked llama.cpp worker), off by
+  default and run only under development isolation until its measurements and signing
+  pass.
 - An installable macOS arm64 package with install, upgrade, rollback and uninstall
   (`scripts/package.sh`, `scripts/install.sh`); not signed yet.
 - A meter-only model gateway for one pinned host profile (OMP 18.6.0 with Z.ai
-  `glm-5.3-flash`).
+  `glm-5.3-flash`). It is released separately from the CLI and MCP, not advertised
+  with them, and needs a new live proof first (owner decision, 2026-11-06, "Release it
+  separately"; [record](docs/validation.md#owner-decisions--2026-11-06)).
 - Owned learning commands (spec 013), frozen off: kept as research tooling, not
   packaged or advertised.
 

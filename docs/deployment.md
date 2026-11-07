@@ -49,7 +49,10 @@ forwarded-request admission, upstream credentials and observed provider receipts
 has no source-store access. Worker supervisor owns lifecycle/access/resource bounds. Workers own only
 computation over explicit inputs. A worker cannot open the live store or call back
 to broaden its own permissions. External platform/library dependencies retain their
-licenses; all first-party glue/trainer/worker implementation stays Rust.
+licenses; all first-party glue/trainer/worker implementation stays Rust, except the
+narrow opt-in host-extension exception in
+[architecture](architecture.md#owned-learning-and-isolation) (the `pilot-capture` OMP
+bridge; owner decision, 2026-11-06).
 
 ## Bootstrap contract (003 owner)
 
@@ -136,7 +139,7 @@ No predecessor store, service or host-global configuration was migrated or chang
 | A busy status returns an old healthy snapshot | 003 returns `busy` when its engine slot is occupied. Completed status identifies the observed store/snapshot, not current-disk or model health. Read deadlines return `deadline_exceeded`, not a partial successful read or cached health certificate | Concurrent status/index, cancellation and delayed-library cases; no successful read after expiry |
 | Oversized lexical terms, rewrite/reclaim failures and neural transport churn | 001 owns bounded byte-preserving source/recovery; redb/Tantivy own physical persistence. 009 owns exact-input cache identity, visible partial coverage, disk-cap refusal and explicit offline purge. Do not port custom WAL/slot/checkpoint machinery or predecessor cache bytes | Long unbroken source text under the admitted file bound still retrieves byte-exactly; 001 restart/repair; 009 recipe/cache/index/worker acceptance before advertising semantics |
 | Workers use the wrong store or an unavailable route | 003 per-project configuration and transcript-visible fallback; only the task's independently authorized roots. No user-global entry pinning one repository across every session; borrowed subagents use their parent's configured connection | Real host/version tool ordering and fallback; root/hash/range rejection cannot widen permissions |
-| Release or optional-resource blockers | Release the actually accepted scope under release.md. 009 and 013 remain active goals with selected models; their incomplete recipe, rights, isolation and package checks block those claims, not a useful baseline. Gateway account/model/spend inputs block forwarding, not MCP | Matching real consumer, installed package or provider evidence for each advertised feature; no scratch-probe promotion |
+| Release or optional-resource blockers | Release only when every active spec is complete ([release](release.md); owner policy 2026-10-04 replaced this row's 2026-10-01 rule of releasing the accepted scope). 009's signed-package checks block the release ([owner, 2026-11-06](validation.md#owner-decisions--2026-11-06), "Row 4 blocks release"). 010's real-model acceptance is deferred, so the release does not wait on it and 010's code stays experimental and unadvertised ([owner, 2026-11-06](validation.md#owner-decisions--2026-11-06), "Defer 010 real-model acceptance"). 013 is frozen off (2026-10-07), so its unfinished learning checks are not release conditions. Gateway account/model/spend inputs block forwarding and the gateway's separate release, not MCP | Matching real consumer, installed package or provider evidence for each advertised feature; no scratch-probe promotion |
 
 The owner selected optional shared-owner MCP and the complete 001/003 T001–T003
 implementation tranche on 2026-10-01. Default stdio remains; explicit per-root
@@ -645,7 +648,11 @@ Data purge is a distinct explicit action with the existing ownership checks.
 - Selected release: install the actual artifact in a clean supported environment,
   inspect effective grants, exercise the workflow, upgrade/rollback and uninstall.
   Unsupported platforms/features are labeled unavailable. Failed optional isolation
-  blocks that worker, not the baseline package. No claim of hostile-kernel protection.
+  blocks that feature and therefore the release ([checklist](release.md)). For semantic
+  retrieval, the signed package's isolation check is part of row 4 of the
+  [measurement handoff](measurement-handoff.md), which must pass before any release
+  ([owner, 2026-11-06](validation.md#owner-decisions--2026-11-06), "Row 4 blocks
+  release"). No claim of hostile-kernel protection.
 
 These are focused integration checks owned by existing tasks and the
 [release checklist](release.md); no new all-roadmap measurement gate. Package/signing/

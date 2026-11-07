@@ -6,7 +6,9 @@ Status: T001–T003 complete and locally accepted, unreleased. T001 and T002 wer
 context) and its measured run on rust-lang/rust 1.99.0, which passed every criterion
 (see validation). T004 (doors, city map) was approved by the owner on 2026-10-07,
 implemented and merged 2026-10-08 (`d00fc19`, cross-lab SHIP, gates green), amended for
-tie groups (`483810a`, cross-lab SHIP); G1 passed with 001 T007 on 2026-10-08. Dependencies: 001; 003
+tie groups (`483810a`, cross-lab SHIP); G1 passed with 001 T007 on 2026-10-08. T005:
+the owner accepts it at its written scope (2026-11-06, § T005); the acceptance is
+recorded once the local gates receipt exists, which is still to do. Dependencies: 001; 003
 only for the agent-facing part of T003.
 Authorization: specification refinement.
 Spec-pass decisions recorded 2026-10-03: pinned producer release, UTF-8-only positions,
@@ -503,6 +505,17 @@ evidence; `spine_tree.cpp` currently rolls up derived provides/consumes vocabula
 Its spec 058 and `setu_engine.cpp` inform the publication-cost question. Those sources
 were inspected, not executed; the ecosystem plan retains the full pin and differences.
 
+Owner decision, 2026-11-06 ("Accept at written scope"): the fixture check above is
+T005's whole acceptance. It passes
+([first record](../../docs/validation.md#boundary-relationships-and-task-evidence--2026-10-10));
+the producer has since grown through `python-http-v7` (FastAPI and Flask) and the
+execution-observation import, so the owner accepts T005 at that scope. The acceptance
+is recorded once the local gates receipt exists (still to do); T005 then stops
+blocking release. Other frameworks and brokers, broader import forms, cross-language
+identity, dynamic collectors and the other items the dated continuations below leave
+open or pending are named limitations, not open T005 work. This decision supersedes
+those open or pending notes.
+
 
 #### T005 implementation — 2026-10-10
 
@@ -598,6 +611,8 @@ row. They invalidate with that source and must be delivered for task relationshi
 No new table or workspace execution is introduced. Old recipe rows decode but cannot
 serve as current evidence until explicit or enabled watcher republication. Other
 frameworks/brokers and cross-file import resolution remain pending concrete producers.
+(They remained pending under T005 until the owner made them named limitations on
+2026-11-06.)
 
 
 T005 imported/nested continuation (2026-10-10): `python-http-v4` composes up to
@@ -617,7 +632,8 @@ commit, and reuses unchanged scopes. Query validation reads each configured sour
 metadata once in the same transaction. Task composition requires all dependency bodies
 to fit. No new store table or workspace execution is introduced. The opt-in synthetic
 FastAPI consumer test executes a real cross-file nested-router request; broader
-frameworks/brokers and imports through router re-exports remain pending.
+frameworks/brokers and imports through router re-exports remain pending. (They
+remained pending under T005 until the owner made them named limitations on 2026-11-06.)
 
 
 T005 Flask and execution continuation (2026-10-11): `python-http-v5` adds imported
@@ -679,6 +695,8 @@ budget. The explicit CPython fixture captures a dynamic `getattr` call and execu
 lines while excluding an unexecuted error branch. Regressions cover two collection
 scopes, atomic rejection, third-source invalidation and restart. Broader collectors,
 frameworks/brokers, cross-language identity and test-to-requirement coverage remain open.
+(They remained open under T005 until the owner made them named limitations on
+2026-11-06.)
 
 
 T005 package and observed-framework continuation (2026-10-11):
@@ -697,13 +715,15 @@ fresh collection, an observing-test edit also invalidates the observations after
 restart. The collector captures the indexed snapshot before explicit execution and
 checks its fixture files again afterward. These generated fixtures validate the import
 contract, not a deployed general-purpose collector or test-to-requirement inference. Broader frameworks/brokers, re-exports,
-async/background trace attribution and cross-language identity remain open.
+async/background trace attribution and cross-language identity remain open. (They
+remained open under T005 until the owner made them named limitations on 2026-11-06.)
 
 The 2026-10-11 task-composition continuation maps explicit fresh requirement links to
 observed target source lines, with task entry IDs attached to the existing bounded
 execution proof. It adds no graph truth or execution behavior. A positive overlap is
 traceability only; satisfaction and complete coverage remain unestablished. Broader
-collectors/frameworks and runtime identity remain open under T005.
+collectors/frameworks and runtime identity remain open under T005. (They remained open
+until the owner made them named limitations on 2026-11-06.)
 
 T005 named re-export continuation (2026-10-11): `python-http-v7` follows explicit
 module-level `from module import name [as alias]` chains to a configured router
@@ -722,4 +742,5 @@ rows need explicit or already-enabled watcher republication. Tests cover two-hop
 aliases, edits/reverts/deletion/restart, refusal cases and whole-proof task packing;
 an explicitly invoked real FastAPI fixture confirms a request through a package
 re-export. Broader import forms, frameworks, dynamic collectors and cross-language
-evidence remain open.
+evidence remain open. (They remained open under T005 until the owner made them named
+limitations on 2026-11-06.)

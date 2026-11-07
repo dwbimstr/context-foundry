@@ -4,6 +4,10 @@ A release declares its version, included behavior and supported environments. It
 only when every task of every active spec in the [portfolio](../specs/README.md) is
 implemented and accepted (owner policy 2026-10-04); deferred and superseded specs are
 excluded. This checklist replaces spec 015; it is not another product.
+[003 T006](../specs/003-agent-retrieval-context/spec.md#t006--validate-retrieval-repairs-in-real-coding-tasks)
+remains a release condition that bounded pilot v1 cannot accept. Owner decision,
+2026-11-06, "Draft pilot v2, unfunded": a pilot v2 contract is to be drafted, and nothing
+is spent until the owner separately authorizes a key, rights and a costed budget.
 
 1. Record the selected scope, actual acceptance evidence and known limitations. Verify
    advertised integrations with their real consumer; do not make untested claims.
@@ -30,10 +34,19 @@ The learning package must use the owned Rust worker; the legacy Laya client is n
 evidence for it. A raw subprocess is not a successful jail test. While 013 is frozen
 off (owner, 2026-10-07), the release package is built without `--with-learning` and
 advertises no learned routing, so its learning-worker checks are not release conditions.
-An advertised gateway additionally proves its actual host/API streaming/tool round,
-private credential boundary, input/output admission, unknown-usage handling and exact
-host-config restoration on opt-out. Missing integration proof blocks that gateway
-and therefore the release. Gateway credentials never enter packaged data or worker grants.
+Owner decision, 2026-11-06, "Defer 010 real-model acceptance": the release does not
+wait on 010's real-model task utility, and 010's implemented code stays experimental
+and unadvertised.
+
+Owner decision, 2026-11-06, "Release it separately": as
+[spec 003](../specs/003-agent-retrieval-context/spec.md#t004--forward-and-meter-an-actual-supported-model-workflow)
+says, the meter-only 003 T004 gateway is released separately from CLI and MCP, and the
+CLI/MCP release does not advertise it. The gateway's own release additionally proves
+its actual host/API streaming/tool round, private credential boundary, input/output
+admission, unknown-usage handling and exact host-config restoration on opt-out.
+Missing integration proof blocks the gateway's release, not the CLI/MCP release; the
+earlier wording here, under which it blocked the whole release, is superseded.
+Gateway credentials never enter packaged data or worker grants.
 
 The current repository has no release. A local `v0.1.0` tag and artifact made on
 2026-10-04 under the earlier release-the-working-scope rule were withdrawn the same day
@@ -44,8 +57,19 @@ package, the source archive and `SHA256SUMS`, after Developer ID signing; the ta
 publication still need the owner's go-ahead.
 
 G2, G1 with the profile, and vector parity selected EmbeddingGemma 2 on 2026-10-08
-([validation](validation.md)). Until the installed-artifact checks (row 4 of the
-[measurement handoff](measurement-handoff.md)) pass on the signed package, the package
-is built without `--with-semantic` and advertises no semantic retrieval, just as
-learning is not advertised while 013 is frozen off. When they pass, build it with
-`--with-semantic --semantic-profile` and the frozen EmbeddingGemma 2 profile.
+([validation](validation.md)). Owner decision, 2026-11-06, "Row 4 blocks release":
+the first release ships signed semantic retrieval. Build the release candidate with
+`--with-semantic --semantic-profile` and the frozen EmbeddingGemma 2 profile, sign it,
+and run the installed-artifact checks (row 4 of the
+[measurement handoff](measurement-handoff.md)) on that signed package. A failing check
+is fixed before any release; a lexical-only package does not ship in its place. The
+2026-10-08 wording here, which built the package without `--with-semantic` until row 4
+passed, is superseded because it allowed a lexical-only release.
+
+Owner decision, 2026-11-06, "Once now, unsigned": `scripts/native-macos-acceptance.py`
+runs once on the owner's Mac with ad-hoc signing (to do) and is repeated on the signed
+release candidate. Owner decision, 2026-11-06, "Script checks only": device acceptance
+is what that script checks, and the release notes name the unbuilt global GPU
+pressure, combined embedding and generation residency, thermal/battery and
+embedding-eviction policies as limitations. They also state the other limitations the
+owner named that day in the [decision record](validation.md#owner-decisions--2026-11-06).

@@ -16,26 +16,32 @@ The [portfolio](../specs/README.md) owns order and status. Release useful workfl
 4. One real code-relationship workflow on a declared large workspace (005).
 5. Progressive neural preparation, semantic retrieval and retained work across restart/edit (009).
 6. Explicit project memory as an independent feature (008).
-7. Repeated owned Rust policy fine-tuning with isolated execution, selection and rollback (013).
+7. (Frozen off 2026-10-07; not a release condition) Repeated owned Rust policy
+   fine-tuning with isolated execution, selection and rollback (013).
 
-All seven are planned work; a release waits until every active spec is complete (owner
-policy 2026-10-04). As of
+Items 1–6 are planned work (013 is frozen off); a release waits until every active spec
+is complete (owner policy 2026-10-04). As of
 2026-10-01, 001 T001–T003 and 003 T001–T003 (including the optional shared owner) are
 implemented and verified locally ([validation](validation.md)). The owner selected
 item 3 on 2026-10-03 as the current core work, ahead of the optional features; it is
 implemented locally: 001 T004–T006 are accepted and committed (`5edf32c`); 003 T005 and
-007 T001 were accepted and committed locally on 2026-10-04, as were 008 (explicit
-memory) and 003 T004 (the owned model gateway, verified live against Z.ai). None is
-released, and the [release checklist](release.md) runs only after every active spec
-is complete. 005, 009 and 013 remain open. The 2026-10-03 spec pass classified their
-remaining unknowns as settled decisions, owned decisions (both decided 2026-10-04) or
-external prerequisites, all listed in the portfolio. 001 D001 stays
+007 T001 were accepted and committed locally on 2026-10-04, as were 008 T001–T002
+(explicit memory) and 003 T004 (the owned model gateway, verified live against Z.ai).
+None is released, and the [release checklist](release.md) runs only after every active
+spec is complete. At that point 005, 009 and 013 were open; the 2026-10-03 spec pass
+classified their remaining unknowns as settled decisions, owned decisions (both decided
+2026-10-04) or external prerequisites, all listed in the portfolio. Since then 013 has
+been frozen off (2026-10-07); 005 T005 is accepted at its written scope once its local
+gates receipt exists (to do), and 009 remains open
+([owner decisions, 2026-11-06](validation.md#owner-decisions--2026-11-06)). 003
+T006–T009, 008 T003–T005, 001 T010–T011 and 010's device acceptance also remain open;
+the [portfolio](../specs/README.md) owns current status. 001 D001 stays
 resolved: redb/Tantivy. Optional model choices do not reopen that decision by default.
 
-Plan 009's cache/profile/chunk lifecycle alongside 001. Nemotron 3 Embed 1B with the
-owner-supplied MLX 4-bit artifact is selected and its D001 recipe values are chosen;
-run the serving-limit check and validate the isolated runtime bridge before
-full-corpus preparation.
+Plan 009's cache/profile/chunk lifecycle alongside 001. EmbeddingGemma 2 on the pinned
+llama.cpp worker is the only selected profile (G2, G1 and vector parity, 2026-10-08).
+The owner closed the Nemotron comparison on 2026-11-06 ("Close it; Gemma only") and
+keeps the Nemotron files only as historical evidence.
 Neural retrieval can precede graph; it
 does not depend on policy training or generated summaries. Semantic-enabled use
 requires cold/partial/warm/edit/restart proof.
@@ -54,7 +60,12 @@ is a research reference only. The [deployment contract](deployment.md) follows e
 advertised feature through installation, shutdown, upgrade, rollback and uninstall;
 libkrun is conditional infrastructure, needed only where an isolation profile requires it.
 
-Federation, generated knowledge, automatic watchers and legacy migration
-need specific user failures before implementation; launch-time multi-root context
-(007) is not federation. The [subtraction review](review/subtraction.md)
-explains the smaller design; do not resurrect old plans because an ID still exists.
+Federation and legacy migration need specific user failures before implementation;
+launch-time multi-root context (007) is not federation. Opt-in watching (001 T011) is
+implemented experimentally. After F18 is fixed without loosening it, T011 needs a native
+`mcp --watch` run on the 62,116-file rust-lang/rust corpus on the owner's Mac (to do),
+and it stays open if that run fails. Generated knowledge (010) is implemented
+experimentally; its real-model acceptance is deferred and it stays unadvertised
+([owner decisions, 2026-11-06](validation.md#owner-decisions--2026-11-06)). The
+[subtraction review](review/subtraction.md) explains the smaller design; do not
+resurrect old plans because an ID still exists.

@@ -1,5 +1,649 @@
 # Validation
 
+## Owner decisions — 2026-11-06
+
+After the pilot, an in-session sweep (self-review, not independent) searched the
+repository, GitHub and the private pilot files for decisions waiting on the owner.
+It found 113 raw candidates, 57 of them distinct, and a completeness pass added 7
+more. Verifiers dropped 32 of those 64 as already decided, the agent's own call or
+not real, kept 32, and grouped those into 29 questions. The owner answered all of them, plus two follow-ups, in one
+multiple-choice dialog. "Done" means it happened on 2026-11-06; everything else
+is work to do.
+
+**Release path**
+
+| # | Item | Owner's choice | Result |
+|---|---|---|---|
+| 10 | 009 signed-package checks (handoff row 4) | "Row 4 blocks release" | The first release ships signed semantic retrieval; a failing row 4 is fixed first. |
+| 14 | 010 real-model acceptance | "Defer 010 real-model acceptance" | The release no longer waits on 010's task utility; the code stays experimental and unadvertised. |
+| 20 | 003 T004 meter-only Z.ai gateway | "Release it separately" | CLI and MCP release without advertising it; it gets its own release once proven live. |
+| 16 | 005 T005 boundary relationships | "Accept at written scope" | Accepted once a local gates receipt exists (to do); other producers become named limitations. |
+| 11 | 009 T006–T009 scale | "Accept the Mac rust run" | The existing Mac hierarchy-v1 preparation of rust-lang/rust, plus a short replay and changed-input check (to do), accepts scale; F10/F11 retire; Linux x86 and the 67,663-source corpus are a named limitation. |
+| 12 | Device acceptance scope | "Script checks only" | What `scripts/native-macos-acceptance.py` checks decides; unbuilt GPU-pressure, residency, thermal/battery and eviction policies are named limitations. |
+| 13 | Native macOS acceptance (F7) | "Once now, unsigned" | One ad-hoc-signed run on the owner's Mac now (to do), repeated on the signed release candidate. |
+| 15 | 001 T011 watching | "Native Mac run on rust" | Fix F18 without loosening it, then run `mcp --watch` on the 62,116-file rust corpus against bounds stated in advance (to do). |
+| 9 | 001 T010 and `--experimental-behavior-context` | "Lexical-only, drop T006 gate" | T010's own local gates and the 2026-10-19 G2 rule decide; the flag's semantic-store effects are removed and it defaults on only where lexical results are served (code to do). |
+| 24 | Query-time parse cost (001 T006, 007) | "Accept as named limitation" | No code change; reopen only after a measured failure on a real corpus. |
+
+**T006 and task context**
+
+| # | Item | Owner's choice | Result |
+|---|---|---|---|
+| 1 | 003 T006 after bounded pilot v1 | "Draft pilot v2, unfunded" | A new frozen contract with several harder held-out tasks, a powered sample and the v1 gap fixes (to do); no spend until the owner authorizes a key, rights and a budget. |
+| 8 | 003 T007–T009 and 008 T003–T005 | "Measure them in pilot v2" | Their outcome tasks join the T006 suite; 008 T004's semantic triggers get built; all six stay open until an authorized run passes. |
+| 17 | `pilot-capture` apparatus and its embedded TypeScript bridge | "Keep, with an exception" | A narrow architecture exception for embedded host-extension source in an opt-in feature; the local gates gained a `pilot-capture` step with the main merge (see below). |
+| 19 | F2 local 30B pair and F3 economics | "Retire F2; F3 to T006" | F2 is retired; F3's economics gate points to T006 and pilot v2. |
+
+**Hosts, evidence and credentials**
+
+| # | Item | Owner's choice | Result |
+|---|---|---|---|
+| 3 | Where the work runs | "Mac only, drop sandbox" | The owner's Mac (Apple M5 Max, 64 GiB) is the work host; cloud sessions remain a fallback; Linux-only jobs stay parked until the owner provides a Linux host. |
+| 6 | The 2026-10-11 sandbox and its resume archive | "Declare both lost" | Items that needed the archive are retired or resettled (F2, F6, F8, F10, F11). |
+| 18 | F6 frozen Rust/Go label sets | "Retire F6 as a gate" | G1, G2 and F4-style sealed sets are the only retrieval instruments. |
+| 7, 30 | Backups of the G2/F4/G1 sets and pilot evidence | "Encrypted off-machine copy", "Encrypted, on disk for now" | Encrypted, checksummed archives under `~/VSC_DEV/backups` (to do); the owner copies them off the Mac. Pilot evidence is kept until T006 is accepted, retired or superseded. |
+| 4 | Pilot v1 API key | "Revoke it, delete the file" | Done: the local key file and its empty directory were deleted. The owner revokes the key in the Console. |
+
+**Dependencies**
+
+| # | Item | Owner's choice | Result |
+|---|---|---|---|
+| 2 | rustls 0.23.45 alerts, PR #49 and the main merge | "Bump rustls, then merge" | rustls 0.23.46 on experimental, one gates run, one PR to main merged by the owner with a merge commit (to do). |
+| 5 | zip 0.6.6 alerts via the optional tch worker | "Dismiss as unused" | Done: Dependabot alerts #13–#16 dismissed as not used, with a recheck if 013 is unfrozen or npz loading is added. |
+| 21 | tree-sitter-scala 0.26.4, tree-sitter-powershell 0.26.6, pulldown-cmark 0.13.6 | "One bump, gated on unit diff" | One schema bump after a unit diff on fixtures and both G2 corpora; G2 on the Mac only if G2-corpus units change (to do). |
+| 22 | Tantivy 0.27.0 (PR #47) | "Apply only if neutral" | Merged onto experimental only if existing stores open without repair and G1 lexical results are identical (to do). |
+| 23 | tree-sitter-dart 0.3.0 (PR #48) | "Close; stay on 0.2.0" | Done: PR #48 closed with the reason. |
+
+**Retired, closed or kept**
+
+| # | Item | Owner's choice | Result |
+|---|---|---|---|
+| 28 | Handoff rows 5 and 6 (record-only timings) | "Retire both" | No compute is spent; the handoff stays open for row 4 and newer checks. |
+| 26 | Nemotron versus EmbeddingGemma comparison | "Close it; Gemma only" | EmbeddingGemma 2 only. |
+| 31 | Foundry's 10.4 GB of Nemotron stores and GGUF | "Keep them" | Kept as historical evidence. |
+| 27 | `overview-v1` recipe | "Keep as the low-cost recipe" | No change. |
+| 29 | F1 historical CI re-run | "Drop the historical re-run" | When Actions returns: one run on the then-current heads plus the two action bumps. |
+| 25 | 2026-10-25 audit items 3–5 and three pivots | "Defer, with triggers" | See below. |
+
+**Re-entry triggers for the deferred audit items.**
+
+- Item 3, explaining which changed dependency triggered regeneration: when a
+  measured regeneration cost or an operator question needs that explanation.
+- Item 4, cross-host resume: when a concrete host needs a task resumed on
+  another host; then an adapter for that host only.
+- Item 5, stable prompt prefixes: only inside a paid authorization, such as
+  pilot v2, that measures the hosted cache benefit.
+- The pivots (resume companion, task capsules, demand-driven enrichment): only
+  after T006 shows task benefit in an authorized run.
+
+**Done on 2026-11-06, checked.**
+
+- GitHub: alerts #13–#16 read back as `dismissed` (`not_used`); PR #48 reads
+  back `closed`. Open alerts are now the four rustls ones (#9–#12).
+- The pilot key file is gone: `~/.config/cf-pilot` no longer exists.
+- Pilot evidence: 357 files and directories readable by group or others were
+  tightened to 0700/0600, as contract §10 requires; none remain.
+- The offline oracle rerun (1A, 1B, 3A, seed) and the replay script were copied
+  from the session scratchpad into the private pilot folder, with a SHA-256
+  list of 74 files, before macOS cleanup could delete them.
+
+**Main merge preparation (decisions 2 and 17).** `8600fc0` bumps rustls to
+0.23.46; its lockfile change is identical to Dependabot PR #49 (cargo's MSRV-aware
+resolution also moves bindgen to syn 2.0.119 and tempfile to getrandom 0.3.4).
+`854cf88` adds three `pilot-capture` gates to `scripts/gates.sh` and fixes the two
+Clippy lints they found in `src/pilot_capture/wire.rs` test code; the earlier
+qualification receipt had not run Clippy on that feature's test targets. Gates ran
+on the owner's Mac (Apple M5 Max) with Rust 1.97.1 and 1.90.0, the macOS 26.5 SDK,
+on clean trees; logs are private, under
+`datasets/context-foundry-gates/<commit>-2026-11-06/`.
+
+- `8600fc0` (01:13–01:30 UTC): the five gates then in the script all exit 0;
+  **1,314 passed, 0 failed, 34 ignored**. Log SHA-256 prefixes: Clippy `2d948dd2…`,
+  test `dfb51fd8…`, MSRV check `37b27708…`, MSRV Clippy `cd0f5a0a…`. Run separately
+  afterward, `pilot-capture` Clippy failed on the two lints, and its unit tests
+  passed 62.
+- `854cf88` (01:33–01:52 UTC): fmt, Clippy, `pilot-clippy`, `pilot-test` (62
+  passed), MSRV check, MSRV Clippy and `msrv-pilot-check` exit 0. `test` exits 101:
+  **1,312 passed, 2 failed, 34 ignored**. Log SHA-256 prefixes: Clippy `35843436…`,
+  test `8bbfca51…`, pilot Clippy `b18a1c35…`, pilot tests `2f6725bb…`, MSRV check
+  `d79e2fea…`, MSRV Clippy `32d47f79…`, MSRV pilot check `2974fd84…`.
+- The two failures are timing tests. `artifact_verification_obeys_caller_cancellation`
+  passed 3 of 3 isolated reruns. The 6,000-file watcher test (F18) left 2,680, then
+  3,248 files pending index after its 180-second deadline, in the gate run and in an
+  isolated rerun. The default build is the same as at `8600fc0`, where it passed:
+  since then only feature-gated test code changed. Neither test was loosened; F18
+  stays open ("Native Mac run on rust" requires fixing it first).
+- Not run: CI (Actions unavailable), native macOS acceptance (F7, to do) and the
+  `pilot-capture` actual-host suite (not a gate).
+
+One observation for the owner, with no change made: Dependabot pull requests
+still start hosted workflow runs on their own branches (for example on
+2026-11-05 and 2026-11-06), although pushes from this line use `[skip ci]`.
+
+## Paid transport probe and bounded coding pilot — 2026-11-06
+
+**Verdicts, kept separate as contract §12 requires.**
+
+- **Apparatus:** a completed, interpretable pilot. All eight slots reached a
+  terminal outcome and were retained. All 60 provider HTTP attempts are
+  accounted for, primary usage is complete for all 30 generations, and the
+  source and oracle bindings are valid. No halt occurred and no capture,
+  containment or provenance breach is unresolved. The binding gaps listed
+  below are disclosed rather than claimed closed.
+- **Coding:** all 8 slots passed the independent oracle, arm A 4/4 and arm B
+  4/4, so B−A = 0 in every pair. The model made essentially the same repair in
+  both arms, so this task is too easy to show any effect of the Foundry view on
+  correctness.
+- **Claim ceiling:** descriptive only. One task was repeated four times per
+  arm. There is no significance, interval, noninferiority, causal savings,
+  generalization, T006 acceptance, default promotion or invoiced-cost claim.
+
+Coding provider and model: Anthropic `claude-sonnet-5-5` through OMP 18.13.2,
+with adaptive thinking, `xhigh` effort, a 4,096-token output cap and standard
+service. Native sessions record `resolvedModelIsFallback=false`.
+
+The implementation and this record are by Claude Code (Opus 5.5). Every check
+below was done by in-session agents (self-review), not independently.
+
+### Authorization and probe
+
+The owner provided:
+- the credential file;
+- the billing identity, an Anthropic workspace that is pinned in the ratecard
+  only by SHA-256;
+- confirmation that the personal key is scoped to that workspace. The frozen
+  transport sends no `anthropic-workspace-id` header, so an unscoped key would
+  have failed.
+
+The owner then approved the rights and two scoped authorizations, each naming
+its pins:
+
+| Scope | Pins |
+| --- | --- |
+| Probe only | contract `1a00758f…502d`, helper `5ed9a163…64b3`, probe manifest `a15d9654…5474`, ratecard `507fe2f0…841e` |
+| Coding | the same contract, helper and ratecard, plus coding manifest `50184eb7…1cdd` and the probe seal `dcf8869d…d8f0` |
+
+Before any spend, in-session agents replayed every admission gate against the
+helper's code and files (92 of 92 passed). The helper claims a receipt before it
+reads the credential, so the credential's shape was checked locally first.
+
+The probe ran 13:14:57–13:15:06 UTC. It made two HTTP attempts, one CountTokens
+and one Messages, with no retry. It ended `end_turn` with 17 output tokens and
+no tool use. Its 5,239 input tokens matched the count exactly: 4 were uncached
+and 5,235 were five-minute cache writes. The seal binds:
+- the 17-record journal (`6d6b8ab2…d076`);
+- the returned model and settings;
+- the request and message identities;
+- the boot identity;
+- the paid clock.
+
+### Coding run
+
+The coding run took 170 s, from 13:31:51 to 13:34:41 UTC. It continued the
+probe's hash-chained journal (331 records, `801c76e7…`) through the verified
+handoff. Slot order was 1B, 1A, 2B, 2A, 3A, 3B, 4A, 4B.
+
+Every final generation ended `end_turn`. No slot hit a cap, and no request was
+truncated or refused for its input size.
+
+| Arm | Passed | Inclusive input, median (range) | Output, median (range) | Host wall, median (range) | Generations by pair | Tool calls by pair |
+| --- | ---: | --- | --- | --- | --- | --- |
+| A | 4/4 | 43,837.5 (43,494–44,126) | 1,521.5 (1,273–1,650) | 21.0 s (18.8–22.5) | 4 / 4 / 4 / 4 | 3 / 3 / 4 / 4 |
+| B | 4/4 | 32,837 (31,429–55,155) | 1,251.5 (1,207–1,590) | 16.8 s (14.4–22.5) | 4 / 3 / 3 / 3 | 3 / 2 / 2 / 2 |
+
+The denominator is 4 in every cell, with no missing or partial observations.
+
+- **Totals.** Inclusive input was 175,295 tokens for A and 152,258 for B, 13%
+  lower for B. Pair 1 reverses this: 1B used 55,155 tokens against 1A's 43,628.
+- **Cache counters.** A had 40 uncached, 37,951 cache-write and 137,304
+  cache-read tokens; B had 34, 39,857 and 112,367.
+  - The provider applied five-minute writes: native usage records them as
+    `ephemeral5m`, and the transport omits the TTL.
+  - Every request shared the same stable prefix, system, tools and settings
+    hashes.
+- **Usage scope.** These usage figures are the pilot's own live aggregate
+  observation of the wire. They are not invoice data.
+- **Money.** Budget-rate spend was 3,609,995 microUSD, 36.1% of the USD 10
+  envelope, including the probe's 52,815.
+  - The calculated charge at the pinned ratecard is about USD 0.346: A 0.168,
+    B 0.164 and probe 0.013. It is not an invoice and excludes taxes, fees and
+    discounts.
+  - OMP's native cost fields agree with it to 1e-6 USD.
+- **Limits.** Totals stayed within every cap:
+  - 30 permits, 30 counts and 60 HTTP attempts against caps of 49, 49 and 107;
+  - at most 4 generations in any slot;
+  - a highest slot spend of 591,300 against 1,000,000;
+  - at most 818 output tokens in a generation, against 4,096;
+  - a largest count of 17,164 tokens, against 30,720.
+- **Paid wall.** 1,181 s of 7,200 s were used. The 1,005 s between the probe
+  seal and the coding handoff mixes the owner's approval wait with operator
+  work, and the journal does not record the split.
+- **B's allocated subtotal.** Preparing each pair's view took 3.8–4.1 s
+  (index, prepare and context, with 112 embedded document units per pair). The
+  query-embedding count was not recorded and is unknown. Adding the preparation
+  time brings B's median wall to about 20.6 s, against A's 21.0 s.
+
+### How to read the arm differences
+
+- **Slot order and cache.** The probe did not warm the cache for 1B: the
+  1,005 s gap exceeded the five-minute TTL, and 1B's first generation read 0
+  cached tokens. 1B instead wrote the 4,849-token shared prefix that every later
+  slot read. That costs B about USD 0.0116 at the ratecard, more than the
+  A−B gap of USD 0.0044. No cache-independent effect is claimed.
+- **B is not one treatment.** Views 1–3 differ only in store-identity citation
+  suffixes. View 4 adds a tenth block, `Cargo.toml` (2,041 against about
+  1,730 tokens).
+- **Arm A's evidence slot** holds the pinned placeholder that tells the model
+  to inspect the workspace with its file tools.
+- **Budget headroom.** B's injected context limited its headroom: 1B could not
+  have admitted a fifth generation, which every A slot could have.
+- **Repairs.** Seven candidates use the upstream clone-then-commit fix, and all
+  seven compile to a byte-identical oracle binary. 3A peeks instead, which is
+  equivalent.
+- **The oracle is not vacuous.**
+  - It fails the seed with exit 101 at input `%A`.
+  - Every pass printed the full 131,598-case PASS line.
+  - An offline rerun of 1A, 1B and 3A reproduced their check binaries.
+  - Replaying each slot's single edit onto the seed reproduces its checked
+    source, which confirms each slot was restored from the seed.
+
+**Two blocked reads.** In 3A and 4A, the model's first generation issued
+`read` of `.`, a listing of the workspace root, alongside its read of
+`src/lib.rs`. Canonical read admission covers only the five corpus files, so the
+guard refused both calls, with no effect. The prompt does not forbid the read.
+
+- Only arm A saw these refusals, which plausibly follows from its "inspect the
+  workspace" placeholder.
+- **Owner decision, 2026-11-06:** "Keep as recorded". They are constraint
+  violations under §10. The tool was the advertised `read`, so they are not
+  "forbidden-tool attempts" under §9/§11, and the oracle outcomes stand
+  (A 4/4).
+- **Stricter reading, not applied:** counting them as forbidden-tool attempts
+  would have made arm A 2/4 and B−A +1 in pairs 3 and 4.
+
+One journaled consumer cancellation (2A, final generation) was drained to the
+terminal event and reconciled with complete usage.
+
+### Containment and disclosed gaps
+
+**Host startup traffic.** Each OMP host, at startup and outside any model tool
+call, tried:
+- an `api.anthropic.com` connection prewarm, which failed with `ENOTFOUND`;
+- loopback model discovery on ports 11434, 1234 and 8080, which failed with
+  `EPERM`.
+
+The sandbox denied these before any bytes were sent, and the journal does not
+record them. The host profile is `(allow default)(deny network*)` plus path
+denials. It is not a jail.
+
+**Disclosed gaps:**
+- **Checker receipts bind environment-variable names only.** They omit the
+  values and the `sandbox-exec` profile. They take the oracle and compiler
+  hashes from policy constants; the copies on disk were rehashed separately and
+  match.
+- **Every compile step wrote some stderr, and only its hash was kept.** The
+  cause is unknown; the compiled binaries are byte-identical to clean rebuilds.
+- **The coding authority digest sits outside the hash chain.** It is recorded
+  only in its claim marker. `coding-admission.json` names a `runs/coding`
+  directory that the handoff never uses; the run continued in `runs/probe`.
+- **Some files are not 0600/0700.** Store files and OMP-created files have
+  wider permissions; the pilot root is 0700.
+- **Failure paths not exercised.**
+  - A credential rejected after the receipt claim leaves only the claim marker.
+  - A workspace-restore failure exits without journaling a halt.
+- **`seal_slot` decides pass from exit codes alone.** It does not check the
+  PASS line, which matched here.
+
+**Key leak scan.** No file under the runs, checks, archives, workspaces, helper
+logs or `docs/` contains the key or any of its overlapping 24-character
+fragments: 410 files, about 1 GB, were scanned.
+
+**Private evidence:** `pilot-run-v1-69f88b`, including `runs/probe`, `checks`,
+`archive` and `authority`, plus `live-capture-v1-ztmPDT/{probe,coding}-run-2026-11-06`.
+
+## Pilot apparatus and frozen launch inputs — 2026-11-06
+
+**Verdict: everything before the first paid request is built, qualified and
+frozen.** Contract gate 4 of the
+[bounded pilot v1 contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v1.md)
+is met; gates 2, 3 and 5 wait only on owner-held inputs (credential, account
+identity, rights approval and an explicit spend authorization). No provider
+request, real credential or coding trial occurred.
+
+[`pilot_capture::apparatus`](../src/pilot_capture/apparatus.rs) and the
+`materialize`, `manifests`, `probe` and `coding` commands of
+[`foundry-pilot-capture`](../src/bin/foundry_pilot_capture.rs) add:
+
+- verification of every pinned input, including the profile-declared embedding
+  worker, model and tokenizer, which the freeze had declared but not rehashed
+  (all three match);
+- the four pair views, each from a fresh seed workspace and isolated store with
+  the pinned release Foundry, profile and development isolation;
+- real renders of all nine slots and the frozen probe and coding manifests
+  (17 re-verified pins, the views, per-slot render commitments, and the pilot
+  root as the host's isolation root);
+- a contained independent checker: the accepted four-step recipe on a copied
+  candidate under `sandbox-exec` (no network, owner home unreadable, minimal
+  environment, 60 s). The accepted positive control passes and the seeded
+  negative fails with the exact recorded assertion;
+- the executor (probe, then the eight frozen slots with workspace restore,
+  archiving, checks and seals) and a descriptive report with no inference.
+
+Live admission now also requires the billed account and pricing evidence pinned
+by SHA-256 in the ratecard, and `rights_approved` in the owner receipt; a test
+walks every live gate in order and confirms one receipt admits one run.
+
+**Full-pipeline qualification (no provider).** One run used real views,
+renders, host, sandbox and checker with only the model scripted: the probe
+sealed, the journal-verified handoff continued it, and all eight slots sealed.
+Arm B applied the upstream repair through the native edit tool and passed 4/4;
+arm A made no edit and failed 0/4; B−A was +1 in every pair; 13 permits.
+
+**Frozen inputs (private, `pilot-run-v1-69f88b`).** Each view took about 2.5 s
+to prepare and 1.4 s to deliver, all `semantic:ready`:
+
+| Pair | Bytes | o200k tokens | Shown items |
+| ---: | ---: | ---: | ---: |
+| 1 | 6,428 | 1,729 | 9 |
+| 2 | 6,428 | 1,738 | 9 |
+| 3 | 6,428 | 1,738 | 9 |
+| 4 | 7,577 | 2,041 | 10 |
+
+The views differ by pair only through the workspace identity in each evidence
+handle. That changes handle token lengths, and pair 4's packing fits one more
+item. The contract treats pair views as setup-derived facts; report this when
+interpreting arm B.
+
+Pricing evidence, from the official pricing and token-counting pages: Claude
+Sonnet 5.5 costs $2 input, $2.50 five-minute cache write, $0.10 cache read and
+$10 output per million tokens, all within the frozen $10/$25 budget rates.
+CountTokens is free, separately rate-limited, an estimate, and never uses the
+prompt cache. The release helper is frozen in the pilot root
+(`5ed9a163…64b3`); the release `foundry` binary is unchanged.
+
+Gates for this change: `cargo fmt --check` and both clippy gates pass; 62 unit
+and 16 actual-host tests pass, including the full pipeline (`29a2bcf`).
+
+## Live-capture implementation and no-provider qualification — 2026-11-05
+
+**Verdict: the approved capture boundary is implemented and passes its actual-host
+no-provider qualification; missing gate 1 of the
+[bounded pilot v1 contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v1.md)
+(SHA-256 `1a00758f…502d`, byte-unchanged) is complete by owner decision.** It made
+no provider request, read no real credential, materialized no Foundry view and ran
+no coding trial. Gates 2–5 (real compatibility, ratecard/account/rights, launch
+manifest, owner authorization) remain open, so live execution is still locked.
+
+The opt-in `pilot-capture` feature adds one module and one helper; the default
+build and the release `foundry` binary are unchanged:
+
+- [`src/pilot_capture.rs`](../src/pilot_capture.rs): the non-cloneable
+  `CaptureSession` (strictly separate verification and live admissions, live
+  gates refused by name before any credential read, one-run authority claim,
+  hash-chained fsynced journal, checked microUSD reservations, permits,
+  deadlines, monotonic halt, slot driver, preview `render_binding`, independent
+  check seals, probe seal and clean probe-to-coding handoff).
+- [`protocol.rs`](../src/pilot_capture/protocol.rs) (closed frames over the
+  existing `neural::protocol` framing), [`host.rs`](../src/pilot_capture/host.rs)
+  (network-denied `sandbox-exec` launch, inode-bound pipes on fds 3/4, RPC, tool
+  admission ported from the accepted apparatus guard, native session read-back),
+  [`wire.rs`](../src/pilot_capture/wire.rs) (final-body validation, CountTokens
+  projection, direct HTTPS without proxy/redirect/retry, whole-event SSE judging
+  with error withholding, lossless `u64` usage) and the thin
+  [`bridge.ts`](../src/pilot_capture/bridge.ts) (credential-free, delegates to the
+  host-bundled `streamAnthropic`).
+- [`foundry-pilot-capture`](../src/bin/foundry_pilot_capture.rs): `preflight`,
+  `render` and the future `probe`, which today refuses with
+  `authority_receipt_missing` before claiming anything.
+
+Qualification used the pinned OMP 18.13.2 (`38c36452…3d0f`), the embedded bridge,
+a fresh private host root per slot and an owned numeric-loopback TLS fixture
+(throwaway CA minted per test) with an owned synthetic credential. Results:
+
+| Stage 1 case | Evidence |
+| --- | --- |
+| Native bootstrap | Bundled import, keyless catalog clone (custom API, `max_tokens` 4096, `xhigh`, exactly `read`/`edit`) and settings verified through `get_state`; a bridge load failure aborts host startup before RPC ready (`--trusted-extension`) |
+| Ready and private descriptors | Ready precedes the sole prompt; fds 3/4 bound to Rust's pipe inodes; EOF/truncation fail closed |
+| Keyless / no bypass | No registry credential; the host's own network attempts (local-model discovery and an unconditional connection prewarm `HEAD` to the model origin) are denied by the sandbox before name resolution |
+| Count → Messages | Exactly one CountTokens then one unchanged Messages body per permit; projection omits output/transport controls and the thinking binding |
+| Native response path | Native SDK consumes accepted bytes; `responseId` joins the SSE message id exactly once |
+| Retry refusal | Failed status, withheld error event, failed count and input-cap refusal each produce no second request |
+| Credential-echo privacy | Canary in non-success body/headers/`request-id` and in split or coalesced SSE error events never reaches the host root, journal or capture; failure is never a clean EOF |
+| Normal exit and containment | RPC EOF → normal exit, process group gone, no forced kill |
+
+The bounded suite also covers a legitimate tool followup with a fresh permit, a
+blocked out-of-scope edit (behaviour failure, protected files unchanged), missing
+final usage (reservation retained, halt), journal failure before transmission,
+preview rendering with no request, pair render matching, independent check seals
+and recipe/truncation provenance faults, and the sealed handoff (tampered or
+inflated seals and non-owned verification keys refused).
+
+Pinned-host behaviours the implementation now handles explicitly:
+request bodies are gzipped unless `PI_REQUEST_COMPRESSION=0` (disabled; any
+`content-encoding` is refused, which also removes the host's silent uncompressed
+re-send); the native client cancels the body right after `message_stop` (Rust
+keeps reading upstream to a verified terminal); blocked tool calls get no
+`tool_result` hook (Rust's refusal completes them); the reminder shows the
+working directory without macOS's `/private` prefix (exact display mapping).
+
+An in-session four-lens adversarial review raised 34 findings; 26 survived
+per-finding refutation and all 26 are fixed, including tool completions erased at
+settlement, unbounded reuse of one authority receipt, a probe seal invalidated by a
+later record, non-halting pin/launch faults, the probe wall and a
+credential-shaped upstream `request-id`. That review is self-review, not
+independent review, and it is the implementation's review: on 2026-11-05 the owner
+decided "no independent reviews needed - go complete and remove the gate of independent reviews". Gate 1 (implementation and review of the capture boundary) is
+therefore complete; no cross-lab review ran or is pending.
+
+Receipt (Rust 1.97.1 Homebrew; source as committed on base `957aacb`):
+
+| Gate | Result | Log SHA-256 |
+| --- | --- | --- |
+| `cargo fmt --check` | pass | `e3b0c442…b855` |
+| `cargo clippy --locked --all-targets -- -D warnings` | pass | `f2066ca2…49ec` |
+| `cargo clippy --locked --features pilot-capture … -- -D warnings` | pass | `fecede7c…2ffe` |
+| Unit tests (`--features pilot-capture --lib pilot_capture`) | 58 passed | `1fe1d804…84ce` |
+| Actual-host suite (`--test pilot_capture`) | 14 passed | `705087d1…2b6b` |
+
+Not run: `scripts/gates.sh` (no merge), the Rust 1.90 MSRV clippy and the full
+default test suite; native macOS acceptance is out of scope. The private
+implementation receipt and logs are in the live-capture evidence root.
+
+## No-provider apparatus preflight — 2026-10-29
+
+**Verdict: the full no-provider fixture preflight passes.** These are
+installed-consumer apparatus runs with fixed scripted loopback responses—not
+model-written coding trials or measurements of provider consumption/economics.
+The owner removed the Anthropic-only author restriction; scoped corrections used
+GLM-5.3, with OpenAI Sol/Astra review. Those reviewers share one provider and are
+independent of the Z.ai author.
+
+| Attempt | Passed / declared cases | Wall seconds | Outcome |
+| --- | ---: | ---: | --- |
+| First | 6 / 25 | 1,276.32 | Undeclared SSE encoder; startup catalog-control accounting |
+| Corrected | 23 / 25 | 268.42 | JavaScript-safe integer/import domain and native-refusal attribution |
+| Final | 25 / 25 | 268.14 | Full declared inventory and final reconciliation pass |
+
+The pinned OMP 18.13.2, release Foundry and Rust 1.97.1 binaries ran with fresh
+private HOME/XDG/TMP directories, a cleared child environment and dummy credentials.
+The process-birth macOS policy allowed only the fixture TCP port, denied other
+network destinations and restricted real-home data access. Live fixture/decoy and
+harmless canary controls passed; no actual credential contents were opened.
+The policy includes named securityd denials, but no dynamic keychain proof is claimed.
+This controlled apparatus is not a production jail.
+
+All three runs passed the four controller checks: network isolation, home-data isolation,
+real launch-pin tamper refusal, and externally compiled positive/seeded-negative
+oracle controls. The host passed later-payload-mutation and wrong-role-prompt
+rejection before transport. Admitted request bytes showed exactly `read`/`edit`,
+the selected model, adaptive thinking and `output_config.effort: "xhigh"`.
+
+The first run's fixture writer referenced an undeclared encoder. Startup
+`GET /v1/models` discovery was also recorded as an unexpected path. The corrected
+run delivered SSE and exercised actual read/edit effects, selector-shadow refusal,
+usage missingness, split frames and open-body completion. Late/cancelled Messages
+attempts are now checked against the immutable inventory used by each case, again
+after bounded handler shutdown; final catalog-auth and persistence state is reconciled.
+The open-body case completed through independent client cancellation before normal
+host exit; it does not prove that the HTTP body remained open until exit.
+
+The second run exposed two apparatus mismatches. The final controller losslessly
+parses Rust's valid `u64` import aggregates through original JSON integer lexemes,
+checks exact BigInt arithmetic and retains oversized evidence as tagged decimal
+strings plus complete raw stdout. Guard normalization still remains unknown at
+its JavaScript-safe overflow boundary; production accounting is unchanged.
+The clean host's identity-bound `Tool locate not found` result is accepted only
+with the exact single-plain-text-block shape and refusal digest. The recorded
+boundary is the host registry, not a fictional guard hook; the out-of-scope read
+is separately vetoed by the guard. No fake native tool or ambient plugin was added.
+
+In the successful baseline fixture, the actual wire thinking count is captured,
+but the native host still omits `reasoningTokens`; production import correctly
+remains `complete:false`. A separate, explicitly derived fixture session imports
+as complete only with strictly correlated observed wire counters. Native JSONL is
+unchanged; missing native reasoning is not a measured zero, and reasoning is not
+added again to inclusive output. This synthetic proof does not establish what
+the provider emitted in the earlier live calibration.
+Native usage-record counts are not request counts: the overflow fixture retained
+two usage-bearing native entries for one endpoint response. Their arithmetic is
+imported as recorded, not rewritten into request parity or billed consumption.
+
+The final receipt reconciles all Messages attempts with no pending handlers,
+late inventory drift, unexpected catalog auth or evidence-append failures. The
+operator additionally verified the hashes of all 29 complete raw import-output
+artifacts. Native and derived imports remain separate.
+A post-run Sol review inspected the manifest, selected raw transport/native/tool
+and oracle proofs, and accepted only this bounded no-provider apparatus scope.
+
+All cleanups reported no unresolved owned groups and stopped listeners. The
+operator confirmed all three canary paths absent with `lstat` and all 135 original
+calibration file pins unchanged. Evidence and exact executed source snapshots remain
+outside Git under `datasets/context-foundry-task-validation/apparatus-v2-DkGJgT/`;
+run directories are `preflight-runs/run-mvt80879-mfwlf/`,
+`preflight-runs/run-mvtgh5lg-2ayg4z/` and
+`preflight-runs/run-mvthtmxg-vpxs7/`. The final controller/guard SHA-256 prefixes
+are `112d1aa1…` / `d8999597…`. Failed attempts remain failed and retained.
+Elapsed times are diagnostic apparatus time, not coding latency.
+
+This closes the approved apparatus-only preflight, not T006 or a clean coding
+comparison. The guard remains fixture-only, with dummy auth and live origins
+rejected; it is not an authorized live-capture adapter. A live comparison still
+needs an approved capture/claim boundary, cache treatment, sampling/repetition and
+uncertainty plan, complete phase/usage accounting, spend/stop rules and explicit
+authorization. No real inference, forwarding, production accounting change or
+coding-comparison authorization follows from these fixture runs.
+
+## Paired coding task and actual host usage — 2026-10-28
+
+**Verdict:** both model-written repairs pass a frozen, hash-pinned external
+correctness oracle, and actual host input/output/cache usage is captured and reconciled.
+This is one public seeded calibration, not held-out task-quality acceptance.
+The frozen read/edit-only tool recipe was not enforced by the host, and its
+reasoning-token breakdown is missing. T006 and economic acceptance remain open.
+
+**Apparatus.** OMP 18.13.2 (`38c36452…`) ran Anthropic
+`claude-sonnet-5-5` at `xhigh` in both arms, with no model fallback. The task reuses
+the public `percent-encoding` 2.3.2 scenario from
+[`tests/gateway/host_task.rs`](../tests/gateway/host_task.rs): malformed escapes
+must not consume bytes, while valid escapes, no-alloc support, UTF-8 conversion
+and unchanged borrowing remain correct. The pinned upstream archive is
+`9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220`.
+Only private copies were seeded or edited; the registry and project code were not.
+
+The operator recorded protocol `3e55bde1…` before model execution, with matching
+seeded files, task, model, settings and checker; the recorded random draw selected
+baseline then assisted. Freeze chronology and the draw procedure are operator
+provenance, not independently attested by the saved runner, which rechecks seed
+hashes but not every launch pin. Each arm had one attempt, a 600-second host limit
+and a USD 5 host-reported admission ceiling, not a guarantee about invoiced or
+in-flight cost. The intended baseline was ordinary file tools without injected
+evidence. Assisted received the release CLI's 2,031-`o200k_base`-token semantic view.
+Both actually exposed the larger catalog described below. The operator reports no
+synthetic source expansion, manual arm retry, post-outcome query retuning or ranking change.
+
+The external oracle (`f5ac14d3…`) passed the untouched upstream control and
+rejected both seeded inputs before the runs. Afterward, both candidates compiled
+with no-alloc and alloc, passed 131,598 byte-case invocations plus UTF-8/encoding checks, and
+kept every protected file unchanged. Actual model reads/edits stayed within the
+five-file workspace; neither model saw the checker or another repository's source.
+The host's filesystem scope was instruction-based and audited, not an OS jail.
+The compilation JSON retains results, not compiler argv/version or an explicit
+candidate/linkage manifest; those invocations are operator execution evidence,
+not a self-contained compiler replay bundle.
+
+
+| Observation | Baseline (intended file tools) | Assisted (injected context) |
+| --- | ---: | ---: |
+| External correctness oracle | PASS | PASS |
+| Completed assistant usage records | 5 | 4 |
+| Source read calls | 2 | 1 |
+| Input tokens, including cache | 70,724 | 60,576 |
+| Cache-read tokens, input subset | 52,062 | 51,744 |
+| Cache-write tokens, input subset | 18,650 | 8,822 |
+| Output tokens | 1,595 | 1,287 |
+| Input plus output tokens | 72,319 | 61,863 |
+| Host wall time, seconds | 16.743 | 12.739 |
+| Known execution subtotal, seconds | 17.065 | 16.991 |
+| Host-catalog estimated USD, not billed charges | 0.0957802 | 0.0533524 |
+
+The execution subtotal adds the external after-check and, for assisted, 2.666 s
+of fresh indexing/preparation and 1.364 s of retrieval. Experiment construction,
+positive/negative controls, operator model work and energy are outside that subtotal,
+not zero. Local preparation separately embedded 112 vectors through 15 document
+calls and 18,841 input tokens. These are not Anthropic tokens or equivalent costs.
+Query-embedding token usage and local energy are not exposed by this CLI and remain
+unknown. No model acquisition was performed.
+
+**Receipt reconciliation.** All nine completed assistant records have actual
+input/output/cache counts; native totals match their sums and the usage objects
+in persisted sessions match those in the final JSON events. Complete messages
+are not field-identical: persisted messages also contain `contextSnapshot`.
+Production `usage import --host omp` returns the same normalized totals with no
+unparsed or unattributed results. Reasoning-token counts—not reasoning activity—
+are absent from the retained host usage objects: import correctly reports
+`complete:false` with 5/4 missing reasoning categories. Its numeric zero is not a
+measured zero, and the current completeness contract is unchanged.
+Anthropic [documents inclusive output usage](https://platform.claude.com/docs/en/build-with-claude/thinking-steering-and-cost#pricing)
+and an `output_tokens_details.thinking_tokens` subset on the final streaming
+event. Missing host breakdown does not itself prove missing aggregate output or
+provider omission; no raw provider stream was captured in this calibration.
+Host-catalog prices and the one-hour cache-write TTL do not establish billed charges.
+Hosted cache state was not reset; first-request cache conditions differed.
+The exact provenance and causal contribution of cache reuse are not identified.
+The apparent differences therefore do not establish causal or general savings.
+
+**Protocol deviation.** Despite `--tools read,edit`, OMP advertised those tools
+plus native `locate`, `context`, `status`, `remember`, `retrieve` and `history`.
+Both models attempted `locate` once; each returned a no-daemon error and no source.
+Those failed tool turns and their usage remain included. Effective catalogs matched
+between arms, but neither run satisfies the frozen read/edit-only recipe. The host
+filtering issue was reported; the pair was not rerun to erase that result.
+
+**Context boundary.** Release Foundry (`9dcbec8f…`), the existing pinned local
+profile and `--development-isolation` produced `semantic:ready`; its trace records
+64 dense candidates at revision 5. The injected view matches the assisted host's
+persisted user message. It includes the iterator caller, but does not cover the
+repair helper at bytes `8535..8747`; the model still read source. This is operator-
+injected CLI context, not proof of autonomous tool adoption, enforced host routing
+or provider-wire application hooks.
+
+**Post-repair freshness diagnostic.** The pre-edit handle still retrieves the
+accepted revision-5 snapshot before re-indexing, as
+[001 FR-003](../specs/001-source-state-recovery/spec.md) requires; an initial
+diagnostic incorrectly expected live-file invalidation. After explicit indexing
+accepts revision 6, that handle returns `stale_handle` with no source bytes.
+Semantic maintenance then completes with one new vector/197 document tokens,
+retaining the old cached input. This additional re-index/probe/refit work took
+1.299 s and is reported separately, not hidden in the primary paired subtotal.
+
+Raw prompts, sessions, patches, controls, protocol, checker, traces, imports and
+`report.json` are retained outside Git under
+`datasets/context-foundry-task-validation/paired-lFCMwZ/`. Session SHA-256 prefixes
+are baseline `3c5b0a54…` and assisted `01241341…`. No credentials, raw transcripts,
+weights or upstream sources were added to Git. No product default, persistent/global
+host configuration, product code or acceptance threshold changed; command-local
+overlay settings and flags were used as recorded.
+
 ## Markdown parser security and unit migration — 2026-10-26
 
 The owner approved a targeted security follow-up to the cleanup below, not the
@@ -1452,6 +2096,8 @@ directly.
 
 | Commit | fmt | clippy 1.97 | test 1.97 | msrv-check | msrv-clippy |
 | --- | --- | --- | --- | --- | --- |
+| `854cf88` | 0 | 0 | 101: 1,312 passed, 2 timing failures (watcher F18, cancellation), 34 ignored; pilot-capture gates 0 ([receipt](#owner-decisions--2026-11-06)) | 0 | 0 |
+| `8600fc0` | 0 | 0 | 0: 1,314 passed, 34 ignored ([receipt](#owner-decisions--2026-11-06)) | 0 | 0 |
 | `16b1e39` | 0 | 0 | 0: 1,307 passed, 34 ignored ([dependency cleanup receipt and log digests](#dependency-and-branch-cleanup--2026-10-26)) | 0 | 0 |
 | `38dc370` | 0 | 0 | 0: 1,287 passed, 34 ignored; gateway 54 passed ([receipt and log digests](#architecture-refactor-and-dependency-updates--2026-10-25)) | 0 | 0 |
 | `d72f3bb` | 0 | 0 | 0: 1,174 passed, 28 ignored; gateway 54 passed; two test threads ([receipt and log digests](review/evidence-selection-2026-10-17.json)) | 0 | 0 |
@@ -1985,7 +2631,9 @@ it is local; raw rows, traces and binary hashes are in `validation-runs/rrf-step
 - **Decision.** The candidate delivers no more expected spans than the interleave arm,
   so by F9's rule it stays reverted: `ef524b9` stands and no code changed. Retrieval
   remains **2/8**. These are exposed development questions, not held-out acceptance; F6
-  still gates any retrieval acceptance claim.
+  still gates any retrieval acceptance claim. (Superseded 2026-11-06: F6 is retired as
+  a gate, and G1, G2 and F4-style sealed sets are the only retrieval instruments; see
+  the [owner decisions](#owner-decisions--2026-11-06).)
 
 ### Steps 3 to 7
 

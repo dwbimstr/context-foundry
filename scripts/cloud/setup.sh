@@ -14,7 +14,8 @@
 # public pinned model files, the 013 tokenizer/config used by the default tests,
 # OMP 18.6.0 with Bun 1.3.14 for host-task runs, and the locked Cargo
 # dependencies (including the three grammar forks pinned by git revision).
-# Private evidence is not fetched here; see scripts/cloud/fetch-resume.sh.
+# Private evidence is not available in cloud sessions: the resume archive was
+# declared lost on 2026-11-06, and G1, G2 and pilot runs stay on the owner's Mac.
 set -u
 T=/opt/cf
 LOG=/var/log/context-foundry-setup.log

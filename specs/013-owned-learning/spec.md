@@ -104,7 +104,8 @@ Owner answers, 2026-10-04:
 Repeatedly prepare permitted feedback, adapt the model, evaluate, select or reject,
 serve in isolation and roll back. First decision: `search` versus `graph` on joint
 state/question/ordered options. Neural inference cannot grant roots, tools, spending
-or larger token budgets. Nemotron remains the independent retrieval model.
+or larger token budgets. 009's embedding model (EmbeddingGemma 2) remains the
+independent retrieval model.
 
 - **FR-001:** Only externally labeled, explicitly approved exact inputs may train.
   Preserve correction, withdrawal, group splits and contributing lineage between rounds.
@@ -270,8 +271,8 @@ T003's and SC-004 T004's, each passing only with that task's verification.
   reply within the ceiling resets the count (busy fallback neither counts nor resets);
   three consecutive prediction timeouts terminate the worker and disable the policy
   until restart. Malformed, wrong-identity and dead-worker cases stay terminal.
-  Explicit strategy/missing graph bypasses policy. Missing Nemotron does not disable a
-  usable policy; neither model extends 003 deadline. Combined aggregate resource test
+  Explicit strategy/missing graph bypasses policy. A missing 009 embedding model does not
+  disable a usable policy; neither model extends 003 deadline. Combined aggregate resource test
   belongs here only when both features are enabled. Count extra encoder work honestly.
   Verify exact-threshold acceptance, below-threshold abstention before rounding,
   entropy/answer-probability distinction, option-probability consistency and stable

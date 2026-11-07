@@ -10,6 +10,14 @@ The runner preserves failures and blocked hardware as such; adding the job does 
 establish acceptance. Its selected checks exclude generation, real-model owner death
 under pressure, global GPU headroom and signed installed-package acceptance.
 
+Owner decisions, 2026-11-06. "Once now, unsigned": the runner runs once on the
+owner's Mac with ad-hoc development signing, for the first physical-device receipts,
+and again on the signed release candidate; neither run has happened yet. "Script
+checks only": device acceptance is what this runner checks, and the unbuilt global
+GPU pressure, combined embedding-and-generation residency, thermal/battery and
+embedding-eviction policies become named limitations, each with a re-entry condition,
+and no new code.
+
 **2026-10-11 resource-code handoff.** The macOS CPU sampler now exists in
 [`model_resources.rs`](../src/model_resources.rs), using the existing optional
 background CPU policy. Linux verifies tick accounting/reset and policy hysteresis;
@@ -127,6 +135,13 @@ with representation quality and full inference still unaccepted. Full completion
 requires no unpartitioned sources, missing inputs or unpublished
 current locations, followed by real serving and changed-input checks. A completed
 file scan or fitting inventory alone cannot close semantic scale acceptance.
+
+Owner decision, 2026-11-06: "Accept the Mac rust run". 009 T006–T009 scale
+acceptance cites the complete hierarchy-v1 preparation of rust-lang/rust (62,035
+files) on the owner's Mac, plus a short replay and changed-input check there, which
+has not run yet. The 67,663-source Rust/Go corpus and Linux x86 scale become a named
+limitation, and F10 and F11 are retired. The full-corpus and Linux commands below
+remain reproduction instructions; they no longer decide acceptance.
 
 **Opt-in native scale calibration.** After the ordinary embedding receipt and
 cleanup (and generation cleanup when `--generation` is selected),
@@ -488,18 +503,23 @@ large to copy. Rows 1–3, 5, 6 and 7 below ran on the development host (Apple s
 18 GiB), one job at a time, with results recorded in [validation](validation.md).
 
 The selected profile is EmbeddingGemma 2. Nemotron 3 Embed 1B's G2 runs were INVALID,
-and the owner closed it.
+and the owner closed it. The long-context comparison with EmbeddingGemma 2 that a
+2026-10-09 request reopened was closed on 2026-11-06 ("Close it; Gemma only"); the
+Nemotron files are kept as historical evidence ("Keep them").
 
 For that 2026-10-08 baseline, row 4 and two record-only timings remained. The newer
 continuation above adds open numerical, scale and hardware checks; the historical
-table does not establish their acceptance. The baseline timing attempts swapped.
+table does not establish their acceptance. The baseline timing attempts swapped, and
+the owner retired both timings on 2026-11-06 ("Retire both").
 
 ## While this handoff is open
 
-- Semantic retrieval stays optional and off by default. Until row 4 passes, a release
-  package is built without `--with-semantic` and advertises no semantic retrieval, just
-  as learning is not advertised while 013 is frozen off ([release](release.md)). The
-  record-only rows never gate packaging.
+- Semantic retrieval stays optional, and it stays off by default until row 4 passes. Owner
+  decision, 2026-11-06: "Row 4 blocks release". The first release ships signed
+  semantic retrieval, so row 4 must pass before any release, and a failing row 4 is
+  fixed first. This replaces the 2026-10-08 reading here, under which a package built
+  without `--with-semantic` could be released while row 4 was open
+  ([release](release.md)). The record-only rows never gate packaging.
 - Nothing here changes code. Each result is recorded as counts in
   [validation](validation.md) and in the owning spec's status line. Results,
   responses, transcripts, models and private datasets stay outside Git.
@@ -517,6 +537,9 @@ table does not establish their acceptance. The baseline timing attempts swapped.
   job at a time, and run G1 with a semantic profile at `SHARDS=1` unless memory covers
   six owners and six workers.
 - Rust stable and 1.90 toolchains, `cmake`, `git` and `python3`; about 20 GB free.
+- The work runs on the owner's Mac (owner decision, 2026-11-06, "Mac only, drop
+  sandbox"), which reports an Apple M5 Max with 64 GiB. The 2026-10-08 rows ran on an
+  18 GiB Apple M3 Pro.
 
 ## Inputs
 
@@ -525,7 +548,12 @@ under the owner's authority; paths are given relative to `~/VSC_DEV`. The corpor
 public sources; the datasets, results and converted model files are not redistributed.
 The stores are bound to the absolute corpus paths under `/Users/satishlomte/VSC_DEV`;
 [resume on another machine](resume.md) gives the exact transfer, clone and
-verification steps.
+verification steps. Owner decisions, 2026-11-06: "Encrypted off-machine copy" and
+"Encrypted, on disk for now". The frozen G2 questions, the F4 sealed set
+(`datasets/context-foundry-f4`), the G2 harness, the G1 apparatus and the pilot's
+private evidence also go into encrypted, checksummed archives in `~/VSC_DEV/backups`,
+which the owner copies off the Mac ([encrypted backups](resume.md#encrypted-backups)).
+The archives are not built yet.
 
 | Input | Location | Identity |
 | --- | --- | --- |
@@ -553,14 +581,14 @@ reproduced the cards and hierarchy G2 runs row for row (388/388 each).
 
 ## Measurements
 
-| # | Measurement | Owning spec | Decides | Status (2026-10-08) |
+| # | Measurement | Owning spec | Decides | Status (2026-10-08; retirements 2026-11-06) |
 | --- | --- | --- | --- | --- |
 | 1 | G2 per candidate profile | 009 T004 *G2 and enablement* | whether a profile may be enabled for anchor-less queries | EmbeddingGemma 2 ENABLE; Nemotron INVALID twice, closed by the owner |
 | 2 | G1 with each profile that passed G2 | 009 T004 *G2 and enablement* | same; all targets and guards must still pass | EmbeddingGemma 2 PASS |
 | 3 | Batched against single-sequence vectors | 009 T004 Verification | numerical acceptance of the worker | EmbeddingGemma 2 PASS (development bundle) |
-| 4 | Installed-artifact checks | 009 T004 Verification | advertising semantic retrieval in a signed release | **deferred**: needs the Developer ID-signed package; the owner defers signing until the product is ready for release |
-| 5 | Preparation cost before and after cards | 009 T004 Verification | record only | counts recorded; time not accepted (every attempt swapped) |
-| 6 | Index time and peak memory before and after T009 | 001 T009 Verification | record only | oh-my-pi recorded; rust-lang/rust before T009 not valid (every attempt swapped) |
+| 4 | Installed-artifact checks | 009 T004 Verification | the release: the first release ships signed semantic retrieval (owner, 2026-11-06, "Row 4 blocks release"); on 2026-10-08, only advertising semantic retrieval in a signed release | **deferred**: needs the Developer ID-signed package; the owner defers signing until the product is ready for release |
+| 5 | Preparation cost before and after cards | 009 T004 Verification | record only | counts recorded; time not accepted (every attempt swapped); **retired** by the owner, 2026-11-06 ("Retire both") |
+| 6 | Index time and peak memory before and after T009 | 001 T009 Verification | record only | oh-my-pi recorded; rust-lang/rust before T009 not valid (every attempt swapped); **retired** by the owner, 2026-11-06 ("Retire both") |
 | 7 | Door latency for tie groups | 005 T004 amendment | record only (not an acceptance criterion) | recorded |
 | 8 | Rollback re-embedding under a pre-T004 binary | 009 T004 *Data cutover* | needed only if a pre-T004 build was ever distributed | not needed: no pre-T004 build was distributed |
 
@@ -600,14 +628,16 @@ reproduced the cards and hierarchy G2 runs row for row (388/388 each).
    - row 3 passes when rerun against it.
 5. **Preparation cost.** On the library-only rust-lang/rust store (the 2,255 files of
    `library/`), record time, peak footprint and tokens embedded under cards. The counts
-   and footprints are recorded. Still owed: an elapsed time from a run without
-   swapouts. Each attempt here needed about 2.4 GB for the foundry and its worker. The
-   earlier body-unit figures are in [validation](validation.md) (15,026 units, 6,889 s
-   with Nemotron on MLX).
+   and footprints are recorded. An elapsed time from a run without swapouts was still
+   owed until the owner retired this row on 2026-11-06 ("Retire both"). Each attempt
+   here needed about 2.4 GB for the foundry and its worker. The earlier body-unit
+   figures are in [validation](validation.md) (15,026 units, 6,889 s with Nemotron on
+   MLX).
 6. **T009 timing.** Index oh-my-pi (8,436 files) and rust-lang/rust into fresh stores
    with the binary before T009 (the parent of `89a8c54`) and with main, alone on an
-   idle host, under `/usr/bin/time -l`, and record wall time and peak memory. Still
-   owed: a rust-lang/rust run with the before-T009 binary, without swapouts. The build
+   idle host, under `/usr/bin/time -l`, and record wall time and peak memory. A
+   rust-lang/rust run with the before-T009 binary, without swapouts, was still owed
+   until the owner retired this row on 2026-11-06 ("Retire both"). The build
    and run scripts are in `datasets/context-foundry-timing` (`build.sh`, `t009.sh`,
    `README.md`).
 7. **Door latency.** On the rust-lang/rust store with its SCIP graph (exact doors) and
@@ -622,6 +652,10 @@ reproduced the cards and hierarchy G2 runs row for row (388/388 each).
 ## Closing the handoff
 
 Record each row's counts in [validation](validation.md) and update the owning spec's
-status line. When row 4 passes, amend the release checklist to build the package with
-`--with-semantic` and the EmbeddingGemma 2 profile. Remove this file when row 4 is
-recorded and the owner has either rerun or retired the two missing timings.
+status line. The release checklist builds the release candidate with `--with-semantic`
+and the EmbeddingGemma 2 profile, and row 4 runs on that signed candidate (owner,
+2026-11-06, "Row 4 blocks release"); the 2026-10-08 instruction to amend the checklist
+only after row 4 passed is superseded. The owner retired the two missing
+timings (rows 5 and 6) on 2026-11-06 ("Retire both"), so the handoff stays open only
+for row 4 and the newer numerical, scale and hardware checks above. Remove this file
+when row 4 is recorded and those checks are closed.
