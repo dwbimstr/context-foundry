@@ -27,6 +27,7 @@ depends on the already locked foldhash. The declared licenses are unchanged. The
 PR's tree-sitter-scala 0.26.3 is not applied: a grammar change can change units, which
 [§ Index version gate](../specs/001-source-state-recovery/contracts/context-v2.md#index-version-gate)
 and the partition recipes' `SOURCE_UNIT_SCHEMA` tie to schema bumps, an owner decision.
+The owner settled it on 2026-11-06 ("One bump, gated on unit diff", below).
 
 The 2026-10-26 maintenance subset of PR #37 updates rmcp to 3.6.0
 (rmcp-macros 3.7.0), Tokio to 1.54.1, and ureq to 3.5.0 (ureq-proto 0.6.5).
@@ -39,8 +40,31 @@ locally timed. Because the fix changes Markdown units, the same change bumps
 the derived search schema to `"8"` and `SOURCE_UNIT_SCHEMA` to `"6"`
 ([§ Unit-grammar repair](../specs/001-source-state-recovery/contracts/context-v2.md#unit-grammar-repair--2026-10-26));
 older stores repair explicitly and semantic partitions under `units5` refit
-at the next `semantic prepare`. tree-sitter-scala 0.26.3 remains held: its
-grammar change can change units the same way, an owner decision.
+at the next `semantic prepare`. tree-sitter-scala 0.26.3 was held: its
+grammar change can change units the same way, an owner decision, settled on
+2026-11-06 (below).
+
+Owner decisions of 2026-11-06 ([validation](validation.md#owner-decisions--2026-11-06))
+settle the held and open Dependabot updates:
+
+- **Parser updates** ("One bump, gated on unit diff"). tree-sitter-scala 0.26.4,
+  tree-sitter-powershell 0.26.6 and pulldown-cmark 0.13.6 go in together, in one
+  search and source-unit schema bump, after a unit diff on the fixtures and both G2
+  corpora. G2 runs on the owner's Mac only if units in a G2 corpus change. The other
+  updates in the same Dependabot group stay separate decisions. To do: `Cargo.toml`
+  still pins 0.26.2, 0.26.4 and 0.13.5.
+- **Tantivy 0.27.0, PR #47** ("Apply only if neutral"). The breaking lexical-engine
+  release is built and checked with the local gates and G1. It is merged onto the
+  experimental line only if existing 0.26 stores open without repair and G1 lexical
+  results are identical; otherwise the work stops and is reported to the owner. To do:
+  the lock stays on 0.26.2.
+- **tree-sitter-dart 0.3.0, PR #48** ("Close; stay on 0.2.0"). Done: the PR was
+  closed. 0.3.0 renames `class_member` and `enum_constant`, which the Dart unit
+  extraction matches, so taking it would need code changes and a schema bump that
+  forces every store to repair, and no corpus or G2 question uses Dart. Modern Dart syntax
+  and 0.2.0's misparsed arrow-function bodies stay unfixed.
+- **rustls** and **zip**: see [003 T004](#additions-for-003-t004-owned-model-gateway)
+  and [the legacy components](#legacy-prototype-and-planned-optional-components).
 
 | Package | Locked version | Declared license | Use |
 | --- | --- | --- | --- |
@@ -129,6 +153,13 @@ The upstream client runs with TLS verification on, through rustls with the aws-l
 provider and the platform verifier, and with no proxy, redirects or decompression.
 The lock grew from 300 to 344 entries, a count that includes platform-only crates.
 
+rustls is locked at 0.23.45 on both `experimental/context-ecosystem` and `main`,
+below the 0.23.46 fix for Dependabot alerts #9–#12. Owner decision, 2026-11-06
+("Bump rustls, then merge"): rustls moves to 0.23.46 on the experimental line, the
+local gates run once, and one pull request from experimental to `main`, merged by the
+owner with a merge commit, carries it. Merging it closes Dependabot PR #49 and alerts
+#9–#12. All of this is still to do.
+
 On `aarch64-apple-darwin`, 27 crates are new: mostly `MIT OR Apache-2.0`, plus ISC,
 Zlib, BSD-3-Clause, `CC0-1.0 OR MIT-0 OR Apache-2.0` and two compound expressions:
 - `ring`: `Apache-2.0 AND ISC`;
@@ -158,6 +189,12 @@ bounded health check. The product Cargo graph excludes
 LibTorch from default-feature builds. Its optional `learning-worker` and the separate
 [probe crate](../tools/feasibility/README.md) now pin experimental tch 0.26.0 with
 LibTorch 2.13.0; see the [compatibility review](review/tch-026.md).
+That `tch` path also locks zip 0.6.6 in both lock files, the subject of Dependabot
+alerts #13–#16 (two critical, two medium). Owner decision, 2026-11-06 ("Dismiss as
+unused"): done, the four alerts were dismissed as not used. Default and release builds
+never link `tch`, Foundry calls no npz loader, and the vulnerable npz and build-time
+paths (`tch`'s npz reader, `torch-sys`'s build script) never run here. Unfreezing 013
+or adding npz loading must trigger a recheck.
 The probe also pins PyO3 0.29.2, USearch 2.26.2 and rmcp 3.5.0 (the product has
 since moved to rmcp 3.6.0 and USearch 2.26.5); its lock is not the product lock. Contract 013 v4's accepted
 baseline was tch 0.24.0/LibTorch 2.11.0; that acceptance does not transfer to this

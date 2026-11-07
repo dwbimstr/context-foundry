@@ -1,6 +1,6 @@
 # Context Foundry constitution
 
-Version 0.6.0 · 2026-11-05 · Working project policy. User instructions take precedence.
+Version 0.7.0 · 2026-11-06 · Working project policy. User instructions take precedence.
 This is the single owner of project policy; templates are aids, not extra gates.
 
 ## Purpose
@@ -9,7 +9,9 @@ Help agents correctly work in large codebases using source, graph and explicit m
 at a bounded context cost. Support repeated fine-tuning in an owned Rust subsystem. Preserve
 these outcomes; no predecessor subsystem is entitled to be rebuilt.
 
-New Context Foundry application, trainer and supervisor code is Rust. Laya is a research
+New Context Foundry application, trainer and supervisor code is Rust. The one exception
+is first-party host-extension source that a pinned host requires, embedded in an opt-in
+feature ([architecture](../../docs/architecture.md#owned-learning-and-isolation)). Laya is a research
 reference, not a deployed dependency. Owned model workers require an enforced isolation
 profile; libkrun is conditional infrastructure, not a default core requirement.
 This repository is MIT; dependency, model and dataset
@@ -130,3 +132,6 @@ active spec is complete. The earlier rule of releasing the working scope, and th
 0.6.0 follows the owner's 2026-11-05 decision ("no independent reviews needed - go
 complete and remove the gate of independent reviews"): independent review is no
 longer a gate. Earlier cross-lab reviews remain as history.
+0.7.0 follows the owner's 2026-11-06 decision ("Keep, with an exception"): the 0.4.0
+rule of all first-party code in Rust gains one narrow exception for embedded
+host-extension source in an opt-in feature, currently the `pilot-capture` OMP bridge.

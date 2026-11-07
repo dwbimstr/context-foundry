@@ -413,6 +413,15 @@ delta SHIP (see [validation](../../docs/validation.md)).
 `5edf32c`, unreleased. `following_chunks` is removed. Owner decisions on outline
 refusals are in § Retrieve views of the [v2 contract](contracts/context-v2.md#retrieve-views).
 
+Named limitation (owner decision, 2026-11-06, "Accept as named limitation"): context
+parses verified candidate bodies at query time to build outlines and forms, with no
+cache and no per-request bound beyond the per-file parse limits. A synthetic worst
+case, 32 Rust files of about 1 MiB each, took about 4.2 s of CLI wall time for
+context, about 84% of the MCP owner's 5,000 ms read deadline; a request over the
+deadline fails with the retryable `deadline_exceeded`, and 007 shares that deadline
+across roots. No code change: this reopens only after a measured failure on a real
+corpus ([validation](../../docs/validation.md#token-economics-remainder--003-t005-and-007-t001-2026-10-04)).
+
 - **Depends:** T005. **Scope:** `src/syntax.rs` (outline), `src/store.rs`
   (`context_candidates`, `CandidateBatch`, removal of `following_chunks`),
   `src/response.rs` (`pack` and the forms ladder), `src/mcp.rs`/`src/cli.rs` (`view` /
@@ -523,9 +532,10 @@ accepted locally 2026-10-08 (`89a8c54`, [validation](../../docs/validation.md)).
 timing is a record, not an acceptance condition, and was taken on 2026-10-08. On the
 18 GiB development host, indexing oh-my-pi took 53–57 s with every binary (fastest
 valid runs: main 0.949× of before). [inference] Indexing there is I/O-bound, so the eight threads
-give no visible gain. A valid rust-lang/rust run with the binary before T009 is still
-owed: every attempt swapped
-([measurement handoff](../../docs/measurement-handoff.md)).
+give no visible gain. A valid rust-lang/rust run with the binary before T009 was never
+obtained: every attempt swapped. Owner decision, 2026-11-06 ("Retire both", handoff
+rows 5 and 6): that record-only timing is retired, not owed, and no compute is spent
+on it ([measurement handoff](../../docs/measurement-handoff.md)).
 
 - **Depends:** T005. **Scope:** `src/store.rs` refresh (bounded parse fan-out ahead of
   the one Tantivy writer), `tests/recovery.rs` and `tests/core.rs`.
@@ -540,11 +550,20 @@ owed: every attempt swapped
   fast); G1 results (§ G1) on a store rebuilt by the T009 binary are identical to the
   baseline's. Index time and peak memory for oh-my-pi (8,436 files, 65 s
   single-threaded on 2026-10-07) and rust-lang/rust before and after are recorded by
-  the [measurement handoff](../../docs/measurement-handoff.md).
+  the [measurement handoff](../../docs/measurement-handoff.md), except the
+  rust-lang/rust run before T009, which the owner retired on 2026-11-06.
 
 ### T010 — Retrieve behavioral evidence for a named symbol
 
 **Status:** authorized 2026-10-09 (owner: “go for 1 then 2 and onwards”); in progress, not accepted.
+Owner decision, 2026-11-06 ("Lexical-only, drop T006 gate";
+[decision record](../../docs/validation.md#owner-decisions--2026-11-06)): T010's own
+local gates below and the 2026-10-19 G2 enable rule ([AGENTS.md](../../AGENTS.md))
+decide the flag; the 003 T006 agent-task gate no longer applies to it, and no
+real-agent benefit is claimed. G2 found that the flag helps lexical-only stores and
+costs the default hierarchy recipe ([validation](../../docs/validation.md)), so its
+effects on semantic stores are to be removed and, once the gates pass, it is to
+default on only where lexical results are served. That code change is still to do.
 
 The first candidate is implemented behind `--experimental-behavior-context` (CLI
 context / MCP owner), default off. It changes packing of existing, fresh candidates,
@@ -564,7 +583,8 @@ The full gates below remain pending; see [validation](../../docs/validation.md).
   retrieval problem, separate from 009's anchorless G2 misses.
 - **Depends:** T007 and 005 T004; 009 T005's diagnostic checkpoint supplies the shared
   stage trace, not a dependency on completing the semantic repair. 003 T006 owns
-  evidence that the repair improves actual agent tasks.
+  evidence that the repair improves actual agent tasks; since 2026-11-06 T010 claims
+  no such improvement and does not wait on T006 (owner decision above).
 - **Scope:** intent/resolution at `src/mcp.rs` and the ordinary query entry points,
   candidate selection in `src/store.rs`, packing in `src/response.rs`, and the
   [context v2 contract](contracts/context-v2.md). Keep one query path for CLI/MCP;
@@ -605,11 +625,16 @@ The full gates below remain pending; see [validation](../../docs/validation.md).
     an unknown case. Frozen pure-locator controls retain evidence identities and
     ordering. A changed accepted contract must identify the replaced T007 rule and
     its regression fixtures, rather than silently invalidating the old tests.
+  - Default (owner amendment, 2026-11-06): these gates and the 2026-10-19 G2 enable
+    rule on lexical-only stores decide whether the flag defaults on there; no 003
+    T006 agent-task result is required. The accepted flag changes nothing on stores
+    that serve semantic results.
 - **Verification:** targeted core/MCP fixtures for relevant support, identity
   ambiguity, unavailable/stale graph, bounded packing and scope isolation, followed
   by the required implementation checks and the frozen measurements when this task
   is implemented. Local implementation evidence is recorded in validation; the full
-  benchmark and real-host acceptance gates are still open.
+  benchmark gates are still open. The real-host agent-task gate was dropped for this
+  flag on 2026-11-06.
 
 ### G1 — city-map measurement
 
@@ -716,8 +741,13 @@ proxies, they can resolve to a different compiler.
 
 ### T011 — Maintain the admitted workspace from filesystem change hints
 
-Implemented locally 2026-10-09 for the experimental ecosystem. The owner
-requires continuous incremental maintenance at 60,000–80,000 files. Reuse this spec's
+Implemented locally 2026-10-09 for the experimental ecosystem; not accepted. The owner
+requires continuous incremental maintenance at 60,000–80,000 files. Owner decision,
+2026-11-06 ("Native Mac run on rust"): first fix F18, the intermittent 6,000-file
+watcher test ([FOLLOWUP](../../FOLLOWUP.md)), without loosening its assertion; then
+T011 is accepted only by an `mcp --watch` run on the owner's Mac over the 62,116-file
+rust-lang/rust 1.99.0 corpus, against bounds stated before the run. If that run
+fails, T011 stays open. Neither step has run yet. Reuse this spec's
 source ingestion, ignore/no-follow and reconciliation rules. Watch events do not
 admit roots, certify bytes or become a second source ledger.
 
@@ -735,7 +765,8 @@ admit roots, certify bytes or become a second source ledger.
   step. Expose pending/overflow/last-success/error status; no invisible hot scan loop.
 - Verify event bursts, rename/delete, symlink replacement, lost-event reconciliation,
   restart, edit during refresh and idle operation on a synthetic large-file-count
-  sandbox. That fixture does not establish semantic preparation throughput.
+  sandbox, then accept with the native Mac run above (owner, 2026-11-06). Neither
+  establishes semantic preparation throughput, which belongs to 009 T008.
 
 Reference: Prakarana `3143213d`, `src/internal/workspace.cpp`,
 `docs/design/watcher-efficiency.md`, `test_watch_scan_efficiency.cpp` and

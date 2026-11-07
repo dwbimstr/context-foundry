@@ -1,5 +1,96 @@
 # Validation
 
+## Owner decisions — 2026-11-06
+
+After the pilot, an in-session sweep (self-review, not independent) searched the
+repository, GitHub and the private pilot files for decisions waiting on the owner.
+It found 113 raw candidates, 57 of them distinct, and a completeness pass added 7
+more. Verifiers dropped 32 of those 64 as already decided, the agent's own call or
+not real, kept 32, and grouped those into 29 questions. The owner answered all of them, plus two follow-ups, in one
+multiple-choice dialog. "Done" means it happened on 2026-11-06; everything else
+is work to do.
+
+**Release path**
+
+| # | Item | Owner's choice | Result |
+|---|---|---|---|
+| 10 | 009 signed-package checks (handoff row 4) | "Row 4 blocks release" | The first release ships signed semantic retrieval; a failing row 4 is fixed first. |
+| 14 | 010 real-model acceptance | "Defer 010 real-model acceptance" | The release no longer waits on 010's task utility; the code stays experimental and unadvertised. |
+| 20 | 003 T004 meter-only Z.ai gateway | "Release it separately" | CLI and MCP release without advertising it; it gets its own release once proven live. |
+| 16 | 005 T005 boundary relationships | "Accept at written scope" | Accepted once a local gates receipt exists (to do); other producers become named limitations. |
+| 11 | 009 T006–T009 scale | "Accept the Mac rust run" | The existing Mac hierarchy-v1 preparation of rust-lang/rust, plus a short replay and changed-input check (to do), accepts scale; F10/F11 retire; Linux x86 and the 67,663-source corpus are a named limitation. |
+| 12 | Device acceptance scope | "Script checks only" | What `scripts/native-macos-acceptance.py` checks decides; unbuilt GPU-pressure, residency, thermal/battery and eviction policies are named limitations. |
+| 13 | Native macOS acceptance (F7) | "Once now, unsigned" | One ad-hoc-signed run on the owner's Mac now (to do), repeated on the signed release candidate. |
+| 15 | 001 T011 watching | "Native Mac run on rust" | Fix F18 without loosening it, then run `mcp --watch` on the 62,116-file rust corpus against bounds stated in advance (to do). |
+| 9 | 001 T010 and `--experimental-behavior-context` | "Lexical-only, drop T006 gate" | T010's own local gates and the 2026-10-19 G2 rule decide; the flag's semantic-store effects are removed and it defaults on only where lexical results are served (code to do). |
+| 24 | Query-time parse cost (001 T006, 007) | "Accept as named limitation" | No code change; reopen only after a measured failure on a real corpus. |
+
+**T006 and task context**
+
+| # | Item | Owner's choice | Result |
+|---|---|---|---|
+| 1 | 003 T006 after bounded pilot v1 | "Draft pilot v2, unfunded" | A new frozen contract with several harder held-out tasks, a powered sample and the v1 gap fixes (to do); no spend until the owner authorizes a key, rights and a budget. |
+| 8 | 003 T007–T009 and 008 T003–T005 | "Measure them in pilot v2" | Their outcome tasks join the T006 suite; 008 T004's semantic triggers get built; all six stay open until an authorized run passes. |
+| 17 | `pilot-capture` apparatus and its embedded TypeScript bridge | "Keep, with an exception" | A narrow architecture exception for embedded host-extension source in an opt-in feature; the local gates gain a `pilot-capture` step (to do). |
+| 19 | F2 local 30B pair and F3 economics | "Retire F2; F3 to T006" | F2 is retired; F3's economics gate points to T006 and pilot v2. |
+
+**Hosts, evidence and credentials**
+
+| # | Item | Owner's choice | Result |
+|---|---|---|---|
+| 3 | Where the work runs | "Mac only, drop sandbox" | The owner's Mac (Apple M5 Max, 64 GiB) is the work host; cloud sessions remain a fallback; Linux-only jobs stay parked until the owner provides a Linux host. |
+| 6 | The 2026-10-11 sandbox and its resume archive | "Declare both lost" | Items that needed the archive are retired or resettled (F2, F6, F8, F10, F11). |
+| 18 | F6 frozen Rust/Go label sets | "Retire F6 as a gate" | G1, G2 and F4-style sealed sets are the only retrieval instruments. |
+| 7, 30 | Backups of the G2/F4/G1 sets and pilot evidence | "Encrypted off-machine copy", "Encrypted, on disk for now" | Encrypted, checksummed archives under `~/VSC_DEV/backups` (to do); the owner copies them off the Mac. Pilot evidence is kept until T006 is accepted, retired or superseded. |
+| 4 | Pilot v1 API key | "Revoke it, delete the file" | Done: the local key file and its empty directory were deleted. The owner revokes the key in the Console. |
+
+**Dependencies**
+
+| # | Item | Owner's choice | Result |
+|---|---|---|---|
+| 2 | rustls 0.23.45 alerts, PR #49 and the main merge | "Bump rustls, then merge" | rustls 0.23.46 on experimental, one gates run, one PR to main merged by the owner with a merge commit (to do). |
+| 5 | zip 0.6.6 alerts via the optional tch worker | "Dismiss as unused" | Done: Dependabot alerts #13–#16 dismissed as not used, with a recheck if 013 is unfrozen or npz loading is added. |
+| 21 | tree-sitter-scala 0.26.4, tree-sitter-powershell 0.26.6, pulldown-cmark 0.13.6 | "One bump, gated on unit diff" | One schema bump after a unit diff on fixtures and both G2 corpora; G2 on the Mac only if G2-corpus units change (to do). |
+| 22 | Tantivy 0.27.0 (PR #47) | "Apply only if neutral" | Merged onto experimental only if existing stores open without repair and G1 lexical results are identical (to do). |
+| 23 | tree-sitter-dart 0.3.0 (PR #48) | "Close; stay on 0.2.0" | Done: PR #48 closed with the reason. |
+
+**Retired, closed or kept**
+
+| # | Item | Owner's choice | Result |
+|---|---|---|---|
+| 28 | Handoff rows 5 and 6 (record-only timings) | "Retire both" | No compute is spent; the handoff stays open for row 4 and newer checks. |
+| 26 | Nemotron versus EmbeddingGemma comparison | "Close it; Gemma only" | EmbeddingGemma 2 only. |
+| 31 | Foundry's 10.4 GB of Nemotron stores and GGUF | "Keep them" | Kept as historical evidence. |
+| 27 | `overview-v1` recipe | "Keep as the low-cost recipe" | No change. |
+| 29 | F1 historical CI re-run | "Drop the historical re-run" | When Actions returns: one run on the then-current heads plus the two action bumps. |
+| 25 | 2026-10-25 audit items 3–5 and three pivots | "Defer, with triggers" | See below. |
+
+**Re-entry triggers for the deferred audit items.**
+
+- Item 3, explaining which changed dependency triggered regeneration: when a
+  measured regeneration cost or an operator question needs that explanation.
+- Item 4, cross-host resume: when a concrete host needs a task resumed on
+  another host; then an adapter for that host only.
+- Item 5, stable prompt prefixes: only inside a paid authorization, such as
+  pilot v2, that measures the hosted cache benefit.
+- The pivots (resume companion, task capsules, demand-driven enrichment): only
+  after T006 shows task benefit in an authorized run.
+
+**Done on 2026-11-06, checked.**
+
+- GitHub: alerts #13–#16 read back as `dismissed` (`not_used`); PR #48 reads
+  back `closed`. Open alerts are now the four rustls ones (#9–#12).
+- The pilot key file is gone: `~/.config/cf-pilot` no longer exists.
+- Pilot evidence: 357 files and directories readable by group or others were
+  tightened to 0700/0600, as contract §10 requires; none remain.
+- The offline oracle rerun (1A, 1B, 3A, seed) and the replay script were copied
+  from the session scratchpad into the private pilot folder, with a SHA-256
+  list of 74 files, before macOS cleanup could delete them.
+
+One observation for the owner, with no change made: Dependabot pull requests
+still start hosted workflow runs on their own branches (for example on
+2026-11-05 and 2026-11-06), although pushes from this line use `[skip ci]`.
+
 ## Paid transport probe and bounded coding pilot — 2026-11-06
 
 **Verdicts, kept separate as contract §12 requires.**
@@ -2509,7 +2600,9 @@ it is local; raw rows, traces and binary hashes are in `validation-runs/rrf-step
 - **Decision.** The candidate delivers no more expected spans than the interleave arm,
   so by F9's rule it stays reverted: `ef524b9` stands and no code changed. Retrieval
   remains **2/8**. These are exposed development questions, not held-out acceptance; F6
-  still gates any retrieval acceptance claim.
+  still gates any retrieval acceptance claim. (Superseded 2026-11-06: F6 is retired as
+  a gate, and G1, G2 and F4-style sealed sets are the only retrieval instruments; see
+  the [owner decisions](#owner-decisions--2026-11-06).)
 
 ### Steps 3 to 7
 

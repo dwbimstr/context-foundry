@@ -1,4 +1,11 @@
 #!/bin/bash
+# Retired 2026-11-06: the owner declared the 2026-10-11 resume archive lost, and
+# CLAUDE.md says not to run this script (docs/validation.md, "Owner decisions —
+# 2026-11-06"). No upload source was ever configured (CF_RESUME_URL and
+# CF_RESUME_GH_REPO stayed empty) and the archive is in no dwbimstr release, so this
+# script never fetched it. It is kept only as the record of how a cloud session was
+# meant to fetch it.
+#
 # Download the private resume archive into /workspace, verify its SHA-256 and print
 # its RESTORE.md. Extraction is left to RESTORE.md's own steps.
 #

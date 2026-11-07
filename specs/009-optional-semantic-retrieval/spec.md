@@ -217,8 +217,13 @@ restart/revert reuse apply. Switching to hierarchy-v1 expands the recipe and reu
 matching overview vectors. There is still one active source recipe: this is not a
 simultaneous coarse index with automatic query-triggered body preparation. “Complete”
 means complete for the selected recipe; a file vector does not represent every omitted
-body byte or establish complete retrieval. Comparative quality, full representative
-inference and selective mixed-granularity preparation remain open.
+body byte or establish complete retrieval. Comparative quality and selective
+mixed-granularity preparation remain open; full representative inference is a named
+limitation (scale decision under [T006](#t006--bound-and-parallelize-semantic-partition-computation)).
+Owner decision, 2026-11-06, "Keep as the low-cost recipe": overview-v1 stays an opt-in
+recipe, the cheapest to prepare though it locates fewer G2 answers than cards or
+hierarchy, with no code change; native macOS acceptance keeps using it
+([record](../../docs/validation.md#owner-decisions--2026-11-06)).
 
 Planning addition, 2026-10-09: [T005](#t005--diagnose-and-improve-anchorless-evidence-retrieval)
 is authorized for execution by the owner on 2026-10-09 under the [ecosystem plan](../../docs/context-ecosystem-plan.md).
@@ -244,11 +249,17 @@ and the fused merge. Its real-model checks ran on 2026-10-08
 ([validation](../../docs/validation.md)):
 - EmbeddingGemma 2 passed G2 (139 of 388 gained, 0 lost), G1 with the profile, and the
   batched-against-single-sequence check, so it is the selected profile.
-- Nemotron 3 Embed 1B's G2 runs were INVALID, and the owner closed it.
+- Nemotron 3 Embed 1B's G2 runs were INVALID, and the owner closed it. A long-context
+  comparison against EmbeddingGemma 2, reopened on 2026-10-09, was never run. Owner
+  decision, 2026-11-06, "Close it; Gemma only": it is closed, and EmbeddingGemma 2 is
+  the only embedding model. The Nemotron artifacts are kept as historical evidence.
 
-The installed-artifact checks wait for Developer ID signing
+The installed-artifact checks (handoff row 4) wait for Developer ID signing
 ([measurement handoff](../../docs/measurement-handoff.md)). Until they pass, semantic
-retrieval stays off by default and a release advertises none.
+retrieval stays off by default and there is no release. Owner decision, 2026-11-06,
+"Row 4 blocks release": the first release ships signed semantic retrieval, so a failing
+row 4 is fixed before any release; a lexical-only release is not an option
+([record](../../docs/validation.md#owner-decisions--2026-11-06)).
 D001 recorded 2026-09-29; its chosen values were
 recorded 2026-10-03 (below). Reactivated for planning by the owner's preparation-cost
 concern. Dependencies:
@@ -296,21 +307,26 @@ Owner answers, 2026-10-04:
 The semantic-item line form was decided 2026-10-04 (§ Documents, embedding units and
 returned evidence).
 
-Selected model: **`nvidia/Nemotron-3-Embed-1B-BF16`**, explicitly chosen by the owner.
+Selected model until 2026-10-08 (superseded): **`nvidia/Nemotron-3-Embed-1B-BF16`**,
+explicitly chosen by the owner at the time.
 Selected local artifact: **`mlx-community/Nemotron-3-Embed-1B-BF16-4bit`**, subsequently
 supplied by the owner. Output: 2048 dimensions, cached as float32 vectors; the search
 index stores float16 (D001 chosen values).
 The earlier Llama Nemotron suggestion is superseded. D001 records pinned artifact/runtime
 identities and a bounded executed scratch bridge. Production integration, the complete
 recipe and installed-package acceptance remain open; that probe is not dense retrieval.
+G2 selected EmbeddingGemma 2 on 2026-10-08 (T004), and the owner closed the reopened
+Nemotron comparison on 2026-11-06 ("Close it; Gemma only"): EmbeddingGemma 2 is the
+only selected model. The Nemotron and MLX text in D001 below is history.
 
 ## Outcome and evidence
 
 Explicitly enroll a workspace, get baseline context immediately, prepare semantic
 retrieval progressively, retain that work across sessions and update changed inputs.
-A semantic-enabled release must demonstrate that lifecycle; earlier lexical releases
-remain independently useful and accurately advertised. Distinguish missing candidates
-from bad ordering; a reranker cannot recover an absent candidate.
+A semantic-enabled release must demonstrate that lifecycle. The 2026-09-29 allowance
+for earlier lexical-only releases is superseded: owner decision, 2026-11-06, "Row 4
+blocks release", makes the first release a signed semantic one. Distinguish missing
+candidates from bad ordering; a reranker cannot recover an absent candidate.
 
 The predecessor M42 result reports 32,707 embeddings and approximately 2,920 generated
 facts reattached with zero model calls in 30.2 seconds, compared with approximately a
@@ -1173,7 +1189,8 @@ Those checks ran on 2026-10-08:
   single-sequence vectors, and is the selected profile.
 - Nemotron was INVALID in G2 and closed by the owner.
 - The installed artifact waits for signing
-  ([measurement handoff](../../docs/measurement-handoff.md)).
+  ([measurement handoff](../../docs/measurement-handoff.md)). Its checks (handoff row 4)
+  block the release (owner decision, 2026-11-06, "Row 4 blocks release").
 
 Earlier evidence ([validation](../../docs/validation.md)):
 fused into the final ranking, both Nemotron and EmbeddingGemma 2 delivered less
@@ -1291,7 +1308,8 @@ llama.cpp worker (model and runtime both differ); the average embedded unit was 
   - Batched and single-sequence vectors agree (EmbeddingGemma 2, min cosine 0.9999878).
   - Preparation counts and footprints on the library-only rust-lang/rust store are
     recorded. Its time is not accepted, because every attempt swapped on the 18 GiB
-    host.
+    host. Owner decision, 2026-11-06, "Retire both": this timing (handoff row 5) is
+    retired, not rerun.
 
   Still in the [measurement handoff](../../docs/measurement-handoff.md): the installed
   worker links only system libraries and frameworks, and passes the isolation,
@@ -1349,10 +1367,14 @@ Diagnostics are outside the evidence allowance but their I/O/latency is measured
 separately. Their payloads can contain private source/memory; keep the directory
 outside indexed source and Git, and explicitly remove it when its retention ends.
 
-The private G1/G2 questions/results, prepared Gemma stores and macOS measurement host
-are absent from this cloud workspace. That blocks full miss attribution and quality
-acceptance. Local traced examples and fixture results must remain separately labelled;
-they do not assign causes to the 249 historical G2 misses.
+The private G1/G2 questions/results and prepared Gemma stores are on the owner's Mac,
+the measurement host and where the work runs
+([owner, 2026-11-06](../../docs/validation.md#owner-decisions--2026-11-06)), and have
+been there throughout; G2 has been the
+[retrieval instrument](../../docs/validation.md#g2-restored-as-the-retrieval-instrument--2026-10-17)
+since 2026-10-17. A cloud session lacks them and cannot do full miss attribution or
+quality acceptance. Local traced examples and fixture results must remain separately
+labelled; they do not assign causes to the 249 historical G2 misses.
 
 - **Depends:** T004 implementation and preserved G1/G2 apparatus from the
   [measurement handoff](../../docs/measurement-handoff.md). The diagnostic checkpoint
@@ -1475,6 +1497,13 @@ extends this experimental admission to complete coverage for independent passage
 representations; complete address-card coverage, explicit symbols and ordinary search
 preserve T004 placement. This amends the experimental context rule
 linked above; it is not a new provider, corpus scan or default promotion.
+Owner decision, 2026-11-06, "Lexical-only, drop T006 gate": the
+[003 T006](../003-agent-retrieval-context/spec.md#t006--validate-retrieval-repairs-in-real-coding-tasks)
+agent-task gate no longer applies to this opt-in, and no real-agent benefit is claimed.
+Its effects on semantic stores are to be removed. Once 001 T010's own local gates and
+the 2026-10-19 G2 enable rule pass, it defaults on only where lexical results are
+served (code to do). Until that change lands, the semantic-store rules in this spec
+stay as written.
 
 Inspection of the public Rust losses also found three relevant rank-2 callables
 whose excerpts contained leading documentation but omitted the declaration. The
@@ -1499,6 +1528,13 @@ acceptance. The raw comparison and rejected patch are retained outside Git in th
 Status: implemented experimentally in the shared CLI/MCP pipeline; sandbox evidence
 is in [validation](../../docs/validation.md#large-repository-architecture-and-parallel-partitioning--2026-10-09).
 Bounded representative CPU progress is recorded in [current validation](../../docs/validation.md#retrieval-scale-and-host-economics--2026-10-11); complete repository throughput and task benefit remain unaccepted.
+Owner decision, 2026-11-06, "Accept the Mac rust run": T006–T009 scale acceptance cites
+the existing complete hierarchy-v1 preparation of rust-lang/rust (62,035 files) on the
+owner's Mac ([record](../../docs/validation.md#complete-hierarchy-on-rust--2026-10-21))
+plus a short replay and changed-input check on the owner's Mac, which is still to run;
+scale is not accepted until it passes. Linux x86 scale and the 67,663-source
+representative Rust+Go corpus are a named limitation, and the parked Linux calibration
+and full-overview runs (FOLLOWUP F10/F11) retire.
 
 Selected 2026-10-09 for the experimental branch, following the owner's large-repository
 architecture correction. Current `partition_page` tokenizes serially inside a redb
@@ -1531,7 +1567,9 @@ watching and LLM enrichment remain separate work in the revised ecosystem plan.
 ### T007 — Make semantic bootstrap useful before a complete corpus pass
 
 Selected 2026-10-09; progressive scheduling/publication implemented experimentally,
-with device tuning and real throughput still unverified. T006 removes CPU computation
+with device tuning and real throughput still unverified. Scale acceptance follows the
+owner's 2026-11-06 decision under [T006](#t006--bound-and-parallelize-semantic-partition-computation).
+T006 removes CPU computation
 from serving and writer locks. Replace the whole-source partition and initial
 generation barriers with bounded waves of
 partition/select/embed/commit and amortized searchable publication, preserving exact
@@ -2035,7 +2073,13 @@ atomic publication and bounded compaction; USearch supplies ANN storage and sear
 
 ### T009 — Use model-owned geometry and contextual representations
 
-Implemented experimentally, 2026-10-10; real-device acceptance remains open. The exact publisher contracts and their limits
+Implemented experimentally, 2026-10-10; real-device acceptance remains open. Owner
+decision, 2026-11-06, "Script checks only": device acceptance for T008 and T009 is what
+`scripts/native-macos-acceptance.py` checks, with no new code. The unbuilt global GPU
+pressure, combined residency, thermal/battery and embedding-eviction policies are named
+limitations under [010 T002](../010-source-bound-derived-knowledge/spec.md#t002-shared-memory-admission--2026-10-10).
+Scale acceptance follows [T006](#t006--bound-and-parallelize-semantic-partition-computation).
+The exact publisher contracts and their limits
 are in the [model-window audit](../../docs/context-ecosystem-plan.md#model-windows-and-chunk-representations).
 The selected EmbeddingGemma 2 advertises 8,192 tokens, while the legacy worker geometry has
 a 2,048-token context/batch limit and the address recipe defaults to 128 tokens.
@@ -2255,7 +2299,10 @@ The profile's optional `cpu` controls affinity/thread count and lifetime CPU sec
 ceilings are not vector identity. All admission remains explicit through the existing
 development-isolation switch; this change does not claim release or signed-package
 acceptance. macOS compilation, Metal numerics, hardware resources and installed package
-checks require the deferred native runner. Linux worker/model results are recorded in
+checks require the deferred native runner. Owner decision, 2026-11-06, "Once now,
+unsigned": `scripts/native-macos-acceptance.py` runs once on the owner's Mac with ad-hoc
+signing (to do) and again on the signed release candidate; installed package checks
+still need the signed package. Linux worker/model results are recorded in
 [validation](../../docs/validation.md).
 
 #### T009 independent representations — 2026-10-11
@@ -2306,7 +2353,9 @@ Representative scale continuation (2026-10-11): a pinned Rust 1.90.0 snapshot ha
 138 s. Real Gemma CPU preparation/resume/edit/revert publishes 582 current cards and
 passes current-source serving checks, but 53,913 sources remain unpartitioned after
 the bounded run. Cold inference takes 542 s versus 0.5 s partition computation.
-This is representative partial-progress evidence, not full 60–80k acceptance.
+This is representative partial-progress evidence, not full 60–80k acceptance. Owner
+decision, 2026-11-06: full acceptance on this representative corpus is a named
+limitation, and scale acceptance follows [T006](#t006--bound-and-parallelize-semantic-partition-computation).
 Preparation reports now include the existing publication's corpus `coverage`, only
 when source revision/function/recipe still match; otherwise it is null. Run counters
 remain explicitly run-local. No new scan, durable state or on-disk integrity claim
@@ -2347,4 +2396,7 @@ progress and remaining acceptance are recorded in the latest validation entry. T
 portable `embedding_parity` receipt/comparator covers exact CPU/Metal token inputs,
 including 8,192 tokens, with backend identities kept distinct. Native macOS execution,
 GPU resource tests and signed package acceptance remain required; Linux checks alone
-cannot close them. See [the native handoff](../../docs/measurement-handoff.md).
+cannot close them. Since 2026-11-06 the native and GPU checks are what
+`scripts/native-macos-acceptance.py` checks ([T009](#t009--use-model-owned-geometry-and-contextual-representations)),
+and real inference over the whole inventory is a named limitation ([T006](#t006--bound-and-parallelize-semantic-partition-computation)).
+See [the native handoff](../../docs/measurement-handoff.md).

@@ -15,27 +15,46 @@ removes it and the exact way to resume. Everything that could run there has run;
 results are in [validation](docs/validation.md#cloud-continuation--2026-10-12).
 
 Do not work around a blocker by changing a model, threshold, question set or protocol.
+Only the owner retires an entry or changes its protocol.
 
-## F1. Re-run CI for commits made while Actions was unavailable
+Owner decisions, 2026-11-06 ([record](docs/validation.md#owner-decisions--2026-11-06)):
+the work runs on the owner's Mac ("Mac only, drop sandbox"), and the 2026-10-11
+checkpoint sandbox and its private resume archive are lost ("Declare both lost"); any
+surviving snapshot is given up. Cloud sessions remain a fallback, and Linux-only jobs
+stay parked until the owner provides a Linux host. The entries that needed the sandbox
+or the archive are settled below: F2, F10 and F11 are retired, F3 moves to 003 T006,
+F6 is retired as a gate and F8 is retired.
 
+## F1. One CI run when Actions returns (narrowed 2026-11-06)
+
+- **Owner decision, 2026-11-06 ("Drop the historical re-run"):** F1 no longer re-runs
+  CI on the head of every branch merged while Actions was unavailable. When the budget
+  returns, it is one CI run on the then-current heads plus the two action updates in
+  step 5. The local gates receipts stay the record for everything in between. Nothing is
+  spent now.
 - **Why blocked:** GitHub Actions is out of budget (owner decision 2026-10-12). Workflows
   are never dispatched, re-run or waited on until the owner says the budget is back.
 - **Required resource:** GitHub Actions budget.
 - **Resume:**
-  1. The last commits with CI are `e0a1458` for Rust CI
-     ([38207948806](https://github.com/dwbimstr/context-foundry/actions/runs/38207948806))
-     and `7e7176b` for native macOS
+  1. Hosted Rust CI last ran on `main` on 2026-10-25 and passed on `1d9a58a`
+     ([40227884572](https://github.com/dwbimstr/context-foundry/actions/runs/40227884572);
+     see [validation](docs/validation.md#ci-boundary-repairs--2026-10-25)). Native macOS
+     last ran on `7e7176b`
      ([38209502529](https://github.com/dwbimstr/context-foundry/actions/runs/38209502529)).
-     List the later commits with `git log --oneline 7e7176b..HEAD`. They carry `[skip ci]`.
-  2. Run `rust.yml` on the current head of each branch merged since then. Use a push
-     without `[skip ci]` or `gh api -X POST .../actions/workflows/rust.yml/dispatches`
-     once the workflow accepts dispatch.
+     Before 2026-10-25, Rust CI last ran on `e0a1458`
+     ([38207948806](https://github.com/dwbimstr/context-foundry/actions/runs/38207948806)).
+     Other commits on this line carry `[skip ci]`.
+  2. Run `rust.yml` once on the then-current head of each branch in use (today `main`
+     and `experimental/context-ecosystem`). Use a push without `[skip ci]` or
+     `gh api -X POST .../actions/workflows/rust.yml/dispatches` once the workflow
+     accepts dispatch. The earlier step, one run per branch merged since `7e7176b`, is
+     dropped.
   3. Dispatch `native-macos.yml` with `scale_calibration=true` on the same head.
   4. Compare each result with the local gates receipt in
      [validation](docs/validation.md#local-gates-receipts). Cite the CI run beside the
      receipt; do not delete the receipt.
   5. Apply the workflow action updates that were closed while Actions was unavailable,
-     and verify them with the re-run:
+     and verify them with that one CI run:
      - `actions/checkout` v4 → v7 (`3d3c42e5…`, v7.0.1) in all three workflows
        (`rust.yml`, `native-macos.yml`, `learning-worker.yml`). PR #4 bumped only
        `rust.yml`.
@@ -46,8 +65,12 @@ Do not work around a blocker by changing a model, threshold, question set or pro
      Apply them by hand, or take the next newer upstream release when Dependabot offers
      it.
 
-## F2. Stronger-model host pair (resume step 5)
+## F2. Stronger-model host pair (resume step 5; retired 2026-11-06)
 
+- **Retired (owner, 2026-11-06, "Retire F2; F3 to T006"):** the runner and its
+  `next-run.md` were lost with the archive, and it needs a Linux sealed memfd. The local
+  30B cost comparison is dropped with no spend; F3's economics gate moves to 003 T006.
+  The rest of this entry is the parked protocol as it stood.
 - **Why blocked:**
   - The prepared runner streams the pinned 18,556,689,568-byte Qwen3-Coder-30B-A3B
     Q4_K_M GGUF into a sealed memfd and serves it with a 32K context on one CPU server.
@@ -66,14 +89,23 @@ Do not work around a blocker by changing a model, threshold, question set or pro
      accounting pass.
   6. Do not change the model without the owner.
 
-## F3. Task economics (the economics gate)
+## F3. Task economics (the economics gate; moved to T006 2026-11-06)
 
-- **Why blocked:** a completion benefit needs a correct task completion first. That
-  depends on F2.
-- **Required resource:** F2 completed.
-- **Resume:** after F2, account for every cost: bootstrap, acquisition, retrieval,
-  maintenance, and all failed and unknown attempts. The selected history has 71 requests,
-  of which 66 are complete and five unknown. A smaller failed prompt is not a benefit.
+- **Owner decision, 2026-11-06 ("Retire F2; F3 to T006"):** the economics gate no longer
+  waits on F2. It belongs to
+  [003 T006](specs/003-agent-retrieval-context/spec.md#t006--validate-retrieval-repairs-in-real-coding-tasks),
+  whose hosted runs have produced correct completions with full paid accounting.
+  T006's next step is an unfunded pilot v2 contract ("Draft pilot v2, unfunded");
+  nothing is spent until the owner authorizes a credential, rights and a budget. Its
+  state is in the [current status](docs/resume-context-ecosystem.md).
+- **Why blocked (until 2026-11-06):** a completion benefit needs a correct task
+  completion first. That depended on F2.
+- **Required resource:** an authorized T006 run (pilot v2). Until 2026-11-06: F2
+  completed.
+- **Resume:** in T006's runs, account for every cost: bootstrap, acquisition, retrieval,
+  maintenance, and all failed and unknown attempts. Keep the earlier economics history:
+  71 requests selected at the 2026-10-11 checkpoint, 66 complete and five unknown. A
+  smaller failed prompt is not a benefit.
 
 ## F4. Sealed independent evaluation — passed 2026-10-22
 
@@ -90,7 +122,9 @@ Do not work around a blocker by changing a model, threshold, question set or pro
   sandbox. Its identities, should it reappear: manifest `01a9ad47473c0b99f82bee5f2fabf67cf96c86134e9627c63bd50cb67d80d429`,
   seal `5d599fb9d13a9950233491dd8c4881ef44cbcdbb06287ba64cd0bcc0c836da22`, protocol
   `7bb60b43908269410cfdb29bc35086f9da684d9c0d480086907ee3c97c9d02a0`. It does not
-  reopen this decision.
+  reopen this decision. On 2026-11-06 the owner declared the sandbox and the archive
+  lost ("Declare both lost") and gave up any surviving snapshot; the identities stay
+  only as the record.
 - **Pre-registration (owner, 2026-10-22; committed before any question exists).** The
   only F4 run:
   1. **Candidate:** complete `hierarchy-v1`, `parent_tokens` 64, `card_tokens` 512
@@ -139,8 +173,13 @@ Do not work around a blocker by changing a model, threshold, question set or pro
 - **Still true:** G2's misses have now shaped repairs, so it is development evidence.
   Acceptance needs the sealed set (F4) or fresh held-out questions.
 
-## F6. Frozen Rust and Go regression question sets
+## F6. Frozen Rust and Go regression question sets (retired as a gate 2026-11-06)
 
+- **Retired as a gate (owner, 2026-11-06, "Retire F6 as a gate"):** the label files
+  were lost with the archive. G1, G2 and F4-style sealed sets are the only retrieval
+  instruments, and the F6 gate sentences in F9 are superseded. Go has no frozen
+  regression set until a Go-specific claim needs one. The rest of this entry is the
+  parked step as it stood.
 - **Why blocked:** the label files for the Inspected Rust (6), Additional Rust (8) and
   Mixed-corpus Go (8) sets were frozen in private `retrieval-final-*` directories. Only
   the eight Foundry questions are in Git, as `CASES` in `tests/retrieval_attribution.rs`.
@@ -152,13 +191,26 @@ Do not work around a blocker by changing a model, threshold, question set or pro
   the `fe37eff3` baseline under the 2,048-token budget. Every earlier delivered span must
   survive.
 
-## F7. Native macOS acceptance beyond the CI runner
+## F7. Native macOS acceptance beyond the CI runner (unparked for one run 2026-11-06)
 
-- **Why blocked:** this needs a physical Apple-silicon Mac, for performance, global GPU
-  pressure and combined embedding and generation residency, plus a Developer ID signing
-  and notarization identity for the signed installed package. The CI runner is Apple
-  Paravirtual hardware, and Actions is unavailable (F1).
-- **Required resource:** a physical Apple-silicon Mac, and the owner's signing identity.
+- **Owner decisions, 2026-11-06:**
+  - "Once now, unsigned": F7 is unparked for one run of
+    `scripts/native-macos-acceptance.py` on the owner's Mac now, with ad-hoc signing,
+    for the first physical-device receipts (to do). The run is repeated on the signed
+    release candidate.
+  - "Script checks only": device acceptance for 009 T008/T009 and 010 T002 is what the
+    script checks. The unbuilt policies (global GPU pressure, combined embedding and
+    generation residency, thermal/battery adaptation, embedding eviction) become named
+    limitations with re-entry conditions; no new code is written for them.
+- **Why blocked (until 2026-11-06):** this needs a physical Apple-silicon Mac, for
+  performance, global GPU pressure and combined embedding and generation residency, plus
+  a Developer ID signing and notarization identity for the signed installed package. The
+  CI runner is Apple Paravirtual hardware, and Actions is unavailable (F1).
+- **Why blocked now:** only the signed run, which needs the owner's Developer ID signing
+  identity. The owner's Mac is the work host, and GPU pressure and combined residency
+  are named limitations.
+- **Required resource:** the owner's Mac for the unsigned run, and the owner's signing
+  identity for the signed release candidate.
 - **Resume:**
   1. On the Mac, run
      `python3 scripts/native-macos-acceptance.py --out /abs/new-out --work /abs/new-work.noindex --generation --scale-calibration`.
@@ -168,8 +220,13 @@ Do not work around a blocker by changing a model, threshold, question set or pro
   3. For the signed package, follow [release](docs/release.md) and
      [deployment](docs/deployment.md).
 
-## F8. Private capsule patches and drivers
+## F8. Private capsule patches and drivers (retired 2026-11-06)
 
+- **Retired (owner, 2026-11-06, "Declare both lost"):** the patches and drivers were
+  lost with the archive, so nothing here can run. Each item already has a successor or
+  no remaining use: F9 measured the document/body RRF candidate independently on
+  2026-10-14, the CPU-diagnostics patch was already superseded, and the Linux batch
+  driver served F10 and F11, which are retired. The rest of this entry is the record.
 - **Why blocked:** they exist only in the resume archive, under `V11/resume-capsule/`.
 - **Required resource:** the restored archive.
 - **Resume:**
@@ -230,8 +287,8 @@ Do not work around a blocker by changing a model, threshold, question set or pro
 - **Still open:** frozen delivery remains **2/8**. Under both arms Q0 and Q3 are lost at
   packing, Q4 and Q5 at the per-file cap, and Q1 and Q6 never enter the bounded
   candidate window. That is resume step 2's broader ranking and packing repair, not this
-  candidate. F6's private Rust and Go sets must still pass before any retrieval
-  acceptance claim.
+  candidate. F6's private Rust and Go sets were to pass before any retrieval acceptance
+  claim; that gate is superseded (owner, 2026-11-06; see F6).
 - **Steps, as run:**
   1. Extract the corpus: `git archive ebf28f8 | tar -x -C $CORPUS`. The SHA-256 of the
      uncompressed tar stream is
@@ -280,10 +337,18 @@ Do not work around a blocker by changing a model, threshold, question set or pro
   7. Keep the candidate, by reverting `ef524b9`, only if it delivers more expected spans
      than the interleave arm and loses none that the interleave arm delivers. Otherwise
      leave it reverted. Record either result in validation. F6's private Rust and Go
-     sets must also pass before any retrieval acceptance claim.
+     sets were also to pass before any retrieval acceptance claim (superseded
+     2026-11-06; see F6).
 
-## F10. Linux batch-one/eight calibration (resume step 3)
+## F10. Linux batch-one/eight calibration (resume step 3; retired 2026-11-06)
 
+- **Retired (owner, 2026-11-06, "Accept the Mac rust run"):** 009 T006–T009 scale
+  acceptance now cites the existing complete hierarchy-v1 preparation of
+  `rust-lang/rust` (62,035 files) on the owner's Mac, plus a short replay and
+  changed-input check on the Mac that is still to run. Linux x86 scale and the
+  67,663-source representative corpus become a named limitation. The sandbox this entry
+  waited for is lost (see the top). The rest of this entry is the parked protocol as it
+  stood.
 - **Why blocked:** this step needs three things:
   - the revision-5 worker, which needs `avx512_bf16`;
   - the pinned Rust 1.90.0 and Go 1.25.0 archives, which the session's proxy refused
@@ -325,8 +390,13 @@ Do not work around a blocker by changing a model, threshold, question set or pro
   - at least 1.10x provider throughput, and at most 1.05x preparation wall time;
   - four threads, an 8 GiB worker ceiling, 600 s per arm and 1,500 s in total.
 
-## F11. Full Linux overview of 67,663 sources (resume step 4)
+## F11. Full Linux overview of 67,663 sources (resume step 4; retired 2026-11-06)
 
+- **Retired (owner, 2026-11-06, "Accept the Mac rust run"):** retired with F10, for the
+  same reason; the 67,663-source corpus is a named limitation of 009 scale acceptance.
+  The `overview-v1` recipe this run would have used stays as the low-cost recipe
+  ("Keep as the low-cost recipe"), so F11 retires for its host and corpus, not its
+  recipe. The rest of this entry is the parked protocol as it stood.
 - **Why blocked:** the same two blockers as F10 (`avx512_bf16` and the archives). The
   run also needs about three provider-hours plus overhead in one uninterrupted job.
   A cloud session's VM can pause or move, which makes such a run invalid.
@@ -361,7 +431,11 @@ Do not work around a blocker by changing a model, threshold, question set or pro
   (`hex_tests` in `src/lib.rs`). See
   [validation](docs/validation.md#sha2-011-migration--2026-10-13).
 - **Remaining:** `sha2` 0.10.9 is still compiled under the optional `learning-worker`
-  feature, via `tch` → `zip` → `pbkdf2`. It disappears when that chain moves.
+  feature, via `tch` → `zip` → `pbkdf2`. It disappears when that chain moves. The same
+  chain pins `zip` 0.6.6. On 2026-11-06 the owner dismissed its Dependabot alerts
+  #13–#16 as not used ("Dismiss as unused"): default and release builds never link
+  `tch`, and its npz and build-time `zip` paths never run here. Unfreezing 013 or adding
+  npz loading must trigger a recheck.
 
 ## F13. Continuous semantics stopped on a stale-source partition race (fixed 2026-10-13)
 
@@ -474,7 +548,8 @@ Do not work around a blocker by changing a model, threshold, question set or pro
   `2bab612`, 16 verbatim splits with no visibility change), then resumed it for the
   planned visibility-change splits: planned bumps only, and park anything that needs
   more. All 15 such splits ran, each within its planned bump count. Only the
-  `src/learning.rs` row remains, and it needs a Mac.
+  `src/learning.rs` row remains, and it needs a Mac; since 2026-11-06 the owner's Mac
+  is the work host ([decision](docs/validation.md#owner-decisions--2026-11-06)).
 - **How it ran:** each split is a separate, gated, revertable commit. On 2026-10-13
   only the purely mechanical splits ran: verbatim moves with no visibility change and
   an unchanged public API, 16 in all (see
@@ -579,7 +654,10 @@ Do not work around a blocker by changing a model, threshold, question set or pro
   `src/syntax.rs` and `src/neural/prepare.rs` keep their shared cores and have no
   further split planned.
 
-- **Required resource:** a Mac, for the `src/learning.rs` row.
+- **Required resource:** the owner's Mac, now the work host, for the `src/learning.rs`
+  row and its macOS receipt (step 5). The Linux receipt that step 5 sits next to can
+  come from a cloud fallback session (`bash scripts/cloud/gates.sh OUTDIR`); see the
+  [owner decisions, 2026-11-06](docs/validation.md#owner-decisions--2026-11-06).
 - **Resume, per split:**
   1. Move the planned line ranges verbatim into `src/<module>/<child>.rs`, which starts
      with a `//!` line and `use super::*;`; add `mod <child>;` after the parent's
@@ -825,3 +903,9 @@ Do not work around a blocker by changing a model, threshold, question set or pro
   reconciliations would point at overflow or a restarted scan.
 - **Do not** loosen the assertion. A repair must make a hint that predates the
   reconciliation's own read of a file redundant, without trusting hints as bytes.
+- **Owner decision, 2026-11-06 ("Native Mac run on rust"):** fix this without loosening
+  it, then run `mcp --watch` on the 62,116-file rust corpus on the owner's Mac against
+  bounds stated before the run (about an hour, no spend). That run is the evidence for
+  [001 T011](specs/001-source-state-recovery/spec.md#t011--maintain-the-admitted-workspace-from-filesystem-change-hints),
+  which stays open if it fails. Both steps are to do. The failures above were seen on
+  the M3 Pro; the owner's Mac now reports an Apple M5 Max with 64 GiB.

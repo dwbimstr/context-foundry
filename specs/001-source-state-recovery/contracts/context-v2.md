@@ -637,7 +637,10 @@ locations keep their relative order and are never joined as lexical companions.
 This prevents interleaving from separating the two matching parts of a callable
 again before packing. No expected-answer labels enter selection. It changes no source
 index, vector recipe or cache identity. Development regressions and public repository
-comparisons do not establish held-out G2 acceptance.
+comparisons do not establish held-out G2 acceptance. Owner decision, 2026-11-06: this
+dense/lexical interleaving and the flag's other semantic-store effects are to be
+removed ([§ Experimental behavioral support](#experimental-behavioral-support--001-t010-2026-10-09));
+until then they apply as written.
 
 ### Hit materialization
 
@@ -818,7 +821,7 @@ relations.
 Candidate construction is the two-tier lexical ranking plus available 009 semantic
 candidates, followed by 009's bounded merge. The optional 013 ModernBERT decision head
 receives its own bounded state/question/option input after that merge; it does not
-consume Nemotron's query vector. Then perform bounded graph expansion and
+consume 009's query vector. Then perform bounded graph expansion and
 packing/final freshness validation. Unavailable semantics alone does not make policy
 inference unavailable. Missing valid 013 configuration/input, explicit strategy or
 unavailable graph skips that inference. Until 013 replaces its superseded model
@@ -1146,7 +1149,15 @@ by the resolver; `retrieve` is unchanged.
 #### Experimental behavioral support — 001 T010, 2026-10-09
 
 The owner authorized this candidate for implementation; it is **off by default**
-until T010 and 003 T006 pass their measurement gates. Enable it explicitly with
+until T010 passes its own local gates and the 2026-10-19 G2 enable rule
+([AGENTS.md](../../../AGENTS.md)). Owner amendment, 2026-11-06 ("Lexical-only, drop
+T006 gate"): the 003 T006 agent-task gate no longer applies to this flag, and no
+real-agent benefit is claimed. The flag is to lose its effects on semantic stores,
+including the dense/lexical interleaving of
+[§ Experimental anchorless prose selection](#experimental-anchorless-prose-selection--009-t005-2026-10-10),
+and once those gates pass it is to default on only where lexical results are served.
+That code change is still to do; until it lands, the flag behaves as written here.
+Enable it explicitly with
 `context --experimental-behavior-context` or the same flag at MCP owner startup.
 The MCP tool schema and ordinary response wire do not change.
 
@@ -1179,7 +1190,8 @@ and source identity. No unit of another root may attach to it merely by name.
 
 This candidate does not solve missing methods, prior cap losses, cross-file behavior,
 unrecognized intent, or the 249 anchorless G2 misses. Its default stays off until
-those explicitly scoped retrieval and task-outcome gates are evaluated.
+those explicitly scoped retrieval gates are evaluated; task outcomes no longer gate
+it (owner, 2026-11-06).
 
 ### Doors
 
@@ -1313,6 +1325,13 @@ named limitation). The basenames `Rakefile` and `Gemfile` amend § Dependencies 
 languages' extension-only rule. A name ending in `?`, `!` or `'` (Ruby, Elixir,
 Haskell) is stored and matched without that suffix. Rust, C and C++ gain import keys
 (`use`, `#include`) with this amendment as well.
+
+Owner decision, 2026-11-06 ("Close; stay on 0.2.0"): `tree-sitter-dart` stays at
+0.2.0. Version 0.3.0 renames `class_member` and `enum_constant`, which Dart unit
+extraction matches, so taking it would need extraction changes and a search-schema
+bump that sends every store through `repair-index`, while no corpus or G2 question
+uses Dart. Dependabot PR #48 was closed. Dart 3.12/3.13 syntax that 0.2.0 does not
+parse, and its arrow-function-body misparses, remain named limitations.
 
 A 2026-10-07 feasibility spike (outside the repository) built all 23 grammars on
 `tree-sitter` 0.26.13 with Rust 1.90; the original eight produced identical units on

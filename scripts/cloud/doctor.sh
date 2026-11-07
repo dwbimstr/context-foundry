@@ -93,7 +93,7 @@ curl -fsS -o /dev/null --max-time 15 https://huggingface.co/api/models/google/em
 
 archive=/workspace/${CF_RESUME_ASSET:-context-foundry-resume-20261011.tar.gz}
 [ -f "$archive" ] && info evidence "archive $archive present" ||
-  info evidence "archive not fetched: run scripts/cloud/fetch-resume.sh"
+  info evidence "no resume archive: it was declared lost on 2026-11-06; G1, G2 and pilot runs stay on the owner's Mac"
 [ -d "${V11:-/nonexistent}" ] && info evidence "V11 restored at $V11" || info evidence "V11 not restored"
 receipt=${CF_SETUP_RECEIPT:-/opt/cf/setup-receipt.txt}
 [ -f "$receipt" ] && [ -s "$receipt" ] && info setup "$(head -n 2 "$receipt" | tr '\n' ' ')" ||

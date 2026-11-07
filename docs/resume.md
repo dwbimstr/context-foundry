@@ -10,10 +10,13 @@ recorded results before measuring anything. Background is in the
 
 - **macOS on Apple silicon.** The embedding worker needs Metal, and the stores, binaries
   and worker bundles below are macOS arm64 builds. The core also builds and tests on
-  Linux, checked locally with `scripts/gates.sh` while GitHub Actions is unavailable.
+  Linux. Since 2026-11-06 the local gates run on the owner's Mac; Linux is checked
+  only when a cloud fallback session runs `bash scripts/cloud/gates.sh`.
   The worker and the package do not support Linux.
 - **At least 32 GiB of memory** for measurements (one job at a time), about 20 GB of free
-  disk, and administrator rights (step 1).
+  disk, and administrator rights (step 1). The work runs on the owner's Mac (owner
+  decision, 2026-11-06, "Mac only, drop sandbox"), which reports an Apple M5 Max with
+  64 GiB; the 2026-10-08 baselines ran on an 18 GiB Apple M3 Pro.
 - **Tools:** Xcode command-line tools (`xcode-select --install`), `rustup`, `cmake`,
   `python3`, `node`, `git`.
 
@@ -49,11 +52,36 @@ COPYFILE_DISABLE=1 tar --no-mac-metadata -cf cf-private.tar \
 shasum -a 256 cf-private.tar > cf-private.tar.sha256
 ```
 
-This is about 4–5 GB (more if the G2 agent preserved prepared stores). Transfer both files
+This was about 4–5 GB on 2026-10-08 (more if the G2 agent preserved prepared stores);
+on 2026-11-06 `datasets/context-foundry-g2-runs` alone was 15 GB. Transfer both files
 privately; they hold private datasets and model files and never go into Git. Optional:
 add `models/Nemotron-3-Embed-1B-BF16` (2.1 GB) only to redo the Nemotron conversion, and
 `models/Nemotron-3-Embed-1B-BF16-4bit-d0408b94` only for the rollback re-embedding row of
-the handoff.
+the handoff. The owner keeps the Nemotron files as historical evidence (2026-11-06,
+"Keep them").
+
+### Encrypted backups
+
+Owner decisions, 2026-11-06: "Encrypted off-machine copy", with the destination
+"Encrypted, on disk for now". They cover these five directories, which had no copy off
+the owner's Mac on that date:
+
+- `datasets/context-foundry-g2` (the frozen G2 questions);
+- `datasets/context-foundry-f4` (the F4 sealed set);
+- `datasets/context-foundry-g2-harness`;
+- `datasets/context-foundry-citymap` (the G1 apparatus, about 1.4 GB);
+- `datasets/context-foundry-task-validation` (the bounded pilot's private evidence,
+  about 2.2 GB, including files that carry the owner's account identity).
+
+The agent builds encrypted, checksummed archives of these five directories in
+`~/VSC_DEV/backups`, and the owner copies those off the Mac whenever they choose. Other
+private datasets, such as `datasets/context-foundry-g2-runs`, are not part of the
+encrypted backups. The archives belong to the
+transfer set: carry them with `cf-private.tar`, verify their checksums, and restore each
+directory to its original path under `/Users/satishlomte/VSC_DEV/datasets` in
+step 3. The pilot evidence is kept until 003 T006 is accepted, retired or
+superseded. The archives were not yet built on 2026-11-06; add their exact build and
+restore commands here when they are.
 
 ## On the new machine
 

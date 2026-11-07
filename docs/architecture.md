@@ -384,8 +384,11 @@ verified file-backed artifact reuse and idle unload. Linux has descriptor-only s
 isolation and hard CPU/address-space bounds; the macOS App Sandbox/Metal path has supervised
 footprint/allocation limits and still needs hardware acceptance. No second table or source
 owner is added. Opt-in `model_resources` now reserves combined worker ceilings, checks
-host/container memory headroom and evicts idle generation under pressure. CPU/global GPU,
-thermal and battery policies remain open. See
+host/container memory headroom and evicts idle generation under pressure. Native CPU
+admission still needs device acceptance. Owner decision, 2026-11-06, "Script checks
+only": device acceptance covers what `scripts/native-macos-acceptance.py` checks, and
+the unbuilt global GPU pressure, combined embedding and generation residency,
+thermal/battery and embedding-eviction policies are named limitations. See
 [usage](experimental-context.md#owned-local-generation).
 Exact source/graph evidence, derived repository knowledge and explicit task memory
 have distinct provenance and invalidation rules. The
@@ -397,7 +400,9 @@ Exact paths and identifiers take precedence on locator queries. Lexical retrieva
 is always available. Neural preparation/reuse and dense retrieval are implemented
 under 009. T004 supplies address cards through the llama.cpp worker and selects Gemma
 using the recorded G2/G1 checks; F4 made complete `hierarchy-v1` the default
-representation on 2026-10-22. Signed installed-artifact checks remain open.
+representation on 2026-10-22. Signed installed-artifact checks remain open; by owner
+decision of 2026-11-06 ("Row 4 blocks release") the first release ships signed
+semantic retrieval, so they block the release.
 Graph expansion enriches selected evidence rather than generating another long
 sequence of tool calls.
 
@@ -452,7 +457,14 @@ Proposed [009](../specs/009-optional-semantic-retrieval/spec.md) preserves a nar
 model-profile boundary: exact model/recipe/dimension identity and rebuildable derived
 vectors. Do not make the authoritative store's format or source ledger depend on a
 global "2048 or higher" choice. Same dimensions do not imply compatible vector spaces.
-The owner selected **`nvidia/Nemotron-3-Embed-1B-BF16`**, with
+The selected profile is EmbeddingGemma 2 on the pinned llama.cpp worker (009 T004),
+chosen on 2026-10-08 by G2, G1 with the profile and vector parity. Nemotron's G2 runs
+were INVALID and the owner closed it. Owner decision, 2026-11-06, "Close it; Gemma
+only": the Nemotron long-context comparison that a 2026-10-09 plan line had reopened is
+closed too, and the Nemotron artifacts are kept as historical evidence. The next two
+paragraphs record the original, superseded selection.
+
+The owner originally selected **`nvidia/Nemotron-3-Embed-1B-BF16`**, with
 **`mlx-community/Nemotron-3-Embed-1B-BF16-4bit`** for local serving. Keep native 2048
 output dimensions and float32 vector caching, with a float16 USearch index derived from
 that cache; the MLX weights use 4-bit quantization.
@@ -618,8 +630,9 @@ predates v2 reports `repair_required` until an explicit `repair-index`.
 The 2026-09-29 owner correction replaces the external Laya plan with a Foundry-owned
 Rust policy model/trainer/worker. Laya remains a research reference. The owner further
 clarified ModernBERT with a decision head over joint state/question/candidate inputs.
-The earlier 2048→64→2 classifier on Nemotron vectors is superseded. Nemotron remains
-the retrieval encoder; ModernBERT adds separate model preparation and inference cost.
+The earlier 2048→64→2 classifier on Nemotron vectors is superseded. The retrieval
+encoder (Nemotron when this was written, EmbeddingGemma 2 since 2026-10-08) stays
+separate; ModernBERT adds separate model preparation and inference cost.
 The [ModernBERT review](learning.md#modernbert-and-the-cost-of-matching-laya--2026-09-29)
 records the integration gap. [The feasibility pass](review/feasibility.md) establishes
 one real Rust model/head/gradient boundary. Contract v4 pins tch/LibTorch and frozen
@@ -647,9 +660,20 @@ No Laya/Python first-party trainer or public inference server is selected.
 controls, startup/stop, signing/package checks and conditional microVM use. Native
 process jails are preferred where they meet the stated boundary; libkrun is conditional
 and still requires host/VMM confinement. A process launch or a VM label proves neither.
-The selected third-party MLX embedding runtime is a separate compatibility boundary:
-no assumption that its Python loader runs in a Linux guest or that native GPU access
-has already been isolated. All first-party bridge/supervisor code remains Rust.
+The originally selected third-party MLX embedding runtime was a separate compatibility
+boundary: no assumption that its Python loader runs in a Linux guest or that native GPU
+access has already been isolated. Its replacement, the pinned llama.cpp worker of 009
+T004 (2026-10-08), runs as the separate `foundry-embed` binary; the `foundry` binary and
+the default build never link llama.cpp.
+
+All first-party bridge/supervisor code remains Rust, with one narrow exception. Owner
+decision, 2026-11-06, "Keep, with an exception": an opt-in feature may embed
+first-party host-extension source that its pinned host requires. The only such source
+is the OMP bridge `src/pilot_capture/bridge.ts`, which the opt-in `pilot-capture`
+feature embeds in its `foundry-pilot-capture` helper for
+[003 T006](../specs/003-agent-retrieval-context/spec.md#t006--validate-retrieval-repairs-in-real-coding-tasks)
+pilots; pilot v2 is to reuse it. The default build and the release `foundry` binary never
+contain it. The local gates are to gain a `pilot-capture` build and test step (to do).
 
 ## Bootstrap and adapter economics
 
@@ -664,7 +688,9 @@ distinguishes CLI output, MCP delivery, host hooks and explicit request forwardi
 The owner requested both delivery control and an owned gateway. The latter is an
 optional Rust command with no source-store access, the supported OMP/Z.ai
 `glm-5.3-flash` OpenAI-compatible chat-completions/SSE profile and private loopback
-authentication (003 T004, accepted 2026-10-04). It forwards completed host requests;
+authentication (003 T004, accepted 2026-10-04). Owner decision, 2026-11-06, "Release
+it separately": it is not advertised with the CLI/MCP release and gets its own release
+after a new live proof ([release checklist](release.md)). It forwards completed host requests;
 it does not inject context or rewrite warm prefixes. MCP alone cannot redirect them.
 Measuring provider usage needs no gateway: the approved `foundry usage import` reads
 the host's own session records (003 T005).
@@ -683,7 +709,11 @@ A release ships only when every active spec is complete (owner policy 2026-10-04
 release checks cover the actual contracts: update/delete/reopen, stale evidence, graph
 bounds, budget bounds and a CLI interaction on a small public fixture, plus each
 feature's own acceptance. At runtime the lexical/graph core works without learning or
-dense retrieval.
+dense retrieval. Owner decisions of 2026-11-06 settle three release-scope questions:
+the signed-package semantic checks block the release ("Row 4 blocks release"), the
+release does not wait on 010's real-model task utility ("Defer 010 real-model
+acceptance"), and the meter-only gateway releases separately ("Release it
+separately"). The [release checklist](release.md) owns the details.
 
 Large-codebase scaling and cost improvements need real workload evidence before
 those claims appear in release notes. Such experiments answer a named decision,
@@ -698,8 +728,10 @@ CLI are known constraints. Large repositories require paged reconciliation,
 per-source producer updates and stable symbol identity. A long-lived owner is useful
 for repeated agent requests, not an assumed requirement for every CLI command.
 Those changes stay above library transactions. The selected 009 dense index addresses
-conceptual retrieval with its own preparation/lifecycle checks; it does not gate the
-earlier lexical release or require another general model comparison.
+conceptual retrieval with its own preparation/lifecycle checks and requires no further
+general model comparison. This text once said it did not gate an earlier lexical
+release; that is superseded by the 2026-10-04 release policy and the owner's
+2026-11-06 decision that the first release ships signed semantic retrieval.
 
 No custom scheduler, immutable publication tree, temporal graph history, custom vector
 quantizer, fleet cost governor, or learned compression engine is part of this cut
@@ -732,8 +764,10 @@ restart uses the matching durable lookup below; overflow, identity change and re
 reconcile. Required cold reads and compaction remain corpus-sized. Selective LLM generation now uses the explicit 010 T002 CLI described
 above and opt-in continuous MCP maintenance, now with owned local generation and
 per-worker resource controls, shared memory admission and optional Linux host CPU
-pause/resume thresholds. Native/cgroup CPU policy, global GPU pressure, hardware
-acceptance and model task utility remain open.
+pause/resume thresholds. Native CPU admission still needs device acceptance, which
+covers what `scripts/native-macos-acceptance.py` checks. By owner decisions of
+2026-11-06, global GPU pressure and the other unbuilt policies are named limitations and
+010's model task utility is deferred.
 
 009 publication restart uses `neural/mapping_store.rs`: a disposable redb partition
 lookup, input-key reverse multimap and bounded changed-input frontier. Source, partition
@@ -762,6 +796,10 @@ on every read. A bounded configured-set metadata check accounts for missing prov
 before any unique join. Extraction is explicit; source watching alone starts no boundary
 work. One explicitly enabled configuration can reuse the existing watcher for bounded
 file turns, unchanged-scope reuse, status and pause, without another thread or durable queue.
+Owner decision, 2026-11-06, "Accept at written scope": the owner accepts T005 at this
+written static Python HTTP scope; acceptance is recorded once the local gates receipt
+exists (to do). Other frameworks, brokers, cross-language identity and dynamic
+collectors are named limitations.
 
 [003 T009](../specs/003-agent-retrieval-context/spec.md#t009--compose-evidence-for-a-repository-task)
 uses [`task_evidence.rs`](../src/task_evidence.rs) to add bounded lexical task queries,

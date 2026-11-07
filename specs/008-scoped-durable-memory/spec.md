@@ -1,7 +1,13 @@
 # 008 — Explicit project memory
 
 Status: T001 and T002 implemented locally 2026-10-04 and unreleased (see
-[validation](../../docs/validation.md)). Depends: 001 authoritative ownership, repair and
+[validation](../../docs/validation.md)). T003–T005 are experimental and unaccepted.
+Owner decision, 2026-11-06, "Measure them in pilot v2": their acceptance bar stays,
+their outcome tasks join the [003 T006](../003-agent-retrieval-context/spec.md#t006--validate-retrieval-repairs-in-real-coding-tasks)
+task suite and pilot v2, and T004's semantic triggers are to be built. All three stay
+open until an authorized run passes; pilot v2 is unfunded until the owner authorizes a
+key, rights and a budget ([record](../../docs/validation.md#owner-decisions--2026-11-06)).
+Depends: 001 authoritative ownership, repair and
 context contract; MCP extension only if 003 is available.
 Authorization: specification/task refinement. Ordinary indexed Markdown notes remain
 supported; this feature adds explicit record lifecycle rather than replacing them.
@@ -282,12 +288,17 @@ This adds one migration and one record validator, without another index or queue
   revision nonreuse, schema preservation and pre/post commit fault recovery.
 
 Host application and quality/economics measurements remain pending acceptance
-evidence, not blockers to this sandbox implementation. 003 owns the delivery boundary.
+evidence, not blockers to this sandbox implementation. Pilot v2 (to draft, unfunded)
+is to measure them (owner, 2026-11-06, Status above); T003 stays open until an
+authorized run passes. 003 owns
+the delivery boundary.
 
 ### T004 — Experimental grounded reminders and explicit promotion
 
 Status: exact-action and grounded path/finishing reminders are implemented locally on
-the experimental branch; semantic triggers and measured agent outcomes remain pending.
+the experimental branch. Semantic triggers are still to be built, and pilot v2 is to
+measure agent outcomes (owner, 2026-11-06, Status above); T004 stays open until the
+triggers exist and an authorized run passes.
 
 Build the next stages in the same task record, with no model or background loop.
 `advise {action_key,max_bytes}` returns only active rejected attempts whose optional
@@ -320,7 +331,8 @@ erase prior exports, backups or host/provider copies.
 Tests must exercise silence, exact-match advice, persistent dismissal, promotion and
 indexed retrieval, revision collision, stale source refusal, correction/forget
 conflicts, and abrupt exit before/after promotion commit. Broader contradiction or
-constraint-violation detection and real-host benefit remain pending experiments.
+constraint-violation detection (the semantic triggers) is selected work to build, and
+pilot v2 is to measure real-host benefit (owner, 2026-11-06).
 
 
 T004 grounded review continuation (2026-10-10): read-only
@@ -344,6 +356,8 @@ remain pending; source-linked reminders are not semantic contradiction reasoning
 
 Status: implemented locally in the experimental branch. Sandbox verification and
 remaining host-outcome limits are recorded in [validation](../../docs/validation.md#task-aware-retrieval-and-recovery-search--2026-10-09).
+Pilot v2 is to measure its host outcomes (owner, 2026-11-06, Status above); T005
+stays open until an authorized run passes.
 
 Authorized continuation on the experimental branch: connect retained task state to
 source retrieval. Current failure: `peek` needs a remembered entry ID, and separate

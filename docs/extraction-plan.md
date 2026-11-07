@@ -42,8 +42,11 @@ current plan and names its accepted limitations.
 001 D001 retains the current redb/Tantivy pair after comparing the simpler
 single-transaction alternative. Implement that bounded recovery contract, prove
 preservation/recovery, then bound indexing and verify the rendered
-CLI output. That is a usable release by itself. The agent adapter follows; the real
-graph workflow and owned policy loop must earn their extra complexity through actual use.
+CLI output. That is the first usable increment, not a release: a release waits until
+every active spec is complete, including signed semantic retrieval
+([owner decisions, 2026-11-06](validation.md#owner-decisions--2026-11-06)). The agent
+adapter follows; the real graph workflow and owned policy loop must earn their extra
+complexity through actual use.
 003 owns explicit bootstrap and adapter budgets; the shared [deployment contract](deployment.md)
 places isolation and package lifecycle checks with the feature making each claim.
 
