@@ -153,12 +153,12 @@ The upstream client runs with TLS verification on, through rustls with the aws-l
 provider and the platform verifier, and with no proxy, redirects or decompression.
 The lock grew from 300 to 344 entries, a count that includes platform-only crates.
 
-rustls is locked at 0.23.45 on both `experimental/context-ecosystem` and `main`,
-below the 0.23.46 fix for Dependabot alerts #9–#12. Owner decision, 2026-11-06
-("Bump rustls, then merge"): rustls moves to 0.23.46 on the experimental line, the
-local gates run once, and one pull request from experimental to `main`, merged by the
-owner with a merge commit, carries it. Merging it closes Dependabot PR #49 and alerts
-#9–#12. All of this is still to do.
+rustls is locked at 0.23.46 on both `experimental/context-ecosystem` and `main`, the
+fix for Dependabot alerts #9–#12. Owner decision, 2026-11-06 ("Bump rustls, then
+merge"): the bump landed on the experimental line as `8600fc0`, the local gates ran
+([receipt](validation.md#owner-decisions--2026-11-06)), and PR #52 carried it to
+`main` as merge commit `d94b013` on 2026-11-07. The alerts are closed and Dependabot
+PR #49 was closed as superseded.
 
 On `aarch64-apple-darwin`, 27 crates are new: mostly `MIT OR Apache-2.0`, plus ISC,
 Zlib, BSD-3-Clause, `CC0-1.0 OR MIT-0 OR Apache-2.0` and two compound expressions:

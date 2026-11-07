@@ -146,7 +146,7 @@ below are history.
     sandbox and its archive are declared lost; F2, F6, F8, F10 and F11 retire.
     Encrypted backups are to be built in `~/VSC_DEV/backups` (not built yet). The
     pilot key file is deleted; the owner revokes the key.
-  - **Dependencies:** rustls 0.23.46, then one PR to main (to do); zip alerts
+  - **Dependencies:** rustls 0.23.46 merged to main as `d94b013` (done); zip alerts
     dismissed as not used and Dart 0.3 declined (done); Tantivy 0.27 only if neutral
     (to do).
   - **Closed or kept:** rows 5 and 6 and the historical CI re-run retire; the

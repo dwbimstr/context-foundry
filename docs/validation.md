@@ -48,7 +48,7 @@ is work to do.
 
 | # | Item | Owner's choice | Result |
 |---|---|---|---|
-| 2 | rustls 0.23.45 alerts, PR #49 and the main merge | "Bump rustls, then merge" | rustls 0.23.46 on experimental, one gates run, one PR to main merged by the owner with a merge commit (to do). |
+| 2 | rustls 0.23.45 alerts, PR #49 and the main merge | "Bump rustls, then merge" | rustls 0.23.46 on experimental, one gates run, one PR to main merged by the owner with a merge commit. Done: PR #52 merged as `d94b013` on 2026-11-07; alerts #9–#12 closed and PR #49 closed as superseded. |
 | 5 | zip 0.6.6 alerts via the optional tch worker | "Dismiss as unused" | Done: Dependabot alerts #13–#16 dismissed as not used, with a recheck if 013 is unfrozen or npz loading is added. |
 | 21 | tree-sitter-scala 0.26.4, tree-sitter-powershell 0.26.6, pulldown-cmark 0.13.6 | "One bump, gated on unit diff" | One schema bump after a unit diff on fixtures and both G2 corpora; G2 on the Mac only if G2-corpus units change (to do). |
 | 22 | Tantivy 0.27.0 (PR #47) | "Apply only if neutral" | Merged onto experimental only if existing stores open without repair and G1 lexical results are identical (to do). |
@@ -115,6 +115,10 @@ on clean trees; logs are private, under
   stays open ("Native Mac run on rust" requires fixing it first).
 - Not run: CI (Actions unavailable), native macOS acceptance (F7, to do) and the
   `pilot-capture` actual-host suite (not a gate).
+- Merged 2026-11-07: the owner asked for PR #52 to be merged, and it landed on `main`
+  as merge commit `d94b013` (parents `69c3bb0` and `98adfe5`; its tree equals
+  `98adfe5`). No workflow run started. Dependabot then closed alerts #9–#12, and
+  PR #49 was closed as superseded.
 
 One observation for the owner, with no change made: Dependabot pull requests
 still start hosted workflow runs on their own branches (for example on
