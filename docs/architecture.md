@@ -673,7 +673,8 @@ is the OMP bridge `src/pilot_capture/bridge.ts`, which the opt-in `pilot-capture
 feature embeds in its `foundry-pilot-capture` helper for
 [003 T006](../specs/003-agent-retrieval-context/spec.md#t006--validate-retrieval-repairs-in-real-coding-tasks)
 pilots; pilot v2 is to reuse it. The default build and the release `foundry` binary never
-contain it. The local gates are to gain a `pilot-capture` build and test step (to do).
+contain it. [`scripts/gates.sh`](../scripts/gates.sh) runs `pilot-capture` Clippy, unit
+tests and a Rust 1.90 check as gates; its actual-host suite is not a gate.
 
 ## Bootstrap and adapter economics
 

@@ -31,7 +31,7 @@ is work to do.
 |---|---|---|---|
 | 1 | 003 T006 after bounded pilot v1 | "Draft pilot v2, unfunded" | A new frozen contract with several harder held-out tasks, a powered sample and the v1 gap fixes (to do); no spend until the owner authorizes a key, rights and a budget. |
 | 8 | 003 T007–T009 and 008 T003–T005 | "Measure them in pilot v2" | Their outcome tasks join the T006 suite; 008 T004's semantic triggers get built; all six stay open until an authorized run passes. |
-| 17 | `pilot-capture` apparatus and its embedded TypeScript bridge | "Keep, with an exception" | A narrow architecture exception for embedded host-extension source in an opt-in feature; the local gates gain a `pilot-capture` step (to do). |
+| 17 | `pilot-capture` apparatus and its embedded TypeScript bridge | "Keep, with an exception" | A narrow architecture exception for embedded host-extension source in an opt-in feature; the local gates gained a `pilot-capture` step with the main merge (see below). |
 | 19 | F2 local 30B pair and F3 economics | "Retire F2; F3 to T006" | F2 is retired; F3's economics gate points to T006 and pilot v2. |
 
 **Hosts, evidence and credentials**

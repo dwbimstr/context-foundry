@@ -2333,6 +2333,7 @@ mod tests {
     const RESULT: &str = r#"{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_01","content":"pub fn decode() {}","cache_control":{"type":"ephemeral"}}]}"#;
 
     type Members = Vec<(&'static str, String)>;
+    type HeaderCase = (Vec<(String, String)>, (FaultClass, &'static str));
 
     fn js(text: &str) -> String {
         serde_json::to_string(text).unwrap()
@@ -2580,7 +2581,7 @@ mod tests {
     #[test]
     fn headers_are_refused_by_family() {
         let body = first_body();
-        let cases: Vec<(Vec<(String, String)>, (FaultClass, &str))> = vec![
+        let cases: Vec<HeaderCase> = vec![
             (
                 headers_with("content-encoding", "gzip"),
                 rb("request_encoding_forbidden"),
@@ -3525,7 +3526,7 @@ mod tests {
         let start = start(START_USAGE);
         let (head, tail) = ERROR_EVENT.split_at(9);
         let (events, fault, _) = run(&[start.as_bytes(), head.as_bytes(), tail.as_bytes()]);
-        assert_eq!(events, as_bytes(&[start.clone()]));
+        assert_eq!(events, as_bytes(std::slice::from_ref(&start)));
         assert_eq!(fault, Some(UPSTREAM_ERROR));
 
         // An error-typed payload under another event name is still withheld.

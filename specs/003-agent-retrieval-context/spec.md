@@ -755,8 +755,9 @@ The compatibility, ratecard/rights and owner-authorization gates were then met f
 on 2026-11-06 (above); T006 is not accepted. Owner decision, 2026-11-06, "Keep, with
 an exception": the feature stays in the crate for pilot v2, its embedded TypeScript
 bridge is the narrow exception noted under the
-[OMP hook](#optional-omp-first-call-hook), and the local gates are to gain a
-`pilot-capture` build and test step (to do).
+[OMP hook](#optional-omp-first-call-hook), and
+[`scripts/gates.sh`](../../scripts/gates.sh) runs `pilot-capture` Clippy, unit tests and
+a Rust 1.90 check as gates.
 
 **Bounded pilot contract frozen, 2026-10-31:** the
 [v1 contract](contracts/bounded-pilot-v1.md) is the sole owner of the selected
