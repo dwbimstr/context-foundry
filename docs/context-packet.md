@@ -111,6 +111,8 @@ promoted to a new default.
 records raw artifact locations, frozen identities, failures and checks. Current files
 are outside Git under `/workspace/.context-foundry-tools/validation-runs/`, with the
 prior corpus, profiles, reports and transcripts in `quality-scale-economics-v5`.
+Those paths were on the 2026-10-11 checkpoint sandbox; the owner declared the sandbox
+and its resume archive lost on 2026-11-06 ("Declare both lost").
 Historical `/tmp` artifacts did not survive the environment restart. Restored tool
 caches do not prove a clean installation from the onboarding draft; see [resume](resume.md).
 
@@ -143,15 +145,18 @@ and the measurement handoff `18e27f9`.
    Apple Developer ID is needed before then, and nothing has been signed. After signing,
    run the installed-artifact checks (row 4 of the
    [measurement handoff](measurement-handoff.md)) with the EmbeddingGemma 2 profile.
-   They decide whether the release packages and advertises semantic retrieval; they gate
-   nothing else.
+   They gate the release: owner decision, 2026-11-06, "Row 4 blocks release". The first
+   release ships signed semantic retrieval, and a failing row 4 is fixed before any
+   release. This replaces the 2026-10-08 sentence here, which said they decided only
+   whether the release packaged and advertised semantic retrieval.
 2. **Release.** The [release checklist](release.md) to a GitHub release on
    `dwbimstr/context-foundry` (owner-selected destination). The tag and the publication
    each need the owner's explicit go-ahead.
 3. **Record-only timings** that the 18 GiB development host could not take without
    swapping: the preparation time on the library-only store, and a rust-lang/rust index
-   run with the binary before T009. The owner either reruns them on a host with more
-   free memory or retires them.
+   run with the binary before T009. The owner was to rerun them on a host with more
+   free memory or retire them, and retired both on 2026-11-06 ("Retire both"); nothing
+   is owed.
 
 ## Measurement results
 
@@ -171,10 +176,10 @@ development host*. The raw results, logs and frozen identities are outside Git:
   `tests/policy.rs`.
 - **Docs.** `node scripts/check-links.mjs` from the repository root must report no
   errors before every commit that touches Markdown.
-- **Review.** Every implementer change gets a cross-lab code review (a reviewer from a
-  different model lab than the author) and a SHIP before merge. Design changes that
-  matter get a refuter pair from two labs first. Agreement is not proof: the merging
-  agent checks consequential evidence itself.
+- **Review.** Review proportionally before merge; an in-session adversarial review is
+  enough. Independent (cross-lab) review is not a gate (owner, 2026-11-05) and runs
+  only when the owner asks. Label self-review honestly. Agreement is not proof: the
+  merging agent checks consequential evidence itself.
 - **Isolation.** One writer per tree. Parallel slices use separate `git worktree`s and
   separate `CARGO_TARGET_DIR`s, and implementers do not commit; the integrating agent
   commits and pushes. Never run two heavy jobs (full suite, G1, preparation) at once on
@@ -189,11 +194,12 @@ development host*. The raw results, logs and frozen identities are outside Git:
 ## Environment
 
 - **Platform.** All development, gates and measurements ran on macOS arm64. The core also
-  builds and tests on Linux (x86_64), checked locally with `scripts/gates.sh` while
-  GitHub Actions is unavailable. `foundry-embed` (feature `embed-worker`)
+  builds and tests on Linux (x86_64). Since 2026-11-06 the local gates run on the
+  owner's Mac; Linux is checked only when a cloud fallback session runs
+  `bash scripts/cloud/gates.sh`. `foundry-embed` (feature `embed-worker`)
   supports explicitly admitted Linux CPU and macOS Metal workers. Linux isolation
-  and normal-worker numerical checks pass; the revised Metal worker still needs a
-  native runner. The signed package target remains macOS arm64 (`tests/install.rs`
+  and normal-worker numerical checks pass; the revised Metal worker still needs its
+  native run (F7: one ad-hoc-signed run on the owner's Mac, to do). The signed package target remains macOS arm64 (`tests/install.rs`
   builds only there); Linux is not a substitute for those installed-artifact checks.
 - **Toolchains.** Rust stable plus the 1.90 toolchain (the MSRV gate). The worker build
   also needs `cmake` and a llama.cpp git checkout at commit `b9acf138` (`LLAMA_CPP_DIR`).
@@ -203,7 +209,11 @@ development host*. The raw results, logs and frozen identities are outside Git:
   them. See [dependencies](dependencies.md).
 - **Private inputs.** The corpora, frozen datasets, baseline stores and models are
   listed with their identities in the [measurement handoff](measurement-handoff.md).
-  They are not in Git; the owner transfers them.
+  They are not in Git; the owner transfers them. The frozen sets and the pilot's private
+  evidence are also to go into encrypted, checksummed archives (not built yet) in
+  `~/VSC_DEV/backups` that
+  the owner copies off the Mac (owner, 2026-11-06;
+  [encrypted backups](resume.md#encrypted-backups)).
 - **Memory.** The original sessions used a local Prakarana memory store; it is not part
   of the repository. The specs, [validation](validation.md) and Git history carry
   everything decided.
@@ -230,10 +240,14 @@ development host*. The raw results, logs and frozen identities are outside Git:
 - **Measurements stayed on the development host** (owner, 2026-10-08). A cloud handoff
   was reversed because the baseline stores are too large to copy. G1 with a profile
   runs one shard at a time, because six shards with resident workers swapped the
-  18 GiB host.
+  18 GiB host. Owner decision, 2026-11-06: "Mac only, drop sandbox". The work runs on
+  the owner's Mac, with cloud sessions only as a fallback; the Mac now reports an Apple
+  M5 Max with 64 GiB ([CLAUDE.md](../CLAUDE.md)).
 - **EmbeddingGemma 2 over Nemotron** (owner, 2026-10-08). Nemotron gained more in G2,
   but both of its runs were INVALID, so its result cannot be accepted. EmbeddingGemma 2
-  passed every check and embeds about 3× faster.
+  passed every check and embeds about 3× faster. The long-context comparison that a
+  2026-10-09 request reopened was closed on 2026-11-06 ("Close it; Gemma only"); the
+  Nemotron files are kept as historical evidence ("Keep them").
 
 ## Known rough edges
 

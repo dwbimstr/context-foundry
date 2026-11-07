@@ -168,7 +168,9 @@ reference for small typed decisions with abstention. It is not the product runti
 an API to emulate or a repository contributors must install/edit.
 
 The owner clarified the target: **ModernBERT with a decision head**, using joint
-state/question/candidate inputs. Nemotron remains the separate retrieval encoder.
+state/question/candidate inputs. The retrieval embedding stays a separate encoder:
+EmbeddingGemma 2 since 2026-10-08. The owner closed the Nemotron comparison on
+2026-11-06 ([owner decisions](validation.md#owner-decisions--2026-11-06)).
 Contract v4 selects frozen-encoder/head adaptation first, using Rust tch/LibTorch.
 Encoder adaptation is retained behind its own complete acceptance; head fitting
 does not establish full encoder fine-tuning.
@@ -205,7 +207,8 @@ recipe. Full model/MSRV and distributed-package acceptance remain D001 inputs.
 The model never authorizes repository enrollment, tool execution, provider spend or
 larger budgets. [Adapter economics](../specs/003-agent-retrieval-context/contracts/adapter-economics.md)
 owns those deterministic boundaries. Learning remains off until actual task benefit
-justifies it, but its tasks must be complete before any release. Model preparation
+justifies it. 013 has been frozen off since 2026-10-07, so its remaining tasks are not
+release conditions ([013](../specs/013-owned-learning/spec.md)). Model preparation
 and training costs are reported separately and amortized only over observed use.
 
 The legacy `src/laya.rs`/`--laya-port` HTTP path was removed in 013 T003; `--laya-port`
@@ -292,10 +295,12 @@ Concrete source checks:
 
 ### KISS decision and effects on the rest of Foundry
 
-Retain Nemotron for retrieval. ModernBERT is the proposed separate decision encoder, not
-a replacement embedding profile and not a reason to rebuild document vectors.
-Changing a policy encoder invalidates that policy's prepared features, not Nemotron's
-document cache. Candidate-conditioned encodings depend on the complete formatted
+This 2026-09-29 review chose to retain Nemotron for retrieval. Since 2026-10-08 the
+retrieval embedding has been EmbeddingGemma 2, and on 2026-11-06 the owner closed the
+Nemotron comparison. ModernBERT is the proposed separate decision encoder, not a
+replacement embedding profile and not a reason to rebuild document vectors. Changing a
+policy encoder invalidates that policy's prepared features, not Nemotron's document
+cache. Candidate-conditioned encodings depend on the complete formatted
 state/question/options, their order, tokenizer and weights. They cannot reuse a
 query-only cache entry merely because the state text matches.
 

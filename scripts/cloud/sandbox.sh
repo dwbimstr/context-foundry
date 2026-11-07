@@ -1,8 +1,10 @@
 #!/bin/bash
-# Bind the ecosystem work to the sandbox that holds the checkpoint (/workspace)
-# through Claude Code Remote Control: the session runs on the sandbox, with its
-# files, restored evidence and memory, and is driven from claude.ai/code or the
-# Claude app.
+# Retired 2026-11-06: the work runs on the owner's Mac, and the 2026-10-11
+# checkpoint sandbox is lost (docs/validation.md, "Owner decisions — 2026-11-06").
+# Do not use this script. It once bound the ecosystem work to that sandbox
+# (/workspace) through Claude Code Remote Control: the session ran on the sandbox,
+# with its files, restored evidence and memory, and was driven from claude.ai/code
+# or the Claude app.
 #
 #   scripts/cloud/sandbox.sh check   report whether Remote Control can run here
 #   scripts/cloud/sandbox.sh start   start one Remote Control session in tmux
@@ -73,7 +75,7 @@ print(s.get("loggedIn"), s.get("authMethod"), s.get("subscriptionType"), s.get("
   mem=$(awk '$1 != "max" {printf "%.1f GiB limit", $1 / 1073741824}' /sys/fs/cgroup/memory.max 2>/dev/null)
   info host "$(uname -m), $(nproc) CPUs ${quota:+($quota quota)}, $(awk '/MemTotal/ {printf "%.1f GiB", $2 / 1048576}' /proc/meminfo) RAM ${mem:+($mem)}, $(awk '/SwapTotal/ {printf "%.1f GiB", $2 / 1048576}' /proc/meminfo) swap, $(df -h --output=avail /workspace 2>/dev/null | tail -n 1 | tr -d ' ') free"
   grep -qw avx512_bf16 /proc/cpuinfo && info cpu "avx512_bf16 yes" || info cpu "avx512_bf16 no"
-  [ "$failed" = 0 ] && echo "READY: run scripts/cloud/sandbox.sh start" || echo "NOT READY: fix the FAIL lines"
+  [ "$failed" = 0 ] && echo "READY, but this script is retired (2026-11-06): do not start it; the work runs on the owner's Mac" || echo "NOT READY: fix the FAIL lines"
   return "$failed"
 }
 

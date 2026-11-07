@@ -27,6 +27,10 @@ continuous brief regeneration is separately enabled with an explicit knowledge p
 and maintenance option below. A synthetic 80,000-file lexical/watcher check passes;
 see [scope and timings](validation.md#cold-verification-and-changed-input-publication--2026-10-10).
 Mixed-size repositories and semantic/knowledge throughput still need their own evidence.
+For watching, the owner chose on 2026-11-06 an `mcp --watch` run on the 62,116-file
+rust-lang/rust corpus on the owner's Mac to accept
+[001 T011](../specs/001-source-state-recovery/spec.md#t011--maintain-the-admitted-workspace-from-filesystem-change-hints);
+it has not run yet.
 
 ## Continuous semantic maintenance
 
@@ -177,7 +181,11 @@ hierarchy of rust-lang/rust (62,000 files, 685,623 unit locations sharing 624,32
 vectors) uses about 89% of the vector bound, so larger repositories need it revisited.
 Cold ANN construction and threshold compaction still build in memory; ordinary small
 edits use the bounded delta described above. Real-model semantic throughput at
-60,000–80,000 files and task-quality improvements remain unaccepted. The mixed-size
+60,000–80,000 files and task-quality improvements remain unaccepted. Under the owner's
+2026-11-06 decision ("Accept the Mac rust run"), 009's scale acceptance is to cite this
+complete rust-lang/rust preparation on the owner's Mac plus a short replay and
+changed-input check there, which has not run yet
+([009](../specs/009-optional-semantic-retrieval/spec.md)). The mixed-size
 8,192-file semantic fixture and historical 80,000-file lexical/watcher check cover
 different boundaries; neither is model-scale acceptance. See [validation](validation.md).
 
@@ -267,6 +275,9 @@ For broad preparation with at most one input per nonblank source, use:
 ```
 
 This fits an extractive file overview without computing every body/parent card.
+Owner decision, 2026-11-06 ("Keep as the low-cost recipe"): overview-v1 stays as the
+low-cost opt-in recipe. It embeds far fewer tokens than cards or hierarchy but locates
+fewer G2 answers ([validation](validation.md#g2-restored-as-the-retrieval-instrument--2026-10-17)).
 The existing area-brief lane is retained, with the same bounds and derived provenance.
 It works through ordinary `semantic prepare`, priorities and continuous maintenance.
 Switching to `hierarchy-v1` later reuses matching file vectors while adding body/parent
@@ -287,6 +298,11 @@ lexical matches first. Long overview/hierarchy hits can deliver an exact local p
 instead of the file prefix. Its semantic tag describes how the containing unit was
 selected; the passage has no independent vector or similarity score. Diagnostics
 retain both ranges. No-overlap queries keep the ordinary source-unit fallback.
+Owner decision, 2026-11-06 ("Lexical-only, drop T006 gate"): the flag's effects on
+semantic stores, this one included, are to be removed, and once 001 T010's own gates
+pass it is to default on only where lexical results are served
+([context v2](../specs/001-source-state-recovery/contracts/context-v2.md#experimental-behavioral-support--001-t010-2026-10-09)).
+Until that change lands, it behaves as described here.
 
 CLI requests that resolve explicit/defined anchors now skip unused semantic startup,
 using the same path/prose rules as retrieval. Eligible requests still load their
@@ -515,7 +531,10 @@ re-register a failed backend. No durable event log or periodic whole-tree pollin
 added: unreported notification loss is recovered by explicit indexing or restart.
 Ignore files outside the watched root (for example global Git excludes) likewise
 require an explicit index or restart. Native event integration is tested on Linux;
-macOS and network-filesystem event behavior remain unverified.
+macOS event behavior awaits the native Mac `mcp --watch` run that the owner chose to
+accept
+[001 T011](../specs/001-source-state-recovery/spec.md#t011--maintain-the-admitted-workspace-from-filesystem-change-hints)
+(2026-11-06; not run yet), and network-filesystem event behavior remains unverified.
 
 ## Recoverable task context
 
@@ -865,7 +884,13 @@ backups and previously delivered text remain outside live-store deletion guarant
 
 The local HTTP fixture verifies transport, provenance, reuse and recovery, using synthetic
 responses. Real-model quality, long-repository throughput and hardware headroom
-enforcement remain 010 T002 work. The MCP continuation below now
+enforcement remain 010 T002 work, narrowed by the owner on 2026-11-06: real-model
+acceptance is deferred ("Defer 010 real-model acceptance"), so this generation code stays
+experimental and unadvertised and the release does not wait on it; unbuilt headroom
+policies are named limitations ("Script checks only",
+[010](../specs/010-source-bound-derived-knowledge/spec.md)). Device acceptance of the
+built controls is what `scripts/native-macos-acceptance.py` checks, and that run has not
+happened. The MCP continuation below now
 implements continuous scheduling and shared client admission. See
 [the implemented contract](../specs/010-source-bound-derived-knowledge/spec.md#t002-implementation-decisions-and-boundaries).
 
@@ -929,7 +954,8 @@ Shutdown closes HTTP and discards uncommitted output before releasing the store.
 
 Knowledge tables were introduced in schema 10; the current branch uses schema 11. Selected brief publication does not drain
 unrelated source work. Owned local generation is available below; real-model task quality
-and native macOS CPU/global GPU pressure policies remain open; shared memory and optional
+is deferred and global GPU pressure is a named limitation (owner, 2026-11-06); native
+macOS CPU acceptance remains open; shared memory and optional
 Linux CPU admission are described below.
 
 ## Owned local generation
@@ -1029,7 +1055,10 @@ the worker. Shutdown/cancellation kills and reaps it before releasing the store;
 death also ends computation. A failed call keeps source work pending and completed
 briefs reusable. These native limits are per worker. The optional
 [shared memory policy](#shared-model-memory-admission) additionally accounts for
-retained embedding residency. Global GPU, thermal and battery policies remain follow-up work.
+retained embedding residency. Global GPU, thermal and battery policies are named
+limitations, not planned work (owner, 2026-11-06, "Script checks only"), with the
+[re-entry condition](../specs/010-source-bound-derived-knowledge/spec.md#t002-shared-memory-admission--2026-10-10)
+that 010 states.
 
 `status.knowledge.maintenance.local_worker` exposes PID, launches, calls, verified bytes,
 sampled peak RAM, reported peak GPU allocation, isolation and last stop reason without
@@ -1090,7 +1119,9 @@ probe the host. Current/cache hits need no worker admission and remain usable un
 This is owner-local admission, **not an aggregate OS memory quota**: owner/index memory,
 artifact disk/page cache, other processes and other Foundry owners are outside its reservation
 sum. External HTTP servers have no local worker reservation. Global GPU usage,
-native macOS CPU acceptance, thermal/battery policy and simultaneous real-model hardware acceptance remain open. Without
+thermal/battery policy and combined embedding-plus-generation residency are named
+limitations (owner, 2026-11-06, "Script checks only": device acceptance covers what
+`scripts/native-macos-acceptance.py` checks); native macOS CPU acceptance remains open. Without
 this option, previous admission and cache behavior is preserved.
 
 
@@ -1108,8 +1139,9 @@ mount, cgroup v1 and affinity masks beyond the platform CPU-set capacity are not
 macOS now has a native host-tick sampler using the same policy and a distinct status
 scope (`macos_host_cpu_ticks`). Its arithmetic/reset behavior is tested on Linux;
 native compilation, sampling and real pressure/resume acceptance are outstanding.
-It does not claim Linux affinity/cgroup limits on macOS. Global GPU pressure,
-thermal/battery policy and task-quality/economics acceptance remain pending.
+It does not claim Linux affinity/cgroup limits on macOS. Global GPU pressure and
+thermal/battery policy are named limitations, and 010 task-quality/economics acceptance
+is deferred (owner, 2026-11-06).
 
 ## Boundary relationships and task evidence
 

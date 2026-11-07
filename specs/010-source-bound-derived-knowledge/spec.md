@@ -9,8 +9,11 @@ not Linux affinity/cgroups. No CPU quota, GPU headroom, thermal or battery guara
 added. Linux tests verify the arithmetic and existing pressure/lifetime behavior; the
 native sampler is neither compiled nor executed in this Linux sandbox. Run the ignored
 `native_macos_cpu_observation` test and real pressure/resume checks on macOS before
-acceptance. Global GPU policy, optional embedding eviction and combined-model device
-acceptance remain open.
+acceptance; `scripts/native-macos-acceptance.py` runs both. Owner decision, 2026-11-06,
+"Once now, unsigned": that script runs once on the owner's Mac with ad-hoc signing
+(to do) and again on the signed release candidate. Owner decision, 2026-11-06, "Script
+checks only": global GPU policy, optional embedding eviction and combined-model
+residency are named limitations ([shared memory admission](#t002-shared-memory-admission--2026-10-10)).
 
 Binding reference inspected: libc **0.2.189**, `src/unix/bsd/apple/mod.rs` definitions
 of `host_cpu_load_info`, `HOST_CPU_LOAD_INFO_COUNT` and `host_statistics`. T002 uses
@@ -20,9 +23,16 @@ Status: Experimental T001 implemented locally; T002 now implements explicit sele
 HTTP generation, completion reuse, area lineage and opt-in continuous MCP maintenance.
 Shared client admission, derived MCP context and an experimental owned local generator
 with per-worker CPU/RAM/Metal controls and shared memory admission are implemented.
-Global GPU pressure policies, native CPU sampling, hardware and real-model task acceptance
-remain selected work. The owner's
-large-repository direction supersedes the earlier blanket deferral.
+Native CPU sampling and hardware acceptance remain selected work, limited to what
+`scripts/native-macos-acceptance.py` checks; global GPU pressure policies are a named
+limitation (owner decision, 2026-11-06, "Script checks only"). The owner's
+large-repository direction supersedes the earlier blanket deferral. Owner decision,
+2026-11-06, "Defer 010 real-model acceptance", partly reverses the owner's 2026-10-09
+reactivation of 010:
+provider/recipe selection and real-model task acceptance are deferred, the release no
+longer waits on 010's task utility, the implemented code stays experimental and
+unadvertised, and nothing is downloaded or spent for it
+([record](../../docs/validation.md#owner-decisions--2026-11-06)).
 Import and lifecycle fixtures use synthetic outputs through real storage, retrieval,
 HTTP/CLI and native-worker boundaries. Real CPU initial/changed-input generation and restart/revert reuse are recorded in validation;
 it is not a selected production model or task-quality result. 013 remains frozen off.
@@ -144,8 +154,10 @@ See [validation](../../docs/validation.md) for executed checks and limits.
 ### T002 — Generate useful briefs and area knowledge within idle resources
 
 Status: explicit CLI and continuous MCP generation implemented experimentally. Shared
-client admission and owned local per-worker limits are implemented; aggregate hardware headroom and real-model task acceptance
-remain open. The efficiency amendment places this after
+client admission and owned local per-worker limits are implemented. Aggregate hardware
+headroom is a named limitation, device acceptance is what the native script checks, and
+real-model task acceptance is deferred (owner decisions, 2026-11-06, Status above).
+The efficiency amendment places this after
 changed-work ownership (009 T008) and input/resource identity (009 T009); see the
 [build order](../../docs/context-ecosystem-plan.md#revised-build-order).
 
@@ -153,7 +165,9 @@ After T001, select one accountable generation provider and a pinned recipe. Firs
 party orchestration stays Rust; local generation uses an isolated, bounded model
 worker. A remote provider requires an explicitly configured endpoint and data scope.
 Neither this spec nor retrieval admission sends source to an unspecified service.
-Use existing maintained transports and the shared source acceptance seam.
+Use existing maintained transports and the shared source acceptance seam. This
+selection is deferred (owner, 2026-11-06, Status above): no provider or recipe is
+selected, and the Qwen2.5-Coder-0.5B fixture below is not a selection.
 
 - Source replacement only records durable pending work; it never waits for a model.
   Resume from missing/stale input identities and preserve completed results across
@@ -173,7 +187,9 @@ Use existing maintained transports and the shared source acceptance seam.
   source freshness or foreground evidence delivery.
 - Test with a real configured provider at its actual boundary before claiming model
   integration. Compare verified coding tasks and complete generation/maintenance/task
-  cost; the owner's sandbox build does not wait on a held-out promotion gate.
+  cost; the owner's sandbox build does not wait on a held-out promotion gate. This
+  comparison is deferred with the provider selection (owner, 2026-11-06), so no model
+  integration or task benefit is claimed.
 
 Incremental design amendment, 2026-10-09: record exact generation-input identity
 (source/dependency hashes, selected spans, prompt, model and recipe) and reusable
@@ -274,9 +290,9 @@ pending nodes, incomplete publication, observed usage and unknown calls.
 The standalone CLI retains the store's exclusive-owner rule. The MCP continuation
 below reuses the same acceptance, cache and generation pipeline inside the existing
 owner; there is no second database writer. The local continuation below adds an owned
-model process. Shared memory headroom is now implemented as described below; CPU/global GPU
-policies and real-model task/throughput evidence remain
-T002 follow-ups. Dense brief vectors remain optional. [tests/knowledge.rs](../../tests/knowledge.rs)
+model process. Shared memory headroom is now implemented as described below. Global GPU
+policies are a named limitation, and real-model task/throughput evidence is deferred
+(owner decisions, 2026-11-06, Status above). Dense brief vectors remain optional. [tests/knowledge.rs](../../tests/knowledge.rs)
 exercises the real HTTP/CLI/store/retrieval boundaries with a local synthetic server;
 see [validation](../../docs/validation.md#selective-knowledge-generation).
 
@@ -406,8 +422,10 @@ quality; the fixed repair-selection workloads and negative results live in valid
 
 This controls one generation worker. Opt-in shared memory admission now accounts for
 combined configured embedding/generation ceilings, as described below. Global GPU use,
-native CPU utilization, thermal pressure, battery draw and macOS hardware/package acceptance remain open, alongside
-verified task utility and large-repository economics. Linux synthetic native-denial and
+thermal pressure and battery draw are named limitations; native CPU utilization and
+macOS hardware/package acceptance remain open within what the native script checks;
+verified task utility and large-repository economics are deferred (owner decisions,
+2026-11-06, Status above). Linux synthetic native-denial and
 lifecycle tests plus the real-model smoke are separate evidence in
 [validation](../../docs/validation.md#owned-local-generation-and-resource-controls).
 
@@ -439,8 +457,15 @@ This is admission using configured worker bounds, not a global/hard quota. It ex
 owner/index memory, artifact storage/page cache, hidden cgroup ancestors and other processes
 from the reservation sum. Native per-worker enforcement is unchanged. In-flight work is not
 preempted by this policy; embedding residency is retained for foreground use. Linux host
-CPU admission is implemented below; native CPU/global GPU pressure, thermal/battery
-adaptation and embedding eviction are still follow-ups.
+CPU admission is implemented below, and native macOS CPU admission at the top of this
+spec. Owner decision, 2026-11-06, "Script checks only": device acceptance for this
+admission, T002 and 009 T008/T009 is what `scripts/native-macos-acceptance.py` checks,
+with no new code. Global GPU pressure, combined embedding-plus-generation GPU residency,
+thermal/battery adaptation and embedding eviction are named limitations, no longer
+follow-ups. Each re-enters only when a run on a supported Mac measures a failure it
+would prevent (for example a worker refused or killed with both models resident, or
+sustained thermal throttling during preparation), or when a feature would keep
+embedding and generation resident together by default.
 Tests cover startup refusal, combined reservations, pressure hysteresis, provider lifetime,
 idle eviction/reaping, cache reuse, pending work, pause/shutdown and foreground service.
 See [configuration and limits](../../docs/experimental-context.md#shared-model-memory-admission).
@@ -457,8 +482,9 @@ The first slice used host aggregate contention; the continuation below replaces 
 observation with affinity and visible cgroup-v2 capacity. It is still admission, not a
 hard CPU limit. macOS CPU sampling is unavailable in this slice;
 explicitly enabling this optional field there defers by name. Existing native worker
-thread/CPU-time controls remain. Global GPU, thermal/battery, embedding eviction and
-real-device throughput/combined-model acceptance remain open.
+thread/CPU-time controls remain. Global GPU, thermal/battery and embedding eviction are
+named limitations (above); real-device throughput and combined-model acceptance are
+limited to what the native script checks (owner, 2026-11-06).
 
 Pinned backend reference: llama.cpp `b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea`,
 `include/llama.h` / `llama_model_load_from_file_ptr`, `llama_chat_apply_template`,
@@ -490,8 +516,10 @@ T002 real-model continuation (2026-10-10): the explicitly supplied Qwen2.5-Coder
 Q4_K_M fixture now runs initial and changed-input generation, then reopens/reverts and
 reuses the original cached brief with the GGUF absent. Two calls have complete worker
 usage; revert has zero calls/launches/verified bytes. Linux CPU execution and reuse are
-verified. Model/recipe task utility, long-context embedding comparisons, combined model
-pressure and macOS/Metal acceptance remain open. See
+verified. Model/recipe task utility is deferred and combined model pressure is a named
+limitation (owner decisions, 2026-11-06, Status above). The long-context embedding
+comparison was closed on 2026-11-06 ("Close it; Gemma only"), and macOS/Metal
+acceptance within the native script's checks remains open. See
 [validation](../../docs/validation.md#evidence-coverage-host-application-and-real-cpu-maintenance--2026-10-10).
 
 

@@ -81,7 +81,7 @@ It is **not**:
 
 ## Status
 
-"Stable core" means implemented, cross-lab reviewed, gated and merged on `main`.
+"Stable core" means implemented, reviewed, gated and merged on `main`.
 "Experimental, opt-in" means merged on `main` by owner decision (2026-10-12) while its
 acceptance gates stay open ([follow-ups](FOLLOWUP.md)); defaults do not use it.
 Nothing is released, so no compatibility promise is made yet; store and index
@@ -97,22 +97,20 @@ upgrades are explicit (`upgrade-store`, `repair-index`). Per-task evidence is in
 | Project memory | Stable core | `foundry memory …` and the MCP `memory` tool |
 | Compiler references (SCIP) | Stable core | `import-scip` of rust-analyzer artifacts, `references`, exact doors |
 | Multi-root context | Stable core | `mcp --reference ROOT=STORE`, up to 8 |
-| Semantic retrieval | Optional, off by default | Implemented. EmbeddingGemma 2 passed G2 and G1; it is packaged after signing and the installed-artifact checks ([measurement handoff](docs/measurement-handoff.md)) |
+| Semantic retrieval | Optional, off by default | Implemented. EmbeddingGemma 2 passed G2 and G1. The first release ships it in the signed package, built with `--with-semantic`; no release happens until that package passes the installed-artifact checks (row 4 of the [measurement handoff](docs/measurement-handoff.md#measurements); [owner decision, 2026-11-06](docs/validation.md#owner-decisions--2026-11-06)) |
 | Owned learning | Frozen off | Implemented commands remain as research tooling; not packaged or advertised |
-| Model gateway | Meter only | One pinned host profile (OMP 18.6.0 with Z.ai `glm-5.3-flash`); no spend cap |
+| Model gateway | Meter only | One pinned host profile (OMP 18.6.0 with Z.ai `glm-5.3-flash`); no spend cap. Not part of the CLI and MCP release: it gets its own release after a new live proof ([owner decision, 2026-11-06](docs/validation.md#owner-decisions--2026-11-06)) |
 | Task context | Experimental, opt-in | `foundry task-context`: recoverable task state and evidence ([experimental context](docs/experimental-context.md#recoverable-task-context)) |
-| Source-bound briefs | Experimental, opt-in | `foundry brief`: derived knowledge bound to cited sources ([experimental context](docs/experimental-context.md#source-bound-derived-briefs)) |
-| Owned generation | Experimental, opt-in | `foundry knowledge` with a supervised local worker ([experimental context](docs/experimental-context.md#owned-local-generation)) |
+| Source-bound briefs | Experimental, opt-in | `foundry brief`: derived knowledge bound to cited sources ([experimental context](docs/experimental-context.md#source-bound-derived-briefs)). Real-model acceptance deferred; not advertised for release ([owner decision, 2026-11-06](docs/validation.md#owner-decisions--2026-11-06)) |
+| Owned generation | Experimental, opt-in | `foundry knowledge` with a supervised local worker ([experimental context](docs/experimental-context.md#owned-local-generation)). Real-model acceptance deferred; not advertised for release ([owner decision, 2026-11-06](docs/validation.md#owner-decisions--2026-11-06)) |
 | HTTP boundary analysis | Experimental, opt-in | `foundry boundary`: indexed Python Flask/FastAPI routes; executes no repository code ([experimental context](docs/experimental-context.md#boundary-relationships-and-task-evidence)) |
 
 **Not released yet:**
 
 - no tagged release, prebuilt binary or crates.io package (`publish = false`);
 - the macOS package is not signed; Developer ID signing and notarization come last;
-- semantic retrieval is not advertised until the installed-artifact checks pass on the
-  signed package;
-- a valid rust-lang/rust index timing with the binary before parallel indexing is still
-  owed (record only; oh-my-pi is measured).
+- the installed-artifact checks of the signed package with semantic retrieval have not
+  run, and the first release waits for them.
 
 The withdrawn local `v0.1.0` tag of 2026-10-04 is not a release.
 
@@ -154,9 +152,10 @@ success or cost with a real model.
   `github.com/dwbimstr`). See [dependencies](docs/dependencies.md).
 - **Platforms:** macOS arm64 is where everything is developed, gated and measured.
   GitHub Actions CI is unavailable (owner decision 2026-10-12). The core is checked
-  locally with `scripts/gates.sh` on Linux; the last CI runs passed on Linux and macOS. The installable package, the embedding
-  worker (Metal) and worker isolation are macOS arm64 only. Windows has not been built
-  or tested.
+  locally with `scripts/gates.sh` on the owner's Mac; a cloud Linux session is only a
+  fallback (owner decision 2026-11-06). The last CI runs passed on Linux and macOS.
+  The installable package, the embedding worker (Metal) and worker isolation are
+  macOS arm64 only. Windows has not been built or tested.
 
 ## Install from source
 
@@ -356,7 +355,7 @@ Short pointers; each links to its contract.
 | [Context-v2 contract](specs/001-source-state-recovery/contracts/context-v2.md) | Wire format, city map, languages, packing |
 | [Graph bundle format](docs/graph.md) | `import-graph` input |
 | [Owned learning](docs/learning.md) | The frozen learning subsystem |
-| [Measurement handoff](docs/measurement-handoff.md) | Measurements still owed: the installed artifact after signing, and two record-only timings |
+| [Measurement handoff](docs/measurement-handoff.md) | Measurements still owed: the installed-artifact checks on the signed package (row 4, which blocks release) and the newer numerical, scale and hardware checks |
 | [Release checklist](docs/release.md) | What a release requires |
 | [Dependencies and licenses](docs/dependencies.md) | Third-party crates, forks and licenses |
 | [Context packet](docs/context-packet.md) | Orientation for a new maintainer or agent |

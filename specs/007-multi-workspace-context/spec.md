@@ -150,6 +150,13 @@ daemon, watcher, or cross-root training or consent change is added.
   `store_busy`, and a store held by another owner stays `busy` for the session.
 - No per-root time slices: a slow root can consume the shared deadline, failing the
   request with `deadline_exceeded`.
+- Query-time parsing is not cached or bounded per request (owner decision, 2026-11-06,
+  "Accept as named limitation"). A synthetic worst case, 32 Rust files of about 1 MiB
+  each, took about 4.2 s of single-root CLI context time, about 84% of the 5,000 ms
+  read deadline that selected roots share; a request over the deadline fails with the
+  retryable `deadline_exceeded`. No code change: this reopens only after a measured
+  failure on a real corpus
+  ([validation](../../docs/validation.md#token-economics-remainder--003-t005-and-007-t001-2026-10-04)).
 - Unavailable references are not retried within a session; restart the owner.
 - Labels are display-only and may collide; only `ws16` collisions are refused.
 - 009 semantic candidates and the 013 policy are unimplemented; when they land, their

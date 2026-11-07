@@ -1,6 +1,6 @@
 # Experimental ecosystem checkpoint — 2026-10-11
 
-## Current status — 2026-10-26
+## Current status — 2026-11-06
 
 This section owns current status; other documents link here, and dated paragraphs
 below are history.
@@ -41,9 +41,12 @@ below are history.
   dependency updates ([validation](validation.md#architecture-refactor-and-dependency-updates--2026-10-25)).
   usearch 2.26.5 builds a different ANN graph than 2.26.4 from the same cache, so the
   next republish can move G2 as the v6 rebuild did; G2 was not rerun.
-  tree-sitter-scala 0.26.3 awaits the owner's decision on the schema bumps it needs.
-- **Open.** No CI runs; local gates are the receipt. The 6,000-file watcher test is
-  intermittent on this Mac (F18). After a reboot, repeat G2 runs differ in 36 of 388
+  The held Scala, PowerShell and pulldown-cmark updates now go in one schema bump
+  gated on a unit diff (owner, 2026-11-06).
+- **Open.** Local gates are the receipt; pushes from this line start no CI. Since
+  2026-10-12, hosted runs came only from Dependabot and from the 2026-10-25 fix
+  branches and their pushes to main. The 6,000-file watcher test was intermittent on
+  the owner's earlier M3 Pro (F18) and has not been rerun on the M5 Max. After a reboot, repeat G2 runs differ in 36 of 388
   rows with equal totals; compare arms within one session.
 - **Evidence/profile repairs, 2026-10-25.** Brief enrichment preserves retrieved
   spans/order and the 32-source cap; delivered containing bodies/excerpts can support
@@ -57,7 +60,8 @@ below are history.
   packing decisions, excerpt ranges, unsupported citations and keyed proof outcomes.
   Task-composed memory uses the composition's final snapshot. See the
   [receipt](validation.md#memory-freshness-and-selection-diagnostics--2026-10-25).
-  Ranking and caps are unchanged; the later recommendations and pivots remain proposed.
+  Ranking and caps are unchanged. The later recommendations and pivots are deferred
+  with re-entry triggers (owner, 2026-11-06).
 - **Dependency cleanup, 2026-10-26.** PR #43 merged the active probe's security pins
   with an immutable pre-refresh manifest reference; historical model receipts stay
   unchanged. The rmcp/Tokio/ureq maintenance subset is included. See the
@@ -66,10 +70,89 @@ below are history.
   Existing stores must explicitly run `repair-index` for search schema 8, then
   `semantic prepare` to refit source-unit schema 6. Old semantic state/cache is
   retained, not served or labeled current; store schema 12 and generation v6 stay
-  unchanged. Scala 0.26.3, rmcp 3.7.0 and uuid 1.29.0 remain deferred. The owner
+  unchanged. Scala 0.26.3 was deferred, and on 2026-11-06 the owner put Scala,
+  PowerShell and pulldown-cmark into one schema bump gated on a unit diff; rmcp 3.7.0
+  and uuid 1.29.0 remain deferred. The owner
   authorized this security-only exception to G2 promotion measurement; no quality
   or performance gain is claimed. See the
   [migration and live CLI/MCP receipt](validation.md#markdown-parser-security-and-unit-migration--2026-10-26).
+- **Task calibration and local activation, 2026-10-28.** This checkout now has its
+  own prepared `.context-foundry` store; release CLI queries with the existing
+  explicit profile and development-isolation flag were exercised, including
+  exact citation retrieval. The public upstream coding-task pair produced two
+  externally correct repairs and actual host usage. Extra native-tool exposure,
+  missing reasoning categories and uncontrolled hosted cache prevent clean paired
+  economic acceptance; T006 remains open. See the
+  [dated calibration receipt](validation.md#paired-coding-task-and-actual-host-usage--2026-10-28).
+- **Apparatus-only continuation, 2026-10-29.** The Anthropic-only author restriction
+  is removed. The full actual-host no-provider preflight now passes after strict
+  delivery, request-accounting, lossless-counter and enforcement-boundary repairs;
+  both failed attempts and original calibration evidence are retained. See the
+  [dated receipt](validation.md#no-provider-apparatus-preflight--2026-10-29).
+  The guard remains fixture-only, not an authorized live-capture adapter; no new
+  coding trial is authorized. The pilot's planning choices now have the single
+  owner linked below, while live implementation, evidence and authorization remain gated.
+- **Pilot contract freeze, 2026-10-31.** The
+  [bounded pilot v1 contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v1.md)
+  owns the frozen policy and input pins; [T006](../specs/003-agent-retrieval-context/spec.md#t006--validate-retrieval-repairs-in-real-coding-tasks)
+  records its external digest. This freeze authorizes no pilot implementation,
+  materialization or provider calls. Live-capture acceptance, compatibility,
+  account/ratecard/launch evidence and explicit scoped owner authorization are still required.
+  T006 and economic acceptance remain open.
+- **Live-capture implementation, 2026-11-05.** The approved Rust-owned capture
+  boundary exists behind the opt-in `pilot-capture` feature and passes its
+  actual-host no-provider qualification (14 real-host and 58 unit tests); an
+  in-session review's 26 surviving findings are fixed. The owner removed the
+  independent-review gate the same day, so missing gate 1 is complete. No provider
+  call, credential, view materialization or coding trial occurred; live execution
+  stays locked behind gates 2–5. See the
+  [receipt](validation.md#live-capture-implementation-and-no-provider-qualification--2026-11-05).
+- **Pilot ready for paid launch, 2026-11-06.** The views, manifests,
+  contained checker and executor are built and frozen (gate 4), and a
+  full-pipeline run without any provider sealed the probe and all eight slots.
+  Only owner inputs remain: the credential file, account identity, rights
+  approval and explicit spend authorization (probe, then coding). See the
+  [receipt](validation.md#pilot-apparatus-and-frozen-launch-inputs--2026-11-06).
+- **Bounded pilot v1 completed, 2026-11-06.** With the owner's credential,
+  workspace identity, rights approval and two scoped authorizations, the paid
+  probe sealed and all eight coding slots ran without a halt.
+  - **Apparatus verdict:** a completed, interpretable pilot.
+  - **Coding verdict:** all 8 slots passed the independent oracle (A 4/4,
+    B 4/4, B−A 0 in every pair). Both arms made the same repair, so the task
+    cannot show an effect of the view on correctness.
+  - **Tokens and cost:** B used 13% fewer inclusive input tokens in total, but
+    pair 1 reverses this, and slot order and cache confound cost. The
+    calculated charge at the pinned ratecard was about USD 0.35, against a
+    budget-rate spend of 36% of the USD 10 envelope.
+  - **Classification:** two arm-A reads of `.` were blocked. The owner kept
+    them as constraint violations (2026-11-06), so A stays 4/4. T006 remains
+    unaccepted, and the claim ceiling holds. See the
+    [receipt](validation.md#paid-transport-probe-and-bounded-coding-pilot--2026-11-06).
+- **Owner decisions, 2026-11-06.** The owner settled all 31 pending decisions in
+  one pass; the [record](validation.md#owner-decisions--2026-11-06) lists each with
+  its result.
+  - **Release path:** the signed-package checks (row 4) block release; 010's
+    real-model acceptance and the Z.ai gateway leave the release; 005 T005 is
+    accepted at its written scope once a gates receipt exists; 009 scale is to be
+    accepted through the Mac rust-lang/rust preparation once a short replay and
+    changed-input check passes; device acceptance is what the native script
+    checks; 001 T011 needs a native Mac watch run on rust after F18 is fixed;
+    001 T010's flag is decided by its own local gates and becomes lexical-only
+    once its code change lands. All of these are to do.
+  - **T006:** pilot v2 is to be drafted, unfunded (not drafted yet), and the
+    task-context tasks (003 T007–T009, 008 T003–T005) are to be measured in it. Nothing is spent until the
+    owner authorizes a key, rights and a budget.
+  - **Hosts and evidence:** the owner's Mac is the work host. The 2026-10-11
+    sandbox and its archive are declared lost; F2, F6, F8, F10 and F11 retire.
+    Encrypted backups are to be built in `~/VSC_DEV/backups` (not built yet). The
+    pilot key file is deleted; the owner revokes the key.
+  - **Dependencies:** rustls 0.23.46, then one PR to main (to do); zip alerts
+    dismissed as not used and Dart 0.3 declined (done); Tantivy 0.27 only if neutral
+    (to do).
+  - **Closed or kept:** rows 5 and 6 and the historical CI re-run retire; the
+    Nemotron comparison closes (its files are kept); `overview-v1` stays; query-time
+    parse cost is a named limitation.
+
 
 **Representation repair continuation, 2026-10-17:** body-window contexts keep the
 region's own declaration when over budget (`+context2`), and long overviews keep
@@ -185,7 +268,9 @@ measurement. Results are in [validation](validation.md#cloud-continuation--2026-
 
 ## Code and working state
 
-Repository: `/workspace/context-foundry`; branch: `experimental/context-ecosystem`.
+Repository: `/Users/satishlomte/VSC_DEV/context-foundry` on the owner's Mac (the
+2026-10-11 checkpoint used `/workspace/context-foundry` on the sandbox, now lost);
+branch: `experimental/context-ecosystem`.
 The 2026-10-11 checkpoint's tested implementation was `6ac60d8`, with documentation
 commits after it. The line has since gained code changes from the 2026-10-12 cloud
 session:
@@ -215,11 +300,11 @@ role metadata uses `kinds2`; overview/address recipes retain `kinds1`.
 | Gate | Verified now | Still required |
 | --- | --- | --- |
 | Retrieval | Complete real hierarchy: 274 admitted sources, 13,822 vectors, 14,453 locations. Complete original, role-only and owner-scope arms deliver 1/8; coverage-independent interleaving restores 2/8. Historical experimental lexical was 2/8; the 2026-10-16 budget repair reached 3/8, and callable passage preservation now reaches 4/8 at the same 2,048 tokens. The separate real-model overview comparison also reaches 4/8. Default lexical remains 1/8. | Effective general repair and independent acceptance. All eight stay in the denominator; one historical source is excluded by unchanged private-key policy, so admitted ceiling is 7/8. Do not bypass admission or relabel outlines as body evidence. |
-| Host tasks | Historical Qwen3-4B pair fails both unchanged external oracles. The managed-runtime public seeded repair passes in both arms; provider usage is unavailable. | Representative correct completions and complete provider accounting. The private stronger-model protocol remains parked. |
-| Representative scale | Exact overview fitting covers 67,663 admitted Rust/Go sources; 60,735–65,959 distinct inputs / 14.65–15.86 million tokens. | Full real inference, audit/replay, serving and changed-input verification. No complete 67,663-source model run exists. |
+| Host tasks | Historical Qwen3-4B pair fails both unchanged external oracles. The managed-runtime public seeded repair passes in both arms; provider usage is unavailable. | Representative correct completions and complete provider accounting, now owned by 003 T006 and pilot v2. The private stronger-model protocol (F2) was retired on 2026-11-06, and F3 moved to T006. |
+| Representative scale | Exact overview fitting covers 67,663 admitted Rust/Go sources; 60,735–65,959 distinct inputs / 14.65–15.86 million tokens. | Owner decision, 2026-11-06 ("Accept the Mac rust run"): scale is accepted through the complete hierarchy-v1 preparation of rust-lang/rust (62,035 files) on the owner's Mac plus a short replay and changed-input check there (to do). No complete 67,663-source model run exists; that corpus and Linux x86 scale are a named limitation. |
 | Economics | Identical-source CLI delivery improves by 25% fewer calls and 6.48% fewer delivered tokens at 512 tokens. Provider/task benefit remains unproved. Failed attempts and unknown usage are retained. Selected history totals 71 requests, including the latest 13; 66 complete and five unknown. | Demonstrated completion benefit with bootstrap, acquisition, retrieval, maintenance and failed attempts included. Smaller failed prompts are not a benefit. |
-| Evidence | Bounded source call postings, conservative Python aliases, router dependency proofs and revision-bound execution snapshots; eight real framework/execution checks pass. | Broader collectors, cross-language resolution and realistic task outcomes. Unsupported/dynamic cases remain explicitly incomplete. |
-| Mac/GPU | Real Metal embeddings, 8,192-token input, owned generation, cleanup and CPU/Metal parity pass. Actual 128-file calibration and zero-call replay pass. With Spotlight stopped on the runner, native CPU-pressure acceptance passes twice at unchanged thresholds (runs 38207948408, 38209502529). | Physical-device performance/global GPU pressure, combined residency and signed installed-package acceptance. |
+| Evidence | Bounded source call postings, conservative Python aliases, router dependency proofs and revision-bound execution snapshots; eight real framework/execution checks pass. | 005 T005 is accepted at its written scope once a gates receipt exists (owner, 2026-11-06); broader collectors, frameworks and cross-language resolution are named limitations, and realistic task outcomes belong to pilot v2. Unsupported/dynamic cases remain explicitly incomplete. |
+| Mac/GPU | Real Metal embeddings, 8,192-token input, owned generation, cleanup and CPU/Metal parity pass. Actual 128-file calibration and zero-call replay pass. With Spotlight stopped on the runner, native CPU-pressure acceptance passes twice at unchanged thresholds (runs 38207948408, 38209502529). | One ad-hoc-signed native run on the owner's Mac (to do) and signed installed-package acceptance (row 4, which blocks release). Global GPU pressure, combined residency, thermal/battery and eviction are named limitations (owner, 2026-11-06, "Script checks only"). |
 
 The complete small-repository preparation accounts for 3,608,991 tokens and
 2,710,537 ms of preparation (2,413,715 ms provider time). Unchanged replay takes
@@ -260,8 +345,12 @@ passes the whole native job at unchanged thresholds (idle 2%, recovered 27%). Se
 
 ## Evidence and portable package
 
+Owner decision, 2026-11-06 ("Declare both lost"): V11, the capsule and the portable
+archive below were on the 2026-10-11 sandbox and are lost. This section records what
+they held; it is not a restore procedure.
+
 Set `V11=/workspace/.context-foundry-tools/validation-runs/realistic-delivery-v11`.
-The private `V11/resume-capsule/` holds handoff scripts, patches, hashes, source
+The private `V11/resume-capsule/` held handoff scripts, patches, hashes, source
 snapshots and sealed evaluation data. None of these unrun patches is silently applied.
 `preserved-files.json` identifies their exact bytes. Important evidence directories:
 
@@ -274,7 +363,7 @@ snapshots and sealed evaluation data. None of these unrun patches is silently ap
 - `qwen3-body-reads-pair-2048/`: latest negative host pair and accounting.
 - `evidence-framework-checks/report.json`: eight actual framework/execution checks.
 
-The portable `/workspace/context-foundry-resume-20261011.tar.gz` preserves the v11
+The portable `/workspace/context-foundry-resume-20261011.tar.gz` preserved the v11
 receipts/stores/binaries, handoff work, source corpora/manifests, selected historical
 host receipts and an offline Git bundle. Its adjacent `.sha256` file verifies the
 archive. Read `RESTORE.md` inside before extraction. Public model weights, general
@@ -285,30 +374,26 @@ The archive is private handoff material, not a Git/release artifact.
 
 ## Where to continue
 
-For now, continue on the sandbox that made this checkpoint. It already holds the
-checkout, the restored evidence and the archive, and it has 32 GiB of RAM. Drive it
-through Claude Code Remote Control, which needs a claude.ai Pro/Max login on the
-sandbox:
+Owner decisions, 2026-11-06 ("Mac only, drop sandbox"; "Declare both lost"): continue
+on the owner's Mac (Apple M5 Max, 64 GiB) in `/Users/satishlomte/VSC_DEV/context-foundry`.
+Private corpora, datasets and stores stay at their absolute paths under
+`/Users/satishlomte/VSC_DEV` ([CLAUDE.md](../CLAUDE.md)). The 2026-10-11 sandbox and its
+archive are lost; do not try to reach either. `scripts/cloud/sandbox.sh` and
+`fetch-resume.sh` are retired.
 
-1. Run `git pull --ff-only` in `/workspace/context-foundry`.
-2. Run `bash scripts/cloud/sandbox.sh check`. It reports PASS/FAIL for the Claude CLI,
-   the login, network access to Anthropic, tmux, the repository and the evidence.
-3. Run `bash scripts/cloud/sandbox.sh start`. It starts one Remote Control session in
-   tmux. Answer the trust and enable prompts once in `tmux attach -t cf-remote-control`,
-   then open the session at claude.ai/code.
-
-If the sandbox is unavailable, use a Claude Code cloud environment instead. It is
-versioned in `scripts/cloud`:
+If the Mac is unavailable, use a Claude Code cloud environment as a fallback. It has
+no private evidence, so G1, G2 and pilot runs wait for the Mac. It is versioned in
+`scripts/cloud`:
 
 | File | Use |
 | --- | --- |
-| [`sandbox.sh`](../scripts/cloud/sandbox.sh) | Checks, starts, shows and stops the sandbox's Remote Control session. |
+| [`sandbox.sh`](../scripts/cloud/sandbox.sh) | Retired 2026-11-06 (the sandbox is lost); kept as the record. Do not run it. |
 | [`setup.sh`](../scripts/cloud/setup.sh) | The environment's setup script. It installs Rust 1.90, libclang/CMake, the pinned llama.cpp object store, the pinned public models and 013 files, OMP/Bun, and the locked Cargo dependencies. |
 | [`environment.env`](../scripts/cloud/environment.env) | The environment variables. They hold paths only; there are no secrets. |
 | [`allowed-domains.txt`](../scripts/cloud/allowed-domains.txt) | Hosts added under Custom network access, alongside the default package managers. |
 | [`doctor.sh`](../scripts/cloud/doctor.sh) | Checks a session: the environment variables, host limits, `avx512_bf16`, toolchains and pinned inputs. |
 | [`gates.sh`](../scripts/cloud/gates.sh) | Runs the merge gates (`scripts/gates.sh`) with `environment.env` applied, an optional trusted `CF_GATE_ENV` file, and `RUSTUP_TOOLCHAIN` unset; `bash scripts/cloud/gates.sh OUTDIR`. |
-| [`fetch-resume.sh`](../scripts/cloud/fetch-resume.sh) | Downloads and verifies the private archive and prints its `RESTORE.md`. It takes the archive from a private GitHub release attached to the session, or from an HTTPS URL. |
+| [`fetch-resume.sh`](../scripts/cloud/fetch-resume.sh) | Retired 2026-11-06 (the archive is lost); kept as the record of how a cloud session was meant to fetch it. Do not run it. |
 
 For a prepared environment with tools outside `/opt/cf`, source `environment.env`
 first, then apply the local path overrides. The doctor honors `LIBCLANG_PATH`
@@ -334,16 +419,24 @@ empty or non-file overrides also fail. `OUTDIR/env.txt` records the override pat
 and SHA-256, selected effective settings and compiler paths, excluding private
 archive configuration and arbitrary exports. Never place credentials in the file.
 
-An Anthropic-hosted VM has about 4 vCPUs, 16 GB RAM and 30 GB of disk. That is half
-the memory of the checkpoint host, which affects two steps below:
-
-- Step 5's 18.6 GB Qwen3-Coder-30B-A3B pair cannot run in this environment. It needs
-  a larger host.
-- Steps 3 and 4 need `avx512_bf16` to run the same SIMD revision-5 function.
+An Anthropic-hosted VM has about 4 vCPUs, 16 GB RAM, 30 GB of disk and no private
+evidence. Steps 3–5 below (F10, F11, F2) were retired on 2026-11-06, so none of them
+needs a larger host. Revision-5 (`avx512_bf16`) jobs stay parked until the owner
+provides a Linux host.
 
 [`CLAUDE.md`](../CLAUDE.md) gives agents the session rules for both places.
 
 ## Resume in this order
+
+This is the order as of the 2026-10-11 checkpoint; it is superseded. Take next steps
+from [Current status](#current-status--2026-11-06). What became of each step:
+
+- Step 1 now runs on the owner's Mac (M5 Max, 64 GiB), not the sandbox.
+- Step 2 was measured as F9 on 2026-10-14; its capsule is lost with the archive.
+- Steps 3 and 4 (F10, F11) were retired on 2026-11-06 ("Accept the Mac rust run").
+- Step 5 (F2) was retired on 2026-11-06 ("Retire F2; F3 to T006").
+- Step 6 is superseded by F4, which passed on 2026-10-22.
+- Step 7's capsule patch was retired with the archive (F8).
 
 1. Verify branch/HEAD/clean status and the latest local gates receipt (CI is unavailable). Restore
    prerequisites from [resume instructions](resume.md) and the environment setup;

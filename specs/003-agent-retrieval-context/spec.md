@@ -191,8 +191,12 @@ team-kit hook `team-kit-foundry` (TEAM_KIT_FOUNDRY_ROUTE=1)."
 Approved 2026-10-03 for T005; implemented and reviewed 2026-10-04 in the team-kit
 (team-kit commit `e65f8cf`, installed default-off; see [validation](../../docs/validation.md)).
 The hook lives in the operator team-kit (`~/.omp/team-kit`), not in this repository,
-so Foundry stays all-Rust. OMP offers tool-call interception only to in-process
-TypeScript extensions (`pi.on("tool_call")` returning `{block, reason}`); there is no
+so it adds no TypeScript to Foundry. The only TypeScript here is the opt-in
+`pilot-capture` OMP bridge used by [T006](#t006--validate-retrieval-repairs-in-real-coding-tasks).
+Owner decision, 2026-11-06, "Keep, with an exception": it stays in the crate as a
+narrow [architecture](../../docs/architecture.md) exception for embedded
+host-extension source in an opt-in feature. OMP offers tool-call interception only
+to in-process TypeScript extensions (`pi.on("tool_call")` returning `{block, reason}`); there is no
 external-command hook.
 `omp/agent/extensions/team-kit-foundry.ts` (TypeScript, at most 150 lines, installed by
 `./install.sh --sync`) exports a pure `decide(event, state, roots, cwd)` used by its
@@ -544,6 +548,11 @@ adds the opt-in OMP team-kit hook; this record stays instruction-only evidence.)
   `~/.omp/agent/models.yml` and other profiles stay untouched; never fall back to
   direct upstream requests while a required gateway is unavailable. Release the
   gateway separately from CLI/MCP; no new measurement-close or fleet-governance stage.
+  Owner decision, 2026-11-06, "Release it separately": CLI and MCP release without
+  advertising the gateway. Its 2026-10-04 live proof predates later gateway changes,
+  and the [2026-10-16 live probe](../../docs/validation.md#managed-host-and-gateway-continuation--2026-10-16)
+  failed for insufficient account balance, so the gateway gets its own release only
+  after a new live proof. No spend for that proof is authorized.
 - **External prerequisites (owner, supplied 2026-10-04; environment binding added
   2026-10-16):** the Z.ai key in the configured `credential_env`, or an explicit
   private key file the launcher reads for the gateway process only, and
@@ -710,6 +719,72 @@ not hidden work inside packing; T005 carries the owner's 2026-10-03 economics pr
 
 **Status:** authorized 2026-10-09 (owner: “go for 1 then 2 and onwards”); in progress, not accepted.
 
+**Next: pilot v2, unfunded.** Owner decision, 2026-11-06, "Draft pilot v2,
+unfunded": because v1 cannot accept T006, the next step is a new frozen contract,
+pilot v2 (to draft; [v1](contracts/bounded-pilot-v1.md) stays frozen). It needs
+several harder held-out tasks, a powered sample size and fixes for v1's
+[disclosed gaps](../../docs/validation.md#containment-and-disclosed-gaps), and it
+reuses the qualified `pilot-capture` apparatus (below). Nothing is spent until the
+owner separately authorizes a new scoped key, task-data rights and a costed budget;
+v1's local key file was deleted on 2026-11-06. The same day the owner moved the
+economics gate (FOLLOWUP F3) to T006 and pilot v2, retired the local 30B comparison
+(F2) with no spend, and added task-context outcomes to this suite (Experiment below).
+See the [decision record](../../docs/validation.md#owner-decisions--2026-11-06).
+
+**Bounded pilot v1 run, 2026-11-06:** gates 2, 3 and 5 were met with the owner's
+credential, workspace identity, rights approval and scoped probe and coding
+authorizations. The paid probe sealed, and all eight frozen slots completed
+without a halt.
+- The oracle passed all 8 (A 4/4, B 4/4), so B−A = 0 in every pair; both arms
+  made the same repair. The owner kept two blocked arm-A reads of `.` as
+  constraint violations, not behavior failures.
+- The pilot is complete and interpretable. Its claim ceiling forbids T006
+  acceptance, causal savings and default promotion, so T006 stays unaccepted.
+
+See the
+[receipt](../../docs/validation.md#paid-transport-probe-and-bounded-coding-pilot--2026-11-06).
+
+**Live-capture implementation, 2026-11-05:** the contract's capture boundary is
+implemented behind the opt-in `pilot-capture` feature and passes actual-host
+no-provider qualification. Missing gate 1 is complete: the owner decided that no
+independent review is needed, and the in-session review's findings are fixed. See the
+[receipt](../../docs/validation.md#live-capture-implementation-and-no-provider-qualification--2026-11-05).
+The launch manifest, views, checker and executor are frozen (gate 4, 2026-11-06;
+[receipt](../../docs/validation.md#pilot-apparatus-and-frozen-launch-inputs--2026-11-06)).
+The compatibility, ratecard/rights and owner-authorization gates were then met for v1
+on 2026-11-06 (above); T006 is not accepted. Owner decision, 2026-11-06, "Keep, with
+an exception": the feature stays in the crate for pilot v2, its embedded TypeScript
+bridge is the narrow exception noted under the
+[OMP hook](#optional-omp-first-call-hook), and
+[`scripts/gates.sh`](../../scripts/gates.sh) runs `pilot-capture` Clippy, unit tests and
+a Rust 1.90 check as gates.
+
+**Bounded pilot contract frozen, 2026-10-31:** the
+[v1 contract](contracts/bounded-pilot-v1.md) is the sole owner of the selected
+pilot's capture, accounting, cache, sampling and spending rules.
+SHA-256: `1a00758ffdafbfa18a59dd69e0b9912ef8beca9f7010f375bab8e553c554502d`.
+This is a planning freeze only, not permission for pilot implementation,
+materialization, credential access, a compatibility probe or coding/provider calls.
+The contract's live-capture, launch-evidence and explicit-authorization gates remain.
+
+**Apparatus continuation, 2026-10-29:** the owner authorized apparatus-only fixes
+and a no-provider preflight, removing the Anthropic-only author restriction.
+The full actual installed-host fixture preflight now passes; both earlier failed
+attempts and the original calibration evidence are retained. See the
+[receipt](../../docs/validation.md#no-provider-apparatus-preflight--2026-10-29)
+and [current handoff](../../docs/resume-context-ecosystem.md#current-status--2026-11-06).
+The guard remains fixture-only. This does not authorize another coding comparison,
+establish live-provider capture or amend T006's acceptance.
+
+**Measured host continuation, 2026-10-28:** OMP 18.13.2 with Anthropic Sonnet 5.5
+completed the public seeded `percent-encoding` repair in both ordinary-file and
+semantic-context-assisted arms; both pass the frozen external oracle. Actual
+input/output/cache totals reconcile across session, event stream and usage import.
+The host exceeded the frozen tool recipe, reasoning categories are missing and
+hosted cache state is uncontrolled, so this is calibration only, not T006 or
+economic acceptance. See the
+[receipt](../../docs/validation.md#paired-coding-task-and-actual-host-usage--2026-10-28).
+
 **Managed host continuation, 2026-10-16:** the owner selected the running managed
 Codex agent runtime. A public `percent-encoding` repair passes the external oracle
 in both ordinary-discovery and lexical Foundry CLI arms. This does not require OMP
@@ -790,6 +865,10 @@ verifies the gateway boundary against a scripted upstream. No third-party code i
     task-success noninferiority margin, required improvement and cost/latency limits.
     Do not choose those limits after reading candidate outcomes. This is one shared
     task suite to extend in later milestones, not a new benchmark for every feature.
+    Owner decision, 2026-11-06, "Measure them in pilot v2": the outcome tasks of
+    T007–T009 and 008 T003–T005 join this suite and pilot v2 with their acceptance
+    bar unchanged, and 008 T004's semantic triggers are still to be built. All six
+    stay open until an authorized run passes.
   - Record first useful evidence, complete supporting evidence, exploratory calls,
     steps to a verified patch, constraint violations, retries, task success, turns,
     latency and complete available provider usage under the economics contract.
@@ -800,7 +879,13 @@ verifies the gateway boundary against a scripted upstream. No third-party code i
   outcome within the declared total-cost/latency bounds. Report paired uncertainty,
   per-intent regressions and absolute success. An underpowered or incomplete run
   cannot promote the default or establish dollar savings. Retain the baseline if
-  the outcome gate fails, even if G2 improved.
+  the outcome gate fails, even if G2 improved. Owner decision, 2026-11-06,
+  "Lexical-only, drop T006 gate": this gate no longer decides
+  `--experimental-behavior-context`. 001 T010's own local gates and the
+  [2026-10-19 G2 rule](../../docs/validation.md#g2-rule-without-the-token-clause--2026-10-19)
+  decide it. Its semantic-store effects are to be removed, and once those gates pass
+  it defaults on only where lexical results are served. No real-agent benefit is
+  claimed for the flag.
 - **Next-milestone capability artifact:** inspect the pinned real host for tool
   interception, pre-send context mutation, protected message/tool pairing, restart
   persistence and application acknowledgments. Classify each as supported with
@@ -817,7 +902,10 @@ verifies the gateway boundary against a scripted upstream. No third-party code i
 
 Status: implemented locally through CLI and the real SDK MCP client. The later
 explicit gateway integration applies frozen/live views and is checked with installed
-OMP; broader host outcomes and measured task economics remain pending.
+OMP; broader host outcomes and measured task economics remain pending. Owner
+decision, 2026-11-06: they will be measured in the
+[T006](#t006--validate-retrieval-repairs-in-real-coding-tasks) suite and pilot v2,
+and T007 stays unaccepted until an authorized run passes.
 
 Authorized 2026-10-09 on the experimental branch; measurements do not block sandbox
 implementation. 008 T003/T004 own durable state and mutations. This task exposes the
@@ -845,7 +933,9 @@ restart recovery and bounded output. Host outcome and cost comparisons remain pe
 
 Status: implemented locally through CLI and the real SDK MCP client; see
 [validation](../../docs/validation.md#task-aware-retrieval-and-recovery-search--2026-10-09).
-Applied-host replacement and measured task outcomes remain pending.
+Applied-host replacement and measured task outcomes remain pending. Owner decision,
+2026-11-06: the outcomes will be measured in the T006 suite and pilot v2, and T008 stays
+unaccepted until an authorized run passes.
 
 Experimental continuation of T007 and 008 T005. Add paired CLI context options
 `--task ID --task-revision REV`, and paired MCP context fields `task_id` and
@@ -880,6 +970,8 @@ trace how the selected evidence supports the patch and its test. Later paired ho
 runs compare verified completions, incorrect changes, complete provider usage,
 auxiliary generation and amortized preparation cost. Smaller tool replies alone are
 not success. This acceptance evidence does not block experimental implementation.
+Owner decision, 2026-11-06: these paired runs belong to the T006 suite and pilot v2,
+and T009 stays unaccepted until an authorized run passes.
 
 
 #### T009 implementation — 2026-10-10

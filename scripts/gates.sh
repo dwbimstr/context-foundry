@@ -3,7 +3,11 @@
 #   scripts/gates.sh TREE OUTDIR
 # fmt, clippy and the full test suite on the default toolchain, then check and
 # clippy under the actual Rust 1.90 toolchain (its bin directory first on PATH,
-# never `cargo +1.90.0`). Prints one `GATE <name> exit=<n>` line per gate; logs
+# never `cargo +1.90.0`). The opt-in `pilot-capture` feature, which the default
+# build never compiles, gets its own clippy and unit tests on the default
+# toolchain and a check on 1.90 (owner decision 2026-11-06, "Keep, with an
+# exception"); its actual-host suite is not a gate. Prints one
+# `GATE <name> exit=<n>` line per gate; logs
 # go to OUTDIR. TGT and TGT_MSRV override the two target directories;
 # MSRV_BIN overrides the 1.90 bin directory. On macOS the 1.90 gates link
 # against SDKROOT, by default the selected developer directory's macOS SDK.
@@ -21,6 +25,8 @@ export CARGO_TARGET_DIR=${TGT:-target/gates}
 run fmt cargo fmt --check
 run clippy cargo clippy --locked --all-targets -- -D warnings
 run test cargo test --locked --no-fail-fast
+run pilot-clippy cargo clippy --locked --features pilot-capture --all-targets -- -D warnings
+run pilot-test cargo test --locked --features pilot-capture --lib pilot_capture
 HOST=$(rustc -vV | sed -n 's/^host: //p')
 MSRV_BIN=${MSRV_BIN:-${RUSTUP_HOME:-$HOME/.rustup}/toolchains/1.90.0-$HOST/bin}
 export PATH="$MSRV_BIN:$PATH"
@@ -34,3 +40,4 @@ fi
 { command -v rustc cargo clippy-driver; rustc --version; cargo --version; clippy-driver --version; echo "SDKROOT=${SDKROOT:-}"; } > "$OUT/msrv-versions.log" 2>&1
 run msrv-check cargo check --all-targets --locked
 run msrv-clippy cargo clippy --locked --all-targets -- -D warnings
+run msrv-pilot-check cargo check --all-targets --locked --features pilot-capture
