@@ -747,7 +747,8 @@ requires continuous incremental maintenance at 60,000–80,000 files. Owner deci
 watcher test ([FOLLOWUP](../../FOLLOWUP.md)), without loosening its assertion; then
 T011 is accepted only by an `mcp --watch` run on the owner's Mac over the 62,116-file
 rust-lang/rust 1.99.0 corpus, against bounds stated before the run. If that run
-fails, T011 stays open. Neither step has run yet. Reuse this spec's
+fails, T011 stays open. The F18 deadline failure was repaired on 2026-11-10
+([receipt](../../docs/validation.md#watcher-test-repair-f18--2026-11-10)); the native run has not run yet. Reuse this spec's
 source ingestion, ignore/no-follow and reconciliation rules. Watch events do not
 admit roots, certify bytes or become a second source ledger.
 

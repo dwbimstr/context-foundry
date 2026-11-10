@@ -62,7 +62,7 @@ libkrun is conditional infrastructure, needed only where an isolation profile re
 
 Federation and legacy migration need specific user failures before implementation;
 launch-time multi-root context (007) is not federation. Opt-in watching (001 T011) is
-implemented experimentally. After F18 is fixed without loosening it, T011 needs a native
+implemented experimentally. F18's deadline failure was fixed on 2026-11-10 without loosening it; T011 still needs a native
 `mcp --watch` run on the 62,116-file rust-lang/rust corpus on the owner's Mac (to do),
 and it stays open if that run fails. Generated knowledge (010) is implemented
 experimentally; its real-model acceptance is deferred and it stays unadvertised

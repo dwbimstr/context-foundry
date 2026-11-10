@@ -885,7 +885,14 @@ F6 is retired as a gate and F8 is retired.
 
 ## F18. The 6,000-file watcher test rereads sources on the owner's Mac (open 2026-10-17)
 
-- **Status:** open; it predates the 2026-10-17 changes. On the owner's M3 Pro,
+- **Status, 2026-11-10:** the failure seen on the M5 Max is fixed in `65fd799`; the
+  M3 Pro symptom below is not reproduced and stays open as an observation. On the
+  M5 Max the test never reread a source (`events` 0, 6,000 reads): it missed its
+  180-second deadline because a first reconciliation forced about 6,750 commits to
+  disk. Walks now commit in batches of four and index pages hold 32 keys; the test
+  passes in about 35 s with its assertions unchanged
+  ([receipt](docs/validation.md#watcher-test-repair-f18--2026-11-10)).
+- **Earlier symptom (2026-10-17):** it predates the 2026-10-17 changes. On the owner's M3 Pro,
   `six_thousand_files_allow_foreground_calls_and_no_idle_body_rescans`
   (`tests/watch.rs`) reports 6,076–7,658 source reads at its first idle state instead of
   6,000. Unchanged `e9c5ca0` failed in 2 of 3 runs and the working tree in 5 of 6 on
@@ -907,5 +914,7 @@ F6 is retired as a gate and F8 is retired.
   it, then run `mcp --watch` on the 62,116-file rust corpus on the owner's Mac against
   bounds stated before the run (about an hour, no spend). That run is the evidence for
   [001 T011](specs/001-source-state-recovery/spec.md#t011--maintain-the-admitted-workspace-from-filesystem-change-hints),
-  which stays open if it fails. Both steps are to do. The failures above were seen on
-  the M3 Pro; the owner's Mac now reports an Apple M5 Max with 64 GiB.
+  which stays open if it fails. The repair is done (status above); the rust run is
+  to do. The reread failures above were seen on the M3 Pro; the owner's Mac now
+  reports an Apple M5 Max with 64 GiB. The read-count assertion now prints the
+  watcher status, which is the distinguishing observation if the symptom returns.

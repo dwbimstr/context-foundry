@@ -45,8 +45,10 @@ below are history.
   gated on a unit diff (owner, 2026-11-06).
 - **Open.** Local gates are the receipt; pushes from this line start no CI. Since
   2026-10-12, hosted runs came only from Dependabot and from the 2026-10-25 fix
-  branches and their pushes to main. The 6,000-file watcher test was intermittent on
-  the owner's earlier M3 Pro (F18) and has not been rerun on the M5 Max. After a reboot, repeat G2 runs differ in 36 of 388
+  branches and their pushes to main. The 6,000-file watcher test missed its deadline on
+  the M5 Max when disk syncs were slow; `65fd799` batches the watcher's commits
+  and it passes in about 35 s ([receipt](validation.md#watcher-test-repair-f18--2026-11-10)).
+  The reread symptom seen on the earlier M3 Pro (F18) has not recurred. After a reboot, repeat G2 runs differ in 36 of 388
   rows with equal totals; compare arms within one session.
 - **Evidence/profile repairs, 2026-10-25.** Brief enrichment preserves retrieved
   spans/order and the 32-source cap; delivered containing bodies/excerpts can support
@@ -136,7 +138,8 @@ below are history.
     accepted at its written scope once a gates receipt exists; 009 scale is to be
     accepted through the Mac rust-lang/rust preparation once a short replay and
     changed-input check passes; device acceptance is what the native script
-    checks; 001 T011 needs a native Mac watch run on rust after F18 is fixed;
+    checks; 001 T011 needs a native Mac watch run on rust (F18's deadline failure was
+    fixed 2026-11-10);
     001 T010's flag is decided by its own local gates and becomes lexical-only
     once its code change lands. All of these are to do.
   - **T006:** pilot v2 is to be drafted, unfunded (not drafted yet), and the

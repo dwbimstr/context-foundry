@@ -1,5 +1,50 @@
 # Validation
 
+## Watcher test repair (F18) — 2026-11-10
+
+Self-review, on the owner's Mac (Apple M5 Max, 64 GiB). Private logs:
+`datasets/context-foundry-gates/f18-2026-11-10/` and
+`datasets/context-foundry-gates/65fd799-2026-11-10/`.
+
+**Observed before the change, at `07b7b1d`.** Three runs of
+`six_thousand_files_allow_foreground_calls_and_no_idle_body_rescans` passed in 103, 111
+and 122 seconds against the test's 180-second deadline; the two failures
+recorded on 2026-11-06 ran past it. In every run with a captured status the watcher
+reports `events` 0, `full_reconciliations` 1 and `source_reads` 6,000, so on this
+Mac the test does not reread sources: it is slow. A phase probe (temporary, not
+committed) put the walk at 60 s and the remaining index drain of 4,504 keys at 56 s.
+A 10-second `sample` of the owner during the walk found 73% of the watcher thread
+inside redb's durable commit, almost all of it in `File::sync_all`. The walk made
+one forced commit per file, and each eight-key index page made a search commit and a
+store commit: about 6,750 forced commits for 6,000 files.
+
+**Change, `65fd799`.** A watcher walk publishes the files it reads in atomic batches
+of at most four through the existing foreground batch commit, rechecking each file
+by name just before the commit, and a background index page holds 32 keys instead
+of eight. A single hinted path still commits alone. The test's assertions and
+deadline are unchanged; its read-count assertion now prints the watcher status.
+
+**Checked.**
+
+- The probed test at the change: walk and drain complete in 27 s, test 31 s.
+- `tests/watch.rs`, all four tests, five consecutive runs: 5 of 5 pass in 29–43 s,
+  each with `events` 0 and `source_reads` 6,000.
+- New unit test `a_walk_never_publishes_a_file_rewritten_after_its_read`: a file
+  rewritten between its read and its batch commit fails the walk and is never
+  published with the earlier bytes. With the recheck disabled the test fails.
+- Local gates on clean `65fd799` (20:47–21:05 UTC), Rust 1.97.1 and 1.90.0: all
+  eight gates exit 0; **1,315 passed, 0 failed, 34 ignored**; `pilot-test` 62
+  passed. The watch file took 50 s inside the full suite. Log SHA-256 prefixes:
+  Clippy `8ca4fb7d…`, test `e97514d8…`, pilot Clippy `5799c3ab…`, pilot tests
+  `7109aa4e…`, MSRV check `975eb1f3…`, MSRV Clippy `fd6e45c3…`, MSRV pilot check
+  `5b2a6c17…`.
+
+**Not established.** The 2026-10-17 symptom on the M3 Pro, 6,076–7,658 reads
+against 6,000, did not occur in any of these runs, so its late-hint hypothesis is
+neither confirmed nor repaired. No test measures foreground latency behind a
+32-key page or a four-file batch. Not run: CI (Actions unavailable), native macOS
+acceptance (F7) and the 62,116-file watch run that accepts 001 T011.
+
 ## Owner decisions — 2026-11-06
 
 After the pilot, an in-session sweep (self-review, not independent) searched the
@@ -21,7 +66,7 @@ is work to do.
 | 11 | 009 T006–T009 scale | "Accept the Mac rust run" | The existing Mac hierarchy-v1 preparation of rust-lang/rust, plus a short replay and changed-input check (to do), accepts scale; F10/F11 retire; Linux x86 and the 67,663-source corpus are a named limitation. |
 | 12 | Device acceptance scope | "Script checks only" | What `scripts/native-macos-acceptance.py` checks decides; unbuilt GPU-pressure, residency, thermal/battery and eviction policies are named limitations. |
 | 13 | Native macOS acceptance (F7) | "Once now, unsigned" | One ad-hoc-signed run on the owner's Mac now (to do), repeated on the signed release candidate. |
-| 15 | 001 T011 watching | "Native Mac run on rust" | Fix F18 without loosening it, then run `mcp --watch` on the 62,116-file rust corpus against bounds stated in advance (to do). |
+| 15 | 001 T011 watching | "Native Mac run on rust" | F18's deadline failure is fixed without loosening it ([2026-11-10](#watcher-test-repair-f18--2026-11-10)); then run `mcp --watch` on the 62,116-file rust corpus against bounds stated in advance (to do). |
 | 9 | 001 T010 and `--experimental-behavior-context` | "Lexical-only, drop T006 gate" | T010's own local gates and the 2026-10-19 G2 rule decide; the flag's semantic-store effects are removed and it defaults on only where lexical results are served (code to do). |
 | 24 | Query-time parse cost (001 T006, 007) | "Accept as named limitation" | No code change; reopen only after a measured failure on a real corpus. |
 
@@ -2100,6 +2145,7 @@ directly.
 
 | Commit | fmt | clippy 1.97 | test 1.97 | msrv-check | msrv-clippy |
 | --- | --- | --- | --- | --- | --- |
+| `65fd799` | 0 | 0 | 0: 1,315 passed, 34 ignored; pilot-capture gates 0 ([receipt](#watcher-test-repair-f18--2026-11-10)) | 0 | 0 |
 | `854cf88` | 0 | 0 | 101: 1,312 passed, 2 timing failures (watcher F18, cancellation), 34 ignored; pilot-capture gates 0 ([receipt](#owner-decisions--2026-11-06)) | 0 | 0 |
 | `8600fc0` | 0 | 0 | 0: 1,314 passed, 34 ignored ([receipt](#owner-decisions--2026-11-06)) | 0 | 0 |
 | `16b1e39` | 0 | 0 | 0: 1,307 passed, 34 ignored ([dependency cleanup receipt and log digests](#dependency-and-branch-cleanup--2026-10-26)) | 0 | 0 |
