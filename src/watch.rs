@@ -16,7 +16,10 @@ const MAX_PATHS: usize = 2048;
 const MAX_PATH_BYTES: usize = 1024 * 1024;
 const QUIET: Duration = Duration::from_millis(75);
 const MAX_DEBOUNCE: Duration = Duration::from_secs(1);
-const INDEX_PAGE: usize = 8;
+/// Lexical keys per background index page. Each page ends in a search commit and
+/// a store commit, both forced to disk, so the page size sets how a backlog's
+/// drain time follows the disk's sync latency (FOLLOWUP F18).
+const INDEX_PAGE: usize = 32;
 
 /// The existing owner supplies its one foreground-prioritized engine slot.
 pub(crate) trait Owner: Send + Sync {
@@ -699,6 +702,42 @@ mod tests {
         watch.queue.lock().unwrap().dirty = false;
         watch.event(Ok(event(&watch.root, "nested/.git/info/exclude")));
         assert_eq!(watch.status(0)["dirty_root"], true);
+    }
+    #[test]
+    fn a_walk_never_publishes_a_file_rewritten_after_its_read() {
+        let f = fixture();
+        for name in ["a.rs", "b.rs"] {
+            fs::write(f.root.join(name), "pub fn stale() {}\n").unwrap();
+        }
+        let reader = Arc::new(ChangeReader::new(&f.engine, &f.root).unwrap());
+        let mut walk = ChangeScan::start(&f.engine, reader, None).unwrap();
+        let control = Control::unbounded();
+        // One file is read and waits in the batch; nothing is published yet.
+        while walk.step(&f.engine, &control).unwrap().0.read == 0 {}
+        assert_eq!(f.engine.status().unwrap().source_count, 0);
+        let fresh = "pub fn fresh_and_longer() {}\n";
+        for name in ["a.rs", "b.rs"] {
+            fs::write(f.root.join(name), fresh).unwrap();
+        }
+        let error = loop {
+            match walk.step(&f.engine, &control) {
+                Ok((_, false)) => {}
+                Ok((_, true)) => panic!("a walk over a rewritten file completed"),
+                Err(error) => break error.to_string(),
+            }
+        };
+        assert!(error.contains("file changed during refresh"), "{error}");
+        for name in ["a.rs", "b.rs"] {
+            if let Some(source) = f.engine.source(name).unwrap() {
+                assert_eq!(source.hash, crate::digest(fresh.as_bytes()));
+            }
+        }
+        assert_ne!(f.engine.status().unwrap().scan_state, "complete");
+        scan(&f, None).unwrap();
+        for name in ["a.rs", "b.rs"] {
+            let source = f.engine.source(name).unwrap().unwrap();
+            assert_eq!(source.hash, crate::digest(fresh.as_bytes()));
+        }
     }
     #[test]
     fn scoped_walks_preserve_ignore_precedence_and_delete_only_the_target_subtree() {

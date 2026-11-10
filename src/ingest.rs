@@ -922,6 +922,30 @@ impl ChangeReader {
         path: &str,
         control: &Control,
     ) -> FResult<ChangeCounts> {
+        match self.fetch(engine, path, control)? {
+            Fetched::Absent => Ok(ChangeCounts {
+                deleted: u64::from(engine.delete_source(path)?),
+                ..Default::default()
+            }),
+            Fetched::Body(content, _) => {
+                let changed = engine.replace_source(path, &content)?;
+                Ok(ChangeCounts {
+                    read: 1,
+                    changed: u64::from(changed),
+                    unchanged: u64::from(!changed),
+                    ..Default::default()
+                })
+            }
+            Fetched::Excluded => Ok(ChangeCounts {
+                read: 1,
+                excluded: 1,
+                deleted: u64::from(engine.delete_source(path)?),
+                ..Default::default()
+            }),
+        }
+    }
+    /// One verified no-follow read of a named file, with nothing published.
+    fn fetch(&self, engine: &Engine, path: &str, control: &Control) -> FResult<Fetched> {
         crate::store::validate_path(path)?;
         control.check()?;
         self.check_root()?;
@@ -933,10 +957,7 @@ impl ChangeReader {
                 // from a remove hint. A permission/symlink error cannot delete.
                 self.check_root()?;
                 control.check()?;
-                return Ok(ChangeCounts {
-                    deleted: u64::from(engine.delete_source(path)?),
-                    ..Default::default()
-                });
+                return Ok(Fetched::Absent);
             }
             Err(failure) => return Err(change_error(path, failure)),
         };
@@ -958,32 +979,29 @@ impl ChangeReader {
         }
         self.check_root()?;
         control.check()?;
-        let content = if matches!(
+        let sensitive = matches!(
             path.rsplit('/').next(),
             Some(".env" | "id_rsa" | "id_ed25519")
-        ) {
-            Err("sensitive filename")
-        } else {
-            source_content(&bytes)
-        };
-        match content {
-            Ok(content) => {
-                let changed = engine.replace_source(path, content)?;
-                Ok(ChangeCounts {
-                    read: 1,
-                    changed: u64::from(changed),
-                    unchanged: u64::from(!changed),
-                    ..Default::default()
-                })
-            }
-            Err(_) => Ok(ChangeCounts {
-                read: 1,
-                excluded: 1,
-                deleted: u64::from(engine.delete_source(path)?),
-                ..Default::default()
-            }),
+        );
+        if sensitive || source_content(&bytes).is_err() {
+            return Ok(Fetched::Excluded);
         }
+        let content = String::from_utf8(bytes).expect("source_content accepted UTF-8");
+        Ok(Fetched::Body(content, named))
     }
+    /// Whether the named file is still the one `fetch` read.
+    fn unchanged_since(&self, path: &str, read: &std::fs::Metadata) -> bool {
+        held::open_relative(&self.root_fd, path)
+            .ok()
+            .and_then(|file| file.metadata().ok())
+            .is_some_and(|now| same_file(read, &now))
+    }
+}
+
+enum Fetched {
+    Absent,
+    Excluded,
+    Body(String, std::fs::Metadata),
 }
 
 fn change_error(path: &str, failure: OpenFailure) -> FoundryError {
@@ -1033,9 +1051,17 @@ pub(crate) struct ChangeCounts {
     pub excluded: u64,
 }
 
+/// Files a walk reads before one source commit: the foreground ingestion bound.
+/// Every commit forces the store to disk, so singles made a first reconciliation's
+/// time follow the disk's sync latency (FOLLOWUP F18).
+const SCAN_BATCH: usize = 4;
+
 /// A streaming root/scoped walk. One step visits at most one yielded entry or
 /// one 128-row deletion page, with no root-sized in-memory seen set. The existing
 /// redb seen table supplies the deletion proof. Failed walks never enter sweep.
+/// Read files are published in atomic batches of at most [`SCAN_BATCH`], each
+/// rechecked by name just before its commit; the walk publishes the last batch
+/// before it sweeps. No queued path is updated while a walk is active.
 pub(crate) struct ChangeScan {
     reader: std::sync::Arc<ChangeReader>,
     scope: Option<String>,
@@ -1043,6 +1069,7 @@ pub(crate) struct ChangeScan {
     walker: ignore::Walk,
     sweeping: bool,
     seen: Vec<String>,
+    batch: Vec<(crate::store::PreparedSource, std::fs::Metadata)>,
     after: Option<String>,
     failed: Option<String>,
 }
@@ -1080,6 +1107,7 @@ impl ChangeScan {
             walker,
             sweeping: false,
             seen: Vec::with_capacity(SEEN_PAGE),
+            batch: Vec::with_capacity(SCAN_BATCH),
             after: None,
             failed: None,
         })
@@ -1089,6 +1117,36 @@ impl ChangeScan {
             engine.finish_scan(false)?;
         }
         Ok(())
+    }
+    /// Publish the read batch. A file renamed or rewritten since its read fails
+    /// the walk, as a file changed during a single update does.
+    fn publish(&mut self, engine: &Engine, control: &Control) -> ChangeCounts {
+        let mut counts = ChangeCounts::default();
+        let mut sources = Vec::with_capacity(self.batch.len());
+        for (source, read) in self.batch.drain(..) {
+            if self.reader.unchanged_since(source.path(), &read) {
+                sources.push(source);
+            } else {
+                self.failed = Some(
+                    change_error(
+                        source.path(),
+                        OpenFailure::SourceChanged("file changed during refresh".into()),
+                    )
+                    .to_string(),
+                );
+            }
+        }
+        if sources.is_empty() {
+            return counts;
+        }
+        match engine.replace_prepared_sources(&sources, control) {
+            Ok(changed) => {
+                counts.changed = changed as u64;
+                counts.unchanged = (sources.len() - changed) as u64;
+            }
+            Err(error) => self.failed = Some(error.to_string()),
+        }
+        counts
     }
     pub(crate) fn step(
         &mut self,
@@ -1131,8 +1189,42 @@ impl ChangeScan {
                             engine.mark_seen_batch(&self.seen, self.scan_id)?;
                             self.seen.clear();
                         }
-                        match self.reader.update(engine, path, control) {
-                            Ok(counts) => return Ok((counts, false)),
+                        let fetched = self.reader.fetch(engine, path, control).and_then(|f| {
+                            Ok(match f {
+                                Fetched::Body(body, read) => Some((
+                                    crate::store::PreparedSource::new(path.to_owned(), body)?,
+                                    read,
+                                )),
+                                Fetched::Absent | Fetched::Excluded => None,
+                            })
+                        });
+                        match fetched {
+                            Ok(Some(prepared)) => {
+                                self.batch.push(prepared);
+                                let mut counts = if self.batch.len() >= SCAN_BATCH {
+                                    self.publish(engine, control)
+                                } else {
+                                    ChangeCounts::default()
+                                };
+                                counts.read += 1;
+                                return Ok((counts, false));
+                            }
+                            // A vanished or excluded file retires its source
+                            // through the single update, after the batch before it.
+                            Ok(None) => {
+                                let mut counts = self.publish(engine, control);
+                                match self.reader.update(engine, path, control) {
+                                    Ok(single) => {
+                                        counts.read += single.read;
+                                        counts.deleted += single.deleted;
+                                        counts.excluded += single.excluded;
+                                        counts.changed += single.changed;
+                                        counts.unchanged += single.unchanged;
+                                    }
+                                    Err(error) => self.failed = Some(error.to_string()),
+                                }
+                                return Ok((counts, false));
+                            }
                             Err(error) => {
                                 self.failed = Some(error.to_string());
                             }
@@ -1140,6 +1232,7 @@ impl ChangeScan {
                     }
                 }
                 None => {
+                    let counts = self.publish(engine, control);
                     engine.mark_seen_batch(&self.seen, self.scan_id)?;
                     self.seen.clear();
                     if let Some(reason) = &self.failed {
@@ -1147,6 +1240,7 @@ impl ChangeScan {
                         return Err(FoundryError::InvalidArgument(reason.clone()));
                     }
                     self.sweeping = true;
+                    return Ok((counts, false));
                 }
             }
             return Ok((ChangeCounts::default(), false));

@@ -517,7 +517,8 @@ Generation and embedding inference do not run on the watcher path.
 
 The pending hint queue holds at most 2,048 paths or 1 MiB of path text, then collapses
 to one dirty-root marker. Each owner step handles one walk entry/file, at most 128
-retirements, or eight lexical keys; foreground calls have priority between steps.
+retirements, or 32 lexical keys (a walk commits the files it reads in batches of at
+most four); foreground calls have priority between steps.
 These are work and queue bounds, not whole-process RAM or hard latency guarantees:
 filesystem calls, parsers, database commits and the notification library's OS watch
 registrations have their own costs. Source work gets eight steps before a waiting

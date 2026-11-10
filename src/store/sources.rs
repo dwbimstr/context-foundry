@@ -220,7 +220,8 @@ impl Engine {
     }
 
     /// Ordered, atomic ingestion batch. No partial success within a batch; source
-    /// revisions still advance once per changed path. The watcher uses singles.
+    /// revisions still advance once per changed path. A watcher walk uses the same
+    /// batches; a single hinted path uses `replace_source`.
     pub(crate) fn replace_prepared_sources(
         &self,
         sources: &[PreparedSource],

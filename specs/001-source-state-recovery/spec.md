@@ -796,7 +796,12 @@ the requested file's body. Failed walks never sweep unseen sources. Seen marks u
 existing redb rows, buffered in pages of 128. Source commits and index refresh reuse
 existing freshness and crash-recovery rules, including source-dependent briefs.
 
-One step processes one walk entry/file, 128 sweep keys or eight lexical keys. During
+One step processes one walk entry/file, 128 sweep keys or 32 lexical keys. A walk
+publishes the files it reads in atomic batches of at most four, the foreground
+ingestion bound, and rechecks each by name just before its commit; a single hinted
+path still commits alone. The 2026-11-10 F18 repair set both sizes: every source and
+index commit is forced to disk, and singles with eight-key pages made a first
+reconciliation's time follow the disk's sync latency ([FOLLOWUP](../../FOLLOWUP.md)). During
 long walks and busy edit queues lexical pages publish every 32 source steps;
 remaining index work drains when hints settle. Cancellation is cooperative between
 these steps; an individual OS call or commit is not a hard latency bound. Read failures retry after 2–30 seconds

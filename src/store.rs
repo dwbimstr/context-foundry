@@ -977,6 +977,9 @@ impl PreparedSource {
         let hash = admitted_source_hash(&path, &body)?;
         Ok(Self { path, body, hash })
     }
+    pub(crate) fn path(&self) -> &str {
+        &self.path
+    }
 }
 
 /// The one source admission rule for prepared and direct writes: path rules,

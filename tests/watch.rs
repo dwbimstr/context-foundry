@@ -283,7 +283,9 @@ async fn six_thousand_files_allow_foreground_calls_and_no_idle_body_rescans() {
         "foreground served during reconciliation"
     );
     let baseline = until(&client, |s| idle(s) && s["source_count"] == FILES).await;
-    assert_eq!(baseline["watch"]["source_reads"], FILES);
+    // The status tells a late creation hint (events > 0, one full reconciliation)
+    // from a restarted scan (more than one), FOLLOWUP F18.
+    assert_eq!(baseline["watch"]["source_reads"], FILES, "{baseline}");
     let reads = baseline["watch"]["source_reads"].as_u64().unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(status(&client).await["watch"]["source_reads"], reads);
