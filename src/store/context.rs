@@ -192,20 +192,24 @@ impl Engine {
                 "query must contain 1..4096 nonblank bytes".into(),
             ));
         }
+        // T010 belongs to lexical delivery. A dense window, even partial or
+        // empty, keeps ordinary semantic selection and packing unchanged.
+        let lexical_behavior = options.experimental_behavior;
+        #[cfg(feature = "semantic")]
+        let lexical_behavior = lexical_behavior && options.dense.is_none();
         let selection = SearchSelection {
             anchors,
-            prose: options.experimental_behavior
-                && prose_context_query(query, strategy, policy.is_some()),
+            prose: lexical_behavior && prose_context_query(query, strategy, policy.is_some()),
         };
         #[cfg(feature = "semantic")]
         let search = match options.dense {
-            Some(dense) => self.search_candidates_semantic_selected(
+            Some(dense) => self.search_candidates_semantic(
                 query,
                 None,
                 CONTEXT_UNITS,
                 control,
                 dense,
-                selection,
+                anchors,
             )?,
             None => {
                 self.search_candidates_selected(query, None, CONTEXT_UNITS, control, selection)?
@@ -233,7 +237,7 @@ impl Engine {
             .and_then(|anchor| anchor.entries.first())
             .and_then(|entry| entry.handle.clone())
             .zip(
-                (options.experimental_behavior && resolved == Strategy::Search)
+                (lexical_behavior && resolved == Strategy::Search)
                     .then(|| behavior_terms(query, &search.anchors))
                     .flatten(),
             );

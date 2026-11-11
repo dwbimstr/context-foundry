@@ -293,16 +293,14 @@ signature fallback: its overlong documentation is still truncated. Short complet
 inputs skip parsing; files without declarations use bounded distributed text samples
 and never a blank opening alone. No source transaction holds the tokenizer or model.
 
-With `--experimental-behavior-context`, complete file-overview results also interleave
-lexical matches first. Long overview/hierarchy hits can deliver an exact local passage
-instead of the file prefix. Its semantic tag describes how the containing unit was
-selected; the passage has no independent vector or similarity score. Diagnostics
-retain both ranges. No-overlap queries keep the ordinary source-unit fallback.
-Owner decision, 2026-11-06 ("Lexical-only, drop T006 gate"): the flag's effects on
-semantic stores, this one included, are to be removed, and once 001 T010's own gates
-pass it is to default on only where lexical results are served
+Owner decision, 2026-11-06 ("Lexical-only, drop T006 gate"), implemented for
+qualification 2026-11-11: `--experimental-behavior-context` changes lexical delivery
+only. Dense results retain ordinary ordering and their scored source spans; the flag
+does not admit a model call, refine published vectors, focus a semantic unit locally
+or interleave lexical candidates. A named semantic fallback still serves lexical
+results. Once 001 T010's own gates pass, lexical behavior is to default on
 ([context v2](../specs/001-source-state-recovery/contracts/context-v2.md#experimental-behavioral-support--001-t010-2026-10-09)).
-Until that change lands, it behaves as described here.
+Default promotion is still awaiting qualification.
 
 CLI requests that resolve explicit/defined anchors now skip unused semantic startup,
 using the same path/prose rules as retrieval. Eligible requests still load their

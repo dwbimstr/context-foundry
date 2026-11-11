@@ -562,8 +562,18 @@ local gates below and the 2026-10-19 G2 enable rule ([AGENTS.md](../../AGENTS.md
 decide the flag; the 003 T006 agent-task gate no longer applies to it, and no
 real-agent benefit is claimed. G2 found that the flag helps lexical-only stores and
 costs the default hierarchy recipe ([validation](../../docs/validation.md)), so its
-effects on semantic stores are to be removed and, once the gates pass, it is to
-default on only where lexical results are served. That code change is still to do.
+effects on semantic stores are removed by the candidate below and, once the gates
+pass, it is to default on only where lexical results are served. Default promotion
+still waits for qualification.
+
+Implementation continuation, 2026-11-11: qualify one fixed candidate, without ranking
+tuning. Semantic model admission keeps the ordinary anchor rule regardless of this
+option. A supplied dense window (including partial or empty-hit windows) disables
+both prose selection and owned-method support at the shared engine boundary. Off
+and named-fallback plans are lexical and retain the option. Preserve the explicit
+library boolean and existing flag; default promotion is conditional on the local
+guards, full G1 and a fresh 388-question G2 comparison against `a456c53` (K = 1).
+The scope is retrieval only; no provider spend or real-agent benefit is authorized.
 
 The first candidate is implemented behind `--experimental-behavior-context` (CLI
 context / MCP owner), default off. It changes packing of existing, fresh candidates,

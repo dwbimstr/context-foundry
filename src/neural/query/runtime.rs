@@ -1,7 +1,7 @@
 //! The provider-thread runtime: the one model slot shared by query embeds,
 //! document batches and knowledge calls, its admission and ceilings, and the
 //! dense-index cache it serves, with their tests. The dense index and the
-//! refinement stay in the parent module.
+//! provenance stay in sibling modules.
 use super::*;
 
 /// One job for the provider thread: a query embedding or (009 T003) one
@@ -630,7 +630,6 @@ impl QueryRuntime {
         Ok(DenseWindow {
             hits,
             generation,
-            vector,
             areas,
         })
     }

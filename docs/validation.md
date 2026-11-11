@@ -1,5 +1,21 @@
 # Validation
 
+## Wrap-up continuation — 2026-11-11
+
+The signed-package preflight found zero valid code-signing identities in the
+owner's current keychain search list (`security find-identity -v -p codesigning`,
+checked outside the execution sandbox). Source inspection also confirms two
+implementation prerequisites: `scripts/embed-worker-bundle.sh` signs ad hoc when
+called by the installer, and `src/neural/supervisor.rs` refuses normal admission
+without the development flag. A certificate alone would not complete row 4.
+Signing remains deferred until product readiness; no key was accessed, package
+installed, host setting changed or publication attempted. These are metadata and
+source findings, not signed-runtime acceptance.
+
+The next authorized slice is 001 T010's lexical-only behavior decision. Its fixed
+candidate and no-spend bounds are recorded before measurement in private
+`runs/t010-lexical-2026-11-11/protocol.json`; qualification is in progress.
+
 ## Native macOS acceptance — 2026-11-10
 
 **PASS at the owner's selected script scope, on `01a1152`.** The fresh retry ran

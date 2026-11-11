@@ -901,9 +901,10 @@ fn search_returns_locators_and_never_a_selection_tag() {
     assert_eq!(span_of(&answer.parsed.items[0].handle).0, DUSK_PATH);
 }
 
-/// Prose intent must agree at model admission and final lexical selection.
+/// T010 is lexical-only: toggling it must not admit another model call,
+/// including when the owner supplies globally selected multi-root anchors.
 #[test]
-fn experimental_prose_uses_the_same_anchor_intent_for_model_admission_and_selection() {
+fn experimental_behavior_does_not_change_semantic_model_admission() {
     use context_foundry::store::ContextOptions;
     let corpus = Corpus::new(&[
         ("worker.go".into(), "package sample\nfunc Go() {}\n".into()),
@@ -940,11 +941,11 @@ fn experimental_prose_uses_the_same_anchor_intent_for_model_admission_and_select
             let calls = corpus.probe.query_calls();
             assert!(read(query, false).batch.semantic.is_none());
             assert_eq!(corpus.probe.query_calls(), calls);
-            assert_eq!(read(query, true).batch.semantic.as_deref(), Some("ready"));
+            assert!(read(query, true).batch.semantic.is_none());
             assert_eq!(
                 corpus.probe.query_calls(),
-                calls + 1,
-                "prose must reach the provider"
+                calls,
+                "lexical behavior must not change semantic model admission"
             );
         }
         for query in ["`Go`", "call Go string helper", "call `Go` with a callback"] {
@@ -1067,8 +1068,7 @@ fn dense_units_come_first_in_similarity_order_then_the_lexical_ones_in_todays_or
     let unique: BTreeSet<_> = all.iter().cloned().collect();
     assert_eq!(all.len(), unique.len(), "no unit twice");
 
-    // Experimental prose preserves the diverse first pass, then may backfill
-    // unused slots from this same semantic window in its retained order.
+    // The lexical behavior option leaves this semantic window unchanged.
     let prose = corpus
         .engine()
         .context_candidates_with(
@@ -1090,7 +1090,7 @@ fn dense_units_come_first_in_similarity_order_then_the_lexical_ones_in_todays_or
         .take_while(|item| item.semantic.is_some())
         .map(unit)
         .collect();
-    assert!(prose_dense.len() >= dense.len());
+    assert_eq!(prose_dense.len(), dense.len());
     assert_eq!(
         &prose_dense[..dense.len()],
         dense.iter().map(|i| unit(i)).collect::<Vec<_>>().as_slice()
@@ -1752,7 +1752,7 @@ fn partial_coverage_serves_prepared_vectors_beside_baseline_candidates_and_says_
 }
 
 #[test]
-fn partial_semantics_preserves_distinct_lexical_passages_and_dense_evidence() {
+fn partial_semantics_keeps_ordinary_lexical_units_and_dense_evidence() {
     use context_foundry::store::ContextOptions;
     let mut corpus = Corpus::new(&[]);
     let body = format!(
@@ -1788,27 +1788,34 @@ fn partial_semantics_preserves_distinct_lexical_passages_and_dense_evidence() {
         )
         .unwrap();
     assert_eq!(candidates.batch.semantic.as_deref(), Some("partial"));
-    let passages: Vec<_> = candidates
+    let ordinary = corpus
+        .engine()
+        .context_candidates_with(
+            query,
+            Strategy::Search,
+            &Corpus::control(),
+            &ContextOptions {
+                dense: Some(&window),
+                experimental_behavior: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let handles = |context: &context_foundry::memory::MemoryContext| {
+        context
+            .batch
+            .items
+            .iter()
+            .map(|item| item.handle.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(handles(&candidates), handles(&ordinary));
+    for item in candidates
         .batch
         .items
         .iter()
-        .filter(|i| i.label == "excerpt fn fire")
-        .collect();
-    assert_eq!(passages.len(), 2);
-    let positions: Vec<_> = candidates
-        .batch
-        .items
-        .iter()
-        .enumerate()
-        .filter(|(_, item)| item.label == "excerpt fn fire")
-        .map(|(index, _)| index)
-        .collect();
-    assert_eq!(
-        positions[1],
-        positions[0] + 1,
-        "dense interleaving must not separate already discovered owner evidence"
-    );
-    for item in passages {
+        .filter(|item| item.handle.as_ref().is_some_and(|h| h.path == "kiln.rs"))
+    {
         let handle = item.handle.as_ref().unwrap();
         assert!(item.semantic.is_none());
         assert_eq!(
@@ -1826,13 +1833,19 @@ fn partial_semantics_preserves_distinct_lexical_passages_and_dense_evidence() {
         &response::stdout_bytes,
     )
     .unwrap();
-    assert!(packed.text.contains("twilight_onset_kiln_prepare"));
-    assert!(packed.text.contains("twilight_onset_kiln_finish"));
+    let baseline = response::pack_enriched_context(
+        &ordinary,
+        None,
+        response::Budget::request(2048),
+        &response::stdout_bytes,
+    )
+    .unwrap();
+    assert_eq!(packed.text, baseline.text);
     assert!(packed.tokens <= 2048);
 }
 
 #[test]
-fn experimental_partial_prose_preserves_unprepared_lexical_evidence_early() {
+fn lexical_behavior_leaves_partial_semantic_order_and_freshness_unchanged() {
     use context_foundry::store::ContextOptions;
     let mut corpus = Corpus::new(&[]);
     corpus
@@ -1875,18 +1888,28 @@ fn experimental_partial_prose_preserves_unprepared_lexical_evidence_early() {
     );
     let experimental = context(true);
     assert_eq!(experimental.batch.semantic.as_deref(), Some("partial"));
-    assert_eq!(
-        experimental.batch.items[0].handle.as_ref().unwrap().path,
-        "docs/kiln.md"
-    );
-    assert!(experimental.batch.items[0].semantic.is_none());
+    let order = |context: &context_foundry::memory::MemoryContext| {
+        context
+            .batch
+            .items
+            .iter()
+            .map(|item| (item.handle.clone(), item.semantic.is_some()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(order(&experimental), order(&ordinary));
     assert!(
         experimental
             .batch
             .items
             .iter()
-            .any(|i| i.semantic.is_some())
+            .any(|item| item.semantic.is_some())
     );
+    assert!(experimental.batch.items.iter().any(|item| {
+        item.handle
+            .as_ref()
+            .is_some_and(|h| h.path == "docs/kiln.md")
+            && item.semantic.is_none()
+    }));
     let packed = response::pack_enriched_context(
         &experimental,
         None,
@@ -1894,7 +1917,15 @@ fn experimental_partial_prose_preserves_unprepared_lexical_evidence_early() {
         &response::stdout_bytes,
     )
     .unwrap();
-    assert!(packed.tokens <= 512 && packed.text.contains("kiln was fired"));
+    assert!(packed.tokens <= 512);
+    let baseline = response::pack_enriched_context(
+        &ordinary,
+        None,
+        response::Budget::request(512),
+        &response::stdout_bytes,
+    )
+    .unwrap();
+    assert_eq!(packed.text, baseline.text);
     // Stale lexical bytes remain ineligible even when they would win placement.
     corpus
         .engine()
@@ -6582,7 +6613,7 @@ fn hierarchy_area_preparation_deduplicates_exact_inputs_and_reuses_on_restart() 
 }
 
 #[test]
-fn coarse_semantic_context_focuses_current_evidence_beyond_the_file_prefix() {
+fn coarse_semantic_context_keeps_scored_spans_and_rechecks_freshness() {
     use context_foundry::neural::partition::Representation;
     use context_foundry::store::ContextOptions;
     let path = "src/payments.rs";
@@ -6626,8 +6657,8 @@ fn coarse_semantic_context_focuses_current_evidence_beyond_the_file_prefix() {
         .unwrap();
     assert_eq!(candidates.batch.semantic.as_deref(), Some("ready"));
     assert!(
-        candidates.batch.items[0].semantic.is_none(),
-        "complete file coverage keeps precise lexical evidence first"
+        candidates.batch.items[0].semantic.is_some(),
+        "the lexical behavior flag cannot interleave semantic results"
     );
     let item = candidates
         .batch
@@ -6636,8 +6667,8 @@ fn coarse_semantic_context_focuses_current_evidence_beyond_the_file_prefix() {
         .find(|item| item.is_dense_only() && item.handle.as_ref().is_some_and(|h| h.path == path))
         .expect("independent file vector is served");
     let handle = item.handle.as_ref().unwrap();
-    assert!(handle.start > 4000, "the evidence is past the prefix");
-    assert!(handle.end - handle.start <= 1536);
+    assert_eq!(handle.start, 0);
+    assert_eq!(handle.end as usize, body.len());
     assert_eq!(
         item.forms[0],
         context_foundry::store::RenderedForm::Verbatim(
@@ -6652,7 +6683,27 @@ fn coarse_semantic_context_focuses_current_evidence_beyond_the_file_prefix() {
     )
     .unwrap();
     assert!(packed.tokens <= 1024);
-    assert!(packed.text.contains("return_credit();"), "{}", packed.text);
+    let ordinary = corpus
+        .engine()
+        .context_candidates_with(
+            query,
+            Strategy::Search,
+            &Corpus::control(),
+            &ContextOptions {
+                dense: Some(&window),
+                experimental_behavior: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let baseline = response::pack_enriched_context(
+        &ordinary,
+        None,
+        response::Budget::request(1024),
+        &response::stdout_bytes,
+    )
+    .unwrap();
+    assert_eq!(packed.text, baseline.text);
     assert!(
         trace.snapshot()["events"]
             .as_array()
@@ -7551,161 +7602,7 @@ fn parser_unit_change_refits_a_stale_range_under_an_identical_source_hash() {
 }
 
 #[test]
-fn hierarchy_refines_implementation_bodies_after_container_only_discovery() {
-    use context_foundry::neural::{cache::CardKind, partition::Representation};
-    use context_foundry::store::{ContextOptions, RenderedForm};
-    let path = "src/refund_containers.rs";
-    let source: String = (0..12)
-        .map(|i| {
-            format!(
-                "impl RefundTiming{i} {{\n    fn operation_{i}() {{ apply_adjustment({i}); }}\n}}\n"
-            )
-        })
-        .collect();
-    let mut corpus = Corpus::unprepared(&[(path.into(), source.clone())]);
-    select_body_recipe(&mut corpus, 512, 64, None);
-    Arc::make_mut(&mut corpus.profile).representation =
-        Representation::Hierarchy { parent_tokens: 64 };
-    std::fs::write(
-        &corpus.profile_path,
-        serde_json::to_vec(&*corpus.profile).unwrap(),
-    )
-    .unwrap();
-    assert!(!corpus.prepare().partial);
-    let partition = corpus.engine().semantic_partition(path).unwrap().unwrap();
-    let fragments: BTreeSet<_> = partition
-        .units
-        .iter()
-        .filter(|unit| unit.kind == CardKind::ContainerFragment)
-        .map(|unit| (unit.start as u64, unit.end as u64))
-        .collect();
-    let bodies: BTreeSet<_> = partition
-        .units
-        .iter()
-        .filter(|unit| unit.kind == CardKind::Body)
-        .map(|unit| (unit.start as u64, unit.end as u64))
-        .collect();
-    assert!(fragments.len() >= 12 && bodies.len() == 12);
-    let runtime = corpus.runtime();
-    let mut window = runtime
-        .window(
-            corpus.engine(),
-            "refund timing rules",
-            Instant::now() + Duration::from_secs(30),
-            &Corpus::control(),
-        )
-        .unwrap();
-    // A valid coarse/discovery window may consist entirely of high-scoring
-    // container fragments. They must not consume independently scored Body slots.
-    window.hits = window
-        .hits
-        .iter()
-        .filter(|hit| {
-            window
-                .units(hit)
-                .iter()
-                .any(|unit| &*unit.path == path && unit.kind == CardKind::ContainerFragment)
-        })
-        .cloned()
-        .collect();
-    assert!(!window.hits.is_empty());
-    let trace = context_foundry::retrieval_trace::RetrievalTrace::default();
-    let result = corpus
-        .engine()
-        .context_candidates_with(
-            "refund timing rules",
-            Strategy::Search,
-            &Corpus::control().with_trace(Some(trace.clone())),
-            &ContextOptions {
-                dense: Some(&window),
-                experimental_behavior: true,
-                ..Default::default()
-            },
-        )
-        .unwrap();
-    let events = trace.snapshot();
-    // Diversity reserves the first four file slots, then unused capacity
-    // recovers additional independently scored bodies. Outlines are separate.
-    let ranked: Vec<_> = result
-        .batch
-        .items
-        .iter()
-        .filter(|item| {
-            item.handle
-                .as_ref()
-                .is_some_and(|handle| handle.path == path)
-                && !matches!(item.forms.first(), Some(RenderedForm::Outline(_)))
-        })
-        .collect();
-    assert!(ranked.len() > 4 && ranked.len() <= 32);
-    assert!(ranked.iter().any(|item| item.semantic.is_some()));
-    assert!(ranked.iter().any(|item| item.semantic.is_none()));
-    assert!(
-        bodies.iter().all(|span| ranked.iter().any(|item| {
-            let h = item.handle.as_ref().unwrap();
-            (h.start, h.end) == *span
-        })),
-        "every independent body survives before coarse backfill"
-    );
-    for item in ranked {
-        let handle = item.handle.as_ref().unwrap();
-        assert_eq!(handle.sha256, partition.source_hash);
-        assert_eq!(
-            item.forms[0],
-            RenderedForm::Verbatim(source[handle.start as usize..handle.end as usize].into())
-        );
-        if item.semantic.is_some() {
-            assert!(
-                bodies.contains(&(handle.start, handle.end))
-                    || fragments.contains(&(handle.start, handle.end))
-            );
-        } else {
-            assert!(
-                events["events"].as_array().unwrap().iter().any(|event| {
-                    event["stage"] == "materialization"
-                        && event["origin"] == "lexical"
-                        && event["excerpt"] == serde_json::to_value(handle).unwrap()
-                }),
-                "the other file slots retain current lexical evidence: {events}"
-            );
-        }
-    }
-    let refined: Vec<_> = events["events"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|event| {
-            event["stage"] == "selection"
-                && event["refined"] == true
-                && event["outcome"] == "eligible"
-                && event["unit"]["path"] == path
-        })
-        .collect();
-    assert_eq!(refined.len(), bodies.len());
-    assert!(refined.iter().all(|event| event["representation"] == "body"
-        && bodies.contains(&(
-            event["unit"]["start"].as_u64().unwrap(),
-            event["unit"]["end"].as_u64().unwrap(),
-        ))));
-    let packed = response::pack_enriched_context(
-        &result,
-        None,
-        Budget::request(BUDGET),
-        &response::stdout_bytes,
-    )
-    .unwrap();
-    assert!(packed.tokens <= BUDGET);
-    assert!(
-        packed.text.contains("apply_adjustment"),
-        "body evidence crosses the ordinary response boundary"
-    );
-    let before = corpus.probe.document_calls();
-    assert_eq!(corpus.prepare().document_calls, 0);
-    assert_eq!(corpus.probe.document_calls(), before);
-}
-
-#[test]
-fn experimental_body_placement_survives_real_partial_to_complete_publication() {
+fn lexical_behavior_never_changes_dense_placement_across_representations_and_coverage() {
     use context_foundry::neural::{cache::CardKind, partition::Representation};
     use context_foundry::store::ContextOptions;
 
@@ -7736,7 +7633,6 @@ fn experimental_body_placement_survives_real_partial_to_complete_publication() {
         Representation::Address,
     ] {
         let address = representation == Representation::Address;
-        let hierarchy = matches!(representation, Representation::Hierarchy { .. });
         let retained_kind = if address {
             CardKind::Address
         } else {
@@ -7953,6 +7849,7 @@ fn experimental_body_placement_survives_real_partial_to_complete_publication() {
                     .collect::<Vec<_>>(),
             );
 
+            let mut baseline_text = None;
             for experimental in [false, true] {
                 let trace = context_foundry::retrieval_trace::RetrievalTrace::default();
                 let result = corpus
@@ -8006,10 +7903,8 @@ fn experimental_body_placement_survives_real_partial_to_complete_publication() {
                     }
                 }
                 let lexical_position = order.iter().position(|item| item.0 == lexical_path);
-                let preserved = experimental && (!address || !complete);
                 assert_eq!(
-                    lexical_position,
-                    preserved.then_some(usize::from(hierarchy)),
+                    lexical_position, None,
                     "{representation:?} {coverage} experimental={experimental}"
                 );
                 assert!(!order.iter().any(|item| item.0 == late_path));
@@ -8020,25 +7915,7 @@ fn experimental_body_placement_survives_real_partial_to_complete_publication() {
                     .iter()
                     .filter(|event| event["stage"] == "placement_policy")
                     .collect();
-                if experimental && (!address || !complete) {
-                    assert_eq!(policies.len(), 1, "{snapshot}");
-                    assert_eq!(
-                        policies[0]["policy"],
-                        if address {
-                            "partial_prose_interleave_v1"
-                        } else {
-                            "body_prose_interleave_v1"
-                        }
-                    );
-                    assert_eq!(policies[0]["coverage"], coverage);
-                    assert_eq!(policies[0]["lexical_first"], !hierarchy);
-                    assert_eq!(
-                        policies[0]["eligible_refined_locations"].as_u64().unwrap() > 0,
-                        hierarchy
-                    );
-                } else {
-                    assert!(policies.is_empty(), "{snapshot}");
-                }
+                assert!(policies.is_empty(), "{snapshot}");
                 let packed = response::pack_enriched_context(
                     &result,
                     None,
@@ -8050,7 +7927,7 @@ fn experimental_body_placement_survives_real_partial_to_complete_publication() {
                 let parsed = parse_v2(&packed.text).unwrap();
                 assert_eq!(
                     item_of(&parsed, lexical_path).is_some(),
-                    preserved,
+                    false,
                     "{representation:?} {coverage} experimental={experimental}: {}",
                     packed.text
                 );
@@ -8064,8 +7941,10 @@ fn experimental_body_placement_survives_real_partial_to_complete_publication() {
                     );
                 }
                 if experimental {
+                    assert_eq!(baseline_text.as_deref(), Some(packed.text.as_str()));
                     experimental_orders.push(order);
                 } else {
+                    baseline_text = Some(packed.text);
                     default_orders.push(order);
                 }
             }
@@ -8121,381 +8000,13 @@ fn experimental_body_placement_survives_real_partial_to_complete_publication() {
             default_orders[0], default_orders[1],
             "default placement changed"
         );
-        if !address {
-            assert_eq!(
-                experimental_orders[0], experimental_orders[1],
-                "coverage alone must not change Body/Hierarchy candidate ordering"
-            );
-        }
+        assert_eq!(
+            experimental_orders, default_orders,
+            "the flag must not change any dense candidate order"
+        );
         assert_eq!(corpus.probe.query_calls() - queries_before, 2);
         runtime.shutdown();
     }
-}
-
-#[test]
-fn hierarchy_refinement_scores_competing_bodies_outside_a_lexical_owner() {
-    use context_foundry::neural::{cache::CardKind, partition::Representation};
-    use context_foundry::store::{ContextOptions, RenderedForm};
-    use context_foundry::syntax::{self, Lang, UnitKind};
-
-    let path = "src/owner_scope.rs";
-    let query = "quasar zephyr balance";
-    let lines: String = (0..400)
-        .map(|n| format!("    let carried_{n} = balance + {n};\n"))
-        .collect();
-    let target = format!(
-        "fn reconcile_order() {{\n    // quasar zephyr balance\n{lines}    preserve_transaction();\n}}\n"
-    );
-    let siblings: String = (0..8)
-        .map(|n| format!("    fn unrelated_{n}() {{ unrelated_action({n}); }}\n"))
-        .collect();
-    let source = format!("{target}impl Neighbors {{\n{siblings}}}\n");
-    let owner = syntax::units(&source, Lang::Rust)
-        .into_iter()
-        .find(|unit| unit.kind == UnitKind::Fn && unit.start == 0)
-        .expect("the lexical match belongs to a complete callable");
-    assert!(owner.end - owner.start > 8192);
-    let owner_range = owner.start as u64..owner.end as u64;
-    let mut corpus = Corpus::unprepared(&[(path.into(), source.clone())]);
-    select_body_recipe(&mut corpus, 512, 0, None);
-    Arc::make_mut(&mut corpus.profile).representation =
-        Representation::Hierarchy { parent_tokens: 0 };
-    std::fs::write(
-        &corpus.profile_path,
-        serde_json::to_vec(&*corpus.profile).unwrap(),
-    )
-    .unwrap();
-    assert!(!corpus.prepare().partial);
-    let partition = corpus.engine().semantic_partition(path).unwrap().unwrap();
-    let owned: BTreeSet<_> = partition
-        .units
-        .iter()
-        .filter(|unit| {
-            unit.kind == CardKind::Body && owner.start <= unit.start && unit.end <= owner.end
-        })
-        .map(|unit| (unit.start as u64, unit.end as u64))
-        .collect();
-    assert!(
-        owned.len() > 4,
-        "the callable has several exact body windows"
-    );
-    let preferred: BTreeSet<_> = owned.iter().rev().take(4).copied().collect();
-    let competing: BTreeSet<_> = partition
-        .units
-        .iter()
-        .filter(|unit| unit.kind == CardKind::Body && unit.start >= owner.end)
-        .map(|unit| (unit.start as u64, unit.end as u64))
-        .collect();
-    assert!(preferred.iter().all(|(start, _)| *start > 8192));
-    assert!(
-        partition
-            .units
-            .iter()
-            .filter(|unit| unit.kind == CardKind::Body && unit.start >= owner.end)
-            .count()
-            >= 8,
-        "the same file has enough siblings to exhaust its four slots"
-    );
-
-    // Controlled fixture vectors make every sibling strictly closer than
-    // every owned Body. Within the callable, its last four windows win, well
-    // beyond the first lexical document that contains the query words. This
-    // tests that owner priority is not a hard relevance filter. Both channels
-    // must be scored, and the independently better sibling bodies must win.
-    // These controlled vectors test admission/ranking, not model quality.
-    // All keys, roles and source spans remain those produced by preparation.
-    let query_vector = concept_vector(&provider::render(&corpus.profile.query_template, query));
-    let opposite: Vec<_> = query_vector.iter().map(|value| -*value).collect();
-    assert_eq!(
-        query_vector[0], 0.0,
-        "the query has no first-dimension concept"
-    );
-    let mut tail_vector = opposite.clone();
-    tail_vector[0] = 1.0;
-    let norm = tail_vector
-        .iter()
-        .map(|value| value * value)
-        .sum::<f32>()
-        .sqrt();
-    tail_vector.iter_mut().for_each(|value| *value /= norm);
-    let entries: Vec<_> = partition
-        .units
-        .iter()
-        .map(|unit| {
-            (
-                unit.input_key.clone(),
-                if unit.kind == CardKind::Body
-                    && owned.contains(&(unit.start as u64, unit.end as u64))
-                {
-                    if preferred.contains(&(unit.start as u64, unit.end as u64)) {
-                        tail_vector.clone()
-                    } else {
-                        opposite.clone()
-                    }
-                } else {
-                    query_vector.clone()
-                },
-            )
-        })
-        .collect();
-    corpus
-        .engine()
-        .semantic_cache_commit(
-            &entries,
-            &corpus.digest(),
-            DIMENSIONS,
-            DEFAULT_CACHE_CAP_BYTES,
-        )
-        .unwrap();
-    let rebuilt = corpus
-        .engine()
-        .semantic_rebuild_index(&Corpus::control())
-        .unwrap();
-    assert!(rebuilt.rebuilt && rebuilt.reason.is_none(), "{rebuilt:?}");
-    let documents_before = corpus.probe.document_calls();
-    let queries_before = corpus.probe.query_calls();
-    let runtime = corpus.runtime();
-    let mut window = runtime
-        .window(
-            corpus.engine(),
-            query,
-            Instant::now() + Duration::from_secs(30),
-            &Corpus::control(),
-        )
-        .unwrap();
-    let original_hits = window.hits.clone();
-    for discovery_kind in [CardKind::File, CardKind::Body, CardKind::ContainerFragment] {
-        // Tiny Body/fragment hits discover the file but cannot claim ownership
-        // of its refinement. The current lexical callable gets admission
-        // priority, but must not veto the rest of the discovered file.
-        window.hits = original_hits
-            .iter()
-            .filter(|hit| {
-                window.units(hit).iter().any(|unit| {
-                    &*unit.path == path
-                        && unit.kind == discovery_kind
-                        && (discovery_kind == CardKind::File
-                            || (unit.start >= owner_range.end && unit.end - unit.start < 128))
-                })
-            })
-            .take(1)
-            .cloned()
-            .collect();
-        assert!(
-            !window.hits.is_empty(),
-            "missing {discovery_kind:?} discovery"
-        );
-        let trace = context_foundry::retrieval_trace::RetrievalTrace::default();
-        let result = corpus
-            .engine()
-            .context_candidates_with(
-                query,
-                Strategy::Search,
-                &Corpus::control().with_trace(Some(trace.clone())),
-                &ContextOptions {
-                    dense: Some(&window),
-                    experimental_behavior: true,
-                    ..Default::default()
-                },
-            )
-            .unwrap();
-        let events = trace.snapshot();
-        assert!(
-            events["events"].as_array().unwrap().iter().any(|event| {
-                event["stage"] == "selection"
-                    && event["origin"] == "lexical"
-                    && event["outcome"] == "eligible"
-                    && event["unit"]["path"] == path
-                    && event["unit"]["start"] == owner_range.start
-                    && event["unit"]["end"] == owner_range.end
-                    && event["document"]["end"]
-                        .as_u64()
-                        .is_some_and(|end| end < preferred.first().unwrap().0)
-            }),
-            "the current lexical document preserves its larger callable: {events}"
-        );
-        let scope = events["events"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|event| event["stage"] == "refinement_scope" && event["path"] == path)
-            .expect("the owner decision is auditable");
-        assert!(scope["fallback"].is_null());
-        assert_eq!(
-            scope["ranges"],
-            serde_json::json!([[owner_range.start, owner_range.end]])
-        );
-        let work = &events["events"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|event| event["stage"] == "refinement" && event["outcome"] == "scored")
-            .unwrap()["work"];
-        assert_eq!(work["owner_scoped_paths"], 1);
-        assert!(work["units_considered"].as_u64().unwrap() <= 32_768);
-        assert!(work["vectors_scored"].as_u64().unwrap() <= 4096);
-        assert!(work["retained_locations"].as_u64().unwrap() <= 80 * 4);
-        let refined: Vec<_> = events["events"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|event| {
-                event["stage"] == "selection"
-                    && event["refined"] == true
-                    && event["outcome"] == "eligible"
-                    && event["unit"]["path"] == path
-            })
-            .collect();
-        assert_eq!(
-            refined.len(),
-            owned.len() + competing.len(),
-            "{discovery_kind:?}: {events}"
-        );
-        assert_eq!(scope["policy"], "owner_prioritized_file_refinement_v2");
-        assert_eq!(work["owner_prioritized_locations"], owned.len());
-        assert_eq!(work["file_lane_locations"], competing.len());
-        assert!(
-            refined.iter().all(|event| {
-                event["representation"] == "body"
-                    && owned.union(&competing).any(|span| {
-                        *span
-                            == (
-                                event["unit"]["start"].as_u64().unwrap(),
-                                event["unit"]["end"].as_u64().unwrap(),
-                            )
-                    })
-            }),
-            "every independently scored body must retain its exact provenance: {events}"
-        );
-        assert!(
-            refined.iter().take(4).all(|event| competing.contains(&(
-                event["unit"]["start"].as_u64().unwrap(),
-                event["unit"]["end"].as_u64().unwrap(),
-            ))),
-            "best independently scored bodies stay first"
-        );
-        let owned_order: Vec<_> = refined
-            .iter()
-            .filter_map(|event| {
-                let span = (
-                    event["unit"]["start"].as_u64().unwrap(),
-                    event["unit"]["end"].as_u64().unwrap(),
-                );
-                owned.contains(&span).then_some(span)
-            })
-            .collect();
-        assert_eq!(owned_order.len(), owned.len());
-        assert!(
-            owned_order
-                .iter()
-                .take(4)
-                .all(|span| preferred.contains(span)),
-            "owner priority still admits every owned body, with its own cosine order"
-        );
-        // Context appends a separate whole-file outline after the ranked
-        // units. It is not a fifth independently scored refinement passage.
-        let (outlines, delivered): (Vec<_>, Vec<_>) = result
-            .batch
-            .items
-            .iter()
-            .filter(|item| {
-                item.handle
-                    .as_ref()
-                    .is_some_and(|handle| handle.path == path)
-            })
-            .partition(|item| matches!(item.forms.first(), Some(RenderedForm::Outline(_))));
-        assert_eq!(outlines.len(), 1, "{discovery_kind:?}");
-        let outline = outlines[0];
-        assert!(outline.semantic.is_none());
-        let handle = outline.handle.as_ref().unwrap();
-        assert_eq!((handle.start, handle.end), (0, source.len() as u64));
-        assert_eq!(handle.sha256, partition.source_hash);
-        assert!(
-            outline
-                .forms
-                .iter()
-                .all(|form| matches!(form, RenderedForm::Outline(_) | RenderedForm::OutlineMin(_)))
-        );
-        assert!(
-            delivered.len() > 4 && delivered.len() <= 32,
-            "{discovery_kind:?}"
-        );
-        assert!(delivered.iter().any(|item| item.semantic.is_some()));
-        assert!(delivered.iter().any(|item| item.semantic.is_none()));
-        let mut lexical_spans = BTreeSet::new();
-        for item in delivered {
-            let handle = item.handle.as_ref().unwrap();
-            if item.semantic.is_some() {
-                assert!(
-                    owned.contains(&(handle.start, handle.end))
-                        || competing.contains(&(handle.start, handle.end))
-                );
-            } else {
-                assert!(owner_range.start <= handle.start && handle.end <= owner_range.end);
-                assert!(
-                    events["events"].as_array().unwrap().iter().any(|event| {
-                        event["stage"] == "materialization"
-                            && event["origin"] == "lexical"
-                            && event["unit"]["start"] == owner_range.start
-                            && event["unit"]["end"] == owner_range.end
-                            && event["excerpt"] == serde_json::to_value(handle).unwrap()
-                    }),
-                    "lexical slots must retain the current callable's exact excerpt: {events}"
-                );
-                lexical_spans.insert((handle.start, handle.end));
-                for form in &item.forms {
-                    if let RenderedForm::Excerpt { start, body, .. } = form {
-                        let end = start + body.len() as u64;
-                        assert!(handle.start <= *start && end <= handle.end);
-                        assert_eq!(body, &source[*start as usize..end as usize]);
-                        lexical_spans.insert((*start, end));
-                    }
-                }
-            }
-            assert_eq!(handle.sha256, partition.source_hash);
-            assert_eq!(
-                item.forms[0],
-                RenderedForm::Verbatim(source[handle.start as usize..handle.end as usize].into())
-            );
-        }
-        let packed = response::pack_enriched_context(
-            &result,
-            None,
-            Budget::request(BUDGET),
-            &response::stdout_bytes,
-        )
-        .unwrap();
-        assert!(packed.tokens <= BUDGET);
-        let parsed = parse_v2(&packed.text).unwrap();
-        let mut packed_bodies = 0;
-        for item in parsed.items.iter().filter(|item| !item.handle.is_empty()) {
-            let (item_path, start, end) = span_of(&item.handle);
-            if item_path != path {
-                continue;
-            }
-            if item.form.as_deref() == Some("outline") {
-                assert!(!item.semantic);
-                assert_eq!((start, end), (0, source.len() as u64));
-            } else if item.semantic {
-                if packed_bodies == 0 {
-                    assert!(
-                        competing.contains(&(start, end)),
-                        "better independently scored siblings must survive packing"
-                    );
-                }
-                packed_bodies += 1;
-                assert!(owned.contains(&(start, end)) || competing.contains(&(start, end)));
-            } else {
-                assert!(
-                    lexical_spans.contains(&(start, end)),
-                    "the packed lexical body must match a verified preferred or fallback form"
-                );
-            }
-        }
-        assert!(packed_bodies > 0, "{discovery_kind:?}: {}", packed.text);
-    }
-    assert_eq!(corpus.probe.query_calls(), queries_before + 1);
-    assert_eq!(corpus.probe.document_calls(), documents_before);
 }
 
 #[test]
@@ -8540,26 +8051,15 @@ fn serving_rejects_a_rehashed_mapping_that_claims_the_wrong_representation() {
 }
 
 #[test]
-fn hierarchy_refinement_preserves_scored_body_spans_and_rechecks_freshness() {
-    use context_foundry::neural::cache::CardKind;
+fn lexical_behavior_preserves_empty_and_shared_dense_windows_without_extra_work() {
     use context_foundry::neural::partition::Representation;
     use context_foundry::store::ContextOptions;
     let path = "src/settlement.rs";
-    let source = format!(
-        "/// Reimbursement timing for cancelled transfers.\nfn settle() {{\n{}    issue_credit();\n}}\n{}",
-        "    // Preserve the original transaction state.\n".repeat(48),
-        "// refund timing is discussed elsewhere\n".repeat(70),
-    );
-    let shared_path = "src/settlement_copy.rs";
-    let mut extra = vec![(path.into(), source.clone()), (shared_path.into(), source)];
-    extra.extend((0..128).map(|i| {
-        (
-            format!("src/unrelated_{i}.rs"),
-            format!("fn inventory_{i}() {{ record_serial({i}); }}\n"),
-        )
-    }));
-    let mut corpus = Corpus::unprepared(&extra);
-    select_body_recipe(&mut corpus, 2048, 64, None);
+    let shared = "src/settlement_copy.rs";
+    let source = "/// Refund timing for cancelled payments.\nfn settle() { issue_credit(); }\n";
+    let mut corpus =
+        Corpus::unprepared(&[(path.into(), source.into()), (shared.into(), source.into())]);
+    select_body_recipe(&mut corpus, 512, 64, None);
     Arc::make_mut(&mut corpus.profile).representation =
         Representation::Hierarchy { parent_tokens: 64 };
     std::fs::write(
@@ -8568,16 +8068,8 @@ fn hierarchy_refinement_preserves_scored_body_spans_and_rechecks_freshness() {
     )
     .unwrap();
     assert!(!corpus.prepare().partial);
-    let partition = corpus.engine().semantic_partition(path).unwrap().unwrap();
-    let bodies: BTreeSet<_> = partition
-        .units
-        .iter()
-        .filter(|unit| unit.kind == CardKind::Body)
-        .map(|unit| (unit.start as u64, unit.end as u64))
-        .collect();
-    assert!(!bodies.is_empty());
     let runtime = corpus.runtime();
-    let query = "refund timing rules";
+    let query = "refund timing for cancelled payments";
     let mut window = runtime
         .window(
             corpus.engine(),
@@ -8586,252 +8078,103 @@ fn hierarchy_refinement_preserves_scored_body_spans_and_rechecks_freshness() {
             &Corpus::control(),
         )
         .unwrap();
-    // Exercise the refinement boundary with a coarse-only initial ANN window.
-    // The body inputs exist in the generation but none is in these initial hits.
-    window.hits = window
-        .hits
-        .iter()
-        .filter(|hit| {
-            window
-                .units(hit)
-                .iter()
-                .any(|unit| unit.kind == CardKind::File)
-        })
-        .cloned()
-        .collect();
-    assert!(!window.hits.is_empty());
-    let trace = context_foundry::retrieval_trace::RetrievalTrace::default();
-    let select = || {
-        corpus
-            .engine()
-            .context_candidates_with(
-                query,
-                Strategy::Search,
-                &Corpus::control().with_trace(Some(trace.clone())),
-                &ContextOptions {
-                    dense: Some(&window),
-                    experimental_behavior: true,
-                    ..Default::default()
-                },
-            )
-            .unwrap()
-    };
-    let result = select();
-    assert!(
-        trace.snapshot()["events"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|event| event["stage"] == "selection"
-                && event["refined"] == true
-                && event["representation"] == "body"
-                && event["outcome"] == "eligible"
-                && event["unit"]["path"] == path),
-        "bounded scoring must discover a published body beyond the initial ANN window"
-    );
-    assert!(
-        result.batch.items.iter().any(|item| {
-            item.semantic.is_some()
-                && item.handle.as_ref().is_some_and(|handle| {
-                    handle.path == path && bodies.contains(&(handle.start, handle.end))
-                })
-        }),
-        "an independently scored body passage must survive materialization"
-    );
-    // The generation has many unrelated vectors, but refinement reads only
-    // selected mappings and never needs to traverse those ANN nodes.
-    let mapping = corpus
-        .engine()
-        .semantic_current_mapping(
-            &Corpus::control(),
-            &corpus.digest(),
-            &corpus.profile.recipe_id(),
-        )
-        .unwrap();
-    assert!(mapping.units.len() > DENSE_WINDOW * 2);
-    let paths: BTreeSet<_> = mapping
-        .units
-        .values()
-        .flat_map(|units| units.iter().map(|unit| String::from(&*unit.path)))
-        .collect();
-    let saved: Vec<_> = paths
-        .iter()
-        .map(|path| {
-            (
-                path.clone(),
-                corpus.engine().semantic_partition(path).unwrap().unwrap(),
-            )
-        })
-        .collect();
-    let replace_mapping =
-        |path: &str,
-         record: &context_foundry::neural::cache::PartitionRecord,
-         units: &[context_foundry::neural::cache::PartitionUnit]| {
+    let hits = window.hits.clone();
+    assert!(!hits.is_empty());
+    let queries = corpus.probe.query_calls();
+    let documents = corpus.probe.document_calls();
+    for empty in [false, true] {
+        window.hits = if empty { Vec::new() } else { hits.clone() };
+        let select = |enabled| {
             corpus
                 .engine()
-                .semantic_record_partition(
-                    path,
-                    &record.source_hash,
-                    &record.recipe_id,
-                    &record.function_digest,
-                    Some(units),
-                    &|_| Ok(units.to_vec()),
+                .context_candidates_with(
+                    query,
+                    Strategy::Search,
+                    &Corpus::control(),
+                    &ContextOptions {
+                        dense: Some(&window),
+                        experimental_behavior: enabled,
+                        ..Default::default()
+                    },
                 )
-                .unwrap();
+                .unwrap()
         };
-    let shared = saved
-        .iter()
-        .find(|(path, _)| path == shared_path)
-        .unwrap()
-        .1
-        .clone();
-    assert!(
-        shared
-            .units
+        let baseline = select(false);
+        let candidate = select(true);
+        let pack = |context: &context_foundry::memory::MemoryContext| {
+            response::pack_enriched_context(
+                context,
+                None,
+                response::Budget::request(2048),
+                &response::stdout_bytes,
+            )
+            .unwrap()
+        };
+        let packed = pack(&candidate);
+        assert!(packed.tokens <= 2048);
+        assert_eq!(packed.text, pack(&baseline).text);
+        for item in candidate
+            .batch
+            .items
             .iter()
-            .filter(|unit| unit.kind == CardKind::Body)
-            .all(|unit| partition
-                .units
-                .iter()
-                .any(|other| other.input_key == unit.input_key))
-    );
-    let coarse: Vec<_> = shared
-        .units
-        .iter()
-        .filter(|unit| unit.kind == CardKind::File)
-        .cloned()
-        .collect();
-    let assert_joined_only = |before: usize| {
-        let snapshot = trace.snapshot();
-        let events = &snapshot["events"].as_array().unwrap()[before..];
-        assert!(events.iter().any(|event| event["stage"] == "selection"
-            && event["refined"] == true
-            && event["outcome"] == "eligible"
-            && event["unit"]["path"] == path));
-        assert!(
-            !events.iter().any(|event| event["stage"] == "selection"
-                && event["refined"] == true
-                && event["unit"]["path"] == shared_path),
-            "a shared input key cannot promote an unjoined location"
-        );
-    };
-    replace_mapping(shared_path, &shared, &coarse);
-    let before = trace.snapshot()["events"].as_array().unwrap().len();
-    select();
-    assert_joined_only(before);
-    // A row too large for bounded query decoding must not piggyback on the
-    // same input key's successfully joined provenance in the other file.
-    let mut oversized = shared.units.clone();
-    oversized.extend((0..corpus.source(shared_path).len()).map(|start| {
-        context_foundry::neural::cache::PartitionUnit {
-            kind: CardKind::Body,
-            start,
-            end: start + 1,
-            input_key: "ab".repeat(32),
+            .filter(|item| item.semantic.is_some())
+        {
+            let handle = item.handle.as_ref().unwrap();
+            assert!(
+                window
+                    .hits
+                    .iter()
+                    .flat_map(|hit| window.units(hit))
+                    .any(|unit| *unit.path == handle.path
+                        && unit.start == handle.start
+                        && unit.end == handle.end
+                        && *unit.source_sha256 == handle.sha256)
+            );
         }
-    }));
-    oversized.sort_by(|a, b| {
-        a.start
-            .cmp(&b.start)
-            .then_with(|| b.end.cmp(&a.end))
-            .then_with(|| a.input_key.cmp(&b.input_key))
-    });
-    assert!(serde_json::to_vec(&oversized).unwrap().len() > 512 * 1024);
-    replace_mapping(shared_path, &shared, &oversized);
-    let before = trace.snapshot()["events"].as_array().unwrap().len();
-    let bounded = select();
-    assert!(bounded.batch.counters.candidates_full);
-    let packed = response::pack_enriched_context(
-        &bounded,
-        None,
-        response::Budget::request(2048),
-        &response::stdout_bytes,
-    )
-    .unwrap();
-    assert!(
-        packed
-            .text
-            .lines()
-            .next()
-            .unwrap()
-            .contains("candidates:full")
-    );
-    assert_joined_only(before);
-    assert!(
-        trace.snapshot()["events"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .rev()
-            .find(|event| event["stage"] == "refinement")
-            .unwrap()["work"]["mapping_rows_skipped"]
-            .as_u64()
-            .unwrap()
-            > 0
-    );
-    replace_mapping(shared_path, &shared, &shared.units);
-    // Keep every selected source current but remove its fine partition work.
-    // The retained generation still contains body vectors: this specifically
-    // tests the selected metadata gate, not an empty global ANN shortcut.
-    for (path, record) in &saved {
-        let coarse: Vec<_> = record
-            .units
-            .iter()
-            .filter(|unit| unit.kind == CardKind::File)
-            .cloned()
-            .collect();
-        replace_mapping(path, record, &coarse);
+        assert_eq!(
+            candidate
+                .batch
+                .items
+                .iter()
+                .any(|item| item.semantic.is_some()),
+            !empty
+        );
     }
-    select();
-    let last_work = || {
-        trace.snapshot()["events"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .rev()
-            .find(|event| event["stage"] == "refinement")
-            .unwrap()["work"]
-            .clone()
-    };
-    assert_eq!(last_work()["vectors_scored"], 0);
-    assert_eq!(last_work()["unpublished_units"], 0);
-    for (path, record) in &saved {
-        replace_mapping(path, record, &record.units);
-    }
-    // A current Body mapping alone is insufficient: its exact key must also
-    // occur in this retained publication before any resident vector is read.
-    let mut unpublished = partition.units.clone();
-    unpublished
-        .iter_mut()
-        .find(|unit| unit.kind == CardKind::Body)
-        .unwrap()
-        .input_key = "ef".repeat(32);
-    replace_mapping(path, &partition, &unpublished);
-    select();
-    assert!(last_work()["unpublished_units"].as_u64().unwrap() > 0);
-    replace_mapping(path, &partition, &partition.units);
+    window.hits = hits;
     corpus
-        .engine()
-        .replace_source(path, "fn replaced() {}\n")
+        .engine_mut()
+        .replace_source(path, "fn changed() {}\n")
         .unwrap();
-    let fresh = select();
+    let current = corpus
+        .engine()
+        .context_candidates_with(
+            query,
+            Strategy::Search,
+            &Corpus::control(),
+            &ContextOptions {
+                dense: Some(&window),
+                experimental_behavior: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
     assert!(
-        fresh.batch.items.iter().all(|item| item
-            .handle
-            .as_ref()
-            .is_none_or(|handle| handle.path != path)),
-        "the retained query/generation cannot bypass the final source hash check"
+        current
+            .batch
+            .items
+            .iter()
+            .all(|item| item.handle.as_ref().is_none_or(|h| h.path != path))
     );
+    assert!(
+        current
+            .batch
+            .items
+            .iter()
+            .any(|item| item.handle.as_ref().is_some_and(|h| h.path == shared))
+    );
+    assert_eq!(corpus.probe.query_calls(), queries);
+    assert_eq!(corpus.probe.document_calls(), documents);
     runtime.shutdown();
-    assert!(
-        corpus.prepare().document_calls > 0,
-        "the changed source needs new body and overview inputs"
-    );
-    assert_eq!(
-        corpus.prepare().document_calls,
-        0,
-        "unchanged replay has no inference"
-    );
 }
 
 #[test]

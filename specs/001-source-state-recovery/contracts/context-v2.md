@@ -569,7 +569,7 @@ holds per index state.
 
 #### Experimental anchorless prose selection — 009 T005, 2026-10-10
 
-With `experimental_behavior` enabled for search-context requests, an anchorless
+With `experimental_behavior` enabled for lexical search-context requests, an anchorless
 plain-language query uses tier 2 without promoting incidental exact-definition runs
 to tier 1. Eligibility requires at least three whitespace-separated words, each
 alphabetic (including hyphen-separated alphabetic compounds) after trimming trailing
@@ -620,27 +620,15 @@ body coverage; partial overlaps remain. Derived brief support requires delivered
 body coverage of the cited source. Every admission counts the current selected set
 with its final omitted count, avoiding a late header expansion that drops the only
 covering body.
-Experimental anchorless prose with hierarchy/body representations alternates dense
-and lexical candidates at both partial and complete coverage, before ordinary
-first-placement deduplication, per-file caps and candidate limits. Dense goes first
-only when a refined Body survives the final source check; otherwise lexical goes
-first. Coverage describes availability and freshness, not relevance. The existing
-partial/address and file-overview rules still alternate lexical first; complete
-address-card coverage retains dense precedence. Explicit anchors and ordinary/default
-search keep their existing behavior. All independently scored body ranges remain
-unchanged. Bounded `placement_policy` traces name `body_prose_interleave_v1` for
-hierarchy/body and report coverage separately; `lexical_intent` remains available.
-This reserves no extra candidates or output tokens, and does not guarantee delivery
-of every lexical hit. After semantic interleaving, repeat the same exact-owner
-grouping for lexical documents before placement caps and the global cut; dense
-locations keep their relative order and are never joined as lexical companions.
-This prevents interleaving from separating the two matching parts of a callable
-again before packing. No expected-answer labels enter selection. It changes no source
-index, vector recipe or cache identity. Development regressions and public repository
-comparisons do not establish held-out G2 acceptance. Owner decision, 2026-11-06: this
-dense/lexical interleaving and the flag's other semantic-store effects are to be
-removed ([§ Experimental behavioral support](#experimental-behavioral-support--001-t010-2026-10-09));
-until then they apply as written.
+Owner decision, 2026-11-06, implemented for qualification 2026-11-11: the flag's
+semantic effects are removed. Any supplied dense window, including partial or
+empty-hit windows, uses ordinary semantic ordering and source spans; it gets no
+prose refinement, local focusing, interleaving or owned-method support. Model
+admission uses the ordinary anchor rule independently of this flag. Off and named
+fallback plans serve lexical evidence and may use the lexical algorithm above.
+This replaces the former semantic prose/interleaving paragraphs; source identity,
+vector recipes, freshness checks, bounded provenance and ordinary semantic placement
+are unchanged. See [T010](#experimental-behavioral-support--001-t010-2026-10-09).
 
 ### Hit materialization
 
@@ -1156,7 +1144,8 @@ real-agent benefit is claimed. The flag is to lose its effects on semantic store
 including the dense/lexical interleaving of
 [§ Experimental anchorless prose selection](#experimental-anchorless-prose-selection--009-t005-2026-10-10),
 and once those gates pass it is to default on only where lexical results are served.
-That code change is still to do; until it lands, the flag behaves as written here.
+The 2026-11-11 candidate removes those semantic effects; lexical default promotion
+is still conditional on qualification.
 Enable it explicitly with
 `context --experimental-behavior-context` or the same flag at MCP owner startup.
 The MCP tool schema and ordinary response wire do not change.

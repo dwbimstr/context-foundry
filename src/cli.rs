@@ -862,7 +862,6 @@ fn run() -> AResult<()> {
                     &engine,
                     &query,
                     path.as_deref(),
-                    false,
                     &Control::with_deadline(Instant::now() + crate::mcp::READ_DEADLINE),
                 )?;
                 let control = Control::with_deadline(Instant::now() + crate::mcp::READ_DEADLINE);
@@ -950,8 +949,6 @@ fn run() -> AResult<()> {
                     &engine,
                     &query,
                     None,
-                    experimental_behavior_context
-                        && crate::store::prose_context_query(&query, strategy, routed.is_some()),
                     &Control::with_deadline(Instant::now() + crate::mcp::READ_DEADLINE)
                         .with_trace(trace.clone()),
                 )?;
