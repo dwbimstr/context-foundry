@@ -50,23 +50,23 @@ struct Env {
 
 /// A fresh synthetic five-file workspace plus an unclaimed run path.
 fn env() -> Env {
-    let root = tempfile::tempdir().unwrap();
+    let root = fixture_private_tempdir().unwrap();
     let base = std::fs::canonicalize(root.path()).unwrap();
     let ws = base.join("ws");
-    std::fs::create_dir_all(ws.join("src")).unwrap();
-    std::fs::write(
+    fixture_private_dirs(ws.join("src")).unwrap();
+    fixture_private_write(
         ws.join("Cargo.toml"),
         "[package]\nname = \"records\"\nversion = \"0.0.0\"\n",
     )
     .unwrap();
-    std::fs::write(
+    fixture_private_write(
         ws.join("src/lib.rs"),
         "pub fn decode(input: &[u8]) -> Vec<u8> { input.to_vec() }\n",
     )
     .unwrap();
-    std::fs::write(ws.join("src/ascii_set.rs"), "pub struct AsciiSet;\n").unwrap();
-    std::fs::write(ws.join("LICENSE-MIT"), "MIT synthetic\n").unwrap();
-    std::fs::write(ws.join("LICENSE-APACHE"), "Apache synthetic\n").unwrap();
+    fixture_private_write(ws.join("src/ascii_set.rs"), "pub struct AsciiSet;\n").unwrap();
+    fixture_private_write(ws.join("LICENSE-MIT"), "MIT synthetic\n").unwrap();
+    fixture_private_write(ws.join("LICENSE-APACHE"), "Apache synthetic\n").unwrap();
     Env {
         run_dir: base.join("run"),
         workspace: ws,
@@ -239,7 +239,7 @@ fn checker_assert_diagnostics(receipt: &IndependentCheckReceipt) {
 // declared privacy as the real checker instead of inheriting an ambient mask.
 fn private_checker_tempdir() -> tempfile::TempDir {
     use std::os::unix::fs::PermissionsExt;
-    let directory = tempfile::tempdir().unwrap();
+    let directory = fixture_private_tempdir().unwrap();
     std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
     directory
 }
@@ -461,10 +461,9 @@ fn stage1_probe_end_to_end_and_clean_handoff() {
         discovery.iter().all(|l| l.contains("EPERM")),
         "{discovery:?}"
     );
-    // OMP 18.13.2 unconditionally prewarms a connection to its initial
-    // model's origin (an unauthenticated HEAD through its own transport)
-    // while creating the session. The sandbox denies it before name
-    // resolution; that is the only provider-named host line allowed.
+    // Check the pinned host's expected provider-named prewarm diagnostic.
+    // Its reported ENOTFOUND does not establish OS-level denial ordering or
+    // a complete inventory of startup network attempts.
     let provider_lines: Vec<&str> = logs
         .lines()
         .filter(|l| l.contains("api.anthropic.com"))
@@ -549,6 +548,8 @@ fn stage1_probe_end_to_end_and_clean_handoff() {
             .unwrap()
             .starts_with(&sealed_bytes)
     );
+    assert_owned_private_run_tree(&e.run_dir);
+    assert_owned_private_tree(&e.workspace, None);
 }
 
 /// An owned malformed key reaches the same claimed-run boundary as live
@@ -914,6 +915,8 @@ fn coding_slot_tool_followup_seal_and_order() {
     assert_eq!(receipt.slots.len(), 8);
     assert_eq!(receipt.slots[0].state, "sealed");
     assert!(receipt.slots[1..].iter().all(|s| s.state == "not_started"));
+    assert_owned_private_run_tree(&e.run_dir);
+    assert_owned_private_tree(&e.workspace, None);
 }
 
 /// A forbidden path is blocked before execution (behaviour failure, not a
@@ -1301,7 +1304,7 @@ fn full_pilot_pipeline_qualifies_without_provider() {
     let inputs: EvidenceInputs =
         serde_json::from_slice(&std::fs::read(&inputs_path).unwrap()).unwrap();
     let verified = inputs.verify().unwrap();
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = fixture_private_tempdir().unwrap();
     let root =
         PilotRoot::create(&std::fs::canonicalize(tmp.path()).unwrap().join("pilot")).unwrap();
     apparatus::install_seed(&root, &verified).unwrap();
@@ -1448,7 +1451,7 @@ fn live_gates_refuse_in_order_and_claim_the_authority_once() {
     let dir = e.run_dir.parent().unwrap().to_path_buf();
     let write = |name: &str, bytes: &[u8]| {
         let p = dir.join(name);
-        std::fs::write(&p, bytes).unwrap();
+        fixture_private_write(&p, bytes).unwrap();
         p
     };
     let sha = |p: &Path| pilot_capture::sha256_hex(&std::fs::read(p).unwrap());
@@ -1571,7 +1574,7 @@ fn live_gates_refuse_in_order_and_claim_the_authority_once() {
     assert_eq!(open(&a3, &unbound, "run-5"), "ratecard_account_unbound");
     assert!(!dir.join("authority-3.json.claim").exists());
     assert!(!dir.join("run-5").exists());
-    std::fs::write(dir.join("view-2.txt"), b"tampered").unwrap();
+    fixture_private_write(dir.join("view-2.txt"), b"tampered").unwrap();
     let a4 = write(
         "authority-4.json",
         &serde_json::to_vec(&receipt(true, &exe, &bound)).unwrap(),
@@ -1579,7 +1582,7 @@ fn live_gates_refuse_in_order_and_claim_the_authority_once() {
     assert_eq!(open(&a4, &bound, "run-5"), "launch_view_changed");
     assert!(!dir.join("authority-4.json.claim").exists());
     assert!(!dir.join("run-5").exists());
-    std::fs::write(dir.join("view-2.txt"), b"view 2").unwrap();
+    fixture_private_write(dir.join("view-2.txt"), b"view 2").unwrap();
     // Every gate passes; the credential is the last thing read and is
     // absent, after the authority and the run were claimed exclusively.
     assert_eq!(open(&a4, &bound, "run-5"), "credential_missing");
@@ -1657,14 +1660,27 @@ fn live_gates_refuse_in_order_and_claim_the_authority_once() {
     // not stop at mode/manifest/authority validation. The owned verification
     // probe supplies current boot/clock/bridge fields only: relabeling this
     // evidence does not establish an actual Live-compatible probe history.
+    // This auxiliary Verification probe is a distinct run. Keep its real host
+    // outputs outside the Live fixture's isolation root, whose executable
+    // declaration belongs only to the run named by its authority manifest.
+    let probe_env = env();
     let fx = Fixture::start(vec![
         Reply::Count(2048),
         fixture::text_reply("msg_live_shape_probe", "PILOT_TRANSPORT_OK"),
     ]);
-    let mut probe =
-        CaptureSession::open(verification(&e, &fx, Scope::Probe, Default::default())).unwrap();
+    let mut probe = CaptureSession::open(verification(
+        &probe_env,
+        &fx,
+        Scope::Probe,
+        Default::default(),
+    ))
+    .unwrap();
     let capture = probe
-        .run_slot(slot(&e, policy::PROBE_SLOT, policy::PROBE_INSTRUCTION))
+        .run_slot(slot(
+            &probe_env,
+            policy::PROBE_SLOT,
+            policy::PROBE_INSTRUCTION,
+        ))
         .unwrap();
     let verification_seal = probe.seal_probe(&capture).unwrap();
     probe.finish().unwrap();
@@ -1754,7 +1770,7 @@ struct AuthorityFiles {
 
 fn private_fixture_file(path: &Path, bytes: &[u8]) {
     use std::os::unix::fs::PermissionsExt;
-    std::fs::write(path, bytes).unwrap();
+    fixture_private_write(path, bytes).unwrap();
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
 }
 
@@ -1762,7 +1778,7 @@ impl AuthorityFiles {
     fn new(e: &Env, label: &str, scope: Scope, run_dir: &Path) -> Self {
         use std::os::unix::fs::PermissionsExt;
         let root = e.run_dir.parent().unwrap().join(label);
-        std::fs::create_dir(&root).unwrap();
+        fixture_private_dir(&root).unwrap();
         std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
         let pinned = root.join("pinned.txt");
         private_fixture_file(&pinned, b"owned admission fixture");
@@ -1992,7 +2008,7 @@ fn authority_handoff_path_mismatch_preserves_sealed_bytes_and_requests() {
     probe.finish().unwrap();
     let bytes = std::fs::read(e.run_dir.join("journal.jsonl")).unwrap();
     let other = e.run_dir.with_file_name("other-owned-run");
-    std::fs::create_dir(&other).unwrap();
+    fixture_private_dir(&other).unwrap();
     let alias = e.run_dir.with_file_name("wrong-run-alias");
     std::os::unix::fs::symlink(&other, &alias).unwrap();
     for declared in [e.run_dir.with_file_name("unused"), alias] {
@@ -2077,14 +2093,27 @@ fn authority_journal_handoff_append_failure_returns_no_session() {
 fn authority_live_shaped_handoff_is_chained_to_exact_coding_authority() {
     require_host();
     let e = env();
+    // This auxiliary Verification probe is a distinct run. Keep its real host
+    // outputs outside the Live fixture's isolation root, whose executable
+    // declaration belongs only to the run named by its authority manifest.
+    let probe_env = env();
     let fx = Fixture::start(vec![
         Reply::Count(2048),
         fixture::text_reply("msg_synthetic_live_probe", "PILOT_TRANSPORT_OK"),
     ]);
-    let mut probe =
-        CaptureSession::open(verification(&e, &fx, Scope::Probe, Default::default())).unwrap();
+    let mut probe = CaptureSession::open(verification(
+        &probe_env,
+        &fx,
+        Scope::Probe,
+        Default::default(),
+    ))
+    .unwrap();
     let capture = probe
-        .run_slot(slot(&e, policy::PROBE_SLOT, policy::PROBE_INSTRUCTION))
+        .run_slot(slot(
+            &probe_env,
+            policy::PROBE_SLOT,
+            policy::PROBE_INSTRUCTION,
+        ))
         .unwrap();
     let verification_seal = probe.seal_probe(&capture).unwrap();
     probe.finish().unwrap();
@@ -2102,7 +2131,7 @@ fn authority_live_shaped_handoff_is_chained_to_exact_coding_authority() {
 
     // Explicitly synthetic handoff input: the real constructor's admission
     // plus re-chained verification records. This is not Live-compatible history.
-    let mut rows = journal(&e.run_dir);
+    let mut rows = journal(&probe_env.run_dir);
     rows[0] = first;
     rows.last_mut().unwrap()["run_dir"] = json!(live_run);
     let mut bytes = Vec::new();
@@ -2128,7 +2157,7 @@ fn authority_live_shaped_handoff_is_chained_to_exact_coding_authority() {
     private_fixture_file(&cited, &serde_json::to_vec(&seal).unwrap());
     private_fixture_file(&files.root.join("synthetic-key"), CANARY.as_bytes());
     let wrong_run = e.run_dir.with_file_name("different-existing-run");
-    std::fs::create_dir(&wrong_run).unwrap();
+    fixture_private_dir(&wrong_run).unwrap();
     assert_eq!(
         CaptureSession::open_after_probe(&seal, files.admission(&wrong_run, Some(cited.clone())))
             .err()
@@ -2172,7 +2201,7 @@ fn authority_live_shaped_handoff_is_chained_to_exact_coding_authority() {
 
 #[test]
 fn authority_manifests_cli_requires_explicit_run_dir_before_inputs() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = fixture_private_tempdir().unwrap();
     let root = tmp.path().join("must-not-be-created");
     let inputs = tmp.path().join("nonexistent-inputs.json");
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_foundry-pilot-capture"))
@@ -2394,6 +2423,7 @@ fn oracle_bound_success_and_observed_nonzero_keep_distinct_outcomes() {
 fn oracle_actual_producer_binds_completion_binary_and_owned_sources() {
     use context_foundry::pilot_capture::apparatus::run_independent_check;
     use std::os::unix::fs::DirBuilderExt;
+    use std::os::unix::fs::PermissionsExt;
 
     const EXPECTED_ORACLE: &str =
         "f5ac14d370d852090c49ead61e23f4d9185eed491b33b123ba6e6ff2dec09bb9";
@@ -2454,6 +2484,15 @@ fn oracle_actual_producer_binds_completion_binary_and_owned_sources() {
         .prefix("cf-oracle-producer-")
         .tempdir()
         .unwrap();
+    std::fs::set_permissions(owned_temp.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(
+        std::fs::metadata(owned_temp.path())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o7777,
+        0o700
+    );
     let owned = std::fs::canonicalize(owned_temp.path()).unwrap();
     std::mem::forget(owned_temp);
     eprintln!("owned oracle producer evidence: {}", owned.display());
@@ -2642,6 +2681,8 @@ fn oracle_actual_producer_binds_completion_binary_and_owned_sources() {
         }))
         .unwrap(),
     );
+    assert_owned_private_tree(&positive_checker, Some(Path::new("out/check")));
+    assert_owned_private_tree(&negative_checker, Some(Path::new("out/check")));
 }
 
 #[test]
@@ -2659,4 +2700,341 @@ fn checker_stderr_tampering_is_terminal_before_another_fixture_request() {
         b"owned changed diagnostic",
     );
     oracle_assert_terminal_refusal(session, &capture, &receipt, &e, &fx, "check_stderr_unbound");
+}
+
+// Compatibility setup for NEW owned synthetic fixtures only. Existing
+// entries keep their modes, so deliberate negative mutations stay negative.
+// These helpers do not participate in product permission qualification.
+fn fixture_private_tempdir() -> std::io::Result<tempfile::TempDir> {
+    use std::os::unix::fs::PermissionsExt;
+    let temp = tempfile::Builder::new()
+        .prefix("cf-owned-pilot-fixture-")
+        .tempdir_in("/private/tmp")?;
+    std::fs::set_permissions(temp.path(), std::fs::Permissions::from_mode(0o700))?;
+    Ok(temp)
+}
+
+fn fixture_private_dir(path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(path.as_ref())?;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+}
+
+fn fixture_private_dirs(path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
+    let mut missing = Vec::new();
+    let mut cursor = path.as_ref();
+    while !cursor.try_exists()? {
+        missing.push(cursor.to_path_buf());
+        cursor = cursor
+            .parent()
+            .ok_or_else(|| std::io::Error::other("owned fixture has no parent"))?;
+    }
+    for directory in missing.into_iter().rev() {
+        fixture_private_dir(directory)?;
+    }
+    Ok(())
+}
+
+fn fixture_private_write(
+    path: impl AsRef<std::path::Path>,
+    bytes: impl AsRef<[u8]>,
+) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let existed = path.as_ref().symlink_metadata().is_ok();
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path.as_ref())?;
+    if !existed {
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
+    file.write_all(bytes.as_ref())
+}
+
+#[test]
+fn privacy_named_admission_documents_refuse_before_claim_without_normalizing_inputs() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
+    require_host();
+    for case in [
+        "authority",
+        "manifest",
+        "ratecard",
+        "view",
+        "container",
+        "manifest-symlink",
+    ] {
+        eprintln!("owned private admission case: {case}");
+        let e = env();
+        let files = AuthorityFiles::new(&e, "private-admission", Scope::Probe, &e.run_dir);
+        let path = files.root.join(match case {
+            "authority" => "authority.json",
+            "manifest" | "manifest-symlink" => "manifest.json",
+            "ratecard" => "ratecard.json",
+            "view" => "view-1.txt",
+            "container" => "authority.json",
+            _ => unreachable!(),
+        });
+        let before = std::fs::read(&path).unwrap();
+        if case == "container" {
+            std::fs::set_permissions(&files.root, std::fs::Permissions::from_mode(0o750)).unwrap();
+        } else if case == "manifest-symlink" {
+            let target = files.root.join("owned-manifest-target");
+            std::fs::rename(&path, &target).unwrap();
+            symlink(target, &path).unwrap();
+        } else {
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+        }
+        let fault = CaptureSession::open(files.admission(&e.run_dir, None))
+            .err()
+            .unwrap();
+        assert_eq!(
+            (fault.class, fault.code),
+            (FaultClass::Privacy, "private_artifact_not_private")
+        );
+        files.assert_unclaimed();
+        assert!(!e.run_dir.exists());
+        assert!(!files.root.join("synthetic-key").exists());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        if case == "container" {
+            assert_eq!(
+                std::fs::metadata(&files.root).unwrap().mode() & 0o7777,
+                0o750
+            );
+        } else if case == "manifest-symlink" {
+            assert!(
+                std::fs::symlink_metadata(path)
+                    .unwrap()
+                    .file_type()
+                    .is_symlink()
+            );
+        } else {
+            assert_eq!(std::fs::metadata(path).unwrap().mode() & 0o7777, 0o640);
+        }
+    }
+}
+
+#[test]
+fn privacy_prelaunch_refusal_consumes_no_fixture_http_or_permit() {
+    use std::os::unix::fs::PermissionsExt;
+    require_host();
+    let e = env();
+    let fx = Fixture::start(vec![]);
+    let mut session =
+        CaptureSession::open(verification(&e, &fx, Scope::Coding, Default::default())).unwrap();
+    let file = e.workspace.join("src/lib.rs");
+    let before = std::fs::read(&file).unwrap();
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o640)).unwrap();
+    let fault = session.run_slot(slot(&e, "1B", TASK)).unwrap_err();
+    assert_eq!(
+        (fault.class, fault.code),
+        (FaultClass::Privacy, "private_artifact_not_private")
+    );
+    assert_eq!(session.halted(), Some(fault));
+    assert_eq!(session.counters(), pilot_capture::Counters::default());
+    assert!(fx.seen().is_empty());
+    assert_eq!(std::fs::read(&file).unwrap(), before);
+    let report = session.finish().unwrap();
+    assert_eq!(report.counters, pilot_capture::Counters::default());
+    let rows = journal(&e.run_dir);
+    assert_eq!(rows.iter().filter(|r| r["kind"] == "halt").count(), 1);
+    assert!(!rows.iter().any(|r| r["kind"] == "http_begin"
+        || r["kind"] == "reservation"
+        || r["kind"] == "host_launched"));
+    assert_eq!(rows.last().unwrap()["kind"], "finished");
+}
+
+#[test]
+fn privacy_send_gates_preserve_observed_http_and_refuse_the_next_send() {
+    for after_count in [true, false] {
+        eprintln!(
+            "owned privacy send-gate case: {}",
+            if after_count {
+                "after-count"
+            } else {
+                "before-followup-count"
+            }
+        );
+        require_host();
+        let e = env();
+        let changed = e.workspace.join("src/lib.rs");
+        let before = std::fs::read(&changed).unwrap();
+        let mutate = |reply| Reply::ModeThen {
+            path: changed.clone(),
+            mode: 0o640,
+            reply: Box::new(reply),
+        };
+        let fx = Fixture::start(if after_count {
+            vec![
+                mutate(Reply::Count(3000)),
+                fixture::text_reply("msg_owned_privacy_unexpected_message", "Done."),
+            ]
+        } else {
+            vec![
+                Reply::Count(3000),
+                mutate(fixture::tool_reply(
+                    "msg_owned_privacy_tool",
+                    "toolu_owned_privacy_read",
+                    "read",
+                    json!({"path":"src/lib.rs", "i":"inspect"}),
+                )),
+                Reply::Count(3400),
+                fixture::text_reply("msg_owned_privacy_unexpected_followup", "Done."),
+            ]
+        });
+        let mut session =
+            CaptureSession::open(verification(&e, &fx, Scope::Coding, Default::default())).unwrap();
+        let capture = session.run_slot(slot(&e, "1B", TASK)).unwrap();
+        let fault = session.halted().expect("privacy refusal must be terminal");
+        assert_eq!(
+            (fault.class, fault.code),
+            (FaultClass::Privacy, "private_artifact_not_private")
+        );
+        assert!(matches!(capture.disposition, Disposition::Halted { .. }));
+        assert!(
+            capture.native.is_none(),
+            "unsafe native readback must not be accepted after the privacy failure"
+        );
+        assert!(
+            capture.candidate_inventory.is_empty(),
+            "unsafe candidate inventory must not be published"
+        );
+        assert!(capture.host_exit.as_ref().unwrap().group_gone);
+        assert_eq!(capture.generations.len(), 1);
+        let generation = &capture.generations[0];
+        assert_eq!(generation.count_status, Some(200));
+        assert_eq!(generation.estimate_lexeme.as_deref(), Some("3000"));
+        let counters = session.counters();
+        assert_eq!(counters.count_calls, 1);
+        assert_eq!(
+            counters.generation_permits, 1,
+            "an unsent followup must not consume a permit"
+        );
+        assert_eq!(counters.outstanding_micro_usd, 0);
+        if after_count {
+            assert_eq!(fx.paths(), ["/v1/messages/count_tokens"]);
+            assert_eq!(counters.messages_attempts, 0);
+            assert_eq!(counters.provider_http_attempts, 1);
+            assert_eq!(counters.spent_micro_usd, 0);
+            assert_eq!(generation.messages_attempt, None);
+            assert_eq!(generation.outcome, "privacy_before_messages");
+        } else {
+            assert_eq!(fx.paths(), ["/v1/messages/count_tokens", "/v1/messages"]);
+            assert_eq!(counters.messages_attempts, 1);
+            assert_eq!(counters.provider_http_attempts, 2);
+            assert_eq!(
+                generation.message_id.as_deref(),
+                Some("msg_owned_privacy_tool")
+            );
+            assert!(generation.usage.as_ref().unwrap().complete);
+            assert_eq!(counters.spent_micro_usd, generation.cost_micro_usd.unwrap());
+            assert!(counters.spent_micro_usd > 0);
+        }
+        assert_eq!(std::fs::read(&changed).unwrap(), before);
+        let observed_requests = fx.seen().len();
+        assert_eq!(
+            session.run_slot(slot(&e, "1A", TASK)).unwrap_err().code,
+            "session_halted"
+        );
+        let report = session.finish().unwrap();
+        assert_eq!(report.counters, counters);
+        assert_eq!(report.slots[0].state, "closed");
+        assert_eq!(
+            report.slots[0].disposition.as_ref(),
+            Some(&capture.disposition)
+        );
+        assert!(report.slots[1..].iter().all(|s| s.state == "not_started"));
+        assert_eq!(fx.seen().len(), observed_requests);
+        let rows = journal(&e.run_dir);
+        assert_eq!(rows.iter().filter(|r| r["kind"] == "halt").count(), 1);
+        assert_eq!(
+            rows.iter().filter(|r| r["kind"] == "http_begin").count(),
+            observed_requests
+        );
+        assert_eq!(
+            rows.iter().filter(|r| r["kind"] == "reservation").count(),
+            1
+        );
+        let closed: Vec<_> = rows.iter().filter(|r| r["kind"] == "slot_closed").collect();
+        assert_eq!(closed.len(), 1);
+        assert_eq!(closed[0]["generations"], 1);
+        assert_eq!(
+            closed[0]["disposition"],
+            serde_json::to_value(&capture.disposition).unwrap()
+        );
+        assert_eq!(
+            closed[0]["counters"],
+            serde_json::to_value(counters).unwrap()
+        );
+        assert_eq!(rows.last().unwrap()["kind"], "finished");
+    }
+}
+
+// Actual successful run roots only. Workspaces and checker roots continue
+// through the ordinary helper and receive no host-native exception.
+fn assert_owned_private_run_tree(run: &Path) {
+    const NATIVE: &str = "home/.omp/natives/18.13.2/pi_natives.darwin-arm64.node";
+    let hosts = std::fs::read_dir(run.join("hosts"))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert!(
+        !hosts.is_empty(),
+        "successful actual host flow must retain its host root"
+    );
+    for entry in hosts {
+        let metadata = std::fs::symlink_metadata(entry.path().join(NATIVE)).unwrap();
+        assert!(metadata.is_file() && !metadata.file_type().is_symlink());
+    }
+    assert_owned_private_tree_in_run(run, None, Some(run));
+}
+
+fn assert_owned_private_tree(root: &Path, executable: Option<&Path>) {
+    assert_owned_private_tree_in_run(root, executable, None);
+}
+
+fn assert_owned_private_tree_in_run(root: &Path, executable: Option<&Path>, run: Option<&Path>) {
+    if let Some(run) = run {
+        assert_eq!(root, run, "native exception requires the actual run root");
+    }
+    use std::os::unix::fs::MetadataExt;
+    let mut pending = vec![root.to_path_buf()];
+    let mut seen = 0;
+    while let Some(path) = pending.pop() {
+        seen += 1;
+        assert!(seen <= 16_384, "owned test output tree exceeded its bound");
+        let meta = std::fs::symlink_metadata(&path).unwrap();
+        assert_eq!(meta.uid(), unsafe { libc::getuid() });
+        assert!(
+            !meta.file_type().is_symlink(),
+            "owned output contains symlink"
+        );
+        if meta.is_dir() {
+            assert_eq!(meta.mode() & 0o7777, 0o700, "owned directory mode");
+            pending.extend(std::fs::read_dir(path).unwrap().map(|e| e.unwrap().path()));
+        } else {
+            assert!(meta.is_file(), "owned output is not a regular file");
+            let native = run.is_some_and(|run| {
+                let hosts = run.join("hosts");
+                let Ok(relative) = path.strip_prefix(&hosts) else {
+                    return false;
+                };
+                let mut components = relative.components();
+                matches!(components.next(), Some(std::path::Component::Normal(_)))
+                    && components.as_path()
+                        == Path::new("home/.omp/natives/18.13.2/pi_natives.darwin-arm64.node")
+            });
+            let expected = if native || executable.is_some_and(|rel| path == root.join(rel)) {
+                0o700
+            } else {
+                0o600
+            };
+            assert_eq!(meta.mode() & 0o7777, expected, "owned file mode");
+        }
+    }
 }

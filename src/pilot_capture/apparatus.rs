@@ -11,7 +11,6 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::Read;
 use std::os::fd::AsRawFd;
-use std::os::unix::fs::MetadataExt;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
@@ -26,7 +25,9 @@ use super::protocol::FaultClass;
 use super::{
     CHECK_RECEIPT_KIND, CHECK_STDERR_MAX_BYTES, CaptureFault, CheckStep, IndependentCheckReceipt,
     LaunchManifest, ManifestSlot, ManifestView, PinEntry, PreparedSlot, PreviewAdmission,
-    RenderCommitments, create_private_dir, policy, render_binding, sha256_hex, write_private_new,
+    PrivateArtifact, PrivateTreeBudget, RenderCommitments, collect_private_tree,
+    create_private_dir, open_private_file, policy, private_child, render_binding,
+    require_private_directory, sha256_hex, verify_private_tree, write_private_new,
 };
 
 /// Frozen input pins (contract §2) beyond those in [`policy`].
@@ -297,8 +298,19 @@ const ROOT_DIRS: [&str; 9] = [
 impl PilotRoot {
     /// Claim a fresh pilot root exclusively.
     pub fn create(path: &Path) -> Result<Self, CaptureFault> {
-        create_private_dir(path)?;
-        let root = fs::canonicalize(path)
+        // Only a fresh leaf is claimed. Resolve its admitted existing parent,
+        // never an existing input leaf, so ordinary /tmp aliases remain usable.
+        let parent = fs::canonicalize(
+            path.parent()
+                .ok_or(fault(FaultClass::Persistence, "pilot_root_unresolvable"))?,
+        )
+        .map_err(|_| fault(FaultClass::Persistence, "pilot_root_unresolvable"))?;
+        let target = parent.join(
+            path.file_name()
+                .ok_or(fault(FaultClass::Persistence, "pilot_root_unresolvable"))?,
+        );
+        create_private_dir(&target)?;
+        let root = fs::canonicalize(&target)
             .map_err(|_| fault(FaultClass::Persistence, "pilot_root_unresolvable"))?;
         for d in ROOT_DIRS {
             create_private_dir(&root.join(d))?;
@@ -310,13 +322,46 @@ impl PilotRoot {
     pub fn open(path: &Path) -> Result<Self, CaptureFault> {
         let root = fs::canonicalize(path)
             .map_err(|_| fault(FaultClass::Authority, "pilot_root_missing"))?;
-        for d in std::iter::once(".").chain(ROOT_DIRS) {
-            let meta = fs::symlink_metadata(root.join(d))
+        require_private_directory(path)
+            .map_err(|_| fault(FaultClass::Authority, "pilot_root_not_private"))?;
+        let mut budget = PrivateTreeBudget::new(None);
+        for d in ROOT_DIRS {
+            let child = root.join(d);
+            fs::symlink_metadata(&child)
                 .map_err(|_| fault(FaultClass::Authority, "pilot_root_incomplete"))?;
-            // SAFETY: getuid has no failure mode.
-            let uid = unsafe { libc::getuid() };
-            if !meta.is_dir() || meta.mode() & 0o077 != 0 || meta.uid() != uid {
-                return Err(fault(FaultClass::Authority, "pilot_root_not_private"));
+            require_private_directory(&child)
+                .map_err(|_| fault(FaultClass::Authority, "pilot_root_not_private"))?;
+            if d == "checks" {
+                // Derive only the fixed checks/<one-root>/out/check exception;
+                // both inventory and validation consume this same pass budget.
+                let files = collect_private_tree(&child, false, &[], &mut budget)?;
+                let executables: Vec<&Path> = files
+                    .iter()
+                    .filter(|p| {
+                        let parts: Vec<_> = p.components().collect();
+                        parts.len() == 3
+                            && parts[1].as_os_str() == "out"
+                            && parts[2].as_os_str() == "check"
+                    })
+                    .map(PathBuf::as_path)
+                    .collect();
+                verify_private_tree(&child, &executables, &mut budget)?;
+            } else if d == "runs" {
+                // Fixed PilotRoot layout only: runs/<one-run>/hosts/<one-host>
+                // followed by the host-owned exact native-module suffix.
+                let files = collect_private_tree(&child, false, &[], &mut budget)?;
+                let executables: Vec<&Path> = files
+                    .iter()
+                    .filter(|p| {
+                        let mut parts = p.components();
+                        matches!(parts.next(), Some(std::path::Component::Normal(_)))
+                            && super::host::is_run_native_module(parts.as_path())
+                    })
+                    .map(PathBuf::as_path)
+                    .collect();
+                verify_private_tree(&child, &executables, &mut budget)?;
+            } else {
+                verify_private_tree(&child, &[], &mut budget)?;
             }
         }
         Ok(Self { root })
@@ -350,7 +395,11 @@ pub fn install_seed(root: &PilotRoot, verified: &Verified) -> Result<(), Capture
     let seed = root.seed();
     create_private_dir(&seed.join("src"))?;
     for (rel, src) in &verified.seed {
-        let bytes = fs::read(src).map_err(|_| pin_fault("seed_unreadable"))?;
+        let mut input = super::open_nofollow(src, false)?;
+        let mut bytes = Vec::new();
+        input
+            .read_to_end(&mut bytes)
+            .map_err(|_| pin_fault("seed_unreadable"))?;
         write_private_new(&seed.join(rel), &bytes)?;
     }
     check_seed_tree(&seed)
@@ -372,48 +421,52 @@ fn check_seed_tree(dir: &Path) -> Result<(), CaptureFault> {
 }
 
 fn list_files(dir: &Path) -> Result<Vec<String>, CaptureFault> {
-    let mut out = Vec::new();
-    let mut stack = vec![dir.to_path_buf()];
-    while let Some(d) = stack.pop() {
-        for e in fs::read_dir(&d).map_err(|_| fault(FaultClass::Containment, "tree_unreadable"))? {
-            let p = e
-                .map_err(|_| fault(FaultClass::Containment, "tree_unreadable"))?
-                .path();
-            let meta = fs::symlink_metadata(&p)
-                .map_err(|_| fault(FaultClass::Containment, "tree_unreadable"))?;
-            if meta.is_dir() {
-                stack.push(p);
-            } else {
-                let rel = p
-                    .strip_prefix(dir)
-                    .map_err(|_| fault(FaultClass::Containment, "tree_unreadable"))?
-                    .to_string_lossy()
-                    .into_owned();
-                out.push(rel);
-            }
-        }
-    }
-    out.sort();
-    Ok(out)
+    collect_private_tree(dir, false, &[], &mut PrivateTreeBudget::new(None))?
+        .into_iter()
+        .map(|p| {
+            p.into_os_string()
+                .into_string()
+                .map_err(|_| fault(FaultClass::Containment, "tree_unreadable"))
+        })
+        .collect()
 }
 
 fn copy_tree(from: &Path, to: &Path) -> Result<(), CaptureFault> {
+    let files = collect_private_tree(from, false, &[], &mut PrivateTreeBudget::new(None))?;
     create_private_dir(to)?;
-    for rel in list_files(from)? {
+    for rel in files {
         let dest = to.join(&rel);
-        if let Some(parent) = dest.parent()
-            && !parent.exists()
-        {
-            fs::create_dir_all(parent)
-                .map_err(|_| fault(FaultClass::Persistence, "copy_failed"))?;
-            fs::set_permissions(parent, std::os::unix::fs::PermissionsExt::from_mode(0o700))
-                .map_err(|_| fault(FaultClass::Persistence, "copy_failed"))?;
+        let mut parent = to.to_path_buf();
+        if let Some(relative_parent) = rel.parent() {
+            for component in relative_parent.components() {
+                let std::path::Component::Normal(name) = component else {
+                    return Err(fault(FaultClass::Persistence, "copy_failed"));
+                };
+                parent.push(name);
+                match fs::symlink_metadata(&parent) {
+                    Ok(_) => require_private_directory(&parent)?,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                        create_private_dir(&parent)?
+                    }
+                    Err(_) => return Err(fault(FaultClass::Persistence, "copy_failed")),
+                }
+            }
         }
-        let bytes =
-            fs::read(from.join(&rel)).map_err(|_| fault(FaultClass::Persistence, "copy_failed"))?;
+        let mut input = super::open_nofollow(&from.join(&rel), false)?;
+        if !input
+            .metadata()
+            .map_err(|_| fault(FaultClass::Persistence, "copy_failed"))?
+            .is_file()
+        {
+            return Err(fault(FaultClass::Containment, "tree_unreadable"));
+        }
+        let mut bytes = Vec::new();
+        input
+            .read_to_end(&mut bytes)
+            .map_err(|_| fault(FaultClass::Persistence, "copy_failed"))?;
         write_private_new(&dest, &bytes)?;
     }
-    Ok(())
+    verify_private_tree(to, &[], &mut PrivateTreeBudget::new(None))
 }
 
 /// Restore the canonical workspace `name` from the seed. An existing arm's
@@ -424,8 +477,11 @@ pub fn restore_workspace(
     name: &str,
     archive_as: Option<&str>,
 ) -> Result<(PathBuf, Vec<(String, String)>), CaptureFault> {
-    check_seed_tree(&root.seed())?;
     let ws = root.workspace(name);
+    if ws.symlink_metadata().is_ok() {
+        verify_private_tree(&ws, &[], &mut PrivateTreeBudget::new(None))?;
+    }
+    check_seed_tree(&root.seed())?;
     if ws.symlink_metadata().is_ok() {
         if let Some(label) = archive_as {
             copy_tree(&ws, &root.root.join("archive").join(label))?;
@@ -500,6 +556,7 @@ fn run_bounded(
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .process_group(0);
+    private_child(&mut cmd);
     let mut child = cmd
         .spawn()
         .map_err(|_| fault(FaultClass::Bootstrap, "apparatus_spawn_failed"))?;
@@ -610,6 +667,11 @@ pub fn materialize_views(
             &env,
             remaining("pair_preparation_wall")?,
         )?;
+        verify_private_tree(
+            &store,
+            &[],
+            &mut PrivateTreeBudget::new(Some(pair_started + pair_limit)),
+        )?;
         let report: Value =
             serde_json::from_slice(&index.stdout).map_err(|_| pin_fault("index_report_invalid"))?;
         if index.status != Some(0)
@@ -640,6 +702,11 @@ pub fn materialize_views(
             &root.root,
             &env,
             remaining("pair_preparation_wall")?,
+        )?;
+        verify_private_tree(
+            &store,
+            &[],
+            &mut PrivateTreeBudget::new(Some(pair_started + pair_limit)),
         )?;
         let prep: Value = serde_json::from_slice(&prepare.stdout)
             .map_err(|_| pin_fault("prepare_report_invalid"))?;
@@ -678,6 +745,11 @@ pub fn materialize_views(
             &root.root,
             &env,
             remaining("pair_preparation_wall")?,
+        )?;
+        verify_private_tree(
+            &store,
+            &[],
+            &mut PrivateTreeBudget::new(Some(pair_started + pair_limit)),
         )?;
         let view = String::from_utf8(context.stdout).map_err(|_| pin_fault("view_not_utf8"))?;
         let header = view.lines().next().unwrap_or_default().to_string();
@@ -738,13 +810,18 @@ pub fn materialize_views(
 
 /// Read back a frozen view and verify it against its record.
 pub fn load_view(root: &PilotRoot, pair: u8) -> Result<(String, ViewRecord), CaptureFault> {
-    let record: ViewRecord = serde_json::from_slice(
-        &fs::read(root.view_record(pair))
-            .map_err(|_| fault(FaultClass::Authority, "view_record_missing"))?,
-    )
+    let record: ViewRecord = serde_json::from_slice(&super::read_private_evidence(
+        &root.view_record(pair),
+        "view_record_missing",
+        1 << 20,
+    )?)
     .map_err(|_| fault(FaultClass::Authority, "view_record_invalid"))?;
-    let view = fs::read_to_string(root.view(pair))
-        .map_err(|_| fault(FaultClass::Authority, "view_missing"))?;
+    let view = String::from_utf8(super::read_private_evidence(
+        &root.view(pair),
+        "view_missing",
+        8 << 20,
+    )?)
+    .map_err(|_| fault(FaultClass::Authority, "view_missing"))?;
     if record.pair != pair || sha256_hex(view.as_bytes()) != record.view_sha256 {
         return Err(fault(FaultClass::Pins, "view_changed"));
     }
@@ -1120,6 +1197,7 @@ fn run_check_step(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .process_group(0);
+    private_child(cmd);
     let mut child = cmd.spawn().map_err(|_| prov("check_spawn_failed"))?;
     let pgid = child.id() as i32;
     let stop_group = || {
@@ -1272,11 +1350,19 @@ pub fn run_independent_check(
         if !meta.is_file() {
             return Err(prov("check_candidate_not_regular"));
         }
-        let bytes = fs::read(&src).map_err(|_| prov("check_candidate_missing"))?;
+        let mut input = open_private_file(&src, PrivateArtifact::File)?;
+        let mut bytes = Vec::new();
+        input
+            .read_to_end(&mut bytes)
+            .map_err(|_| prov("check_candidate_missing"))?;
         write_private_new(&root.join(rel), &bytes)?;
         candidate.push((rel.clone(), sha256_hex(&bytes)));
     }
-    let oracle_bytes = fs::read(oracle).map_err(|_| prov("check_oracle_changed"))?;
+    let mut oracle_input = super::open_nofollow(oracle, false)?;
+    let mut oracle_bytes = Vec::new();
+    oracle_input
+        .read_to_end(&mut oracle_bytes)
+        .map_err(|_| prov("check_oracle_changed"))?;
     let oracle_sha256 = sha256_hex(&oracle_bytes);
     if oracle_sha256 != policy::ORACLE_SHA256 {
         return Err(prov("check_oracle_changed"));
@@ -1321,6 +1407,7 @@ pub fn run_independent_check(
         }
         // Fresh pathname observations are not an atomic hash-and-exec binding.
         let executable_sha256 = if name == "oracle_run" {
+            open_private_file(&root.join("out/check"), PrivateArtifact::Executable)?;
             file_sha256(&root.join("out/check")).map_err(|_| prov("check_artifact_unbound"))?
         } else {
             let observed = file_sha256(Path::new(policy::RUSTC))?;
@@ -1337,6 +1424,11 @@ pub fn run_independent_check(
             .env_clear()
             .envs(&environment);
         let output = run_check_step(&mut cmd, &root, name, deadline)?;
+        verify_private_tree(
+            &root,
+            &[Path::new("out/check")],
+            &mut PrivateTreeBudget::new(Some(deadline)),
+        )?;
         let ok = output.status.success();
         let artifact = |rel: &str| -> Result<Vec<(String, String)>, CaptureFault> {
             match fs::read(root.join(rel)) {
@@ -1653,6 +1745,11 @@ fn finish_candidate_check(
 ) -> Result<super::SealedSlot, CaptureFault> {
     checked
         .and_then(|receipt| {
+            verify_private_tree(
+                &receipt.checker_root,
+                &[Path::new("out/check")],
+                &mut PrivateTreeBudget::new(None),
+            )?;
             write_private_new(
                 &root.root.join("checks").join(format!(
                     "{}-{}.receipt.json",
@@ -1695,7 +1792,14 @@ pub fn run_coding(
                     continue;
                 }
             };
-        let (view, _) = load_view(root, pair)?;
+        let (view, _) = match load_view(root, pair) {
+            Ok(value) => value,
+            Err(fault) => {
+                session.halt(fault);
+                rows.push(slot_row(slot_id, None, None));
+                continue;
+            }
+        };
         let prompt = arm_prompt(verified, arm, &view);
         let capture = match session.run_slot(PreparedSlot {
             slot_id: slot_id.to_string(),
@@ -1709,6 +1813,10 @@ pub fn run_coding(
                 continue;
             }
         };
+        if session.halted().is_some() {
+            rows.push(slot_row(slot_id, Some(&capture), None));
+            continue;
+        }
         previous.insert(pair, slot_id.to_string());
         let order: Vec<String> = capture
             .candidate_inventory
@@ -1734,6 +1842,20 @@ pub fn run_coding(
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::fs::MetadataExt;
+
+    // Compatibility setup for NEW owned synthetic fixtures only. Existing
+    // entries keep their modes, so deliberate negative mutations stay negative.
+    // These helpers do not participate in product permission qualification.
+    fn fixture_private_tempdir() -> std::io::Result<tempfile::TempDir> {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::Builder::new()
+            .prefix("cf-owned-pilot-fixture-")
+            .tempdir_in("/private/tmp")?;
+        std::fs::set_permissions(temp.path(), std::fs::Permissions::from_mode(0o700))?;
+        Ok(temp)
+    }
+
     use super::*;
 
     #[test]
@@ -1842,7 +1964,7 @@ mod tests {
         ] {
             eprintln!("owned checker chain case: {failure}");
             let producer_failure = !matches!(failure, "receipt-persist" | "refusal-persist");
-            let temp = tempfile::tempdir().unwrap();
+            let temp = fixture_private_tempdir().unwrap();
             let root = PilotRoot::create(&temp.path().join("pilot")).unwrap();
             let run_dir = root.root.join("runs/owned-check-chain");
             create_private_dir(&run_dir).unwrap();
@@ -1975,6 +2097,9 @@ mod tests {
                 if failure == "receipt-persist" {
                     create_private_dir(&receipt_path).unwrap();
                 }
+                // This fixture must now pass the new whole-checker privacy
+                // gate before reaching its existing persistence assertion.
+                create_private_dir(&root.root.join("checks/unused-checker")).unwrap();
                 (
                     Ok(IndependentCheckReceipt {
                         kind: "bounded-pilot-v1-check-v2".into(),
@@ -2380,5 +2505,312 @@ mod tests {
         );
         assert_eq!(fs::read(path).unwrap(), b"owned sentinel");
         checker_assert_group_gone(&root);
+    }
+    #[test]
+    fn privacy_copy_creates_private_descendants_without_changing_source_bytes_or_modes() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let temp = fixture_private_tempdir().unwrap();
+        let base = fs::canonicalize(temp.path()).unwrap();
+        let source = base.join("source");
+        fs::create_dir_all(source.join("a/b/c")).unwrap();
+        let file = source.join("a/b/c/input.rs");
+        fs::write(&file, b"pub fn owned_copy() {}\n").unwrap();
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::set_permissions(source.join("a"), fs::Permissions::from_mode(0o750)).unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o444)).unwrap();
+        let originals: Vec<_> = [
+            source.clone(),
+            source.join("a"),
+            source.join("a/b"),
+            source.join("a/b/c"),
+            file.clone(),
+        ]
+        .into_iter()
+        .map(|path| {
+            let mode = fs::metadata(&path).unwrap().mode();
+            (path, mode)
+        })
+        .collect();
+        let destination = base.join("copy");
+        copy_tree(&source, &destination).unwrap();
+        verify_private_tree(&destination, &[], &mut PrivateTreeBudget::new(None)).unwrap();
+        assert_eq!(
+            fs::read(destination.join("a/b/c/input.rs")).unwrap(),
+            b"pub fn owned_copy() {}\n"
+        );
+        assert_eq!(fs::read(&file).unwrap(), b"pub fn owned_copy() {}\n");
+        for (path, mode) in originals {
+            assert_eq!(fs::metadata(path).unwrap().mode(), mode);
+        }
+    }
+
+    #[test]
+    fn privacy_copy_refuses_links_without_reading_or_changing_the_owned_outside_target() {
+        use std::os::unix::fs::{MetadataExt, symlink};
+        let temp = fixture_private_tempdir().unwrap();
+        let base = fs::canonicalize(temp.path()).unwrap();
+        let source = base.join("source");
+        create_private_dir(&source).unwrap();
+        let outside = base.join("outside");
+        write_private_new(&outside, b"owned outside sentinel").unwrap();
+        let mode = fs::metadata(&outside).unwrap().mode();
+        symlink(&outside, source.join("link")).unwrap();
+        let destination = base.join("copy");
+        assert!(copy_tree(&source, &destination).is_err());
+        assert_eq!(fs::read(&outside).unwrap(), b"owned outside sentinel");
+        assert_eq!(fs::metadata(outside).unwrap().mode(), mode);
+        assert!(
+            fs::symlink_metadata(source.join("link"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert!(!destination.join("link").exists());
+    }
+
+    #[test]
+    fn privacy_restore_refuses_old_workspace_before_archive_or_seed_replacement() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = fixture_private_tempdir().unwrap();
+        let root = PilotRoot::create(&temp.path().join("pilot")).unwrap();
+        let workspace = root.workspace("owned-old");
+        create_private_dir(&workspace).unwrap();
+        let file = workspace.join("retained");
+        write_private_new(&file, b"owned old-workspace evidence").unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o640)).unwrap();
+        let fault = restore_workspace(&root, "owned-old", Some("must-not-be-created")).unwrap_err();
+        assert_eq!(
+            (fault.class, fault.code),
+            (FaultClass::Privacy, "private_artifact_not_private")
+        );
+        assert_eq!(fs::read(&file).unwrap(), b"owned old-workspace evidence");
+        assert_eq!(fs::metadata(file).unwrap().mode() & 0o7777, 0o640);
+        assert!(!root.root.join("archive/must-not-be-created").exists());
+        assert!(workspace.is_dir());
+        // The seed is deliberately empty. This proves the new earlier privacy
+        // gate, not successful restoration of the private frozen seed.
+    }
+
+    #[test]
+    fn privacy_pilot_root_applies_the_executable_exception_only_to_checker_children() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = fixture_private_tempdir().unwrap();
+        let root = PilotRoot::create(&temp.path().join("pilot")).unwrap();
+        let checker = root.root.join("checks/owned-checker");
+        create_private_dir(&checker).unwrap();
+        create_private_dir(&checker.join("out")).unwrap();
+        write_private_new(&checker.join("out/check"), b"owned inert checker image").unwrap();
+        fs::set_permissions(checker.join("out/check"), fs::Permissions::from_mode(0o700)).unwrap();
+        PilotRoot::open(&root.root).unwrap();
+        let store = root.store(1);
+        create_private_dir(&store).unwrap();
+        create_private_dir(&store.join("out")).unwrap();
+        write_private_new(&store.join("out/check"), b"owned inert store file").unwrap();
+        fs::set_permissions(store.join("out/check"), fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(
+            PilotRoot::open(&root.root).is_err(),
+            "same basename in a store is not a checker executable"
+        );
+    }
+
+    #[test]
+    fn privacy_actual_launchers_set_child_only_masks_under_a_permissive_parent() {
+        use std::os::unix::process::CommandExt;
+        const CHILD: &str = "CF_PRIVATE_LAUNCHER_TEST_CHILD";
+        if let Some(path) = std::env::var_os(CHILD) {
+            let base = PathBuf::from(path);
+            std::fs::write(base.join("ambient-before"), []).unwrap();
+            let ambient_mode = std::fs::metadata(base.join("ambient-before"))
+                .unwrap()
+                .mode()
+                & 0o7777;
+            let source_root = base.join("bounded");
+            create_private_dir(&source_root).unwrap();
+            let script =
+                std::ffi::OsStr::new("umask; mkdir made-directory; printf owned > made-file");
+            let result = run_bounded(
+                Path::new("/bin/sh"),
+                &[std::ffi::OsStr::new("-c"), script],
+                &source_root,
+                &[("PATH", "/usr/bin:/bin".into())],
+                Duration::from_secs(3),
+            )
+            .unwrap();
+            assert_eq!(result.status, Some(0));
+            assert!(!result.timed_out);
+            assert_eq!(
+                u32::from_str_radix(std::str::from_utf8(&result.stdout).unwrap().trim(), 8)
+                    .unwrap(),
+                0o77
+            );
+            verify_private_tree(&source_root, &[], &mut PrivateTreeBudget::new(None)).unwrap();
+            let checker = base.join("checker");
+            create_private_dir(&checker).unwrap();
+            create_private_dir(&checker.join("diagnostics")).unwrap();
+            let mut cmd = Command::new("/bin/sh");
+            cmd.args([
+                "-c",
+                "umask; mkdir made-directory; printf owned > made-file",
+            ])
+            .current_dir(&checker)
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin");
+            let result = run_check_step(
+                &mut cmd,
+                &checker,
+                "noalloc_compile",
+                Instant::now() + Duration::from_secs(3),
+            )
+            .unwrap();
+            assert!(result.status.success());
+            // Shell umask output formatting is platform-specific; the first
+            // launcher observed numeric0077, and these actual artifacts bind
+            // the second launcher's effect independently of its stdout hash.
+            verify_private_tree(&checker, &[], &mut PrivateTreeBudget::new(None)).unwrap();
+            assert_eq!(
+                fs::metadata(checker.join("made-file")).unwrap().mode() & 0o7777,
+                0o600
+            );
+            assert_eq!(
+                fs::metadata(checker.join("made-directory")).unwrap().mode() & 0o7777,
+                0o700
+            );
+            std::fs::write(base.join("ambient-after"), []).unwrap();
+            assert_eq!(
+                std::fs::metadata(base.join("ambient-after"))
+                    .unwrap()
+                    .mode()
+                    & 0o7777,
+                ambient_mode,
+                "product operation changed its caller mask"
+            );
+            return;
+        }
+        let temp = fixture_private_tempdir().unwrap();
+        let base = fs::canonicalize(temp.path()).unwrap();
+        std::fs::write(base.join("parent-before"), b"owned parent mask witness").unwrap();
+        let before = fs::metadata(base.join("parent-before")).unwrap().mode() & 0o7777;
+        let mut child = Command::new(std::env::current_exe().unwrap());
+        child.args(["--exact","pilot_capture::apparatus::tests::privacy_actual_launchers_set_child_only_masks_under_a_permissive_parent","--nocapture"]).env(CHILD,&base);
+        unsafe {
+            child.pre_exec(|| {
+                libc::umask(0);
+                Ok(())
+            });
+        }
+        assert!(child.status().unwrap().success());
+        std::fs::write(base.join("parent-after"), b"owned parent mask witness").unwrap();
+        assert_eq!(
+            fs::metadata(base.join("parent-after")).unwrap().mode() & 0o7777,
+            before
+        );
+    }
+
+    #[test]
+    fn privacy_actual_checker_steps_create_private_rlib_and_executable() {
+        let root = checker_owned_diagnostics_root("actual-rust-modes");
+        for d in ["out", "home", "tmp"] {
+            create_private_dir(&root.join(d)).unwrap();
+        }
+        assert_eq!(
+            file_sha256(Path::new(policy::RUSTC)).unwrap(),
+            policy::RUSTC_SHA256
+        );
+        let library = root.join("owned-lib.rs");
+        write_private_new(&library, b"pub fn owned_value() -> u8 { 7 }\n").unwrap();
+        let binary = root.join("owned-main.rs");
+        write_private_new(
+            &binary,
+            b"fn main() { println!(\"owned private checker\"); }\n",
+        )
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        for (name, input, kind, output) in [
+            (
+                "noalloc_compile",
+                &library,
+                "lib",
+                root.join("out/owned.rlib"),
+            ),
+            ("oracle_compile", &binary, "bin", root.join("out/check")),
+        ] {
+            let mut cmd = Command::new(policy::RUSTC);
+            cmd.arg(input)
+                .args([
+                    "--edition=2021",
+                    "--crate-name",
+                    "owned_private_fixture",
+                    "--crate-type",
+                    kind,
+                    "-o",
+                ])
+                .arg(output)
+                .current_dir(&root)
+                .env_clear()
+                .envs(check_environment(&root).unwrap());
+            let result = run_check_step(&mut cmd, &root, name, deadline).unwrap();
+            assert!(result.status.success());
+            verify_private_tree(
+                &root,
+                &[Path::new("out/check")],
+                &mut PrivateTreeBudget::new(Some(deadline)),
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            fs::metadata(root.join("out/owned.rlib")).unwrap().mode() & 0o7777,
+            0o600
+        );
+        assert_eq!(
+            fs::metadata(root.join("out/check")).unwrap().mode() & 0o7777,
+            0o700
+        );
+        // This is the actual per-step runner and compiler, with public owned
+        // source. The existing ignored producer test covers the frozen oracle.
+    }
+    #[test]
+    fn privacy_pilot_root_native_exception_is_limited_to_exact_run_host_locations() {
+        use std::os::unix::fs::PermissionsExt;
+        const NATIVE: &str = "home/.omp/natives/18.13.2/pi_natives.darwin-arm64.node";
+        for case in [
+            "bound",
+            "wrong-version",
+            "nested-location",
+            "store",
+            "workspace",
+            "archive",
+        ] {
+            eprintln!("owned native PilotRoot metadata case: {case}");
+            let temp = fixture_private_tempdir().unwrap();
+            let root = PilotRoot::create(&temp.path().join("pilot")).unwrap();
+            let relative = match case {
+                "bound" => format!("runs/run1/hosts/h1/{NATIVE}"),
+                "wrong-version" => format!(
+                    "runs/run1/hosts/h1/{}",
+                    NATIVE.replace("18.13.2", "18.13.3")
+                ),
+                "nested-location" => format!("runs/run1/nested/hosts/h1/{NATIVE}"),
+                "store" => format!("stores/pair-1/hosts/h1/{NATIVE}"),
+                "workspace" => format!("workspaces/pair-1/hosts/h1/{NATIVE}"),
+                "archive" => format!("archive/run1/hosts/h1/{NATIVE}"),
+                _ => unreachable!(),
+            };
+            let mut parent = root.root.clone();
+            for component in Path::new(&relative).parent().unwrap().components() {
+                parent.push(component);
+                if !parent.exists() {
+                    create_private_dir(&parent).unwrap();
+                }
+            }
+            let path = root.root.join(relative);
+            write_private_new(&path, b"owned synthetic native metadata fixture").unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+            let result = PilotRoot::open(&root.root);
+            if case == "bound" {
+                result.unwrap();
+            } else {
+                assert_eq!(result.unwrap_err().code, "private_artifact_not_private");
+            }
+        }
     }
 }

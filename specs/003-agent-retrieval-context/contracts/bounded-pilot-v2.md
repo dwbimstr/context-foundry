@@ -219,7 +219,13 @@ is selected. See the [source finding](../../../docs/validation.md#pilot-startup-
 **Selected private-output permissions repair, 2026-11-11 — implementation and qualification pending.**
 The selected repair requires exact owner-only modes on newly owned pilot
 outputs: directories 0700 and regular private files 0600, including special bits.
-Only a checker root's exact `out/check` is a declared 0700 executable exception.
+Declared 0700 executables are a checker root's exact `out/check` and the pinned
+host's exact `home/.omp/natives/18.13.2/pi_natives.darwin-arm64.node` beneath an
+owned host root. The latter is limited to the actual declared capture run's
+`hosts/<host>` children or the corresponding fixed pilot `runs/<run>/hosts/<host>`
+layout; it grants no workspace/store or arbitrary-suffix executable exception.
+The host exception follows the observed native extraction in the local fixture;
+it changes no host pin and establishes no new per-request content attestation.
 Existing wrong-mode objects are refused rather than repaired. Shared external
 executables, models and the public frozen contract retain their existing identity
 checks; named private inputs are checked at their specific read sites without

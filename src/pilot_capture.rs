@@ -19,10 +19,11 @@ pub mod protocol;
 pub mod wire;
 
 use std::collections::BTreeMap;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::net::SocketAddr;
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd};
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -241,38 +242,502 @@ fn fsync_dir(path: &Path) -> Result<(), CaptureFault> {
         .map_err(|_| persistence("dir_fsync_failed"))
 }
 
-/// Create one private (0700) directory; it must not exist. The parent is
-/// fsynced so the directory survives a crash.
-pub(crate) fn create_private_dir(path: &Path) -> Result<(), CaptureFault> {
-    use std::os::unix::fs::DirBuilderExt;
-    std::fs::DirBuilder::new()
-        .mode(0o700)
-        .create(path)
-        .map_err(|_| persistence("private_dir_create_failed"))?;
-    let meta = fs::symlink_metadata(path).map_err(|_| persistence("private_dir_create_failed"))?;
-    if !meta.is_dir() || meta.mode() & 0o077 != 0 || meta.uid() != current_uid() {
-        return Err(persistence("private_dir_not_private"));
+fn privacy(code: &'static str) -> CaptureFault {
+    CaptureFault::new(FaultClass::Privacy, code)
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum PrivateArtifact {
+    Directory,
+    File,
+    Executable,
+}
+
+pub(crate) fn require_private_metadata(
+    meta: &fs::Metadata,
+    kind: PrivateArtifact,
+) -> Result<(), CaptureFault> {
+    let (shape, mode) = match kind {
+        PrivateArtifact::Directory => (meta.is_dir(), 0o700),
+        PrivateArtifact::File => (meta.is_file(), 0o600),
+        PrivateArtifact::Executable => (meta.is_file(), 0o700),
+    };
+    if !shape || meta.uid() != current_uid() || meta.mode() & 0o7777 != mode {
+        return Err(privacy("private_artifact_not_private"));
     }
+    Ok(())
+}
+
+fn component_name(name: &std::ffi::OsStr) -> Result<std::ffi::CString, CaptureFault> {
+    use std::os::unix::ffi::OsStrExt;
+    std::ffi::CString::new(name.as_bytes()).map_err(|_| privacy("private_tree_unreadable"))
+}
+
+fn open_child(parent: &File, name: &std::ffi::OsStr, flags: i32) -> Result<File, CaptureFault> {
+    let name = component_name(name)?;
+    let mut expected: libc::stat = unsafe { std::mem::zeroed() };
+    // SAFETY: the output stat and one-component name are valid; do not follow links.
+    if unsafe {
+        libc::fstatat(
+            parent.as_raw_fd(),
+            name.as_ptr(),
+            &mut expected,
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    } != 0
+    {
+        return Err(privacy("private_tree_unreadable"));
+    }
+    let kind = expected.st_mode & libc::S_IFMT;
+    if kind != libc::S_IFREG && kind != libc::S_IFDIR {
+        return Err(privacy("private_artifact_not_private"));
+    }
+    // SAFETY: parent is an owned live directory fd; name is one NUL-terminated
+    // component. A successful open transfers a fresh owned fd to File.
+    let fd = unsafe {
+        libc::openat(
+            parent.as_raw_fd(),
+            name.as_ptr(),
+            flags | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+        )
+    };
+    if fd < 0 {
+        return Err(privacy("private_tree_unreadable"));
+    }
+    let file = unsafe { File::from_raw_fd(fd) };
+    let actual = file
+        .metadata()
+        .map_err(|_| privacy("private_tree_unreadable"))?;
+    if actual.dev() != expected.st_dev as u64 || actual.ino() != expected.st_ino {
+        return Err(privacy("private_tree_changed"));
+    }
+    Ok(file)
+}
+
+/// Resolve components without following a link at any level. Shared ancestors
+/// are traversed, not chmodded or required to have pilot-private modes.
+fn open_nofollow(path: &Path, directory: bool) -> Result<File, CaptureFault> {
+    use std::path::Component;
+    let mut file = File::open(if path.is_absolute() { "/" } else { "." })
+        .map_err(|_| privacy("private_tree_unreadable"))?;
+    let parts: Vec<_> = path
+        .components()
+        .filter(|c| !matches!(c, Component::RootDir | Component::CurDir))
+        .collect();
+    for (i, part) in parts.iter().enumerate() {
+        let Component::Normal(name) = part else {
+            return Err(privacy("private_tree_unreadable"));
+        };
+        let is_dir = directory || i + 1 < parts.len();
+        file = open_child(
+            &file,
+            name,
+            libc::O_RDONLY | libc::O_NONBLOCK | if is_dir { libc::O_DIRECTORY } else { 0 },
+        )?;
+    }
+    Ok(file)
+}
+
+fn private_parent(path: &Path) -> Result<(File, std::ffi::CString), CaptureFault> {
+    let parent = path.parent().ok_or(privacy("private_tree_unreadable"))?;
+    let name = component_name(path.file_name().ok_or(privacy("private_tree_unreadable"))?)?;
+    Ok((open_nofollow(parent, true)?, name))
+}
+
+pub(crate) fn open_private_file(path: &Path, kind: PrivateArtifact) -> Result<File, CaptureFault> {
+    let file = open_nofollow(path, false)?;
+    require_private_metadata(
+        &file
+            .metadata()
+            .map_err(|_| privacy("private_tree_unreadable"))?,
+        kind,
+    )?;
+    Ok(file)
+}
+
+pub(crate) fn require_private_directory(path: &Path) -> Result<(), CaptureFault> {
+    let file = open_nofollow(path, true)?;
+    require_private_metadata(
+        &file
+            .metadata()
+            .map_err(|_| privacy("private_tree_unreadable"))?,
+        PrivateArtifact::Directory,
+    )
+}
+
+fn new_private_file(path: &Path, append: bool) -> Result<File, CaptureFault> {
+    use std::os::unix::fs::PermissionsExt;
+    let (parent, name) = private_parent(path)?;
+    // SAFETY: parent/name are valid and creation is exclusive; no existing file
+    // is opened for normalization. Mode is applied again through the new fd.
+    let fd = unsafe {
+        libc::openat(
+            parent.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_WRONLY
+                | libc::O_CREAT
+                | libc::O_EXCL
+                | libc::O_NOFOLLOW
+                | libc::O_CLOEXEC
+                | if append { libc::O_APPEND } else { 0 },
+            0o600,
+        )
+    };
+    if fd < 0 {
+        return Err(persistence("private_file_create_failed"));
+    }
+    let file = unsafe { File::from_raw_fd(fd) };
+    file.set_permissions(fs::Permissions::from_mode(0o600))
+        .map_err(|_| persistence("private_file_mode_failed"))?;
+    require_private_metadata(
+        &file
+            .metadata()
+            .map_err(|_| persistence("private_file_mode_failed"))?,
+        PrivateArtifact::File,
+    )?;
+    parent
+        .sync_all()
+        .map_err(|_| persistence("dir_fsync_failed"))?;
+    Ok(file)
+}
+
+/// One pass budget shared across all selected roots; no input content is read.
+pub(crate) struct PrivateTreeBudget {
+    entries: usize,
+    path_bytes: usize,
+    deadline: Option<std::time::Instant>,
+}
+
+impl PrivateTreeBudget {
+    pub(crate) fn new(deadline: Option<std::time::Instant>) -> Self {
+        Self {
+            entries: 0,
+            path_bytes: 0,
+            deadline,
+        }
+    }
+
+    fn check_deadline(&self) -> Result<(), CaptureFault> {
+        if self
+            .deadline
+            .is_some_and(|d| std::time::Instant::now() >= d)
+        {
+            return Err(privacy("private_tree_limit"));
+        }
+        Ok(())
+    }
+
+    fn charge(&mut self, rel: &Path, depth: usize) -> Result<(), CaptureFault> {
+        use std::os::unix::ffi::OsStrExt;
+        self.entries = self.entries.saturating_add(1);
+        self.path_bytes = self
+            .path_bytes
+            .saturating_add(rel.as_os_str().as_bytes().len());
+        if self.entries > 16_384
+            || depth > 64
+            || self.path_bytes > 8 * 1024 * 1024
+            || self
+                .deadline
+                .is_some_and(|d| std::time::Instant::now() >= d)
+        {
+            return Err(privacy("private_tree_limit"));
+        }
+        Ok(())
+    }
+}
+
+struct PrivateDirectory(*mut libc::DIR);
+impl Drop for PrivateDirectory {
+    fn drop(&mut self) {
+        // SAFETY: this owner alone owns the non-null fdopendir result.
+        unsafe {
+            libc::closedir(self.0);
+        }
+    }
+}
+
+fn directory_errno() -> *mut libc::c_int {
+    #[cfg(target_os = "macos")]
+    {
+        unsafe { libc::__error() }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        unsafe { libc::__errno_location() }
+    }
+}
+
+/// The one bounded descriptor-relative walker. Copy inventories use shape-only
+/// validation; private-output callers also require exact metadata at each fd.
+pub(crate) fn collect_private_tree(
+    root: &Path,
+    private: bool,
+    executable_rel: &[&Path],
+    budget: &mut PrivateTreeBudget,
+) -> Result<Vec<PathBuf>, CaptureFault> {
+    fn walk(
+        dir: &File,
+        rel: &Path,
+        depth: usize,
+        private: bool,
+        executable_rel: &[&Path],
+        budget: &mut PrivateTreeBudget,
+        files: &mut Vec<PathBuf>,
+    ) -> Result<(), CaptureFault> {
+        use std::os::unix::ffi::OsStringExt;
+        let owned = dir
+            .try_clone()
+            .map_err(|_| privacy("private_tree_unreadable"))?;
+        let fd = owned.into_raw_fd();
+        // SAFETY: fdopendir takes ownership only on success.
+        let raw = unsafe { libc::fdopendir(fd) };
+        if raw.is_null() {
+            unsafe {
+                libc::close(fd);
+            }
+            return Err(privacy("private_tree_unreadable"));
+        }
+        let directory = PrivateDirectory(raw);
+        loop {
+            // SAFETY: errno is thread-local; this DIR is exclusively owned.
+            unsafe {
+                *directory_errno() = 0;
+            }
+            let entry = unsafe { libc::readdir(directory.0) };
+            if entry.is_null() {
+                if unsafe { *directory_errno() } != 0 {
+                    return Err(privacy("private_tree_unreadable"));
+                }
+                break;
+            }
+            let bytes = unsafe { std::ffi::CStr::from_ptr((*entry).d_name.as_ptr()) }.to_bytes();
+            if bytes == b"." || bytes == b".." {
+                continue;
+            }
+            let name = std::ffi::OsString::from_vec(bytes.to_vec());
+            let child_rel = rel.join(&name);
+            budget.charge(&child_rel, depth + 1)?;
+            let child = open_child(dir, &name, libc::O_RDONLY | libc::O_NONBLOCK)?;
+            let before = child
+                .metadata()
+                .map_err(|_| privacy("private_tree_unreadable"))?;
+            let kind = if before.is_dir() {
+                PrivateArtifact::Directory
+            } else if before.is_file() && executable_rel.contains(&child_rel.as_path()) {
+                PrivateArtifact::Executable
+            } else if before.is_file() {
+                PrivateArtifact::File
+            } else {
+                return Err(privacy("private_artifact_not_private"));
+            };
+            if private {
+                require_private_metadata(&before, kind)?;
+            }
+            if before.is_dir() {
+                walk(
+                    &child,
+                    &child_rel,
+                    depth + 1,
+                    private,
+                    executable_rel,
+                    budget,
+                    files,
+                )?;
+            } else {
+                files.push(child_rel);
+            }
+            let current = open_child(dir, &name, libc::O_RDONLY | libc::O_NONBLOCK)
+                .map_err(|_| privacy("private_tree_changed"))?;
+            let after = current
+                .metadata()
+                .map_err(|_| privacy("private_tree_changed"))?;
+            if (before.dev(), before.ino()) != (after.dev(), after.ino()) {
+                return Err(privacy("private_tree_changed"));
+            }
+            if private {
+                require_private_metadata(&after, kind)?;
+            }
+        }
+        Ok(())
+    }
+    budget.charge(Path::new(""), 0)?;
+    let dir = open_nofollow(root, true)?;
+    let before = dir
+        .metadata()
+        .map_err(|_| privacy("private_tree_unreadable"))?;
+    if private {
+        require_private_metadata(&before, PrivateArtifact::Directory)?;
+    }
+    let mut files = Vec::new();
+    walk(
+        &dir,
+        Path::new(""),
+        0,
+        private,
+        executable_rel,
+        budget,
+        &mut files,
+    )?;
+    let after = open_nofollow(root, true)?
+        .metadata()
+        .map_err(|_| privacy("private_tree_changed"))?;
+    if (before.dev(), before.ino()) != (after.dev(), after.ino()) {
+        return Err(privacy("private_tree_changed"));
+    }
+    if private {
+        require_private_metadata(&after, PrivateArtifact::Directory)?;
+    }
+    files.sort();
+    budget.check_deadline()?;
+    Ok(files)
+}
+
+pub(crate) fn verify_private_tree(
+    root: &Path,
+    executable_rel: &[&Path],
+    budget: &mut PrivateTreeBudget,
+) -> Result<(), CaptureFault> {
+    collect_private_tree(root, true, executable_rel, budget).map(|_| ())
+}
+
+/// A run owns host roots only at hosts/<one-root>. The pinned host's one
+/// declared native module is executable; every other run file remains 0600.
+/// Both inventory and validation consume this same inspected-entry budget.
+pub(crate) fn verify_private_run_root(
+    root: &Path,
+    budget: &mut PrivateTreeBudget,
+) -> Result<(), CaptureFault> {
+    let files = collect_private_tree(root, false, &[], budget)?;
+    let executables: Vec<&Path> = files
+        .iter()
+        .filter(|p| host::is_run_native_module(p))
+        .map(PathBuf::as_path)
+        .collect();
+    verify_private_tree(root, &executables, budget)
+}
+
+fn verify_private_isolation_root(root: &Path, run_dir: &Path) -> Result<(), CaptureFault> {
+    let mut budget = PrivateTreeBudget::new(None);
+    let files = collect_private_tree(root, false, &[], &mut budget)?;
+    // A generic manifest does not confer the fixed PilotRoot layout. Its
+    // native-module exception belongs only to its exact declared run path.
+    let run_relative = run_dir.strip_prefix(root).ok();
+    let executables: Vec<&Path> = files
+        .iter()
+        .filter(|p| {
+            let parts: Vec<_> = p.components().collect();
+            let checker = parts.len() == 4
+                && parts[0].as_os_str() == "checks"
+                && parts[2].as_os_str() == "out"
+                && parts[3].as_os_str() == "check";
+            let native = run_relative
+                .and_then(|run| p.strip_prefix(run).ok())
+                .is_some_and(host::is_run_native_module);
+            checker || native
+        })
+        .map(PathBuf::as_path)
+        .collect();
+    verify_private_tree(root, &executables, &mut budget)
+}
+
+pub(crate) fn private_child(cmd: &mut std::process::Command) {
+    use std::os::unix::process::CommandExt;
+    // SAFETY: umask is async-signal-safe, runs only after fork in this owned
+    // child, and neither allocates nor changes the parent's process mask.
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::umask(0o077);
+            Ok(())
+        });
+    }
+}
+
+/// Create one exact-private directory exclusively. Only this newly created
+/// entry is chmodded; existing entries and shared ancestors are untouched.
+pub(crate) fn create_private_dir(path: &Path) -> Result<(), CaptureFault> {
+    let (parent, name) = private_parent(path)?;
+    // SAFETY: all arguments name a single child of the owned parent descriptor.
+    if unsafe { libc::mkdirat(parent.as_raw_fd(), name.as_ptr(), 0o700) } != 0 {
+        return Err(persistence("private_dir_create_failed"));
+    }
+    // mkdir is affected by the caller's mask. On macOS even O_EVTONLY cannot
+    // acquire a mode000 directory. Establish mode on this exclusively created
+    // component without following links, then pin and verify the same inode.
+    let mut created: libc::stat = unsafe { std::mem::zeroed() };
+    if unsafe {
+        libc::fstatat(
+            parent.as_raw_fd(),
+            name.as_ptr(),
+            &mut created,
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    } != 0
+        || created.st_mode & libc::S_IFMT != libc::S_IFDIR
+        || created.st_uid != current_uid()
+    {
+        return Err(privacy("private_tree_changed"));
+    }
+    // SAFETY: the parent fd and one-component name are valid; this operation
+    // never follows a replacement symlink to another target.
+    if unsafe {
+        libc::fchmodat(
+            parent.as_raw_fd(),
+            name.as_ptr(),
+            0o700,
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    } != 0
+    {
+        return Err(persistence("private_dir_mode_failed"));
+    }
+    let child = open_child(
+        &parent,
+        path.file_name()
+            .ok_or(persistence("private_dir_create_failed"))?,
+        libc::O_RDONLY | libc::O_DIRECTORY,
+    )?;
+    let meta = child
+        .metadata()
+        .map_err(|_| persistence("private_dir_mode_failed"))?;
+    if meta.dev() != created.st_dev as u64 || meta.ino() != created.st_ino {
+        return Err(privacy("private_tree_changed"));
+    }
+    require_private_metadata(&meta, PrivateArtifact::Directory)?;
+    // mkdir/mode establishment/acquisition are not atomic against arbitrary
+    // concurrent same-user replacement. This owned creation has one writer.
+    child
+        .sync_all()
+        .and_then(|()| parent.sync_all())
+        .map_err(|_| persistence("dir_fsync_failed"))
+}
+
+pub(crate) fn write_private_new(path: &Path, bytes: &[u8]) -> Result<(), CaptureFault> {
+    let mut file = new_private_file(path, false)?;
+    file.write_all(bytes)
+        .and_then(|()| file.sync_all())
+        .map_err(|_| persistence("private_file_write_failed"))?;
     if let Some(parent) = path.parent() {
         fsync_dir(parent)?;
     }
     Ok(())
 }
 
-/// Create one private (0600) file exclusively without following symlinks,
-/// write it and fsync it.
-pub(crate) fn write_private_new(path: &Path, bytes: &[u8]) -> Result<(), CaptureFault> {
-    let mut f = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(path)
-        .map_err(|_| persistence("private_file_create_failed"))?;
-    f.write_all(bytes)
-        .and_then(|()| f.sync_all())
-        .map_err(|_| persistence("private_file_write_failed"))?;
-    Ok(())
+fn read_private_evidence(
+    path: &Path,
+    missing: &'static str,
+    max: u64,
+) -> Result<Vec<u8>, CaptureFault> {
+    require_private_directory(path.parent().ok_or(authority(missing))?)?;
+    fs::symlink_metadata(path).map_err(|_| authority(missing))?;
+    let file = open_private_file(path, PrivateArtifact::File)?;
+    let mut bytes = Vec::new();
+    file.take(max + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| authority(missing))?;
+    if bytes.len() as u64 > max {
+        return Err(authority("evidence_shape_invalid"));
+    }
+    Ok(bytes)
 }
 
 fn current_uid() -> u32 {
@@ -405,16 +870,8 @@ struct Journal {
 
 impl Journal {
     fn create(path: &Path, fail_after: Option<u64>) -> Result<Self, CaptureFault> {
-        let file = OpenOptions::new()
-            .append(true)
-            .create_new(true)
-            .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW)
-            .open(path)
-            .map_err(|_| persistence("journal_create_failed"))?;
-        if let Some(parent) = path.parent() {
-            fsync_dir(parent)?;
-        }
+        let file =
+            new_private_file(path, true).map_err(|_| persistence("journal_create_failed"))?;
         Ok(Self {
             file,
             path: path.to_path_buf(),
@@ -427,11 +884,24 @@ impl Journal {
     /// Reopen for the probe-to-coding handoff after verifying the digest
     /// sealed by the probe.
     fn reopen(path: &Path, expected_sha256: &str, records: u64) -> Result<Self, CaptureFault> {
-        let meta = fs::symlink_metadata(path).map_err(|_| persistence("journal_missing"))?;
-        if !meta.is_file() || meta.mode() & 0o077 != 0 || meta.uid() != current_uid() {
-            return Err(persistence("journal_not_private"));
-        }
-        let bytes = fs::read(path).map_err(|_| persistence("journal_unreadable"))?;
+        fs::symlink_metadata(path).map_err(|_| persistence("journal_missing"))?;
+        let (parent, _) = private_parent(path).map_err(|_| persistence("journal_not_private"))?;
+        let mut file = open_child(
+            &parent,
+            path.file_name().ok_or(persistence("journal_not_private"))?,
+            libc::O_RDWR | libc::O_APPEND | libc::O_NONBLOCK,
+        )
+        .map_err(|_| persistence("journal_not_private"))?;
+        require_private_metadata(
+            &file
+                .metadata()
+                .map_err(|_| persistence("journal_not_private"))?,
+            PrivateArtifact::File,
+        )
+        .map_err(|_| persistence("journal_not_private"))?;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)
+            .map_err(|_| persistence("journal_unreadable"))?;
         if sha256_hex(&bytes) != expected_sha256 {
             return Err(CaptureFault::new(
                 FaultClass::Authority,
@@ -449,11 +919,6 @@ impl Journal {
             ));
         }
         let prev = lines.last().map(|l| sha256_hex(l)).unwrap_or_default();
-        let file = OpenOptions::new()
-            .append(true)
-            .custom_flags(libc::O_NOFOLLOW)
-            .open(path)
-            .map_err(|_| persistence("journal_reopen_failed"))?;
         Ok(Self {
             file,
             path: path.to_path_buf(),
@@ -498,9 +963,13 @@ impl Journal {
     /// its terminal refusal before returning; a failed append is itself the
     /// reported failure, never a claim that the refusal was recorded.
     fn credential_refusal(&mut self, fault: CaptureFault) -> CaptureFault {
+        self.admission_refusal("credential_admission", fault)
+    }
+
+    fn admission_refusal(&mut self, phase: &'static str, fault: CaptureFault) -> CaptureFault {
         match self.append(
             "halt",
-            json!({"phase": "credential_admission", "class": fault.class.as_str(), "code": fault.code}),
+            json!({"phase": phase, "class": fault.class.as_str(), "code": fault.code}),
         ) {
             Ok(()) => fault,
             Err(journal_fault) => journal_fault,
@@ -508,7 +977,11 @@ impl Journal {
     }
 
     fn digest(&self) -> Result<String, CaptureFault> {
-        let bytes = fs::read(&self.path).map_err(|_| persistence("journal_unreadable"))?;
+        let mut file = open_private_file(&self.path, PrivateArtifact::File)
+            .map_err(|_| persistence("journal_not_private"))?;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)
+            .map_err(|_| persistence("journal_unreadable"))?;
         Ok(sha256_hex(&bytes))
     }
 }
@@ -769,7 +1242,8 @@ fn validate_live(
     if file_sha256(&a.omp, "omp_missing")? != policy::OMP_SHA256 {
         return Err(pins("omp_pin_mismatch"));
     }
-    let authority_bytes = read_evidence(&a.authority, "authority_receipt_missing", 64 * 1024)?;
+    let authority_bytes =
+        read_private_evidence(&a.authority, "authority_receipt_missing", 64 * 1024)?;
     let receipt: AuthorityReceipt = serde_json::from_slice(&authority_bytes)
         .map_err(|_| authority("authority_receipt_invalid"))?;
     if receipt.kind != "bounded-pilot-v1-authority"
@@ -791,7 +1265,8 @@ fn validate_live(
     if file_sha256(&exe, "implementation_unidentified")? != receipt.implementation_sha256 {
         return Err(authority("implementation_digest_mismatch"));
     }
-    let manifest_bytes = read_evidence(&a.launch_manifest, "launch_manifest_missing", 1 << 20)?;
+    let manifest_bytes =
+        read_private_evidence(&a.launch_manifest, "launch_manifest_missing", 1 << 20)?;
     if sha256_hex(&manifest_bytes) != receipt.launch_manifest_sha256 {
         return Err(authority("launch_manifest_digest_mismatch"));
     }
@@ -818,7 +1293,8 @@ fn validate_live(
     }
     let run_dir = check_manifest_run_dir(&manifest, &a.run_dir)?;
     verify_manifest_pins(&manifest)?;
-    let ratecard_bytes = read_evidence(&a.ratecard, "ratecard_missing", 64 * 1024)?;
+    verify_private_isolation_root(&manifest.isolation_root, &manifest.run_dir)?;
+    let ratecard_bytes = read_private_evidence(&a.ratecard, "ratecard_missing", 64 * 1024)?;
     if sha256_hex(&ratecard_bytes) != receipt.ratecard_sha256 {
         return Err(authority("ratecard_digest_mismatch"));
     }
@@ -855,7 +1331,7 @@ fn validate_live(
         (Scope::Probe, _) => None,
         (Scope::Coding, None) => return Err(authority("compatibility_evidence_missing")),
         (Scope::Coding, Some(path)) => {
-            let bytes = read_evidence(path, "compatibility_evidence_missing", 1 << 20)?;
+            let bytes = read_private_evidence(path, "compatibility_evidence_missing", 1 << 20)?;
             let seal: ProbeSeal = serde_json::from_slice(&bytes)
                 .map_err(|_| authority("compatibility_evidence_invalid"))?;
             if seal.kind != "bounded-pilot-v1-probe-seal"
@@ -895,6 +1371,7 @@ fn check_verification_manifest(
     }
     check_manifest_run_dir(&m, run_dir)?;
     verify_manifest_pins(&m)?;
+    verify_private_isolation_root(&m.isolation_root, &m.run_dir)?;
     Ok(Some(m))
 }
 
@@ -910,6 +1387,12 @@ fn verify_manifest_pins(manifest: &LaunchManifest) -> Result<(), CaptureFault> {
         }
     }
     for view in &manifest.views {
+        require_private_directory(
+            view.path
+                .parent()
+                .ok_or(privacy("private_artifact_not_private"))?,
+        )?;
+        open_private_file(&view.path, PrivateArtifact::File)?;
         if file_sha256(&view.path, "launch_view_missing")? != view.sha256 {
             return Err(pins("launch_view_changed"));
         }
@@ -1069,12 +1552,16 @@ fn read_credential(
     manifest: &LaunchManifest,
 ) -> Result<wire::Credential, CaptureFault> {
     let privacy = |code| CaptureFault::new(FaultClass::Privacy, code);
-    let meta = fs::symlink_metadata(path).map_err(|_| privacy("credential_missing"))?;
-    if !meta.is_file()
-        || meta.mode() & 0o077 != 0
-        || meta.uid() != current_uid()
-        || meta.len() > 512
-    {
+    fs::symlink_metadata(path).map_err(|_| privacy("credential_missing"))?;
+    require_private_directory(
+        path.parent()
+            .ok_or(privacy("credential_file_not_private"))?,
+    )
+    .map_err(|_| privacy("credential_file_not_private"))?;
+    let file = open_private_file(path, PrivateArtifact::File)
+        .map_err(|_| privacy("credential_file_not_private"))?;
+    let meta = file.metadata().map_err(|_| privacy("credential_missing"))?;
+    if meta.len() > 512 {
         return Err(privacy("credential_file_not_private"));
     }
     let canonical = fs::canonicalize(path).map_err(|_| privacy("credential_missing"))?;
@@ -1087,7 +1574,13 @@ fn read_credential(
     {
         return Err(privacy("credential_inside_run_paths"));
     }
-    let bytes = fs::read(&canonical).map_err(|_| privacy("credential_missing"))?;
+    let mut bytes = Vec::new();
+    file.take(513)
+        .read_to_end(&mut bytes)
+        .map_err(|_| privacy("credential_missing"))?;
+    if bytes.len() > 512 {
+        return Err(privacy("credential_file_not_private"));
+    }
     let text = std::str::from_utf8(&bytes).map_err(|_| privacy("credential_invalid"))?;
     wire::Credential::new(text.trim_end_matches(['\n', '\r']))
 }
@@ -1393,12 +1886,8 @@ pub struct IndependentCheckReceipt {
 }
 
 fn validate_check_directory(path: &Path) -> Result<(), CaptureFault> {
-    let invalid = || CaptureFault::new(FaultClass::CheckerProvenance, "check_root_not_private");
-    let meta = fs::symlink_metadata(path).map_err(|_| invalid())?;
-    if !meta.is_dir() || meta.uid() != current_uid() || meta.mode() & 0o7777 != 0o700 {
-        return Err(invalid());
-    }
-    Ok(())
+    require_private_directory(path)
+        .map_err(|_| CaptureFault::new(FaultClass::CheckerProvenance, "check_root_not_private"))
 }
 
 /// Validate the retained bytes through the same no-follow file descriptor.
@@ -1411,19 +1900,9 @@ fn validate_check_stderr(root: &Path, step: &CheckStep) -> Result<(), CaptureFau
     }
     validate_check_directory(root).map_err(|_| invalid())?;
     validate_check_directory(&root.join("diagnostics")).map_err(|_| invalid())?;
-    let file = OpenOptions::new()
-        .read(true)
-        // O_NONBLOCK also prevents an unexpected FIFO from blocking before
-        // the descriptor's regular-file check below.
-        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
-        .open(root.join(expected))
-        .map_err(|_| invalid())?;
-    let meta = file.metadata().map_err(|_| invalid())?;
-    if !meta.is_file()
-        || meta.uid() != current_uid()
-        || meta.mode() & 0o7777 != 0o600
-        || meta.len() != step.stderr_bytes
-    {
+    let file =
+        open_private_file(&root.join(expected), PrivateArtifact::File).map_err(|_| invalid())?;
+    if file.metadata().map_err(|_| invalid())?.len() != step.stderr_bytes {
         return Err(invalid());
     }
     let mut bytes = Vec::new();
@@ -1570,6 +2049,7 @@ fn planned_slots(scope: Scope) -> Vec<SlotSummary> {
 fn claim_run_dir(run_dir: &Path) -> Result<(PathBuf, PathBuf), CaptureFault> {
     let parent = run_dir.parent().ok_or(authority("run_dir_invalid"))?;
     let parent = fs::canonicalize(parent).map_err(|_| authority("run_dir_parent_missing"))?;
+    require_private_directory(&parent)?;
     let name = run_dir.file_name().ok_or(authority("run_dir_invalid"))?;
     let dir = parent.join(name);
     create_private_dir(&dir).map_err(|_| authority("run_dir_claim_failed"))?;
@@ -1615,6 +2095,8 @@ impl CaptureSession {
                 check_claimed_run_dir(&run_dir, &target)?;
                 let mut journal =
                     Journal::create(&run_dir.join("journal.jsonl"), v.faults.journal_fail_after)?;
+                verify_private_run_root(&run_dir, &mut PrivateTreeBudget::new(None))
+                    .map_err(|fault| journal.admission_refusal("privacy_admission", fault))?;
                 let credential = wire::Credential::new(&v.credential)
                     .map_err(|fault| journal.credential_refusal(fault))?;
                 let endpoint = wire::Endpoint::Verification {
@@ -1649,6 +2131,8 @@ impl CaptureSession {
                 let (run_dir, hosts_dir) = claim_run_dir(&target)?;
                 check_claimed_run_dir(&run_dir, &target)?;
                 let mut journal = Journal::create(&run_dir.join("journal.jsonl"), None)?;
+                verify_private_run_root(&run_dir, &mut PrivateTreeBudget::new(None))
+                    .map_err(|fault| journal.admission_refusal("privacy_admission", fault))?;
                 let credential = read_credential(&l.credential_file, &run_dir, &manifest)
                     .map_err(|fault| journal.credential_refusal(fault))?;
                 let credential_path = fs::canonicalize(&l.credential_file).map_err(|_| {
@@ -1761,6 +2245,7 @@ impl CaptureSession {
                     let manifest =
                         check_verification_manifest(v.manifest.clone(), Scope::Coding, &v.run_dir)?;
                     check_handoff_run_dir(&v.run_dir, &seal.run_dir)?;
+                    verify_private_run_root(&seal.run_dir, &mut PrivateTreeBudget::new(None))?;
                     // Admit this verification path before touching the sealed journal.
                     let mut journal = Journal::reopen(
                         &seal.run_dir.join("journal.jsonl"),
@@ -1798,6 +2283,7 @@ impl CaptureSession {
                                 && c.run_dir == seal.run_dir => {}
                         _ => return Err(authority("compatibility_evidence_not_this_probe")),
                     }
+                    verify_private_run_root(&seal.run_dir, &mut PrivateTreeBudget::new(None))?;
                     // Only validated coding admission may inspect this cited probe.
                     // A terminal prefix refuses before consuming fresh authority;
                     // no journal append is allowed until the claim succeeds.
@@ -2202,6 +2688,19 @@ impl Inner {
         }
     }
 
+    fn check_transmission_privacy(
+        &self,
+        host: &host::Host,
+        run: &SlotRun,
+        deadline: std::time::Instant,
+    ) -> Result<(), CaptureFault> {
+        let mut budget = PrivateTreeBudget::new(Some(deadline));
+        verify_private_run_root(&self.run_dir, &mut budget)?;
+        require_private_directory(&host.paths.root)?;
+        verify_private_tree(&run.tool_policy.workspace, &[], &mut budget)?;
+        budget.check_deadline()
+    }
+
     async fn run_admitted_slot(
         &mut self,
         slot: PreparedSlot,
@@ -2240,6 +2739,9 @@ impl Inner {
                 "workspace_not_canonical",
             ));
         }
+        let mut private_budget = PrivateTreeBudget::new(None);
+        verify_private_run_root(&self.run_dir, &mut private_budget)?;
+        verify_private_tree(&workspace, &[], &mut private_budget)?;
         if workspace.starts_with(&self.run_dir) || self.run_dir.starts_with(&workspace) {
             return Err(CaptureFault::new(
                 FaultClass::Bootstrap,
@@ -2546,85 +3048,108 @@ impl Inner {
             ));
         }
 
-        // Native identity reconciliation (read-only).
-        let native = match host::read_native_session(&paths.sessions) {
-            Ok(Some(session)) => {
-                let wire_ids: Vec<String> = run
-                    .generations
-                    .iter()
-                    .filter_map(|g| g.message_id.clone())
-                    .collect();
-                let joins: Vec<(String, Vec<String>)> = wire_ids
-                    .iter()
-                    .map(|id| {
-                        let entries = session
-                            .assistant
-                            .iter()
-                            .filter(|a| a.response_id.as_deref() == Some(id.as_str()))
-                            .map(|a| a.entry_id.clone())
-                            .collect();
-                        (id.clone(), entries)
-                    })
-                    .collect();
-                let unmatched: Vec<String> = session
-                    .assistant
-                    .iter()
-                    .filter_map(|a| a.response_id.clone())
-                    .filter(|r| !wire_ids.contains(r))
-                    .collect();
-                if purpose == Purpose::Capture {
-                    if !unmatched.is_empty() {
-                        self.enter_halt(CaptureFault::new(
-                            FaultClass::Containment,
-                            "native_unobserved_generation",
-                        ));
+        let mut private_budget = PrivateTreeBudget::new(None);
+        let private_outputs = verify_private_run_root(&self.run_dir, &mut private_budget)
+            .and_then(|()| verify_private_tree(&workspace, &[], &mut private_budget));
+        let mut private_outputs_ok = true;
+        if let Err(fault) = private_outputs {
+            if purpose == Purpose::Preview {
+                return Err(fault);
+            }
+            self.enter_halt(fault);
+            private_outputs_ok = false;
+        }
+
+        // Preserve transmitted observations and slot closure on privacy halt,
+        // without reading unsafe native/candidate content or claiming inventory.
+        let native = if private_outputs_ok {
+            match host::read_native_session(&paths.sessions) {
+                Ok(Some(session)) => {
+                    let wire_ids: Vec<String> = run
+                        .generations
+                        .iter()
+                        .filter_map(|g| g.message_id.clone())
+                        .collect();
+                    let joins: Vec<(String, Vec<String>)> = wire_ids
+                        .iter()
+                        .map(|id| {
+                            let entries = session
+                                .assistant
+                                .iter()
+                                .filter(|a| a.response_id.as_deref() == Some(id.as_str()))
+                                .map(|a| a.entry_id.clone())
+                                .collect();
+                            (id.clone(), entries)
+                        })
+                        .collect();
+                    let unmatched: Vec<String> = session
+                        .assistant
+                        .iter()
+                        .filter_map(|a| a.response_id.clone())
+                        .filter(|r| !wire_ids.contains(r))
+                        .collect();
+                    if purpose == Purpose::Capture {
+                        if !unmatched.is_empty() {
+                            self.enter_halt(CaptureFault::new(
+                                FaultClass::Containment,
+                                "native_unobserved_generation",
+                            ));
+                        }
+                        if session.unparsed_lines > 0 {
+                            self.enter_halt(CaptureFault::new(
+                                FaultClass::Usage,
+                                "native_session_unparsed",
+                            ));
+                        }
+                        if session.model_usage_entries > 0 {
+                            self.enter_halt(CaptureFault::new(
+                                FaultClass::Retry,
+                                "native_out_of_transcript_usage",
+                            ));
+                        }
                     }
-                    if session.unparsed_lines > 0 {
+                    let evidence = NativeEvidence {
+                        session_sha256: session.sha256,
+                        session_bytes: session.bytes,
+                        assistant_entries: session.assistant.len() as u32,
+                        joins,
+                        unmatched_native_response_ids: unmatched,
+                        model_usage_entries: session.model_usage_entries,
+                    };
+                    self.record_or_halt(
+                        "native_session",
+                        json!({"slot": run.slot_id, "native": evidence}),
+                    );
+                    Some(evidence)
+                }
+                Ok(None) => {
+                    // A transmitted generation without any native session is an
+                    // evidence gap, not an empty result.
+                    if purpose == Purpose::Capture
+                        && run.generations.iter().any(|g| g.messages_attempt.is_some())
+                    {
                         self.enter_halt(CaptureFault::new(
                             FaultClass::Usage,
-                            "native_session_unparsed",
+                            "native_session_missing",
                         ));
                     }
-                    if session.model_usage_entries > 0 {
-                        self.enter_halt(CaptureFault::new(
-                            FaultClass::Retry,
-                            "native_out_of_transcript_usage",
-                        ));
+                    None
+                }
+                Err(f) => {
+                    if f.class == FaultClass::Privacy {
+                        if purpose == Purpose::Preview {
+                            return Err(f);
+                        }
+                        private_outputs_ok = false;
                     }
+                    if purpose == Purpose::Capture {
+                        self.enter_halt(f);
+                    }
+                    None
                 }
-                let evidence = NativeEvidence {
-                    session_sha256: session.sha256,
-                    session_bytes: session.bytes,
-                    assistant_entries: session.assistant.len() as u32,
-                    joins,
-                    unmatched_native_response_ids: unmatched,
-                    model_usage_entries: session.model_usage_entries,
-                };
-                self.record_or_halt(
-                    "native_session",
-                    json!({"slot": run.slot_id, "native": evidence}),
-                );
-                Some(evidence)
             }
-            Ok(None) => {
-                // A transmitted generation without any native session is an
-                // evidence gap, not an empty result.
-                if purpose == Purpose::Capture
-                    && run.generations.iter().any(|g| g.messages_attempt.is_some())
-                {
-                    self.enter_halt(CaptureFault::new(
-                        FaultClass::Usage,
-                        "native_session_missing",
-                    ));
-                }
-                None
-            }
-            Err(f) => {
-                if purpose == Purpose::Capture {
-                    self.enter_halt(f);
-                }
-                None
-            }
+        } else {
+            None
         };
 
         // Candidate inventory and containment of effects.
@@ -2633,8 +3158,12 @@ impl Inner {
             .iter()
             .map(|(r, _)| r.clone())
             .collect();
-        let inventory = hash_sources(&workspace, &rels).unwrap_or_default();
-        if purpose == Purpose::Capture {
+        let inventory = if private_outputs_ok {
+            hash_sources(&workspace, &rels).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        if purpose == Purpose::Capture && private_outputs_ok {
             let listing = list_workspace(&workspace).unwrap_or_default();
             let mut expected = rels.clone();
             expected.sort();
@@ -3301,6 +3830,27 @@ impl Inner {
             ));
         }
 
+        if let Err(fault) = self.check_transmission_privacy(host, run, slot_deadline.into_std()) {
+            let _ = host
+                .send_bridge(refuse(FaultClass::Privacy), Vec::new())
+                .await;
+            return Err(fault);
+        }
+
+        let now_ns = continuous_nanos()?;
+        if self
+            .paid_deadline_ns
+            .is_some_and(|deadline| now_ns >= deadline)
+        {
+            let _ = host
+                .send_bridge(refuse(FaultClass::Deadline), Vec::new())
+                .await;
+            return Err(CaptureFault::new(
+                FaultClass::Deadline,
+                "paid_wall_exhausted",
+            ));
+        }
+
         // Permit, reservation and attempt identity are durable before any
         // provider byte is sent.
         let permit = self.counters.generation_permits + 1;
@@ -3451,6 +4001,14 @@ impl Inner {
             return Ok(());
         }
 
+        if let Err(fault) = self.check_transmission_privacy(host, run, gen_deadline.into_std()) {
+            self.release(run, &mut record, "privacy_before_messages")?;
+            run.generations.push(record);
+            let _ = host
+                .send_bridge(refuse(FaultClass::Privacy), Vec::new())
+                .await;
+            return Err(fault);
+        }
         let messages_attempt = self.next_attempt()?;
         record.messages_attempt = Some(messages_attempt);
         if let Err(f) = self.record(
@@ -3929,6 +4487,11 @@ impl Inner {
             if receipt.steps.len() < policy::CHECK_RECIPE.len() && last_ok {
                 return Err(prov("check_steps_truncated"));
             }
+            verify_private_tree(
+                &receipt.checker_root,
+                &[Path::new("out/check")],
+                &mut PrivateTreeBudget::new(None),
+            )?;
             Ok(if pass {
                 CheckOutcome::Pass
             } else {
@@ -4101,6 +4664,38 @@ fn fill_observation(record: &mut GenerationRecord, obs: &wire::Observation) {
 
 #[cfg(test)]
 mod tests {
+    // Compatibility setup for NEW owned synthetic fixtures only. Existing
+    // entries keep their modes, so deliberate negative mutations stay negative.
+    // These helpers do not participate in product permission qualification.
+    fn fixture_private_tempdir() -> std::io::Result<tempfile::TempDir> {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::Builder::new()
+            .prefix("cf-owned-pilot-fixture-")
+            .tempdir_in("/private/tmp")?;
+        std::fs::set_permissions(temp.path(), std::fs::Permissions::from_mode(0o700))?;
+        Ok(temp)
+    }
+
+    fn fixture_private_write(
+        path: impl AsRef<std::path::Path>,
+        bytes: impl AsRef<[u8]>,
+    ) -> std::io::Result<()> {
+        use std::io::Write;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let existed = path.as_ref().symlink_metadata().is_ok();
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(path.as_ref())?;
+        if !existed {
+            file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        }
+        file.write_all(bytes.as_ref())
+    }
+
     use super::*;
 
     #[test]
@@ -4132,9 +4727,9 @@ mod tests {
 
     #[test]
     fn an_authority_receipt_admits_one_run_only() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = fixture_private_tempdir().unwrap();
         let receipt = dir.path().join("authority.json");
-        fs::write(&receipt, b"{}").unwrap();
+        fixture_private_write(&receipt, b"{}").unwrap();
         claim_authority(&receipt, "abc", &dir.path().join("run-1")).unwrap();
         assert_eq!(
             claim_authority(&receipt, "abc", &dir.path().join("run-2"))
@@ -4159,7 +4754,7 @@ mod tests {
 
     #[test]
     fn journal_chains_records_and_detects_tampering() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = fixture_private_tempdir().unwrap();
         let path = dir.path().join("j.jsonl");
         let mut j = Journal::create(&path, None).unwrap();
         j.append("a", json!({"x": 1})).unwrap();
@@ -4188,7 +4783,7 @@ mod tests {
     #[test]
     fn restore_halt_append_failure_cannot_be_hidden_by_a_later_successful_finish() {
         for fail_halt_append in [false, true] {
-            let temp = tempfile::tempdir().unwrap();
+            let temp = fixture_private_tempdir().unwrap();
             let root = apparatus::PilotRoot::create(&temp.path().join("pilot")).unwrap();
             let run_dir = root.root.join("runs/test-restore");
             create_private_dir(&run_dir).unwrap();
@@ -4317,10 +4912,10 @@ mod tests {
             "missing-run",
             "wrong-run",
         ] {
-            let temp = tempfile::tempdir().unwrap();
+            let temp = fixture_private_tempdir().unwrap();
             let run_dir = fs::canonicalize(temp.path()).unwrap();
             let authority_bytes = b"owned synthetic probe authority evidence";
-            fs::write(run_dir.join("synthetic-authority"), authority_bytes).unwrap();
+            fixture_private_write(run_dir.join("synthetic-authority"), authority_bytes).unwrap();
             let mut seal = ProbeSeal {
                 kind: "bounded-pilot-v1-probe-seal".into(),
                 mode: Mode::Live,
@@ -4736,12 +5331,12 @@ mod tests {
                     receipt.steps[0].stderr_path =
                         "diagnostics/noalloc_compile.partial.stderr".into()
                 }
-                "bytes" => fs::write(&path, b"owned changed bytes").unwrap(),
+                "bytes" => fixture_private_write(&path, b"owned changed bytes").unwrap(),
                 "length" => receipt.steps[0].stderr_bytes += 1,
                 "hash" => receipt.steps[0].stderr_sha256 = sha256_hex(b"owned wrong digest"),
                 "oversize" => {
                     let bytes = vec![b'x'; 1_048_577];
-                    fs::write(&path, &bytes).unwrap();
+                    fixture_private_write(&path, &bytes).unwrap();
                     receipt.steps[0].stderr_bytes = bytes.len() as u64;
                     receipt.steps[0].stderr_sha256 = sha256_hex(&bytes);
                 }
@@ -4877,6 +5472,536 @@ mod tests {
                 sha256_hex(&serde_json::to_vec(&receipt).unwrap())
             );
             assert!(!rows.iter().any(|r| r["kind"] == "halt"));
+        }
+    }
+    fn privacy_owned_root(label: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::Builder::new()
+            .prefix("cf-private-metadata-")
+            .tempdir()
+            .unwrap();
+        fs::set_permissions(temp.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let base = fs::canonicalize(temp.path()).unwrap();
+        std::mem::forget(temp);
+        eprintln!(
+            "owned privacy metadata evidence ({label}): {}",
+            base.display()
+        );
+        base
+    }
+
+    #[test]
+    fn privacy_new_artifacts_establish_exact_modes_without_changing_parent_mask() {
+        use std::os::unix::process::CommandExt;
+        use std::process::Command;
+        const CHILD_ROOT: &str = "CF_PRIVATE_CREATION_TEST_CHILD";
+        if let Some(path) = std::env::var_os(CHILD_ROOT) {
+            let root = PathBuf::from(path);
+            std::fs::write(root.join("ambient-before"), []).unwrap();
+            let ambient_mode = std::fs::metadata(root.join("ambient-before"))
+                .unwrap()
+                .mode()
+                & 0o7777;
+            let directory = root.join("created");
+            create_private_dir(&directory).unwrap();
+            assert_eq!(fs::metadata(&directory).unwrap().mode() & 0o7777, 0o700);
+            let file = directory.join("bytes");
+            write_private_new(&file, b"owned exact private bytes").unwrap();
+            assert_eq!(fs::metadata(&file).unwrap().mode() & 0o7777, 0o600);
+            assert_eq!(fs::read(&file).unwrap(), b"owned exact private bytes");
+            let mut journal = Journal::create(&directory.join("journal.jsonl"), None).unwrap();
+            journal
+                .append("owned", serde_json::json!({"synthetic":true}))
+                .unwrap();
+            assert_eq!(
+                fs::metadata(directory.join("journal.jsonl"))
+                    .unwrap()
+                    .mode()
+                    & 0o7777,
+                0o600
+            );
+            std::fs::write(root.join("ambient-after"), []).unwrap();
+            assert_eq!(
+                std::fs::metadata(root.join("ambient-after"))
+                    .unwrap()
+                    .mode()
+                    & 0o7777,
+                ambient_mode,
+                "product operation changed its caller mask"
+            );
+            return;
+        }
+        let base = privacy_owned_root("new-modes");
+        std::fs::write(base.join("parent-before"), b"owned mask witness").unwrap();
+        let before = fs::metadata(base.join("parent-before")).unwrap().mode() & 0o7777;
+        for mask in [0, 0o777] {
+            let root = base.join(format!("child-{mask:o}"));
+            create_private_dir(&root).unwrap();
+            let mut child = Command::new(std::env::current_exe().unwrap());
+            child.args(["--exact", "pilot_capture::tests::privacy_new_artifacts_establish_exact_modes_without_changing_parent_mask", "--nocapture"])
+                .env(CHILD_ROOT, &root);
+            // Only the new process changes its mask, before it execs libtest.
+            unsafe {
+                child.pre_exec(move || {
+                    libc::umask(mask);
+                    Ok(())
+                });
+            }
+            assert!(
+                child.status().unwrap().success(),
+                "owned creation child mask={mask:o}"
+            );
+        }
+        std::fs::write(base.join("parent-after"), b"owned mask witness").unwrap();
+        assert_eq!(
+            fs::metadata(base.join("parent-after")).unwrap().mode() & 0o7777,
+            before
+        );
+    }
+
+    #[test]
+    fn privacy_private_open_rejects_special_types_modes_and_preserves_opened_identity() {
+        use std::io::Read;
+        use std::os::unix::ffi::OsStrExt;
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let base = privacy_owned_root("private-open");
+        for mode in [0o400, 0o640, 0o700, 0o1600, 0o2600, 0o4600] {
+            eprintln!("owned private-file mode case: {mode:o}");
+            let path = base.join(format!("mode-{mode:o}"));
+            write_private_new(&path, b"owned source").unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+            let fault = open_private_file(&path, PrivateArtifact::File)
+                .err()
+                .unwrap();
+            assert_eq!(
+                (fault.class, fault.code),
+                (FaultClass::Privacy, "private_artifact_not_private")
+            );
+            assert_eq!(
+                fs::metadata(&path).unwrap().mode() & 0o7777,
+                mode,
+                "opening must not normalize existing files"
+            );
+        }
+        let file = base.join("file");
+        write_private_new(&file, b"owned original bytes").unwrap();
+        let mut opened = open_private_file(&file, PrivateArtifact::File).unwrap();
+        fs::rename(&file, base.join("original-inode")).unwrap();
+        write_private_new(&file, b"owned replacement bytes").unwrap();
+        let mut observed = Vec::new();
+        opened.read_to_end(&mut observed).unwrap();
+        assert_eq!(
+            observed, b"owned original bytes",
+            "the validated descriptor must be used for the read"
+        );
+        assert_eq!(fs::read(&file).unwrap(), b"owned replacement bytes");
+        let nested = base.join("nested");
+        create_private_dir(&nested).unwrap();
+        write_private_new(&nested.join("private-input"), b"owned nested input").unwrap();
+        let parent_alias = base.join("parent-alias");
+        symlink(&nested, &parent_alias).unwrap();
+        assert!(
+            open_private_file(&parent_alias.join("private-input"), PrivateArtifact::File).is_err(),
+            "a private final file does not authorize following its parent symlink"
+        );
+        for case in ["symlink", "directory", "fifo"] {
+            eprintln!("owned private-file type case: {case}");
+            let path = base.join(case);
+            match case {
+                "symlink" => symlink(&file, &path).unwrap(),
+                "directory" => create_private_dir(&path).unwrap(),
+                "fifo" => {
+                    let path = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+                    assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+                }
+                _ => unreachable!(),
+            }
+            assert!(
+                open_private_file(&path, PrivateArtifact::File).is_err(),
+                "{case}"
+            );
+        }
+        assert_eq!(fs::read(&file).unwrap(), b"owned replacement bytes");
+    }
+
+    #[test]
+    fn privacy_private_directories_require_exact_modes_and_no_symlink() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let base = privacy_owned_root("private-directories");
+        for mode in [0o500, 0o750, 0o1700, 0o2700, 0o4700] {
+            eprintln!("owned private-directory mode case: {mode:o}");
+            let directory = base.join(format!("dir-{mode:o}"));
+            create_private_dir(&directory).unwrap();
+            fs::set_permissions(&directory, fs::Permissions::from_mode(mode)).unwrap();
+            assert_eq!(
+                require_private_directory(&directory).unwrap_err().code,
+                "private_artifact_not_private"
+            );
+            assert_eq!(fs::metadata(directory).unwrap().mode() & 0o7777, mode);
+        }
+        let target = base.join("target");
+        create_private_dir(&target).unwrap();
+        let link = base.join("alias");
+        symlink(&target, &link).unwrap();
+        assert!(require_private_directory(&link).is_err());
+        assert_eq!(fs::metadata(target).unwrap().mode() & 0o7777, 0o700);
+    }
+
+    #[test]
+    fn privacy_new_artifact_collisions_do_not_replace_or_normalize_existing_entries() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let root = privacy_owned_root("exclusive-new");
+        let target = root.join("owned-target");
+        write_private_new(&target, b"owned sentinel").unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o640)).unwrap();
+        let alias = root.join("alias");
+        symlink(&target, &alias).unwrap();
+        for path in [&target, &alias] {
+            assert!(write_private_new(path, b"must not replace").is_err());
+            assert!(create_private_dir(path).is_err());
+        }
+        let directory = root.join("directory");
+        create_private_dir(&directory).unwrap();
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o750)).unwrap();
+        assert!(create_private_dir(&directory).is_err());
+        assert_eq!(fs::read(target).unwrap(), b"owned sentinel");
+        assert!(
+            fs::symlink_metadata(&alias)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(fs::metadata(directory).unwrap().mode() & 0o7777, 0o750);
+    }
+
+    #[test]
+    fn privacy_tree_executable_exception_is_only_the_declared_checker_path() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = privacy_owned_root("executable-scope");
+        create_private_dir(&root.join("out")).unwrap();
+        let image = root.join("out/check");
+        write_private_new(&image, b"owned inert executable identity").unwrap();
+        fs::set_permissions(&image, fs::Permissions::from_mode(0o700)).unwrap();
+        verify_private_tree(
+            &root,
+            &[Path::new("out/check")],
+            &mut PrivateTreeBudget::new(None),
+        )
+        .unwrap();
+        assert_eq!(
+            verify_private_tree(&root, &[], &mut PrivateTreeBudget::new(None))
+                .unwrap_err()
+                .code,
+            "private_artifact_not_private"
+        );
+        fs::rename(&image, root.join("out/other-check")).unwrap();
+        assert_eq!(
+            verify_private_tree(
+                &root,
+                &[Path::new("out/check")],
+                &mut PrivateTreeBudget::new(None)
+            )
+            .unwrap_err()
+            .code,
+            "private_artifact_not_private"
+        );
+    }
+
+    #[test]
+    fn privacy_tree_budget_is_shared_and_counts_os_path_bytes_without_lossy_utf8() {
+        use std::os::unix::ffi::OsStringExt;
+        let base = privacy_owned_root("shared-budget");
+        let one = base.join("one");
+        create_private_dir(&one).unwrap();
+        let two = base.join("two");
+        create_private_dir(&two).unwrap();
+        let mut shared = PrivateTreeBudget::new(None);
+        shared.entries = 16_383;
+        verify_private_tree(&one, &[], &mut shared).unwrap();
+        assert_eq!(shared.entries, 16_384);
+        assert_eq!(
+            verify_private_tree(&two, &[], &mut shared)
+                .unwrap_err()
+                .code,
+            "private_tree_limit"
+        );
+        // APFS refuses invalid UTF-8 names (EILSEQ). Exercise raw OS-byte
+        // charging directly, then exercise the same charge in an actual walk
+        // with an accepted multi-byte filename. Neither case uses lossy UTF-8.
+        let name = std::ffi::OsString::from_vec(vec![0xff, 0xfe]);
+        let mut raw = PrivateTreeBudget::new(None);
+        raw.path_bytes = 8 * 1024 * 1024 - 2;
+        raw.charge(Path::new(&name), 1).unwrap();
+        assert_eq!(raw.path_bytes, 8 * 1024 * 1024);
+        let valid_name = "owned-\u{1f980}";
+        write_private_new(&one.join(valid_name), b"owned multi-byte filename").unwrap();
+        let mut paths = PrivateTreeBudget::new(None);
+        paths.path_bytes = 8 * 1024 * 1024 - valid_name.len();
+        verify_private_tree(&one, &[], &mut paths).unwrap();
+        assert_eq!(
+            paths.path_bytes,
+            8 * 1024 * 1024,
+            "charge actual OS bytes, not replacement characters"
+        );
+        assert_eq!(
+            verify_private_tree(&one, &[], &mut paths).unwrap_err().code,
+            "private_tree_limit"
+        );
+    }
+
+    #[test]
+    fn privacy_tree_depth_deadline_and_missing_entry_refuse_incomplete_success() {
+        let root = privacy_owned_root("depth-and-deadline");
+        let mut deepest = root.clone();
+        for _ in 0..64 {
+            deepest = deepest.join("d");
+            create_private_dir(&deepest).unwrap();
+        }
+        verify_private_tree(&root, &[], &mut PrivateTreeBudget::new(None)).unwrap();
+        write_private_new(&deepest.join("too-deep"), b"owned level65 file").unwrap();
+        assert_eq!(
+            verify_private_tree(&root, &[], &mut PrivateTreeBudget::new(None))
+                .unwrap_err()
+                .code,
+            "private_tree_limit"
+        );
+        let expired = std::time::Instant::now() - std::time::Duration::from_millis(1);
+        assert_eq!(
+            verify_private_tree(&root, &[], &mut PrivateTreeBudget::new(Some(expired)))
+                .unwrap_err()
+                .code,
+            "private_tree_limit"
+        );
+        let parent = open_nofollow(&deepest, true).unwrap();
+        fs::remove_file(deepest.join("too-deep")).unwrap();
+        assert_eq!(
+            open_child(
+                &parent,
+                std::ffi::OsStr::new("too-deep"),
+                libc::O_RDONLY | libc::O_NONBLOCK
+            )
+            .err()
+            .unwrap()
+            .code,
+            "private_tree_unreadable"
+        );
+        // This is deterministic missing-entry refusal, not an injected in-walk race.
+    }
+
+    #[test]
+    fn privacy_tree_checks_metadata_without_freezing_active_file_contents() {
+        use std::io::Write;
+        let root = privacy_owned_root("active-contents");
+        let path = root.join("session.jsonl");
+        write_private_new(&path, b"owned first line\n").unwrap();
+        verify_private_tree(&root, &[], &mut PrivateTreeBudget::new(None)).unwrap();
+        let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+        file.write_all(b"owned next line\n").unwrap();
+        file.sync_all().unwrap();
+        verify_private_tree(&root, &[], &mut PrivateTreeBudget::new(None)).unwrap();
+        assert_eq!(
+            fs::read(path).unwrap(),
+            b"owned first line\nowned next line\n"
+        );
+    }
+
+    #[test]
+    fn privacy_open_directory_descriptor_stays_owned_after_named_path_replacement() {
+        use std::io::Read;
+        use std::os::unix::fs::symlink;
+        let base = privacy_owned_root("descriptor-replacement");
+        let tree = base.join("tree");
+        create_private_dir(&tree).unwrap();
+        let inside = tree.join("inside");
+        create_private_dir(&inside).unwrap();
+        write_private_new(&inside.join("value"), b"owned original directory bytes").unwrap();
+        let outside = base.join("outside");
+        create_private_dir(&outside).unwrap();
+        write_private_new(&outside.join("value"), b"owned outside sentinel").unwrap();
+        let parent = open_nofollow(&tree, true).unwrap();
+        let held = open_child(
+            &parent,
+            std::ffi::OsStr::new("inside"),
+            libc::O_RDONLY | libc::O_DIRECTORY,
+        )
+        .unwrap();
+        fs::rename(&inside, tree.join("retained-original")).unwrap();
+        symlink(&outside, &inside).unwrap();
+        let mut source = open_child(
+            &held,
+            std::ffi::OsStr::new("value"),
+            libc::O_RDONLY | libc::O_NONBLOCK,
+        )
+        .unwrap();
+        let mut bytes = Vec::new();
+        source.read_to_end(&mut bytes).unwrap();
+        assert_eq!(bytes, b"owned original directory bytes");
+        assert!(verify_private_tree(&tree, &[], &mut PrivateTreeBudget::new(None)).is_err());
+        assert_eq!(
+            fs::read(outside.join("value")).unwrap(),
+            b"owned outside sentinel"
+        );
+        // A deterministic rename before the next real descriptor operation;
+        // this does not claim a concurrent swap inside a complete tree walk.
+    }
+
+    #[test]
+    fn privacy_checker_owned_artifact_modes_cannot_seal_as_pass_or_ordinary_fail() {
+        use std::os::unix::fs::PermissionsExt;
+        for nonzero in [false, true] {
+            eprintln!("owned checker-artifact privacy case: nonzero={nonzero}");
+            let (mut session, capture, mut receipt) = checker_owned_receipt_fixture();
+            let journal = session.inner.run_dir.join("journal.jsonl");
+            create_private_dir(&receipt.checker_root.join("out")).unwrap();
+            let artifact = receipt.checker_root.join(&receipt.steps[0].artifacts[0].0);
+            let bytes = b"owned noalloc";
+            assert_eq!(receipt.steps[0].artifacts[0].1, sha256_hex(bytes));
+            write_private_new(&artifact, bytes).unwrap();
+            fs::set_permissions(&artifact, fs::Permissions::from_mode(0o640)).unwrap();
+            if nonzero {
+                receipt.steps.truncate(1);
+                receipt.steps[0].exit = Some(1);
+                receipt.steps[0].artifacts.clear();
+            }
+            let fault = session.seal_slot(&capture, &receipt).unwrap_err();
+            assert_eq!(
+                (fault.class, fault.code),
+                (FaultClass::Privacy, "private_artifact_not_private")
+            );
+            assert_eq!(session.halted(), Some(fault));
+            let report = session.finish().unwrap();
+            assert!(report.slots.iter().all(|s| s.check.is_none()));
+            assert_eq!(report.counters, Counters::default());
+            let rows: Vec<serde_json::Value> = fs::read_to_string(journal)
+                .unwrap()
+                .lines()
+                .map(|s| serde_json::from_str(s).unwrap())
+                .collect();
+            assert!(!rows.iter().any(|r| r["kind"] == "slot_sealed"));
+            let refused = rows.iter().find(|r| r["kind"] == "check_refused").unwrap();
+            assert_eq!(
+                refused["receipt_sha256"],
+                sha256_hex(&serde_json::to_vec(&receipt).unwrap())
+            );
+            assert_eq!(rows.iter().filter(|r| r["kind"] == "halt").count(), 1);
+            assert_eq!(fs::read(artifact).unwrap(), bytes);
+        }
+    }
+    fn native_mode_fixture_file(root: &Path, relative: &str, mode: u32) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = root.join(relative);
+        let mut parent = root.to_path_buf();
+        for component in Path::new(relative).parent().unwrap().components() {
+            parent.push(component);
+            if !parent.exists() {
+                create_private_dir(&parent).unwrap();
+            }
+        }
+        write_private_new(&path, b"owned synthetic native metadata fixture").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+        path
+    }
+
+    #[test]
+    fn privacy_host_native_run_exception_requires_exact_path_mode_and_real_file() {
+        const NATIVE: &str = "home/.omp/natives/18.13.2/pi_natives.darwin-arm64.node";
+        assert_eq!(host::NATIVE_MODULE_RELATIVE_PATH, NATIVE);
+        for case in [
+            "bound",
+            "wrong-version",
+            "wrong-name",
+            "nested-host",
+            "no-host-container",
+            "private-nonexec",
+            "wide",
+            "special",
+            "symlink",
+        ] {
+            eprintln!("owned native run metadata case: {case}");
+            let root = privacy_owned_root("native-run");
+            let mut relative = format!("hosts/h1/{NATIVE}");
+            let mode = match case {
+                "wrong-version" => {
+                    relative = relative.replace("18.13.2", "18.13.3");
+                    0o700
+                }
+                "wrong-name" => {
+                    relative = relative.replace("pi_natives.darwin-arm64.node", "other.node");
+                    0o700
+                }
+                "nested-host" => {
+                    relative = format!("hosts/nested/h1/{NATIVE}");
+                    0o700
+                }
+                "no-host-container" => {
+                    relative = format!("h1/{NATIVE}");
+                    0o700
+                }
+                "private-nonexec" => 0o600,
+                "wide" => 0o750,
+                "special" => 0o1700,
+                "bound" | "symlink" => 0o700,
+                _ => unreachable!(),
+            };
+            let path = native_mode_fixture_file(&root, &relative, mode);
+            if case == "symlink" {
+                let outside = privacy_owned_root("native-link-target").join("owned-target");
+                fs::rename(&path, &outside).unwrap();
+                std::os::unix::fs::symlink(&outside, &path).unwrap();
+            }
+            let result = verify_private_run_root(&root, &mut PrivateTreeBudget::new(None));
+            if case == "bound" {
+                result.unwrap();
+                // A suffix-shaped executable in a workspace/store receives no
+                // exception from the ordinary private-tree validation operation.
+                assert_eq!(
+                    verify_private_tree(&root, &[], &mut PrivateTreeBudget::new(None))
+                        .unwrap_err()
+                        .code,
+                    "private_artifact_not_private"
+                );
+            } else {
+                let fault = result.unwrap_err();
+                assert_eq!(
+                    (fault.class, fault.code),
+                    (FaultClass::Privacy, "private_artifact_not_private")
+                );
+            }
+            if case == "symlink" {
+                assert!(
+                    fs::symlink_metadata(&path)
+                        .unwrap()
+                        .file_type()
+                        .is_symlink()
+                );
+            } else {
+                assert_eq!(
+                    fs::metadata(&path).unwrap().mode() & 0o7777,
+                    mode,
+                    "validation must not normalize the fixture"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn privacy_host_native_isolation_exception_is_bound_to_the_declared_run() {
+        const NATIVE: &str = "home/.omp/natives/18.13.2/pi_natives.darwin-arm64.node";
+        for declared_matches in [true, false] {
+            eprintln!("owned native isolation binding case: declared_matches={declared_matches}");
+            let root = privacy_owned_root("native-isolation");
+            let run = root.join("declared-run");
+            create_private_dir(&run).unwrap();
+            let other = root.join("other-run");
+            create_private_dir(&other).unwrap();
+            native_mode_fixture_file(&root, &format!("declared-run/hosts/h1/{NATIVE}"), 0o700);
+            let result =
+                verify_private_isolation_root(&root, if declared_matches { &run } else { &other });
+            if declared_matches {
+                result.unwrap();
+            } else {
+                assert_eq!(result.unwrap_err().code, "private_artifact_not_private");
+            }
         }
     }
 }

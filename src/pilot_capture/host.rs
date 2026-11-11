@@ -9,7 +9,7 @@
 //! file. Forced termination is a cleanup failure, never a manufactured
 //! success.
 
-use std::fs::{self, File};
+use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::fs::MetadataExt;
@@ -25,12 +25,30 @@ use tokio::sync::mpsc;
 use super::protocol::{
     ChannelIdentity, FaultClass, Inbound, InboundState, OutboundState, ParentMessage, ProtocolFault,
 };
-use super::{CaptureFault, create_private_dir, policy, sha256_hex, write_private_new};
+use super::{
+    CaptureFault, PrivateArtifact, PrivateTreeBudget, create_private_dir, open_private_file,
+    policy, private_child, require_private_directory, sha256_hex, verify_private_tree,
+    write_private_new,
+};
 
 /// The bridge source, embedded from the repository and materialized with
 /// its exact bytes into each private host root.
 pub const BRIDGE_SOURCE: &[u8] = include_bytes!("bridge.ts");
 pub const SANDBOX_EXEC: &str = "/usr/bin/sandbox-exec";
+/// Exact owned extraction path of the pinned OMP 18.13.2 macOS arm64 host.
+/// This declares private executable metadata, not a per-request content hash.
+pub(crate) const NATIVE_MODULE_RELATIVE_PATH: &str =
+    "home/.omp/natives/18.13.2/pi_natives.darwin-arm64.node";
+
+/// Match a bounded walk's inventoried path at hosts/<one-root>/<exact module>.
+/// No workspace, store, other host version, or arbitrary-depth path is admitted.
+pub(crate) fn is_run_native_module(relative: &Path) -> bool {
+    let mut parts = relative.components();
+    matches!(parts.next(), Some(Component::Normal(name)) if name == "hosts")
+        && matches!(parts.next(), Some(Component::Normal(_)))
+        && parts.as_path().as_os_str() == std::ffi::OsStr::new(NATIVE_MODULE_RELATIVE_PATH)
+}
+
 /// Longest RPC stdout line kept for parsing (agent_end carries messages).
 const MAX_RPC_LINE_BYTES: usize = 32 * 1024 * 1024;
 /// Largest native session file read back for identity reconciliation.
@@ -305,6 +323,7 @@ impl Host {
         if workspace != spec.workspace {
             return Err(fault(FaultClass::Bootstrap, "workspace_not_canonical"));
         }
+        verify_private_tree(&workspace, &[], &mut PrivateTreeBudget::new(None))?;
         if workspace.join(".omp").symlink_metadata().is_ok() {
             return Err(fault(
                 FaultClass::Bootstrap,
@@ -373,6 +392,12 @@ impl Host {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .process_group(0);
+        verify_private_tree(
+            &root,
+            &[Path::new(NATIVE_MODULE_RELATIVE_PATH)],
+            &mut PrivateTreeBudget::new(None),
+        )?;
+        private_child(&mut cmd);
         let child_write = c2r_write.as_raw_fd();
         let child_read = r2c_read.as_raw_fd();
         // SAFETY: only async-signal-safe libc calls (fcntl, dup2, close)
@@ -1067,6 +1092,8 @@ pub struct NativeSession {
 /// modifying it. `Ok(None)` when no session file exists (no assistant
 /// message was produced).
 pub fn read_native_session(sessions: &Path) -> Result<Option<NativeSession>, CaptureFault> {
+    require_private_directory(sessions)?;
+    verify_private_tree(sessions, &[], &mut PrivateTreeBudget::new(None))?;
     let mut files = Vec::new();
     for entry in fs::read_dir(sessions)
         .map_err(|_| fault(FaultClass::Usage, "native_sessions_unreadable"))?
@@ -1084,15 +1111,20 @@ pub fn read_native_session(sessions: &Path) -> Result<Option<NativeSession>, Cap
         _ => return Err(fault(FaultClass::Usage, "native_session_ambiguous")),
     }
     let path = files.remove(0);
-    let meta = fs::symlink_metadata(&path)
+    let file = open_private_file(&path, PrivateArtifact::File)?;
+    let meta = file
+        .metadata()
         .map_err(|_| fault(FaultClass::Usage, "native_session_unreadable"))?;
-    if !meta.is_file() || meta.len() > MAX_NATIVE_SESSION_BYTES {
+    if meta.len() > MAX_NATIVE_SESSION_BYTES {
         return Err(fault(FaultClass::Usage, "native_session_shape"));
     }
-    let mut bytes = Vec::with_capacity(meta.len() as usize);
-    File::open(&path)
-        .and_then(|mut f| f.read_to_end(&mut bytes))
+    let mut bytes = Vec::new();
+    file.take(MAX_NATIVE_SESSION_BYTES + 1)
+        .read_to_end(&mut bytes)
         .map_err(|_| fault(FaultClass::Usage, "native_session_unreadable"))?;
+    if bytes.len() as u64 > MAX_NATIVE_SESSION_BYTES {
+        return Err(fault(FaultClass::Usage, "native_session_shape"));
+    }
     let mut assistant = Vec::new();
     let mut model_usage_entries = 0u32;
     let mut unparsed_lines = 0u32;
@@ -1136,14 +1168,69 @@ pub fn file_identity(path: &Path) -> Option<(u64, u64)> {
 
 #[cfg(test)]
 mod tests {
+    // Compatibility setup for NEW owned synthetic fixtures only. Existing
+    // entries keep their modes, so deliberate negative mutations stay negative.
+    // These helpers do not participate in product permission qualification.
+    fn fixture_private_tempdir() -> std::io::Result<tempfile::TempDir> {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::Builder::new()
+            .prefix("cf-owned-pilot-fixture-")
+            .tempdir_in("/private/tmp")?;
+        std::fs::set_permissions(temp.path(), std::fs::Permissions::from_mode(0o700))?;
+        Ok(temp)
+    }
+
+    fn fixture_private_dir(path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(path.as_ref())?;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+    }
+
+    fn fixture_private_dirs(path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
+        let mut missing = Vec::new();
+        let mut cursor = path.as_ref();
+        while !cursor.try_exists()? {
+            missing.push(cursor.to_path_buf());
+            cursor = cursor
+                .parent()
+                .ok_or_else(|| std::io::Error::other("owned fixture has no parent"))?;
+        }
+        for directory in missing.into_iter().rev() {
+            fixture_private_dir(directory)?;
+        }
+        Ok(())
+    }
+
+    fn fixture_private_write(
+        path: impl AsRef<std::path::Path>,
+        bytes: impl AsRef<[u8]>,
+    ) -> std::io::Result<()> {
+        use std::io::Write;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let existed = path.as_ref().symlink_metadata().is_ok();
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(path.as_ref())?;
+        if !existed {
+            file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        }
+        file.write_all(bytes.as_ref())
+    }
+
     use super::*;
 
     fn workspace() -> (tempfile::TempDir, ToolPolicy) {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = fixture_private_tempdir().unwrap();
         let ws = fs::canonicalize(dir.path()).unwrap();
-        fs::create_dir_all(ws.join("src")).unwrap();
+        fixture_private_dirs(ws.join("src")).unwrap();
         for f in policy::READ_SET {
-            fs::write(ws.join(f), b"x").unwrap();
+            fixture_private_write(ws.join(f), b"x").unwrap();
         }
         (dir, ToolPolicy::pilot(ws))
     }
@@ -1233,7 +1320,7 @@ mod tests {
             admit_tool(&p, "edit", br#"{"path":"src/lib.rs:1"}"#),
             ToolVerdict::Refuse("path_uri_or_device_forbidden")
         );
-        fs::write(p.workspace.join("src/lib.rs:1"), b"shadow").unwrap();
+        fixture_private_write(p.workspace.join("src/lib.rs:1"), b"shadow").unwrap();
         assert_eq!(
             admit_tool(&p, "read", br#"{"path":"src/lib.rs:1"}"#),
             ToolVerdict::Refuse("selector_literal_shadow")
@@ -1250,7 +1337,7 @@ mod tests {
             ToolVerdict::Refuse("path_symlink")
         );
         fs::remove_file(p.workspace.join("Cargo.toml")).unwrap();
-        fs::create_dir(p.workspace.join("Cargo.toml")).unwrap();
+        fixture_private_dir(p.workspace.join("Cargo.toml")).unwrap();
         assert_eq!(
             admit_tool(&p, "read", br#"{"path":"Cargo.toml"}"#),
             ToolVerdict::Refuse("not_regular_file")
@@ -1334,9 +1421,9 @@ mod tests {
 
     #[test]
     fn native_session_identity_is_read_back() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = fixture_private_tempdir().unwrap();
         assert!(read_native_session(dir.path()).unwrap().is_none());
-        fs::write(
+        fixture_private_write(
             dir.path().join("2026_x.jsonl"),
             b"{\"type\":\"session\",\"id\":\"s\"}\n{\"type\":\"message\",\"id\":\"e1\",\"message\":{\"role\":\"assistant\",\"responseId\":\"msg_1\",\"stopReason\":\"stop\"}}\n",
         )
@@ -1345,5 +1432,48 @@ mod tests {
         assert_eq!(s.assistant.len(), 1);
         assert_eq!(s.assistant[0].response_id.as_deref(), Some("msg_1"));
         assert_eq!(s.model_usage_entries, 0);
+    }
+    #[test]
+    fn privacy_native_session_readback_requires_private_regular_files() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let bytes=b"{\"type\":\"session\",\"id\":\"owned\"}\n{\"type\":\"message\",\"id\":\"owned-entry\",\"message\":{\"role\":\"assistant\",\"responseId\":\"msg_owned\",\"stopReason\":\"stop\"}}\n";
+        for case in ["private", "wide", "executable", "special", "symlink"] {
+            eprintln!("owned native-session privacy case: {case}");
+            let temp = fixture_private_tempdir().unwrap();
+            let root = fs::canonicalize(temp.path()).unwrap();
+            let sessions = root.join("sessions");
+            create_private_dir(&sessions).unwrap();
+            let path = sessions.join("owned.jsonl");
+            write_private_new(&path, bytes).unwrap();
+            match case {
+                "wide" => fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap(),
+                "executable" => {
+                    fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap()
+                }
+                "special" => {
+                    fs::set_permissions(&path, fs::Permissions::from_mode(0o1600)).unwrap()
+                }
+                "symlink" => {
+                    let target = root.join("owned-target");
+                    fs::rename(&path, &target).unwrap();
+                    symlink(target, &path).unwrap();
+                }
+                "private" => {}
+                _ => unreachable!(),
+            }
+            let result = read_native_session(&sessions);
+            if case == "private" {
+                assert_eq!(
+                    result.unwrap().unwrap().assistant[0].response_id.as_deref(),
+                    Some("msg_owned")
+                );
+            } else {
+                let fault = result.unwrap_err();
+                assert_eq!(
+                    (fault.class, fault.code),
+                    (FaultClass::Privacy, "private_artifact_not_private")
+                );
+            }
+        }
     }
 }

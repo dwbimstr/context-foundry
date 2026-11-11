@@ -28,6 +28,13 @@ use tokio_rustls::rustls;
 pub enum Reply {
     /// 200 application/json count result.
     Count(u64),
+    /// Owned test action after the request is recorded and before its response.
+    /// This never alters production/runtime configuration or a real provider.
+    ModeThen {
+        path: std::path::PathBuf,
+        mode: u32,
+        reply: Box<Reply>,
+    },
     /// Arbitrary status, headers and body (for count or messages failures).
     Status(u16, Vec<(String, String)>, Vec<u8>),
     /// 200 text/event-stream body delivered as these chunks, with a short
@@ -294,7 +301,19 @@ async fn answer(
         body,
     });
     let next = script.lock().unwrap().pop_front();
+    let next = match next {
+        Some(Reply::ModeThen { path, mode, reply }) => {
+            use std::os::unix::fs::PermissionsExt;
+            assert!(path.is_absolute());
+            let metadata = std::fs::symlink_metadata(&path).unwrap();
+            assert!(metadata.is_file() && !metadata.file_type().is_symlink());
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+            Some(*reply)
+        }
+        other => other,
+    };
     match next {
+        Some(Reply::ModeThen { .. }) => panic!("nested owned mode actions are not supported"),
         Some(Reply::Count(n)) => full(
             200,
             vec![
