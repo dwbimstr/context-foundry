@@ -1,5 +1,108 @@
 # Validation
 
+## Pilot private-output permissions and terminal publication — 2026-11-11
+
+**Qualified at the selected local boundaries on `c399c1e`.** The
+[existing v2 requirement](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#required-v1-gap-repairs-and-qualification)
+now enforces exact 0700 owned directories and 0600 private files, including special
+bits. Descriptor-relative checks preserve ownership, type and inode identity;
+one logical pass shares 16,384 inspected entries, depth 64 and 8 MiB of OS-path
+bytes, including both inventory and validation. Child launchers set umask 0077
+without changing their caller. Existing wrong-mode objects are refused, not repaired.
+
+Checks run before count/Messages and after producers. A privacy failure after a
+count retains that observation, releases only its reservation and prevents Messages.
+Post-send failures retain observed usage and halted slot capture/closure while
+refusing unsafe readback. CLI success additionally requires actual exclusive,
+durable seal/report persistence and successful finalization; terminal journals
+are not reopened to hide sidecar failure.
+
+The only declared 0700 executables are checker `out/check` and pinned OMP 18.13.2's
+`home/.omp/natives/18.13.2/pi_natives.darwin-arm64.node`, limited to the declared
+run's `hosts/<host>` or fixed `runs/<run>/hosts/<host>` layout. No workspace/store
+or arbitrary-suffix exception exists. This records the observed extraction and
+checks metadata; it adds no per-request native-content hash or host re-pin.
+The archived host remains `38c3645283ceba06f66462830ae15f27270cc7f84575e40a4c6bd68452a63d0f`.
+Frozen v1 contract, policy module and apparatus pins are byte-identical.
+
+**Final focused checks.** Counts are passed / failed / ignored; nested isolated
+children are not added to outer counts.
+
+| Boundary | Counts | Elapsed |
+| --- | --- | --- |
+| Pilot units | 97 / 0 / 0 | 34.886 s |
+| CLI units | 6 / 0 / 0 | 17.342 s |
+| Four lexical stores / process reopen | 1 / 0 / 0 | 6.805 s |
+| Complete pinned-host fixture suite | 33 / 0 / 2 | 279.922 s |
+| Actual compiler/oracle producer | 1 / 0 / 0 | 3.664 s |
+
+The host suite uses the same production code but predates the ignored producer's
+test-only container-mode correction; it is not an identical full test-source claim.
+That producer was separately rerun on the final source. Safe readback confirms
+private checker artifacts, expected completion/binary bindings, and an ordinary
+compile-error candidate exiting 1 without executing an oracle. The four stores
+are actual current CLI lexical stores, not semantic-worker qualification.
+
+**All 15 selected controls executed unchanged failing assertions and restored
+exact source:** mode, component-links, creation-dir-mode, creation-file-mode,
+child-mask-bounded, child-mask-checker, parent-mask, host-mask, path-byte-budget,
+send-count, send-messages, post-host-closure, cli-report, cli-probe-persist and
+checker-mode. Each inner test returned 101 with its runtime marker and no compile
+failure. `control-boundaries.json` preserves the precise reached assertion and
+unreached checks. In particular, send-count failed the generations-length assertion;
+it is **not an observed extra-HTTP proof**. Send-messages reached a fixture-path
+mismatch without disclosing its exact vector. Host-mask reached non-completion,
+not a zero-HTTP assertion. Creation controls failed prerequisites before metadata
+assertions; checker-mode reached only its successful-step receipt branch.
+Parent-mask affects only the isolated caller. CLI probe persistence uses the real
+finished fixture-probe receipt; post-host-closure directly exposes lost returned
+capture, not independently observed later closure rows.
+
+**Failures retained:** 8 earlier unexpected-exit commands remain in safe
+metadata, including missing test metadata/permission imports, restrictive-mask
+creation, APFS filename setup, CLI fixtures and the first full-host suite.
+macOS refused O_EVTONLY on mode 000: exclusive mkdir now uses nonfollowing stat,
+fchmodat, then opened-inode comparison and child/parent sync. APFS rejected invalid
+UTF8 filenames; the raw-byte test directly charges an OsString and separately
+walks an accepted multibyte filename. Two synthetic Live fixtures moved auxiliary
+Verification probes to separate owned environments. The RLIMIT_FSIZE child uses
+pipes for libtest reporting. The ignored producer's newly owned 0755 container
+was corrected to 0700 after readback and rerun. These fixture corrections preserve the production guards.
+
+**Separate bounded phases.** The original 3,600-second stage closed after
+2931.612 s **unqualified because full gates were absent**;
+its deadline was not extended. A separately selected 1,800-second gate-only
+continuation tested the same committed candidate. All eight actual gate exits are
+0 (fmt, clippy, tests, pilot clippy/tests and three Rust 1.90 gates), completing in
+614.765 s; continuation elapsed is
+625.829 s, within its original deadline. Default tests:
+1311 passed, 0 failed, 34 ignored;
+recovery: 21 checks; pilot outer: 97 passed,
+0 failed, 0 ignored, with
+1 intact nested summary. Two child summaries interleave with parallel test output
+in both the gate and final focused logs; each log retains three child 1/0/0 count
+fragments plus the outer 97/0/0. The original parser mismatch is preserved and
+explained in `nested-summary-inspection.json`; children are never added to outer
+totals. Rust/Cargo 1.97.1 and 1.90.0 use SDK 26.5.
+
+Both phases retain 120 seconds for cleanup, one heavy job, a 20 GiB free-space floor,
+8 GiB sampled individual-process ceiling and USD 0 spend. Focused sampled RSS/free
+minimum: 2,192,277,504 /
+266,261,848,064 bytes, with
+225 missed samples; gates:
+1,418,739,712 / 263,419,609,088 bytes, with 1382 misses. Receipts report natural exit,
+no forced cleanup and no observed owned identities remaining. These are sampled
+observations, not true peaks or GPU/global-memory guarantees.
+
+No real provider request, real credential, original private full-pipeline rerun,
+semantic-worker output acceptance or current-installed-host qualification is
+claimed. Startup-network completeness, arbitrary same-user race protection,
+deterministic fchmod/fsync fault injection and power-loss durability remain
+unproved. Pilot v2 stays unfunded/unfrozen; T006 and task-context outcomes remain open.
+Private receipts remain under `runs/pilot-private-permissions-2026-11-11/`:
+`commit-pin.json`, `stage-closure.json`, safe command/control metadata, readbacks,
+`control-boundaries.json`, and `gate-continuation/{protocol,gates-result,safe-gate-metadata}.json`.
+
 ## Parser bundle and complete unit comparison — 2026-11-11
 
 Owner decision 21 is implemented in `68ed776`: tree-sitter-scala 0.26.2 →

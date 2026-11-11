@@ -157,7 +157,7 @@ The current source pointers establish ownership, not completed qualification.
 | Checker binds environment names only | Bind exact sanitized environment values, sandbox profile bytes and freshly hashed oracle/compiler bytes to each checker receipt. Credentials are absent from the checker environment. The selected local checks pass ([record](../../../docs/validation.md#pilot-checker-provenance-and-retained-diagnostics--2026-11-11)); the limits in the selected repair below and broader v2 qualification remain. |
 | Compile stderr only hashed | Retain bounded private stderr bytes and their digest, with explicit overflow/failure behavior. Inspect errors; a matching binary hash cannot explain omitted diagnostics. The selected local checks pass ([record](../../../docs/validation.md#pilot-checker-provenance-and-retained-diagnostics--2026-11-11)); the limits in the selected repair below and broader v2 qualification remain. |
 | Coding authority outside chain; declared/actual paths differ | Append the authorization digest to the durable chain before a paid attempt and require the canonical actual run root to equal the authorized root. The selected metadata/path and chained-authority fixtures pass ([record](../../../docs/validation.md#pilot-authority-and-run-path-binding--2026-11-11)); historical v1 evidence is unchanged. Current installed-host compatibility and actual Live-compatible probe history remain unproved. |
-| Some private artifacts have wider permissions | Enforce and verify 0700 directories/0600 private files, including host/store outputs; fail before transmission if this cannot be established. Executables need explicitly declared private executable modes. |
+| Some private artifacts have wider permissions | Enforce and verify 0700 directories/0600 private files, including host/store outputs; fail before transmission if this cannot be established. Executables need explicitly declared private executable modes. The selected local metadata, child-launcher, lexical-store, pinned-host and actual-checker checks pass ([record](../../../docs/validation.md#pilot-private-output-permissions-and-terminal-publication--2026-11-11)). This permission slice does not qualify semantic-worker output modes, the original private full pipeline, current installed-host compatibility or complete startup-network observation. |
 | Rejected credential after claim has no terminal journal outcome | Preserve consumed claim and append a terminal refusal without printing the credential; prove no provider transmission. The selected local repair passes the pinned-artifact fixture checks, including synthetic Live admission ordering ([record](../../../docs/validation.md#pilot-credential-refusal-durability--2026-11-11)). Current installed-host compatibility and actual Live-compatible probe history remain unproved; v2 still requires its declared host/arm qualification. |
 | Workspace restore failure exits without halt record | Journal a terminal halt, stop owned processes and prohibit the next slot. The selected local fixtures pass: healthy journal finalization retains the halt and unstarted rows, the post-admission CLI returns failure, and failed halt persistence prevents a later success receipt ([record](../../../docs/validation.md#pilot-workspace-restoration-and-halt-persistence--2026-11-11)). This does not establish live-front-door admission, current installed-host/provider compatibility, private-oracle outcomes or power-loss durability; v2 still requires its declared host/arm qualification. |
 | `seal_slot` relies only on exit status | Bind actual expected oracle-completion evidence to the checked candidate and receipt; zero exit without the required completion evidence cannot pass. The selected completion/artifact consumer and actual owned-copy producer checks pass ([record](../../../docs/validation.md#pilot-checker-completion-and-artifact-binding--2026-11-11)). Complete stream capture and terminal check-chain errors are enforced; this does not qualify the private full pipeline, remaining capture gaps or pilot v2/T006. |
@@ -202,8 +202,9 @@ failure or deadline stops the owned group, joins the readers and leaves later st
 and slots unstarted through the existing halt owner. Qualification separates real
 consumer/file checks, owned-process lifecycle fixtures, and the fixed compiler/oracle
 on fresh owned copies. A pre-execution pathname hash is not atomic exec attestation;
-dynamic libraries/sysroot, compiler-version preflight bounds, broader private-artifact
-permissions and startup-network observation remain separate gaps. This repair neither
+dynamic libraries/sysroot, compiler-version preflight bounds and startup-network
+observation remain separate gaps. Broader private-artifact permissions have their
+selected qualification below. This repair neither
 runs the original calibration harness nor accepts or funds pilot v2/T006.
 [Qualification evidence](../../../docs/validation.md#pilot-checker-provenance-and-retained-diagnostics--2026-11-11); broader v2 freeze requirements remain.
 
@@ -216,7 +217,8 @@ an acknowledged complete observation prefix before count/messages admission.
 Source inspection is not shipped-runtime coverage or OS-denial proof; no host re-pin
 is selected. See the [source finding](../../../docs/validation.md#pilot-startup-network-source-feasibility--2026-11-11).
 
-**Selected private-output permissions repair, 2026-11-11 — implementation and qualification pending.**
+**Selected private-output permissions repair, 2026-11-11 — qualified at the selected local no-provider boundaries.**
+[Qualification evidence](../../../docs/validation.md#pilot-private-output-permissions-and-terminal-publication--2026-11-11) records the candidate, retained failures, exact control boundaries, separate gate-only continuation and unexecuted scope.
 The selected repair requires exact owner-only modes on newly owned pilot
 outputs: directories 0700 and regular private files 0600, including special bits.
 Declared 0700 executables are a checker root's exact `out/check` and the pinned

@@ -178,8 +178,15 @@ and dated paragraphs below are history.
     real checker run ([record](validation.md#pilot-checker-completion-and-artifact-binding--2026-11-11)).
     This does not accept the full private pipeline or pilot v2/T006; other gaps remain.
     Checker provenance and retained diagnostics pass the selected local checks
-    ([record](validation.md#pilot-checker-provenance-and-retained-diagnostics--2026-11-11));
-    broader permissions/startup-network gaps and pilot v2/T006 remain open.
+    ([record](validation.md#pilot-checker-provenance-and-retained-diagnostics--2026-11-11)).
+    Owned-output permissions and truthful seal/report publication pass their
+    selected local no-provider checks on `c399c1e`
+    ([record](validation.md#pilot-private-output-permissions-and-terminal-publication--2026-11-11)).
+    The receipt separates the originally unqualified stage from its completed
+    gate-only continuation, and distinguishes current lexical stores, pinned-host
+    fixtures and actual checker outputs. These permission checks do not qualify
+    semantic-worker output modes, the original private full pipeline or current
+    installed-host compatibility; pilot v2/T006 remain open.
     Startup-network observation remains open: matching-release source exposes
     partial diagnostics but no established complete early observation/barrier
     ([source finding](validation.md#pilot-startup-network-source-feasibility--2026-11-11)).
