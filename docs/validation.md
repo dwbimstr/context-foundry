@@ -301,6 +301,78 @@ red/green logs, final gate receipt and a 340-file SHA-256 evidence snapshot, is 
 `runs/store-lock-2026-11-11/`; the original
 gate logs and receipt remain in `runs/t010-lexical-2026-11-11/gates-retained*`.
 
+## Pilot authority and run-path binding — 2026-11-11
+
+**PASS at the selected local no-provider boundary.** Pilot v2/T006 remain unfunded and unaccepted.
+Authority code `87fe845a3e4612996f14370a2dfc6e2a8732cb2b` follows base `bd9ecbf19f6ca529aa51d17c2fa923e88a76def0`.
+Test-only continuation `4c659f72f3d5bb9ade51e4502dc9fe986d0dc79b` changes only `tests/store_lock.rs`; the four authority-source hashes remain exact.
+Launch metadata `bounded-pilot-v1-launch-v2` requires canonical `run_dir` and explicit
+`manifests --run-dir`; the unchanged authority shape binds that root through the manifest digest.
+Existing synced `admitted`/`coding_handoff` records bind the digest of validated authority bytes, scope
+and actual root before a runnable session returns; Verification records null authority.
+Legacy unbound metadata and unbound Live probe history refuse without rewriting historical evidence.
+
+| Retained command | Passed / failed / ignored | Actual / expected exit | Seconds | Disposition |
+| --- | ---: | ---: | ---: | --- |
+| `green-authority` | 9 / 0 / 0 | 0 / 0 | 96.354 | green pass |
+| `green-chain-final` | 2 / 0 / 0 | 0 / 0 | 34.223 | green pass |
+| `green-full-host-suite` | 25 / 0 / 1 | 0 / 0 | 195.484 | green pass |
+| `green-restore-cli` | 2 / 0 / 0 | 0 / 0 | 13.949 | green pass |
+| `green-seal-binding` | 1 / 0 / 0 | 0 / 0 | 18.535 | green pass |
+| `red-baseline-authority` | 2 / 7 / 0 | 101 / 101 | 80.778 | expected-red failure witness |
+| `red-coding-chain` | 0 / 1 / 0 | 101 / 101 | 30.368 | expected-red failure witness |
+| `red-probe-chain` | 0 / 1 / 0 | 101 / 101 | 21.798 | expected-red failure witness |
+| `red-seal-binding` | 0 / 1 / 0 | 101 / 101 | 18.174 | expected-red failure witness |
+| `fixture-continuation/green-store-lock` | 2 / 0 / 0 | 0 / 0 | 4.442 | green pass |
+| `fixture-continuation/mechanism-witness` | 1 / 0 / 0 | 0 / 0 | 6.226 | green pass |
+
+Expected-red `passed:true` only means the declared failure occurred. Actual panic/assertion
+excerpts and every command identity/lifecycle are retained in the private collection and logs.
+Baseline chain-positive tests stopped at new-format rejection; those are not causal chain witnesses.
+`red-probe-chain` and `red-coding-chain` omit only their producer fields, retain format/path
+validation, and restore all four selected source hashes. Their exact failing assertions remain recorded.
+The probe control fails on null admitted authority; the coding control reaches handoff and fails
+on null run path. Its later authority assertion was not reached, so it is not an authority-specific red.
+The seal-binding red stops at the first missing-authority case; it does not independently witness
+all later invalid-binding branches. The unchanged final green tests exercise their full assertions.
+Focused runs retain their actual working-tree HEAD/patch identity; gate receipts bind their respective commits.
+The ignored private-evidence pipeline was adapted before execution (`fixture-correction.txt`),
+including its earlier manifest-bound path refusal; it was never run or qualified.
+
+**First gates FAILED on `87fe845`:** seven exits 0, default test 101. The store-lock test failed
+at direct Tantivy writer setup (`tests/store_lock.rs:120`, `LockBusy`), before `Engine::open_existing`.
+Default totals: 1,310/1/34 passed/failed/ignored; 21 recovery checks and 64 pilot units pass.
+It took 634.366 s; original shared stage 1354.647/1,800 s concluded failed without extension.
+Its sampled individual RSS was 2,079,424,512 B, minimum free 267,518,402,560 B, with 1,413 missed samples.
+The separate two-store witness shows held-child `LockBusy` becoming writer-acquired after reap,
+while the other owner stays ready; it demonstrates a mechanism, not the original concurrent schedule.
+The continuation adds one shared Mutex as the first local in both tests. Strip-equality confirms
+unchanged original bodies/assertions and removal of the temporary witness; product lock policy is unchanged.
+This applies the [prior descriptor-lifetime finding](#derived-writer-contention-after-fork--2026-11-11) to fixture isolation (Tantivy 0.27 `directory::mmap_directory::ReleaseLockFile::drop`).
+
+**Fresh continuation gates pass** in 584.887 s: fmt, Clippy, default tests, pilot Clippy/tests,
+actual Rust 1.90 check/Clippy and pilot check. Rust/Cargo 1.97.1 and 1.90.0 use macOS SDK 26.5.
+Default totals: 1,311 passed, 0 failed, 34 ignored; 21 custom recovery checks pass separately.
+Pilot unit totals: 64 passed, 0 failed, 0 ignored. All retained commands exit naturally,
+with no forced cleanup or observed owned process remaining. The separate continuation completes in
+724.857 s of its own 1,800 s, with no extension and spend $0; the original failure remains unchanged.
+Focused sampled individual RSS maximum: 2,110,259,200 B;
+minimum free disk: 271,239,192,576 B; missed memory samples: 76.
+Gates: 859,127,808 B sampled individual RSS, 267,593,863,168 B minimum free,
+1,338 missed samples. The 8 GiB process/20 GiB disk bounds held; these are not true peaks or aggregate/GPU memory.
+
+Private evidence: `runs/pilot-authority-path-2026-11-11/`: `protocol.json`, `commit-pin.json`,
+`candidate-hashes.json`, all `focused/*/result.json` with named stdout/stderr/native receipts,
+`red-*-chain-control.json`, `fixture-correction.txt`, the failed `gates-result.json` and `stage-disposition.json`.
+Fresh continuation owners are `fixture-continuation/{protocol,commit-pin,gates-result,fixture-isolation-check}.json`, its focused receipts and gates logs.
+Both pins/receipts bind unchanged authority sources, frozen policy/contract and host; the original failed receipt is hash-preserved.
+Archived host SHA-256: `38c3645283ceba06f66462830ae15f27270cc7f84575e40a4c6bd68452a63d0f`.
+
+This is metadata revision 2 under frozen v1 policy, not new pilot authorization. No current installed
+host or provider compatibility, actual Live-compatible probe history, private oracle outcomes,
+power-loss/hostile-filesystem campaign, retrieval gain or real-agent/economics benefit is claimed.
+Other apparatus and pilot task/sample/arm/launch prerequisites retain their existing status.
+
 ## Pilot workspace restoration and halt persistence — 2026-11-11
 
 **PASS at the selected local no-provider repair boundary.** Focused red/green,

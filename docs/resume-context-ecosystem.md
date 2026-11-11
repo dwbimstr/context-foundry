@@ -169,6 +169,11 @@ and dated paragraphs below are history.
     ([record](validation.md#pilot-workspace-restoration-and-halt-persistence--2026-11-11)).
     This does not qualify live admission, the current installed host or pilot
     v2/T006; the other apparatus and freeze requirements remain.
+    Authority/run-path binding passes its selected local no-provider checks
+    ([record](validation.md#pilot-authority-and-run-path-binding--2026-11-11)).
+    New launch metadata binds the canonical capture root and chains the
+    validated authority digest; historical v1 evidence remains immutable.
+    Pilot v2/T006 and the remaining freeze requirements stay open.
   - **Hosts and evidence:** the owner's Mac is the work host. The 2026-10-11
     sandbox and its archive are declared lost; F2, F6, F8, F10 and F11 retire.
     Five encrypted backups are built and checksum-verified in

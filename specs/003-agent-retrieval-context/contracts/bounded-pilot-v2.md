@@ -82,7 +82,7 @@ The private launch manifest binds the contract digest, apparatus/executable hash
 host/model/settings, task and oracle manifests, allocation, profile/model inputs,
 all permitted routes, permissions and actual run directory. Rehash inputs at use.
 
-**Selected authority/run-path repair, 2026-11-11 — not yet qualified.** Launch
+**Selected authority/run-path repair, 2026-11-11 — qualified at the selected local fixture boundary.** Launch
 metadata uses `bounded-pilot-v1-launch-v2` with required canonical `run_dir`, distinct
 from `isolation_root`. The existing `manifests` command requires `--run-dir`;
 `build_manifests(root, verified, run_dir: &Path)` binds the same explicit capture
@@ -105,6 +105,7 @@ existing credential-refusal terminal shapes, halt ordering and restore repairs.
 This is capture metadata revision 2 under unchanged v1 policy, not pilot-v2
 execution authorization. Frozen v1 contract, manifests, claims, journals and
 receipts remain immutable history; v2 remains unfunded, unfrozen and unaccepted.
+[Qualification evidence](../../../docs/validation.md#pilot-authority-and-run-path-binding--2026-11-11); the broader v2 freeze requirements remain.
 
 Preserve v1's essential admission invariants: final serialized request identity
 after hooks; a pinned compatible counter projection; one generation in flight;
@@ -155,7 +156,7 @@ The current source pointers establish ownership, not completed qualification.
 | Host startup network denials absent from journal | Capture denied startup attempts and their destination/classification before any paid request; disallow unobserved routes. A sandbox denial is not evidence of journal completeness. |
 | Checker binds environment names only | Bind exact sanitized environment values, sandbox profile bytes and freshly hashed oracle/compiler bytes to each checker receipt. Credentials are absent from the checker environment. |
 | Compile stderr only hashed | Retain bounded private stderr bytes and their digest, with explicit overflow/failure behavior. Inspect errors; a matching binary hash cannot explain omitted diagnostics. |
-| Coding authority outside chain; declared/actual paths differ | Append the authorization digest to the durable chain before a paid attempt and require the canonical actual run root to equal the authorized root. |
+| Coding authority outside chain; declared/actual paths differ | Append the authorization digest to the durable chain before a paid attempt and require the canonical actual run root to equal the authorized root. The selected metadata/path and chained-authority fixtures pass ([record](../../../docs/validation.md#pilot-authority-and-run-path-binding--2026-11-11)); historical v1 evidence is unchanged. Current installed-host compatibility and actual Live-compatible probe history remain unproved. |
 | Some private artifacts have wider permissions | Enforce and verify 0700 directories/0600 private files, including host/store outputs; fail before transmission if this cannot be established. Executables need explicitly declared private executable modes. |
 | Rejected credential after claim has no terminal journal outcome | Preserve consumed claim and append a terminal refusal without printing the credential; prove no provider transmission. The selected local repair passes the pinned-artifact fixture checks, including synthetic Live admission ordering ([record](../../../docs/validation.md#pilot-credential-refusal-durability--2026-11-11)). Current installed-host compatibility and actual Live-compatible probe history remain unproved; v2 still requires its declared host/arm qualification. |
 | Workspace restore failure exits without halt record | Journal a terminal halt, stop owned processes and prohibit the next slot. The selected local fixtures pass: healthy journal finalization retains the halt and unstarted rows, the post-admission CLI returns failure, and failed halt persistence prevents a later success receipt ([record](../../../docs/validation.md#pilot-workspace-restoration-and-halt-persistence--2026-11-11)). This does not establish live-front-door admission, current installed-host/provider compatibility, private-oracle outcomes or power-loss durability; v2 still requires its declared host/arm qualification. |
