@@ -301,6 +301,68 @@ red/green logs, final gate receipt and a 340-file SHA-256 evidence snapshot, is 
 `runs/store-lock-2026-11-11/`; the original
 gate logs and receipt remain in `runs/t010-lexical-2026-11-11/gates-retained*`.
 
+## Pilot checker completion and artifact binding — 2026-11-11
+
+**PASS at the selected local checker boundary.** Pilot v2/T006 remain unfunded and unaccepted.
+Candidate `85479736a55c3b6982e88adb2a4b8a013a062b5f` follows `13c0a63e1e8282986d50444632e13ffc27a6b9db`; frozen v1 policy/history are unchanged.
+The existing consumer requires the pinned completion digest and exact compile/executed-image
+lineage. Complete observed nonzero results remain ordinary Fail; incomplete provenance halts.
+The producer hashes the exact copied oracle bytes, refuses read-error-as-EOF capture, and routes
+capture/receipt-write/sealing errors through the existing halt, keeping later slots unstarted.
+
+| Retained focused command | Passed / failed / ignored | Actual / expected exit | Seconds | Disposition |
+| --- | ---: | ---: | ---: | --- |
+| `green-actual-producer` | 1 / 0 / 0 | 0 / 0 | 4.108 | green pass |
+| `green-consumer` | 4 / 0 / 1 | 0 / 0 | 66.552 | green pass |
+| `green-full-host-suite` | 29 / 0 / 2 | 0 / 0 | 242.703 | green pass |
+| `green-helpers` | no test summary | 101 / 0 | 9.798 | retained other outcome; inspect metadata/log |
+| `green-helpers-final` | 2 / 0 / 0 | 0 / 0 | 31.625 | green pass |
+| `green-helpers-retry` | 2 / 0 / 0 | 0 / 0 | 31.787 | green pass |
+| `red-actual-producer` | 0 / 1 / 0 | 101 / 101 | 1.346 | expected-red failure witness |
+| `red-check-halt` | 0 / 1 / 0 | 101 / 101 | 32.517 | expected-red failure witness |
+| `red-consumer` | 1 / 3 / 1 | 101 / 101 | 44.974 | expected-red failure witness |
+| `red-pipe` | 0 / 1 / 0 | 101 / 101 | 31.849 | expected-red failure witness |
+
+Expected-red `passed:true` matches a failure witness, not implementation acceptance. Actual
+assertion metadata and exact restored-source controls remain with each command. Tests run on
+retained working-tree patches; all eight gates below bind the final committed candidate.
+The first `green-helpers` command failed compilation before tests: its unqualified `json!`
+was corrected to `serde_json::json!` in test code only; production was unchanged and the failure is retained.
+The pipe red accepts a prefix hash; the halt red fails on None versus check_output_unbound at its
+first producer-error case, before its receipt-write branch. Final green exercises both helper branches.
+Synthetic consumer receipts use inert artifact identities and do not execute the private oracle.
+The actual producer executes the fixed local compiler/oracle on new owned copies of the five
+SHA256SUMS-verified files and fresh outputs. It uses no host/model/provider or original calibration harness.
+Its baseline red completes four zero-exit steps and checks completion before finding no oracle_run
+executed-image artifact. Green separately passes the positive chain and a new owned compile-error case.
+That negative producer phase is an observed nonzero receipt; ordinary Fail consumption is tested separately.
+Readback retains 29 private green artifacts and proves five original files unchanged in bytes/mode/
+mtime/inode, owned input bytes/mode 0600 and compiler pin unchanged. Original oracle and historical
+stdout bytes are unchanged; original oracle mode was not compared.
+The serial synthetic-host file is distinct; both the private full pipeline and actual-producer test
+remain ignored there. Actual producer execution is only its separately selected ignored-test command.
+
+**All eight gates pass** in 616.327 s; default tests 1,311/0/34 passed/failed/ignored,
+21 custom recovery checks pass separately, and pilot units 66/0/0. Rust/Cargo 1.97.1 and
+actual Rust/Cargo 1.90.0 use macOS SDK 26.5. Every retained command exits naturally, without
+forced cleanup or observed owned processes remaining. Shared elapsed: 1529.531/2,400 s;
+no extension, 120-second cleanup reserve and spend $0. Each producer recipe retains its 60-second bound.
+Focused sampled individual RSS maximum 2,165,719,040 B; minimum free
+270,814,244,864 B; 74 missed samples. Gates: 1,401,208,832 B RSS,
+267,521,388,544 B free, 1,381 misses. Bounds held; these are not true peaks or aggregate/GPU memory.
+
+Expected successful stdout SHA-256: `aac03c0ded8403eb8bd3ca53e9880313cde11fa658db4fc7444d737eef33127d`.
+Its 106-byte length is historical input metadata; the new receipt records a digest, not a byte counter.
+Oracle SHA-256: `f5ac14d370d852090c49ead61e23f4d9185eed491b33b123ba6e6ff2dec09bb9`.
+Private owners: `runs/pilot-oracle-completion-2026-11-11/` protocol, owned-input/commit pins,
+all focused receipts/control metadata, `producer-red-readback.json`, `producer-readback.json`,
+`input-final-readback.json`, `helper-compile-correction.json`,
+`gates-result.json` and gate logs. Raw private source/oracle/output bytes stay outside Git.
+
+No current installed-host/provider compatibility, private full-pipeline/agent/economics acceptance,
+power-loss durability or retrieval gain is claimed. Environment/sandbox/compiler receipt expansion,
+retained stderr bytes and permissions remain separate gaps; broader v2 freeze requirements stay open.
+
 ## Pilot authority and run-path binding — 2026-11-11
 
 **PASS at the selected local no-provider boundary.** Pilot v2/T006 remain unfunded and unaccepted.

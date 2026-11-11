@@ -160,9 +160,9 @@ The current source pointers establish ownership, not completed qualification.
 | Some private artifacts have wider permissions | Enforce and verify 0700 directories/0600 private files, including host/store outputs; fail before transmission if this cannot be established. Executables need explicitly declared private executable modes. |
 | Rejected credential after claim has no terminal journal outcome | Preserve consumed claim and append a terminal refusal without printing the credential; prove no provider transmission. The selected local repair passes the pinned-artifact fixture checks, including synthetic Live admission ordering ([record](../../../docs/validation.md#pilot-credential-refusal-durability--2026-11-11)). Current installed-host compatibility and actual Live-compatible probe history remain unproved; v2 still requires its declared host/arm qualification. |
 | Workspace restore failure exits without halt record | Journal a terminal halt, stop owned processes and prohibit the next slot. The selected local fixtures pass: healthy journal finalization retains the halt and unstarted rows, the post-admission CLI returns failure, and failed halt persistence prevents a later success receipt ([record](../../../docs/validation.md#pilot-workspace-restoration-and-halt-persistence--2026-11-11)). This does not establish live-front-door admission, current installed-host/provider compatibility, private-oracle outcomes or power-loss durability; v2 still requires its declared host/arm qualification. |
-| `seal_slot` relies only on exit status | Bind actual expected oracle-completion evidence to the checked candidate and receipt; zero exit without the required completion evidence cannot pass. |
+| `seal_slot` relies only on exit status | Bind actual expected oracle-completion evidence to the checked candidate and receipt; zero exit without the required completion evidence cannot pass. The selected completion/artifact consumer and actual owned-copy producer checks pass ([record](../../../docs/validation.md#pilot-checker-completion-and-artifact-binding--2026-11-11)). Complete stream capture and terminal check-chain errors are enforced; this does not qualify the private full pipeline, remaining capture gaps or pilot v2/T006. |
 
-**Selected checker-completion repair, 2026-11-11 — not yet qualified.**
+**Selected checker-completion repair, 2026-11-11 — qualified at the selected local checker boundary.**
 The existing receipt owner must require the pinned oracle's complete successful
 stdout digest (`aac03c0ded8403eb8bd3ca53e9880313cde11fa658db4fc7444d737eef33127d`),
 recovered from hash-verified historical evidence, for an all-zero-exit pass.
@@ -175,6 +175,7 @@ use the existing session halt and leave later slots unstarted. This reuses curre
 receipt fields and preserves frozen v1 policy/history. Qualification separates
 synthetic consumer tests from the real fixed compiler/oracle on new owned copies;
 it does not rerun the original calibration harness or accept pilot v2/T006.
+[Qualification evidence](../../../docs/validation.md#pilot-checker-completion-and-artifact-binding--2026-11-11); the broader v2 freeze requirements remain.
 
 Preserve v1's original failures and interpretation. Its two blocked `read .` calls
 remain constraint violations with the owner's accepted oracle outcomes. V2's task
