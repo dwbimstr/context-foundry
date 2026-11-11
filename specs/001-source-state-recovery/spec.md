@@ -2,8 +2,8 @@
 
 Planning addition, 2026-10-09: [T010](#t010--retrieve-behavioral-evidence-for-a-named-symbol)
 is authorized for execution by the owner on 2026-10-09 under the [ecosystem plan](../../docs/context-ecosystem-plan.md).
-Existing task acceptance stands; default city-map behavior is unchanged. The
-implemented mixed-intent candidate is opt-in pending its full acceptance gates.
+Existing task acceptance stands. The accepted experimental line keeps mixed-intent
+behavior opt-in; an isolated default-on candidate is undergoing qualification.
 
 Status: T001–T006 implemented and verified locally; not released. T001–T003 were
 verified on 2026-10-01 (owner-approved scope: 001 + 003 first implementation). T004–T006
@@ -580,8 +580,22 @@ option. A supplied dense window (including partial or empty-hit windows) disable
 both prose selection and owned-method support at the shared engine boundary. Off
 and named-fallback plans are lexical and retain the option. Preserve the explicit
 library boolean and existing flag; default promotion is conditional on the local
-guards, full G1 and a fresh 388-question G2 comparison against `a456c53` (K = 1).
+guards, full G1 and a fresh 388-question G2 comparison. The first attempt used
+`a456c53` and K = 1; its failed default result remains in the record.
 The scope is retrieval only; no provider spend or real-agent benefit is authorized.
+
+The second candidate, selected 2026-11-11 before its tests, adds conservative
+singleton exact-run priority for lexical prose and preserves long passages through
+the existing selection identity ([contract](contracts/context-v2.md#experimental-anchorless-prose-selection--009-t005-2026-10-10)).
+It uses the accepted parser/Tantivy baseline `68ed776` (records `1b4cf0e`) and K = 2
+for this continuing decision family, requiring p < 0.025 with the other owner
+enable conditions unchanged. The isolated trial includes the proposed default in
+the library, CLI and MCP before G1/G2, with the existing bare enabling flag and
+`--experimental-behavior-context=false` opt-out. Default promotion on the accepted
+branch remains held until all gates pass; there is no score-driven variant.
+The same six frozen economics cases now run through both default and explicit-on
+MCP boundaries, without changing their assertions, corpus or token caps. Existing
+ordinary comparison controls explicitly opt out of the proposed new default.
 
 The first candidate is implemented behind `--experimental-behavior-context` (CLI
 context / MCP owner), default off. It changes packing of existing, fresh candidates,

@@ -29,14 +29,21 @@ fn retrieval_trace_distinguishes_selection_caps_from_anchored_packing_omissions(
     engine.replace_source("session.rs", &body).unwrap();
     drain(&mut engine);
     let query = "How does `Session` retry requests?";
+    // This diagnostic deliberately exercises the original anchored ladder.
+    let options = context_foundry::store::ContextOptions {
+        experimental_behavior: false,
+        ..Default::default()
+    };
     let baseline = engine
-        .context_candidates(query, Strategy::Auto, &Control::unbounded())
-        .unwrap();
+        .context_candidates_with(query, Strategy::Auto, &Control::unbounded(), &options)
+        .unwrap()
+        .batch;
     let trace = context_foundry::retrieval_trace::RetrievalTrace::default();
     let control = Control::unbounded().with_trace(Some(trace.clone()));
     let batch = engine
-        .context_candidates(query, Strategy::Auto, &control)
-        .unwrap();
+        .context_candidates_with(query, Strategy::Auto, &control, &options)
+        .unwrap()
+        .batch;
     let pack = |batch: &_| {
         response::pack_context(batch, Budget::request(2048), &response::stdout_bytes).unwrap()
     };
@@ -75,10 +82,11 @@ fn retrieval_trace_distinguishes_selection_caps_from_anchored_packing_omissions(
         .unwrap();
     let stale_trace = context_foundry::retrieval_trace::RetrievalTrace::default();
     engine
-        .context_candidates(
+        .context_candidates_with(
             query,
             Strategy::Auto,
             &Control::unbounded().with_trace(Some(stale_trace.clone())),
+            &options,
         )
         .unwrap();
     assert!(
@@ -145,8 +153,17 @@ fn prose_diversity_backfills_independent_same_file_evidence_without_hiding_neigh
             .unwrap();
     assert!(packed.text.contains("action_11"));
     let ordinary = engine
-        .context_candidates(query, Strategy::Search, &Control::unbounded())
-        .unwrap();
+        .context_candidates_with(
+            query,
+            Strategy::Search,
+            &Control::unbounded(),
+            &ContextOptions {
+                experimental_behavior: false,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .batch;
     assert_eq!(
         ordinary
             .items
@@ -453,8 +470,17 @@ fn prose_plural_acronyms_match_the_acronym_without_changing_symbol_requests() {
         "z.rs"
     );
     let ordinary = engine
-        .context_candidates(query, Strategy::Search, &Control::unbounded())
-        .unwrap();
+        .context_candidates_with(
+            query,
+            Strategy::Search,
+            &Control::unbounded(),
+            &ContextOptions {
+                experimental_behavior: false,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .batch;
     assert_eq!(ordinary.items[0].handle.as_ref().unwrap().path, "a.rs");
     engine.replace_source("named.rs", "fn APIs() {}\n").unwrap();
     drain(&mut engine);
@@ -842,6 +868,172 @@ fn prose_coverage_and_proximity_beat_repeated_single_term_and_accept_compounds()
             .path,
         "constant.rs"
     );
+}
+
+// A uniquely named implementation competes with stronger full-query matches.
+// These are synthetic source bytes; they are parsed and retrieved, never run.
+const PROSE_BUDGET_IMPLEMENTATION: &str = "pub fn rebalance(loads: &[u64], limit: u64) -> Vec<u64> {\n    let mut result = loads.to_vec();\n    let total: u64 = result.iter().sum();\n    if total <= limit {\n        return result;\n    }\n    let mut remaining = limit;\n    for (index, value) in result.iter_mut().enumerate() {\n        let slots = (loads.len() - index) as u64;\n        let share = remaining / slots;\n        *value = (*value).min(share);\n        remaining -= *value;\n    }\n    result\n}";
+
+fn prose_budget_fixture() -> (tempfile::TempDir, tempfile::TempDir, Engine) {
+    let fixture = tempfile::tempdir().unwrap();
+    let (store, mut engine) = setup(&fixture.path().join("ws"));
+    engine
+        .replace_source("unique.rs", PROSE_BUDGET_IMPLEMENTATION)
+        .unwrap();
+    // All 25 definitions fit the context candidate limit. Each competitor
+    // covers the full query and has enough body to create delivery pressure.
+    for n in 0..24 {
+        let mut body = format!("pub fn inspect_{n:02}() {{\n    rebalance_shard_capacity();\n");
+        for step in 0..16 {
+            body.push_str(&format!("    let sample_{step} = observe({step});\n"));
+        }
+        body.push_str("    retain(sample_15);\n}\n");
+        engine
+            .replace_source(&format!("competitor{n:02}.rs"), &body)
+            .unwrap();
+    }
+    drain(&mut engine);
+    (fixture, store, engine)
+}
+
+fn prose_budget_text(engine: &Engine, enabled: bool) -> String {
+    use context_foundry::store::ContextOptions;
+    let context = engine
+        .context_candidates_with(
+            "rebalance shard capacity",
+            Strategy::Search,
+            &Control::unbounded(),
+            &ContextOptions {
+                experimental_behavior: enabled,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let packed = response::pack_enriched_context(
+        &context,
+        None,
+        Budget::request(2048),
+        &response::stdout_bytes,
+    )
+    .unwrap();
+    assert!(packed.tokens <= 2048);
+    assert!(
+        tiktoken_rs::o200k_base_singleton()
+            .encode_ordinary(&packed.text)
+            .len()
+            <= 2048,
+        "the final emitted context exceeds its token cap"
+    );
+    assert!(parse_v2(&packed.text).is_ok());
+    packed.text
+}
+
+#[test]
+fn prose_delivers_a_unique_named_implementation_within_the_final_budget() {
+    let (_fixture, _store, engine) = prose_budget_fixture();
+    assert!(
+        prose_budget_text(&engine, false).contains(PROSE_BUDGET_IMPLEMENTATION),
+        "the ordinary exact-name path must deliver the complete fixture body"
+    );
+    let text = prose_budget_text(&engine, true);
+    let parsed = parse_v2(&text).unwrap();
+    assert!(
+        parsed.items.iter().any(|item| {
+            item.kind == testkit::V2Kind::Source
+                && item.form.is_none()
+                && item.body == PROSE_BUDGET_IMPLEMENTATION
+                && HandleRef::parse(&item.handle).is_ok_and(|handle| handle.path == "unique.rs")
+        }),
+        "prose context lost the unique implementation's exact body:\n{text}"
+    );
+}
+
+#[test]
+fn prose_duplicate_names_keep_full_query_evidence_first_in_final_delivery() {
+    let (_fixture, _store, mut engine) = prose_budget_fixture();
+    engine
+        .replace_source("duplicate.rs", PROSE_BUDGET_IMPLEMENTATION)
+        .unwrap();
+    drain(&mut engine);
+    let text = prose_budget_text(&engine, true);
+    let parsed = parse_v2(&text).unwrap();
+    let first = parsed
+        .items
+        .iter()
+        .find(|item| item.kind == testkit::V2Kind::Source)
+        .expect("the final context must deliver source evidence");
+    assert!(
+        first.form.is_none()
+            && first.body.starts_with("pub fn inspect_")
+            && first.body.contains("rebalance_shard_capacity();"),
+        "ambiguous one-word definitions displaced the fuller evidence:\n{text}"
+    );
+}
+
+#[test]
+fn prose_never_delivers_a_stale_unique_implementation() {
+    let (_fixture, _store, engine) = prose_budget_fixture();
+    engine
+        .replace_source("unique.rs", "pub fn unrelated() { fresh_observation(); }\n")
+        .unwrap();
+    // Deliberately do not refresh: the old definition still has index postings.
+    let text = prose_budget_text(&engine, true);
+    assert!(text.contains("rebalance_shard_capacity();"));
+    assert!(
+        !text.contains("pub fn rebalance("),
+        "stale definition bytes survived final validation:\n{text}"
+    );
+    for item in parse_v2(&text).unwrap().items {
+        if item.kind == testkit::V2Kind::Source && !item.handle.is_empty() {
+            assert_ne!(
+                HandleRef::parse(&item.handle).unwrap().path,
+                "unique.rs",
+                "a stale posting must not be retargeted to the edited file"
+            );
+        }
+    }
+}
+
+#[test]
+fn prose_keeps_the_late_body_of_a_unique_named_long_callable() {
+    let fixture = tempfile::tempdir().unwrap();
+    let (_store, mut engine) = setup(&fixture.path().join("ws"));
+    let body = format!(
+        "pub fn rebalance() {{\n    inspect_shard_capacity();\n{}    apply_shard_capacity();\n}}\n",
+        "    ordinary_step();\n".repeat(450),
+    );
+    engine.replace_source("long.rs", &body).unwrap();
+    drain(&mut engine);
+    let text = prose_budget_text(&engine, true);
+    let parsed = parse_v2(&text).unwrap();
+    let verbatim: Vec<_> = parsed
+        .items
+        .iter()
+        // Full verbatim bodies and exact excerpts both render with no form
+        // tag. "excerpt" is a label; signature/outline tags are excluded.
+        .filter(|item| item.kind == testkit::V2Kind::Source && item.form.is_none())
+        .collect();
+    assert!(
+        verbatim
+            .iter()
+            .any(|item| item.body.contains("pub fn rebalance()")),
+        "final context lost the named declaration:\n{text}"
+    );
+    assert!(
+        verbatim
+            .iter()
+            .any(|item| item.body.contains("apply_shard_capacity();")),
+        "the named declaration must not suppress its late matching body:\n{text}"
+    );
+    for item in verbatim {
+        let handle = HandleRef::parse(&item.handle).unwrap();
+        assert_eq!(handle.path, "long.rs");
+        assert_eq!(
+            item.body.as_bytes(),
+            &body.as_bytes()[handle.start as usize..handle.end as usize],
+            "each delivered passage must retain its exact source coordinates"
+        );
+    }
 }
 
 #[test]

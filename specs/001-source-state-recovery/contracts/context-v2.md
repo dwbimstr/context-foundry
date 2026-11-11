@@ -570,16 +570,26 @@ holds per index state.
 #### Experimental anchorless prose selection — 009 T005, 2026-10-10
 
 With `experimental_behavior` enabled for lexical search-context requests, an anchorless
-plain-language query uses tier 2 without promoting incidental exact-definition runs
-to tier 1. Eligibility requires at least three whitespace-separated words, each
+plain-language query uses prose selection with conservative singleton exact-definition
+priority (the 2026-11-11 candidate; default promotion remains gated). It reuses
+at most 32 lowercase, distinct tier-1 runs, excluding existing prose stopwords and
+runs corresponding to suppressed incidental group-3 anchors. A run precedes tier 2
+only when its restricted `def_name` query's complete Count is exactly one indexed
+definition document; a truncated TopDocs sample or freshness-filtered survivor count
+cannot establish this. The restriction excludes memory/brief documents and applies
+any path subtree, without new role, case, language, qualifier or freshness filters.
+Uniqueness is per serving index, not compiler identity or global root identity.
+Existing run ordering, 64/256 candidate bounds, final-read identity and the 32-unit
+context cap remain. Non-prose exact-run selection is unchanged. Eligibility requires at least three whitespace-separated words, each
 alphabetic (including hyphen-separated alphabetic compounds) after trimming trailing
 `?`, `.`, `,` or `:`. A capitalized group-3 candidate inside an unmarked compound
 does not alone turn prose into a symbol request; marked and shaped names still do.
 Queries starting with
 `where`, `find`, `locate`, `show` or `who` retain the baseline. Explicit code/path
 syntax, admitted anchors (including global multi-root anchors), graph strategy and
-policy-routed auto strategy retain their existing selection. Default context and the
-ordinary `search` operation are unchanged.
+policy-routed auto strategy retain their existing selection. The ordinary `search`
+operation is unchanged. The isolated default-on trial and its qualification gates
+are owned by [T010](../spec.md#t010--retrieve-behavioral-evidence-for-a-named-symbol).
 
 Cause: many definitions named ordinary words such as `read` can occupy all 32 context
 slots ahead of a body matching the complete behavioral query. The candidate removes
@@ -590,7 +600,12 @@ bring forward the next disjoint matching document of its same long callable
 (`fn`/`method`, over 1,536 bytes) from that bounded window. The association requires
 the same path, hash, owner start/head/end and kind; names alone never join owners.
 Every candidate remains present once, and final selection still admits at most two
-documents per owner. This prevents a discovered function's later matching passage
+disjoint documents per owner. Cross-tier exclusion and final selection use the same
+clipped document identity for every long prose candidate, including a promoted
+definition. The existing `selection_unit(prose)` helper therefore applies its long
+prose rule to both tiers; non-prose still uses the whole delivery-unit identity.
+This preserves later matching body passages when the definition document is
+promoted, with the existing overlap check and no additional candidate window. This prevents a discovered function's later matching passage
 from being cut independently below unrelated owners. The ranked lanes then
 alternate, code first. Each
 window uses distinct non-stopword subtoken coverage (at most 64 terms). Adjacent
@@ -1173,8 +1188,8 @@ by the resolver; `retrieve` is unchanged.
 
 #### Experimental behavioral support — 001 T010, 2026-10-09
 
-The owner authorized this candidate for implementation; it is **off by default**
-until T010 passes its own local gates and the 2026-10-19 G2 enable rule
+The owner authorized this candidate for implementation; the accepted branch keeps
+it **off by default** until T010 passes its own local gates and the 2026-10-19 G2 enable rule
 ([AGENTS.md](../../../AGENTS.md)). Owner amendment, 2026-11-06 ("Lexical-only, drop
 T006 gate"): the 003 T006 agent-task gate no longer applies to this flag, and no
 real-agent benefit is claimed. The flag is to lose its effects on semantic stores,
@@ -1184,8 +1199,12 @@ and once those gates pass it is to default on only where lexical results are ser
 The 2026-11-11 candidate removes those semantic effects; lexical default promotion
 is held after the candidate failed the frozen economics guard
 ([receipt](../../../docs/validation.md#t010-lexical-default--2026-11-11)).
-Enable it explicitly with
-`context --experimental-behavior-context` or the same flag at MCP owner startup.
+The second candidate adds singleton prose priority and passage preservation above.
+Its isolated trial defaults on in the library, CLI and MCP before qualification,
+retains bare `--experimental-behavior-context`, and accepts
+`--experimental-behavior-context=false` to select the ordinary lexical path.
+It must pass a fresh comparison against parser baseline `68ed776` with K = 2,
+all frozen local outcomes and full G1. A supplied dense window still bypasses it.
 The MCP tool schema and ordinary response wire do not change.
 
 The first candidate repairs packing only. It does not expand candidate windows,

@@ -721,7 +721,7 @@ impl Engine {
         }
         let prose = selection.prose && anchors.is_empty() && prose_query(query);
         if prose && let Some(trace) = control.trace() {
-            trace.record(serde_json::json!({"stage":"lexical_intent", "intent":"anchorless_prose", "exact_run_promotion":false, "scoring":"distinct_terms_proximity_v1", "term_limit":64}));
+            trace.record(serde_json::json!({"stage":"lexical_intent", "intent":"anchorless_prose", "exact_run_promotion":true, "exact_run_rule":"singleton_indexed_definition", "scoring":"distinct_terms_proximity_v1", "term_limit":64}));
         }
         for anchor in anchors {
             // The anchor's window (context-v2 § Resolver order): every
@@ -761,10 +761,10 @@ impl Engine {
                 documents,
             });
         }
-        if tier1.is_empty() && !prose {
-            // Without anchors the 2026-10-06 rule stands: one exact count and
-            // the 64 smallest-`key_hash` definitions per run, under the same
-            // restriction as the documents it keeps.
+        if tier1.is_empty() {
+            // Count every eligible definition, independently of the bounded
+            // TopDocs sample. Prose promotes only singleton runs; ordinary
+            // exact-run selection retains the 2026-10-06 rule.
             let definitions = (
                 Count,
                 TopDocs::with_limit(TIER1_LIMIT).tweak_score(|reader: &SegmentReader| {
@@ -778,11 +778,20 @@ impl Engine {
             );
             let mut runs: Vec<(usize, String, Vec<tantivy::DocAddress>)> = Vec::new();
             for run in tier1_runs(query, &code_spans(query)) {
+                if prose
+                    && (prose_stopword(&run)
+                        || parsed.capitalized.iter().any(|anchor| {
+                            anchor.text.to_lowercase() == run
+                                && incidental_prose_anchor(query, anchor)
+                        }))
+                {
+                    continue;
+                }
                 let (count, top) = searcher.search(
                     restrict(term(fields.def_name, &run, IndexRecordOption::Basic)).as_ref(),
                     &definitions,
                 )?;
-                if count > 0 {
+                if count > 0 && (!prose || count == 1) {
                     let top = top.into_iter().map(|(_, address)| address).collect();
                     runs.push((count, run, top));
                 }
@@ -1002,11 +1011,14 @@ impl Engine {
                 });
             }
         }
-        let units: std::collections::BTreeSet<_> = first.iter().map(Candidate::unit).collect();
+        let units: std::collections::BTreeSet<_> = first
+            .iter()
+            .map(|candidate| candidate.selection_unit(prose))
+            .collect();
         let mut second: Vec<Candidate> = Vec::new();
         for (score, address) in tier2 {
             let candidate = read(2, score, address, None)?;
-            if !units.contains(&candidate.unit()) {
+            if !units.contains(&candidate.selection_unit(prose)) {
                 second.push(candidate);
             }
         }

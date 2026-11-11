@@ -494,7 +494,7 @@ pub enum RenderedForm {
 /// Ranking tiers: exact definitions (1), lexical hits (2), file outlines.
 pub const TIER_OUTLINE: u8 = 4;
 /// Experimental behavioral support: existing lexical candidates owned by the
-/// uniquely resolved type. Selected only by 001 T010's opt-in context policy.
+/// uniquely resolved type. Selected only by 001 T010's lexical context policy.
 pub const TIER_BEHAVIOR: u8 = 3;
 
 /// One ranked, already revalidated candidate (context-v2 § Candidate seam).
@@ -1642,7 +1642,7 @@ impl RecordPlan {
 /// window, a configured 013 policy routing an `auto` strategy, and the
 /// anchors a multi-root owner chose over every serving root (007; `None`
 /// chooses them from this store's index).
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct ContextOptions<'a> {
     pub compose_evidence: bool,
     pub compact_evidence: bool,
@@ -1655,6 +1655,27 @@ pub struct ContextOptions<'a> {
     pub dense: Option<&'a crate::neural::query::DenseWindow>,
     pub policy: Option<&'a crate::policy::Policy>,
     pub anchors: Option<&'a [AnchorCandidate]>,
+}
+
+// One default shared by the library and both command-line entry points.
+pub(crate) const DEFAULT_BEHAVIOR_CONTEXT: bool = true;
+
+impl Default for ContextOptions<'_> {
+    fn default() -> Self {
+        Self {
+            compose_evidence: false,
+            compact_evidence: false,
+            boundary_config: None,
+            task: None,
+            memory: false,
+            briefs: false,
+            experimental_behavior: DEFAULT_BEHAVIOR_CONTEXT,
+            #[cfg(feature = "semantic")]
+            dense: None,
+            policy: None,
+            anchors: None,
+        }
+    }
 }
 
 /// The query's tokens for path detection: whitespace- and backtick-separated
@@ -2233,7 +2254,7 @@ impl Candidate {
     }
 
     fn selection_unit(&self, prose: bool) -> placement::UnitRef<'_> {
-        if prose && self.tier == 2 && self.unit_end.saturating_sub(self.unit_start) > 1536 {
+        if prose && self.unit_end.saturating_sub(self.unit_start) > 1536 {
             (
                 self.path.as_str(),
                 self.start.max(self.unit_start),
