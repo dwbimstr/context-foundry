@@ -7925,9 +7925,8 @@ fn lexical_behavior_never_changes_dense_placement_across_representations_and_cov
                 .unwrap();
                 assert!(packed.tokens <= BUDGET);
                 let parsed = parse_v2(&packed.text).unwrap();
-                assert_eq!(
-                    item_of(&parsed, lexical_path).is_some(),
-                    false,
+                assert!(
+                    item_of(&parsed, lexical_path).is_none(),
                     "{representation:?} {coverage} experimental={experimental}: {}",
                     packed.text
                 );

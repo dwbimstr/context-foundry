@@ -49,8 +49,15 @@ apparatus attempt. Default promotion exposed two core fixtures implicitly relyin
 on the former default; their baseline calls now explicitly set `false`, with their
 assertions unchanged. The fresh boundary suites passed all 88 core and 93 MCP tests,
 including library defaults, bare-flag compatibility, explicit opt-out and exact
-CLI/MCP parity. Final default-binary G2 identity and the eight implementation gates
-remain pending.
+CLI/MCP parity. Default binary `aac40dd` reproduced all 388 G2 response records and
+result rows exactly; its SHA-256 is
+`2f15591cc93064a7b9cce91f36f6a1ee250b7e2e34f159f10a21640e32a624ad`.
+The first full gate attempt stopped after Clippy rejected a literal-boolean
+`assert_eq!` in a semantic regression. The assertion now uses `is_none()` without
+changing its condition. The supervisor's 60-second interrupt grace expired during
+the test suite, then bounded cleanup removed all observed owned processes. That
+partial run is retained and does not count as acceptance. The fresh eight-gate run
+remains pending.
 
 Private protocols, binaries, complete outputs, failed receipts and resource samples
 are retained in `runs/t010-lexical-2026-11-11/` and
