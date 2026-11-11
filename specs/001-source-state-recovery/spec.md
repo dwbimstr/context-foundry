@@ -592,7 +592,9 @@ found `QueryRuntime::dense_index` already selected at candidate rank 2 but omitt
 by anchored packing. On that frozen local query the candidate supplies the method
 and the owner's address at 357 delivered tokens versus 437 for the baseline's struct
 alone. This is one development example, not a G1/G2 or real-agent acceptance result.
-The full gates below remain pending; see [validation](../../docs/validation.md).
+The promotion conditions below are not all satisfied; the retained cleanup's
+implementation gates pass. See the [dated receipt](../../docs/validation.md#t010-lexical-default--2026-11-11)
+and [current status](../../docs/resume-context-ecosystem.md).
 
 - **Problem:** T007 resolves identity well, but its anchored packing can deliver a
   type definition or directory without the implementation needed by a question about

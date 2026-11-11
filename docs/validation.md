@@ -14,7 +14,10 @@ The existing `d72f3bb` field-order repair is present: redb ownership outlives th
 parent's search-writer teardown. A separate real-process witness identifies a
 remaining lifetime mismatch. Tantivy 0.26.2's `ReleaseLockFile::drop`
 (`src/directory/mmap_directory/mod.rs`) releases its BSD flock only by closing its
-file; redb 4.4.0's optimized file backend explicitly unlocks. A child held between
+file; its `src/directory/tests.rs::test_lock_non_blocking` and `test_lock_blocking`
+cover same-process/thread lock release, not this inherited-descriptor boundary.
+Those upstream tests were inspected, not rerun. redb 4.4.0's optimized file backend
+explicitly unlocks in `release_all_locks`/`unlock_whole_file`. A child held between
 fork and exec retains the inherited Tantivy descriptor. After the parent drops
 its Engine, a new Engine acquires redb but reports `repair_required/LockBusy`;
 releasing and reaping the child restores `ready` and the original search result,
@@ -38,7 +41,23 @@ the original source revision/result. A native focused run passed all 88 core,
 22 policy and two lock tests in 87.82 s, including the original failing policy case;
 it exited naturally with no observed owned processes left. In-session review added
 a deadline check before starting any retry, so an expired wait cannot start another
-reader construction. Fresh full gates are still pending. Private evidence is in
+reader construction; both lock regressions passed again after that correction.
+
+**Fresh full gates: PASS on `fef81c64f75b41ce5379174d82fa1b3e4888b461`.** All eight
+stages exited 0 in 741.87 s: formatting, Clippy, default tests, pilot-feature Clippy
+and unit tests, and Rust 1.90 check/Clippy/pilot check. The default suite passed
+1,307 tests with zero failures and 34 ignored; all 21 named child-process recovery
+checks also passed. The separate pilot unit gate passed 62 tests. The watcher file
+passed all four tests in 26.52 s. This used Rust/Cargo 1.97.1, actual Rust 1.90.0
+binaries and the macOS 26.5 SDK on the owner's M5 Max. The tracked tree was clean.
+The 1,800 s outer deadline, 20 GiB disk floor and 8 GiB sampled Foundry-owner RSS
+ceiling were unchanged. The supervisor exited naturally, without forced cleanup,
+and found no owned processes remaining. No paid provider, training or hosted CI ran.
+
+This accepts the retained semantic isolation, supervisor repair and store-lock
+containment at their tested boundaries. It does **not** qualify T010's rejected
+default-promotion candidate. Private evidence, including the pre-repair executable,
+red/green logs, final gate receipt and a 340-file SHA-256 evidence snapshot, is in
 `runs/store-lock-2026-11-11/`; the original
 gate logs and receipt remain in `runs/t010-lexical-2026-11-11/gates-retained*`.
 
@@ -119,8 +138,8 @@ default-switch code and its dependent test changes are withdrawn; semantic isola
 the direct admission regression and the native supervisor repair remain. T010 is
 not accepted. A future lexical repair needs a separately declared candidate and
 fresh local/frozen measurements. The first complete implementation-gate run on the
-retained cleanup failed the separate writer-lock case [recorded above](#derived-writer-contention-after-fork--2026-11-11);
-fresh gates after that repair remain to run.
+retained cleanup failed the separate writer-lock case [recorded above](#derived-writer-contention-after-fork--2026-11-11).
+After its repair, all eight gates passed on `fef81c6`; default promotion stays held.
 
 Private protocols, binaries, complete outputs, failed receipts and resource samples
 are retained in `runs/t010-lexical-2026-11-11/` and
