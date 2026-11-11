@@ -1,5 +1,57 @@
 # Validation
 
+## Encrypted evidence backups — 2026-11-11
+
+Owner decisions 7/30 are complete at the selected local-disk boundary. Five
+archives are built under `~/VSC_DEV/backups/foundry-20261111-retry1`, totaling
+1,225,156,744 encrypted bytes. The owner selected `~/.ssh/id_ed25519.pub` and
+retains its private key; the pinned recipient fingerprint is
+`SHA256:nsuaEpeRmr4BvJH1gfJkqkPuoiAz9uaQFmkLlL0rzsQ`. No private key was read.
+The owner still handles off-machine copying and authenticated recovery.
+
+| Archive | Source directory under `datasets/` | Ciphertext SHA-256 |
+| --- | --- | --- |
+| `01.tar.zst.age` | `context-foundry-g2` | `e81cfbcb320b280eacc9d370b9b89d335a8cc8cdd45740f4a5059a6fac78122d` |
+| `02.tar.zst.age` | `context-foundry-f4` | `bd7688af71838712d09fe0b87b15ddc3ae86eaf3197f577ad658872085f82ff0` |
+| `03.tar.zst.age` | `context-foundry-g2-harness` | `6a7155a79f7873177518361182f40523a2222e8dcd705d6a3878e1a6785c91fc` |
+| `04.tar.zst.age` | `context-foundry-citymap` | `bfbdfd33cc9784ba0f6fc83a5af49b47bbd78a6b08f535bcbdf9075b179f7133` |
+| `05.tar.zst.age` | `context-foundry-task-validation` | `d9468d818e3ac20bfde7018930d0601317c7fd929c69ecc45ce35bf2e753748e` |
+
+The native-supervised job passed in 20.66 s within the declared 1,800 s budget
+and 20 GiB free-disk floor. Each source received a complete non-following
+byte/type/mode/symlink manifest. Per-file APFS clones matched those manifests
+before and after the archive stream, and the originals matched again at the end.
+All 15 BSDtar/zstd/age pipeline exits were zero. There was no plaintext tar at rest;
+file-level manifests and source mappings are inside encryption. Ciphertext files
+were fsynced, freshly hashed, header-inspected and published without overwriting.
+A separate `shasum -a 256 -c SHA256SUMS` readback passed for all five archives and
+four recovery sidecars/helpers. The checksum list's own SHA-256 is
+`40edae75f9e9b7852e34717391594196224444852c4c84ce74f5bce9f4b4cc32`.
+The supervisor recorded natural exit, no forced cleanup and no owned process
+remaining. Only this job's staging copies were removed; original data is retained.
+
+The first preflight failed before any dataset read: `diskutil info` was given the
+staging subdirectory rather than its containing mount point. Its failed receipt
+and empty destination remain. The corrected driver queries the observed APFS
+mount point and checks its device against staging, then uses fresh work/output
+names. No source, recipient, archive rule or resource bound changed.
+
+Age 1.3.2's official macOS arm64 archive and executable were checksum-verified;
+no tool was installed system-wide. Nine synthetic manifest rejection checks and a
+small APFS/BSDtar restore check passed, including executable/read-only modes and
+symlinks. Those are apparatus checks, not decryption of the real archives.
+**Authenticated decryption/restoration and an off-machine copy are unexecuted.**
+The backup preserves file bytes, types, modes and symlink targets; ACLs, xattrs,
+resource forks, flags, ownership, timestamps, sparse layout and hardlink topology
+are not claimed. These are per-file clones with repeated manifest checks, not an
+atomic volume snapshot or a live-database consistency proof. No paid calls ran.
+
+The private apparatus, original/corrected protocols, failed/successful native
+receipts and complete manifests are retained in `runs/backups-2026-11-11/`.
+[Build, checksum and owner-only recovery commands](resume.md#encrypted-backups)
+travel with the existing resume instructions. Pilot evidence stays retained until
+T006 is accepted, retired or superseded.
+
 ## Tantivy 0.27 store compatibility and G1 neutrality — 2026-11-11
 
 Owner decision 22 (2026-11-06, “Apply only if neutral”) selects one dependency
@@ -590,7 +642,7 @@ is work to do.
 | 3 | Where the work runs | "Mac only, drop sandbox" | The owner's Mac (Apple M5 Max, 64 GiB) is the work host; cloud sessions remain a fallback; Linux-only jobs stay parked until the owner provides a Linux host. |
 | 6 | The 2026-10-11 sandbox and its resume archive | "Declare both lost" | Items that needed the archive are retired or resettled (F2, F6, F8, F10, F11). |
 | 18 | F6 frozen Rust/Go label sets | "Retire F6 as a gate" | G1, G2 and F4-style sealed sets are the only retrieval instruments. |
-| 7, 30 | Backups of the G2/F4/G1 sets and pilot evidence | "Encrypted off-machine copy", "Encrypted, on disk for now" | Encrypted, checksummed archives under `~/VSC_DEV/backups` (to do); the owner copies them off the Mac. Pilot evidence is kept until T006 is accepted, retired or superseded. |
+| 7, 30 | Backups of the G2/F4/G1 sets and pilot evidence | "Encrypted off-machine copy", "Encrypted, on disk for now" | Done on local disk: five encrypted archives and checksum readback pass ([receipt](#encrypted-evidence-backups--2026-11-11)). The owner copies them off the Mac and performs authenticated recovery. Pilot evidence is kept until T006 is accepted, retired or superseded. |
 | 4 | Pilot v1 API key | "Revoke it, delete the file" | Done: the local key file and its empty directory were deleted. The owner revokes the key in the Console. |
 
 **Dependencies**

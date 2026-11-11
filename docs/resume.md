@@ -73,15 +73,74 @@ the owner's Mac on that date:
 - `datasets/context-foundry-task-validation` (the bounded pilot's private evidence,
   about 2.2 GB, including files that carry the owner's account identity).
 
-The agent builds encrypted, checksummed archives of these five directories in
-`~/VSC_DEV/backups`, and the owner copies those off the Mac whenever they choose. Other
-private datasets, such as `datasets/context-foundry-g2-runs`, are not part of the
-encrypted backups. The archives belong to the
-transfer set: carry them with `cf-private.tar`, verify their checksums, and restore each
-directory to its original path under `/Users/satishlomte/VSC_DEV/datasets` in
-step 3. The pilot evidence is kept until 003 T006 is accepted, retired or
-superseded. The archives were not yet built on 2026-11-06; add their exact build and
-restore commands here when they are.
+Built and checksum-verified on 2026-11-11 in
+`/Users/satishlomte/VSC_DEV/backups/foundry-20261111-retry1`. The five archives total
+1,225,156,744 bytes; their source mapping and ciphertext hashes are in the
+[dated receipt](validation.md#encrypted-evidence-backups--2026-11-11).
+The owner selected `~/.ssh/id_ed25519.pub`; its fingerprint is
+`SHA256:nsuaEpeRmr4BvJH1gfJkqkPuoiAz9uaQFmkLlL0rzsQ`. The private key stays with the
+owner. Other datasets, including `context-foundry-g2-runs`, are not in this batch.
+The owner copies the entire batch off the Mac. Carry it with `cf-private.tar`;
+off-machine copying and authenticated recovery are not yet verified.
+
+The successful build command, run from this repository, was:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 /Applications/Xcode.app/Contents/Developer/usr/bin/python3 \
+  runs/backups-2026-11-11/apparatus-v2/backup.py run \
+  /Users/satishlomte/VSC_DEV/context-foundry/runs/backups-2026-11-11/protocol-retry1.json
+```
+
+This private apparatus/protocol is retained with the run evidence, outside Git.
+It uses BSDtar → `zstd -T1 -3 -c` → `age -R` and a frozen public-recipient snapshot;
+there is no plaintext tar at rest. A rebuild needs a copied protocol with new work
+and batch names; the recorded command refuses existing destinations. Its 30-minute
+bound, 20 GiB free-disk floor and five-source scope remain explicit.
+
+Verify the complete batch before transfer and again on the receiving Mac:
+
+```sh
+cd /Users/satishlomte/VSC_DEV/backups/foundry-20261111-retry1
+/usr/bin/shasum -a 256 -c SHA256SUMS
+```
+
+`SHA256SUMS` covers all five archives, `RECIPIENT`, `README.txt`, `restore_one.sh`
+and `restore_verify.py`. Its own SHA-256 is
+`40edae75f9e9b7852e34717391594196224444852c4c84ce74f5bce9f4b4cc32`.
+The helpers are standalone and travel with the batch. The checksums are not a
+signature. The official [age 1.3.2 macOS arm64 release](https://github.com/FiloSottile/age/releases/tag/v1.3.2)
+archive SHA-256 is `e2020b073c44f692685a24d6abc378817eb81ffaaf49fd0531ef8565f767f2f5`;
+the `age` executable is `4012dfc2725883beafb710894af4f599b7a94f8c8e0f51f02cc96ab8df33915e`.
+The original executable remains in `runs/backups-2026-11-11/tools/age`; no system
+installation was performed.
+
+**Owner-only recovery example, not executed by the agent.** Use the retained private
+identity locally; do not send it to an assistant. This restores archive 01 into a
+new private directory and refuses an existing directory:
+
+```sh
+bash /Users/satishlomte/VSC_DEV/backups/foundry-20261111-retry1/restore_one.sh \
+  /Users/satishlomte/VSC_DEV/backups/foundry-20261111-retry1/01.tar.zst.age \
+  /Users/satishlomte/VSC_DEV/backups/restore-g2-20261111 \
+  /Users/satishlomte/.ssh/id_ed25519 \
+  /Users/satishlomte/VSC_DEV/context-foundry/runs/backups-2026-11-11/tools/age \
+  /opt/homebrew/bin/zstd \
+  /Applications/Xcode.app/Contents/Developer/usr/bin/python3
+```
+
+Repeat with a distinct new directory for each archive. The helper checks the age
+binary pin before using the identity, requires age/zstd/BSDtar all to exit 0, and
+verifies every restored file/type/mode/symlink against the encrypted manifest.
+It retains partial failures and never moves data to an original path automatically.
+Only after a successful authenticated restore and manifest verification should the
+owner move `data/` to the original path named in `manifest.jsonl`, without overwriting
+an existing dataset. This replaces the five corresponding directories in step 3;
+other private datasets still come from their separately verified transfer.
+
+Real-archive decryption and recovery have not run. The preserved scope is file
+bytes, types, permission modes and symlink targets; ACLs, xattrs/resource forks,
+flags, ownership, timestamps, hardlink topology and sparse layout are not claimed.
+The pilot evidence remains retained until 003 T006 is accepted, retired or superseded.
 
 ## On the new machine
 

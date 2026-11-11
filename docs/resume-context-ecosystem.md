@@ -157,8 +157,12 @@ and dated paragraphs below are history.
     owner authorizes a key, rights and a budget.
   - **Hosts and evidence:** the owner's Mac is the work host. The 2026-10-11
     sandbox and its archive are declared lost; F2, F6, F8, F10 and F11 retire.
-    Encrypted backups are to be built in `~/VSC_DEV/backups` (not built yet). The
-    pilot key file is deleted; the owner revokes the key.
+    Five encrypted backups are built and checksum-verified in
+    `~/VSC_DEV/backups/foundry-20261111-retry1`
+    ([receipt](validation.md#encrypted-evidence-backups--2026-11-11)). The owner
+    retains the recovery private key and handles off-machine copying and authenticated
+    restoration; neither is claimed done. The pilot key file is deleted; the owner
+    revokes the key.
   - **Dependencies:** rustls 0.23.46 merged to main as `d94b013` (done); zip alerts
     dismissed as not used and Dart 0.3 declined (done); Tantivy 0.27 is accepted
     on experimental after store compatibility, exact G1 neutrality and all eight
