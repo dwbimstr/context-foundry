@@ -1,5 +1,92 @@
 # Validation
 
+## Tantivy 0.27 store compatibility and G1 neutrality — 2026-11-11
+
+Owner decision 22 (2026-11-06, “Apply only if neutral”) selects one dependency
+candidate: Tantivy 0.26.2 → 0.27.0. Candidate `292976929836a65ad8aecc5a82f205209903fda2`
+changes only Cargo.toml and Cargo.lock; no Foundry API adaptation was required.
+Default features remain off; `mmap` and `lz4-compression` remain selected.
+No Foundry ranking, parser, corpus, scoring or schema change is included.
+
+**Pins.** The measured baseline is `f5afd2b9a71acdf1956aca9a6da48f7dacfde7f7`
+(Tantivy 0.26.2), binary SHA-256
+`767910da6960905cc788634297521d043ccb6f294d7a18245126494f866e1389`.
+The candidate binary SHA-256 is
+`874ee3c79624f6e14e442877ecd6ea1b07dd12e765604353e684138f116729ef`.
+The exact 0.27.0 crate archive is
+`ad1ebacf6bc124b741ffbfb088f9835cb55e1e2ff57e182e9219e3efa1377b97`;
+its declared Rust floor is 1.88. The selection named source commit `fef81c6`;
+`f5afd2b` is its documentation-only successor and is the actual frozen baseline.
+
+**Executed on the owner's Mac, with no spend.** Each arm opened its own APFS clone
+of the preexisting 0.26.2 store. All six opening/post-query status pairs matched the frozen
+ready/complete/zero-pending state; no repair or indexing command ran.
+Rust's store had 60,739 sources at `b940084d7eb6a299eb4bfeb8e34901bc051e7ac4`;
+oh-my-pi had 8,436 at `5b8d5b8a15ab1711597584aadbdc112c55befed1`.
+Full original-store manifests and corpus pins remained unchanged. Original stores
+were not opened. Store schema 12, search schema 8, source-unit schema 6 and semantic
+generation 6 remain unchanged; this is compatibility at the tested lexical-store
+boundary, not a semantic preparation or release acceptance run.
+
+| Full G1 group | Tasks per arm | Response records per arm | Unmasked guards | Paired bytes |
+| --- | ---: | ---: | --- | --- |
+| bun | 1,000 | 1,029 | PASS in both arms | Identical |
+| checker | 6,881 | 10,476 | PASS in both arms | Identical |
+| qualified | 2,551 | 2,779 | PASS in both arms | Identical |
+| Total | 10,432 | 14,284 | All pass | Identical |
+
+The frozen runner/scorer used SAMPLE 1/1 and one shard; the comparator did not mask
+its exit. Complete result JSONL and decompressed response JSONL matched literally,
+including identities, arguments, evidence and order; no normalization was used.
+Gzip container timestamps were excluded. Nine synthetic comparator checks passed,
+including rejection of missing/truncated/duplicate or mismatched records.
+
+The predeclared comparison bound was 3,600 s, with a 20 GiB disk floor and an 8 GiB
+sampled Foundry-owner RSS ceiling. The run completed in 1,297.74 s. All 27 native
+phase receipts passed with natural exit, no forced cleanup and no owned process
+remaining. Peak sampled owner RSS was 567,296,000 bytes; minimum observed free disk
+was 293,290,606,592 bytes. Seven owner samples missed processes that had already
+exited. These are sampled observations, not true process/GPU peaks or hard resource
+limits. No provider/model calls, training or corpus-code execution occurred.
+No quality or performance improvement is claimed; G2 was not rerun for this neutral
+maintenance candidate.
+
+**Upstream inspection, separately from execution.** Exact Tantivy 0.27.0 source:
+`src/lib.rs:240` (`INDEX_FORMAT_VERSION = 7`, oldest supported 4);
+`src/compat_tests.rs:42` / `:53` (`test_format_6`, `test_format_7`);
+`src/query/const_score_query.rs:42` (`ConstScoreQuery::weight`, child scoring disabled)
+and `:192` (`test_const_score_query_disables_child_scoring`). Those upstream tests
+were inspected, not executed. Same format numbers were a hypothesis, not the
+compatibility proof above. `src/directory/mmap_directory/mod.rs:310–318`
+(`ReleaseLockFile::drop`) still relies on descriptor closure; the separate Foundry
+inherited-lock containment repair remains in both arms. These references inform
+001's existing derived-index owner and decision 22; no upstream ownership or
+new source schema is imported.
+
+**Local gates: PASS on `2929769`.** All eight stages exited 0 in 791.38 s:
+formatting, Clippy, default tests, pilot-feature Clippy and unit tests, and actual
+Rust 1.90 check/Clippy/pilot check. The default suite passed 1,307 tests, with zero
+failures and 34 ignored; all 21 custom child-process recovery checks also passed.
+The separate pilot unit gate passed 62 tests. All four watcher tests passed in
+27.30 s. Rust/Cargo 1.97.1, Rust 1.90.0 and the macOS 26.5 SDK were used on the
+owner's M5 Max, with the tracked candidate clean. The 1,800 s gate deadline,
+20 GiB disk floor and 8 GiB sampled owner RSS ceiling were respected. The supervisor
+recorded natural exit, no forced cleanup and no owned process remaining.
+
+Decision 22 is accepted for the experimental line. This does not accept T010
+default promotion or constitute a release, signed-package or semantic-quality result.
+
+Private protocols, binaries, status/identity reports and command receipts remain in
+`runs/tantivy-neutral-2026-11-11/`; complete private query outputs and clones remain
+in `datasets/context-foundry-tantivy-027-2026-11-11.noindex/`.
+Protocol SHA-256: `ab19377fd3270edeabfaac8a68ae19d6777a3e3a1cb01ced9021ef38b2c07ab9`.
+Driver SHA-256: `4a7296be6993cfab29fdc92a439df0e6e558dc504fefdf7d32e4bd16896f4ab7`.
+Key receipts: `measurement/result.json`, `measurement/{bun,checker,qualified}-identity.json`,
+`measurement/commands/`, `binary-{baseline,candidate}.json`, `source-inspection.json`,
+`dependency-diff.json`, `comparator-checks.json`, `gates-result.json` and `gates-supervisor/000-full-gates.receipt.json`.
+The earlier source-inspection/README “unexecuted” statuses are preparation history;
+the measurement/result receipt supplies the later executed result.
+
 ## Derived writer contention after fork — 2026-11-11
 
 The retained-cleanup gates on `85369dd` completed all eight stages in 795.88 s:
@@ -513,7 +600,7 @@ is work to do.
 | 2 | rustls 0.23.45 alerts, PR #49 and the main merge | "Bump rustls, then merge" | rustls 0.23.46 on experimental, one gates run, one PR to main merged by the owner with a merge commit. Done: PR #52 merged as `d94b013` on 2026-11-07; alerts #9–#12 closed and PR #49 closed as superseded. |
 | 5 | zip 0.6.6 alerts via the optional tch worker | "Dismiss as unused" | Done: Dependabot alerts #13–#16 dismissed as not used, with a recheck if 013 is unfrozen or npz loading is added. |
 | 21 | tree-sitter-scala 0.26.4, tree-sitter-powershell 0.26.6, pulldown-cmark 0.13.6 | "One bump, gated on unit diff" | One schema bump after a unit diff on fixtures and both G2 corpora; G2 on the Mac only if G2-corpus units change (to do). |
-| 22 | Tantivy 0.27.0 (PR #47) | "Apply only if neutral" | Merged onto experimental only if existing stores open without repair and G1 lexical results are identical (to do). |
+| 22 | Tantivy 0.27.0 (PR #47) | "Apply only if neutral" | Done: existing 0.26 stores open without repair, all G1 result/response bytes are identical, and all eight local gates pass on `2929769` ([receipt](#tantivy-027-store-compatibility-and-g1-neutrality--2026-11-11)). Accepted for experimental. |
 | 23 | tree-sitter-dart 0.3.0 (PR #48) | "Close; stay on 0.2.0" | Done: PR #48 closed with the reason. |
 
 **Retired, closed or kept**

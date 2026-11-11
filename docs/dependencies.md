@@ -53,11 +53,11 @@ settle the held and open Dependabot updates:
   corpora. G2 runs on the owner's Mac only if units in a G2 corpus change. The other
   updates in the same Dependabot group stay separate decisions. To do: `Cargo.toml`
   still pins 0.26.2, 0.26.4 and 0.13.5.
-- **Tantivy 0.27.0, PR #47** ("Apply only if neutral"). The breaking lexical-engine
-  release is built and checked with the local gates and G1. It is merged onto the
-  experimental line only if existing 0.26 stores open without repair and G1 lexical
-  results are identical; otherwise the work stops and is reported to the owner. To do:
-  the lock stays on 0.26.2.
+- **Tantivy 0.27.0, PR #47** ("Apply only if neutral"). Done on the experimental
+  line: `2929769` needs no Foundry API adaptation or schema bump. Existing 0.26
+  stores open without repair; all 10,432 G1 tasks and 14,284 response records per
+  arm are byte-identical, and all eight local gates pass, including Rust 1.90.
+  See the [compatibility and neutrality receipt](validation.md#tantivy-027-store-compatibility-and-g1-neutrality--2026-11-11).
 - **tree-sitter-dart 0.3.0, PR #48** ("Close; stay on 0.2.0"). Done: the PR was
   closed. 0.3.0 renames `class_member` and `enum_constant`, which the Dart unit
   extraction matches, so taking it would need code changes and a schema bump that
@@ -82,7 +82,7 @@ settle the held and open Dependabot updates:
 | serde | 1.0.229 | MIT OR Apache-2.0 | normal |
 | serde_json | 1.0.154 | MIT OR Apache-2.0 | normal |
 | sha2 | 0.11.1 | MIT OR Apache-2.0 | normal |
-| tantivy | 0.26.2 | MIT | normal |
+| tantivy | 0.27.0 | MIT | normal |
 | tiktoken-rs | 0.12.1 | MIT | normal |
 | tokio | 1.54.1 | MIT | normal; dev adds process |
 | tokio-util | 0.7.20 | MIT | normal |
@@ -100,6 +100,15 @@ settle the held and open Dependabot updates:
 | reqwest | 0.13.5 | MIT OR Apache-2.0 | dev |
 | tempfile | 3.27.0 | MIT OR Apache-2.0 | dev |
 | toml | 1.1.8 | MIT OR Apache-2.0 | dev |
+
+The 2026-11-11 Tantivy update also moves its bitpacker, columnar, common,
+query-grammar, sstable and stacker crates to 0.27.0 (MIT), datasketches to 0.5.0
+(Apache-2.0), lru to 0.18.5 (MIT), lz4_flex to 0.14.0 (MIT), and murmurhash32 to
+0.4.0 (MIT). New package names are serde-tuple-vec-map 1.0.1 (MIT) and
+unwrap-infallible 1.0.0 (MIT OR Apache-2.0). The old allocator-api2 0.2.21 and
+hashbrown 0.16.1 entries disappear; hashbrown 0.17.1 remains. The bindgen lock
+edge is unchanged. These are Cargo license declarations; release notice collection
+remains separate.
 
 ## Transitive additions for T005
 

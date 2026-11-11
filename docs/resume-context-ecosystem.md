@@ -160,8 +160,10 @@ and dated paragraphs below are history.
     Encrypted backups are to be built in `~/VSC_DEV/backups` (not built yet). The
     pilot key file is deleted; the owner revokes the key.
   - **Dependencies:** rustls 0.23.46 merged to main as `d94b013` (done); zip alerts
-    dismissed as not used and Dart 0.3 declined (done); Tantivy 0.27 only if neutral
-    (to do).
+    dismissed as not used and Dart 0.3 declined (done); Tantivy 0.27 is accepted
+    on experimental after store compatibility, exact G1 neutrality and all eight
+    local gates ([receipt](validation.md#tantivy-027-store-compatibility-and-g1-neutrality--2026-11-11)).
+    The combined parser update remains to do.
   - **Closed or kept:** rows 5 and 6 and the historical CI re-run retire; the
     Nemotron comparison closes (its files are kept); `overview-v1` stays; query-time
     parse cost is a named limitation.
