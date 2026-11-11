@@ -1,5 +1,64 @@
 # Validation
 
+## T005 units7 baseline preparation — 2026-11-11
+
+**Both owned copies pass current units7 metadata readiness; no query-quality
+result is claimed.** Following the
+[obsolete-recipe preflight](#t005-current-baseline-identity-preflight--2026-11-11),
+a separately selected 3,600-second stage on `6831dbb` prepared fresh retained
+copies of the singleton masters. It used the same archived `f19d353` normal
+binary, accepted Gemma hierarchy profile and existing development worker. Only
+the copied profile's scratch path changed, to a new private child inside the
+worker's existing signed grant. Model, tokenizer, worker, original profile and
+binary hashes match before and after; strict worker signature verification passes.
+The bundle was not changed or re-signed.
+
+| Corpus | Sources / revision | Current eligible, cached and searchable units | Unique ANN entries | Prepare elapsed |
+| --- | --- | --- | --- | --- |
+| bun | 8,436 | 191,161 | 183,311 | 168.725 s |
+| Rust | 60,739 | 685,623 | 624,325 | 684.782 s |
+
+Each command reports `partial:false`, a published index, stopped state and no
+stop/publication reason. Subsequent full audits report complete partition coverage,
+no unpartitioned or missing units, no corrupt/legacy/orphan cache entries and an
+available generation. Source counts, revisions and workspace identities remain
+unchanged. The recipe is
+`hierarchy-v1+overview4+context2+kinds2+units7:512+parent64+tokenizers 0.23.2 onig`,
+dimension 768, with unchanged function digest
+`01dcfe577222256b4e08f9783e973fddb80240be53fe96c7454a6956c100e912`.
+Unique ANN entries deduplicate exact inputs; they need not equal eligible units.
+
+Both preparations report **0 document calls, 0 embedded units and 0 input tokens**;
+cached vectors were reused. Run work counters revisit sources/units and are not
+corpus totals. This proves no current query capability or quality result, and the
+new generation cannot inherit an old G2 score. No model worker was observed.
+
+The whole stage completed in **879.817 s**. All 22 native commands exited naturally,
+with no observed owned processes remaining. Original stores were never opened
+through Foundry and their complete before/after byte and metadata manifests match.
+Complete final manifests pin both prepared copies, including their generation
+files. Existing scratch sibling metadata is unchanged and the new scratch child
+is empty. The copies remain in the new owned directory
+`datasets/context-foundry-t005-units7-2026-11-11-sa2l0xjn.noindex` for the diagnostic.
+
+Selected limits: one heavy job, USD 0 spend, 120 seconds reserved for cleanup,
+another 120 seconds for final audits, at most 900 seconds for bun and 2,400 for Rust,
+4 GiB cache per store, 20 GiB free-space floor, 40 GiB observed apparent-growth
+ceiling and 8 GiB sampled individual-process RSS ceiling. Observed owned-process
+RSS peak: 4,160,634,880 B; driver: 205,766,656 B; minimum free space:
+264,595,890,176 B; apparent growth: 7,103,069,537 B; 22 owned-process samples missed.
+Sampled values do not establish transient or GPU peaks. A separate lightweight
+synthetic trace-helper check ran for 2.434 seconds during Rust preparation; no
+comparative preparation-performance claim is made.
+
+Private evidence is under `runs/t005-units7-preparation-2026-11-11/`, including the
+preselected bounds, exact commands, reports, audits, artifact readbacks and complete
+store manifests. This stage performed no repair-index, cache purge, download,
+query, provider request or workspace-program execution. Current corpus contents
+and full traced/untraced response parity still require verification. Stable store
+metadata is not a fresh row-by-row source-table equality proof. T005 remains
+unaccepted; no ranking variant is selected.
+
 ## T005 current-baseline identity preflight — 2026-11-11
 
 **Metadata preflight passed; semantic query readiness is not established.** On

@@ -36,12 +36,12 @@ and dated paragraphs below are history.
   current-baseline measurement; T005 requires fresh identity and trace checks.
   The historical review of hierarchy's 17 newly lost G1 tasks found mostly tier-1
   lexical hits placed behind every dense unit.
-- **T005 baseline readiness, 2026-11-11.** Status and audit on verified copies
-  confirm both singleton masters have ready lexical indexes but obsolete units6
-  semantic recipes. Original stores pass complete unchanged readbacks. A current
-  semantic baseline requires separately bounded preparation on owned copies for
-  units7, then current coverage, model, corpus and query checks
-  ([preflight receipt](validation.md#t005-current-baseline-identity-preflight--2026-11-11)).
+- **T005 baseline readiness, 2026-11-11.** The original singleton masters retain
+  obsolete units6 semantic recipes. New retained copies now pass complete units7
+  preparation and audits using cached vectors, with zero embedding calls and
+  unchanged-original readbacks
+  ([preparation receipt](validation.md#t005-units7-baseline-preparation--2026-11-11)).
+  Current corpus identity and traced/untraced query parity remain to verify.
   No ranking variant or new G2 quality result is established; T005 remains unaccepted.
 - **Scale.** Publication streams cached vectors (no 2 GiB vector bound) and
   generation v6 interns label-map paths and hashes (rust map 191 → 69 MB). At rust's
