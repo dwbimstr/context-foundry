@@ -135,13 +135,14 @@ below are history.
   its result.
   - **Release path:** the signed-package checks (row 4) block release; 010's
     real-model acceptance and the Z.ai gateway leave the release; 005 T005 is
-    accepted at its written scope once a gates receipt exists; 009 scale is to be
+    accepted at its written scope using the `65fd799` gates receipt
+    ([acceptance](validation.md#boundary-scope-acceptance-005-t005--2026-11-10)); 009 scale is to be
     accepted through the Mac rust-lang/rust preparation once a short replay and
     changed-input check passes; device acceptance is what the native script
-    checks; 001 T011 needs a native Mac watch run on rust (F18's deadline failure was
-    fixed 2026-11-10);
+    checks; 001 T011 is accepted by the native Mac watch run on pinned rust
+    ([receipt](validation.md#native-mac-watcher-acceptance-001-t011--2026-11-10));
     001 T010's flag is decided by its own local gates and becomes lexical-only
-    once its code change lands. All of these are to do.
+    once its code change lands. The remaining release-path items are to do.
   - **T006:** pilot v2 is to be drafted, unfunded (not drafted yet), and the
     task-context tasks (003 T007–T009, 008 T003–T005) are to be measured in it. Nothing is spent until the
     owner authorizes a key, rights and a budget.
@@ -306,7 +307,7 @@ role metadata uses `kinds2`; overview/address recipes retain `kinds1`.
 | Host tasks | Historical Qwen3-4B pair fails both unchanged external oracles. The managed-runtime public seeded repair passes in both arms; provider usage is unavailable. | Representative correct completions and complete provider accounting, now owned by 003 T006 and pilot v2. The private stronger-model protocol (F2) was retired on 2026-11-06, and F3 moved to T006. |
 | Representative scale | Exact overview fitting covers 67,663 admitted Rust/Go sources; 60,735–65,959 distinct inputs / 14.65–15.86 million tokens. | Owner decision, 2026-11-06 ("Accept the Mac rust run"): scale is accepted through the complete hierarchy-v1 preparation of rust-lang/rust (62,035 files) on the owner's Mac plus a short replay and changed-input check there (to do). No complete 67,663-source model run exists; that corpus and Linux x86 scale are a named limitation. |
 | Economics | Identical-source CLI delivery improves by 25% fewer calls and 6.48% fewer delivered tokens at 512 tokens. Provider/task benefit remains unproved. Failed attempts and unknown usage are retained. Selected history totals 71 requests, including the latest 13; 66 complete and five unknown. | Demonstrated completion benefit with bootstrap, acquisition, retrieval, maintenance and failed attempts included. Smaller failed prompts are not a benefit. |
-| Evidence | Bounded source call postings, conservative Python aliases, router dependency proofs and revision-bound execution snapshots; eight real framework/execution checks pass. | 005 T005 is accepted at its written scope once a gates receipt exists (owner, 2026-11-06); broader collectors, frameworks and cross-language resolution are named limitations, and realistic task outcomes belong to pilot v2. Unsupported/dynamic cases remain explicitly incomplete. |
+| Evidence | Bounded source call postings, conservative Python aliases, router dependency proofs and revision-bound execution snapshots; eight real framework/execution checks pass. | 005 T005 is accepted at its written scope ([receipt](validation.md#boundary-scope-acceptance-005-t005--2026-11-10)); broader collectors, frameworks and cross-language resolution are named limitations, and realistic task outcomes belong to pilot v2. Unsupported/dynamic cases remain explicitly incomplete. |
 | Mac/GPU | Real Metal embeddings, 8,192-token input, owned generation, cleanup and CPU/Metal parity pass. Actual 128-file calibration and zero-call replay pass. With Spotlight stopped on the runner, native CPU-pressure acceptance passes twice at unchanged thresholds (runs 38207948408, 38209502529). | One ad-hoc-signed native run on the owner's Mac (to do) and signed installed-package acceptance (row 4, which blocks release). Global GPU pressure, combined residency, thermal/battery and eviction are named limitations (owner, 2026-11-06, "Script checks only"). |
 
 The complete small-repository preparation accounts for 3,608,991 tokens and

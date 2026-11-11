@@ -741,14 +741,16 @@ proxies, they can resolve to a different compiler.
 
 ### T011 — Maintain the admitted workspace from filesystem change hints
 
-Implemented locally 2026-10-09 for the experimental ecosystem; not accepted. The owner
+Implemented locally 2026-10-09; accepted at the owner-selected native scope on
+2026-11-10 ([receipt](../../docs/validation.md#native-mac-watcher-acceptance-001-t011--2026-11-10)). The owner
 requires continuous incremental maintenance at 60,000–80,000 files. Owner decision,
 2026-11-06 ("Native Mac run on rust"): first fix F18, the intermittent 6,000-file
 watcher test ([FOLLOWUP](../../FOLLOWUP.md)), without loosening its assertion; then
-T011 is accepted only by an `mcp --watch` run on the owner's Mac over the 62,116-file
-rust-lang/rust 1.99.0 corpus, against bounds stated before the run. If that run
-fails, T011 stays open. The F18 deadline failure was repaired on 2026-11-10
-([receipt](../../docs/validation.md#watcher-test-repair-f18--2026-11-10)); the native run has not run yet. Reuse this spec's
+T011 requires an `mcp --watch` run on the owner's Mac over the pinned
+rust-lang/rust 1.99.0 corpus, against bounds stated before the run. The F18 deadline
+failure was repaired on 2026-11-10 without loosening the test, and the native run
+passed the same day. The receipt corrects the earlier 62,116-file description against
+the pinned corpus inventory; it records the full run and its limits. Reuse this spec's
 source ingestion, ignore/no-follow and reconciliation rules. Watch events do not
 admit roots, certify bytes or become a second source ledger.
 
@@ -818,7 +820,7 @@ on success, error or unwind. Shutdown refuses new watch work; an incomplete scan
 skips futile abort-slot retries against a closing owner and is reconciled on restart.
 The existing page sizes, foreground priority, 25 ms contention fallback and 180-second
 6,000-file test deadline are unchanged. Linux owner-boundary, restart and integration
-checks pass; native throughput requires its own rerun.
+checks pass; the native run is recorded in the acceptance receipt above.
 
 Intentional differences from the pinned Prakarana implementation: native hints drive
 maintenance, idle ticks do not read source bodies, no periodic all-source treadmill,
@@ -826,8 +828,9 @@ and no separate ledger/graph service. Notification loss without a rescan signal 
 not detectable: explicit indexing or restart reconciles it. Ignore files outside the
 root need the same explicit action. Backend errors are visible and need owner restart
 to re-register. Linux native event and synthetic large-workspace evidence is recorded
-in [validation](../../docs/validation.md); macOS, network filesystems, 80,000-file
-throughput and model preparation speed are not inferred from those tests.
+in [validation](../../docs/validation.md). The native acceptance above covers the
+pinned Rust corpus on the owner's Mac; network filesystems, 80,000-file throughput
+and model preparation speed are not established.
 
 T009/T011 efficiency follow-up, selected 2026-10-09: unchanged-source chunk allocation
 avoidance, bounded ingestion pipelining and lexical worker reuse are implemented.

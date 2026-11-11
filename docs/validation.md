@@ -1,5 +1,92 @@
 # Validation
 
+## Native Mac watcher acceptance (001 T011) — 2026-11-10
+
+**PASS at the owner-selected native scope.** Self-review on the owner's Apple M5 Max,
+64 GiB Mac; no provider, model, corpus-code execution or paid call. The production
+stdio `mcp --watch` binary is `target/gates/debug/foundry`, built from code `65fd799`
+under Rust 1.97.1; source/tests/lockfile are unchanged at `eda1edf`. Its SHA-256 is
+`c4396172c3be1057ebbc5da3f82a485549476f294f5272b61ebdb4951286f201`.
+The existing eight-gate receipt below is reused, not rerun.
+
+**Inputs and count correction, established before launch.** The Rust 1.99.0 corpus
+is still pinned to `b940084d7eb6a299eb4bfeb8e34901bc051e7ac4`. The earlier
+"62,116-file" description is not the current inventory: Git has 62,035 entries
+(62,018 regular files, five symlinks and 12 submodule entries); the filesystem has
+62,023 file/symlink entries outside `.git` and `.context-foundry`. The run used an
+APFS copy, preserving relative paths, ignore rules and bytes, with a fresh store.
+No files were added to pad the corpus. Its manifest SHA-256 is
+`45c2f2111b8395a3389e230ebbe25c7743073aa27851b8dd149c26692bbecd56`.
+The complete admitted count, 60,739, matches the prior pinned-corpus record.
+
+**Predeclared decision and bounds.** This run decides T011's native watching
+acceptance, not semantic preparation or retrieval quality. Total wall budget 3,600 s;
+cold reconciliation 1,800 s; restart reconciliation 900 s; each edit phase 60 s;
+each MCP request 35 s; owner sampled RSS 8 GiB; free-disk floor 20 GiB; clean
+shutdown 15 s. A failed bound leaves T011 open. Search requests asked for 2,048
+tokens. The protocol was written and hashed before the full run; no acceptance
+threshold changed during it.
+
+| Check | Observed |
+| --- | --- |
+| Whole run | 697.9 s; 65 checks passed, none failed |
+| Cold reconciliation | 381.2 s after MCP initialization; 60,739 accepted, 75 excluded, 60,814 body reads; one full reconciliation, zero events/overflow/errors, no pending index work |
+| Foreground service | Status and search served during reconciliation; 313 tool calls over the run, p95 184.7 ms, maximum 1,161.2 ms |
+| Owner memory | Peak sampled RSS 541.8 MiB; all sampled disk reserves above the floor |
+| Idle operation | Two 120-second windows, before edits and after recovery; zero extra body reads in each |
+| Atomic edit | New bytes and hash delivered, old handle rejected as stale; one additional body read and no extra full reconciliation |
+| Burst, rename, delete | 64 files created, directory renamed, all probes deleted; each phase converged by the next two-second poll (2.04–2.05 s), with current paths and no deleted hits |
+| Abrupt restart | Only the owned MCP child killed; offline edit recovered in 27.5 s including reopening (22.6 s reconciliation); new declaration/hash delivered |
+| Cleanup and preservation | Both owned children reaped; clean final exit and store reopen; final admitted count restored; copied and original corpus manifests unchanged |
+
+The two-second polling interval is an observation bound, not measured event latency.
+RSS sampling is not a hard memory-enforcement proof. Foreground timings cover this
+serial status/search workload; no prior-version latency comparison, universal
+contention bound or economic benefit is claimed. Native scale did not inject queue
+overflow or ignore-policy changes; those remain covered by the existing synthetic
+contracts. The M3 Pro duplicate-read observation in F18 remains unresolved.
+T011 is accepted under decision 15. This does not accept semantic scale, the native
+model/device script, signed-package checks, or T006/real-host task outcomes.
+
+**Private evidence and reproduction.** In this checkout, all raw files remain ignored
+under `runs/t011-native-2026-11-10/`. `watch_run.py --out <fresh-absolute-directory>`
+runs the same no-provider driver against the pinned corpus; the binary is required
+at `target/gates/debug/foundry`. `rust-1/` contains the exact `harness.py`, protocol,
+corpus manifest, request/response log, statuses, latency samples, stderr, final receipt,
+response-byte/hash audit and `SHA256SUMS`. The fixture preflight passed before the
+Rust run. Its first two failures are retained: a 100-file fixture completed before
+observing contention, then a driver assertion incorrectly assumed lexical search
+returned only an exact name. Both were corrected before freezing the full-run driver;
+no product code changed.
+
+| Evidence | SHA-256 |
+| --- | --- |
+| Protocol | `1c6f09c13ad82e6638b69d93d75e9a431ae89a43ee7b629b39a024bbb2db7c06` |
+| Driver | `37ce2ee1ec3e2a2ab4b17ac46c1b0d1d5d34c6ab4aada92218a358645458bfca` |
+| Raw events | `fc40d8d78a5be5150ce7b2def67cf1cb4cf68cbe6dd137a82f8a34db22c67911` |
+| Result | `1e277cae7b7bf2def213a3654be029d58e8fd3a20dd36601599ab6819cc4edfa` |
+
+## Boundary scope acceptance (005 T005) — 2026-11-10
+
+Decision 16 (2026-11-06, "Accept at written scope") is fulfilled by the existing
+`65fd799` local gates receipt below. This is an in-session readback of recorded
+checks, not a new test run or independent review. The code, tests and lockfile at
+`eda1edf` are identical to `65fd799`.
+
+The preserved `test.log` contains 21 passing boundary tests and 24 passing task-evidence
+tests, including `composes_task_and_multiservice_evidence_with_exact_citations_and_no_duplicate_spans`,
+`ambiguous_relationships_are_exposed_and_missing_tests_remain_missing`, the real
+CLI/MCP delivery fixtures, source/configuration invalidation, interrupted publication,
+restart and watched maintenance. All eight local gates exit 0. Test-log SHA-256:
+`e97514d8c7c30cb64e9bc2159a760d46166d122d3b2599b12d6a14ad5cd664f3`.
+
+T005 is accepted at the written multi-service fixture scope and no longer blocks
+release. The five optional real-framework boundary tests and one CPython task-evidence
+test are ignored in that receipt; their older runtime records were not rerun here.
+Other frameworks, brokers, broader imports, cross-language identity and dynamic
+collectors remain named limitations. This acceptance does not establish 003 T009
+real-host outcomes, T006 benefit or release readiness.
+
 ## Watcher test repair (F18) — 2026-11-10
 
 Self-review, on the owner's Mac (Apple M5 Max, 64 GiB). Private logs:
@@ -62,11 +149,11 @@ is work to do.
 | 10 | 009 signed-package checks (handoff row 4) | "Row 4 blocks release" | The first release ships signed semantic retrieval; a failing row 4 is fixed first. |
 | 14 | 010 real-model acceptance | "Defer 010 real-model acceptance" | The release no longer waits on 010's task utility; the code stays experimental and unadvertised. |
 | 20 | 003 T004 meter-only Z.ai gateway | "Release it separately" | CLI and MCP release without advertising it; it gets its own release once proven live. |
-| 16 | 005 T005 boundary relationships | "Accept at written scope" | Accepted once a local gates receipt exists (to do); other producers become named limitations. |
+| 16 | 005 T005 boundary relationships | "Accept at written scope" | Accepted using the `65fd799` local gates receipt ([2026-11-10](#boundary-scope-acceptance-005-t005--2026-11-10)); other producers remain named limitations. |
 | 11 | 009 T006–T009 scale | "Accept the Mac rust run" | The existing Mac hierarchy-v1 preparation of rust-lang/rust, plus a short replay and changed-input check (to do), accepts scale; F10/F11 retire; Linux x86 and the 67,663-source corpus are a named limitation. |
 | 12 | Device acceptance scope | "Script checks only" | What `scripts/native-macos-acceptance.py` checks decides; unbuilt GPU-pressure, residency, thermal/battery and eviction policies are named limitations. |
 | 13 | Native macOS acceptance (F7) | "Once now, unsigned" | One ad-hoc-signed run on the owner's Mac now (to do), repeated on the signed release candidate. |
-| 15 | 001 T011 watching | "Native Mac run on rust" | F18's deadline failure is fixed without loosening it ([2026-11-10](#watcher-test-repair-f18--2026-11-10)); then run `mcp --watch` on the 62,116-file rust corpus against bounds stated in advance (to do). |
+| 15 | 001 T011 watching | "Native Mac run on rust" | Done: F18's deadline repair and the bounded native `mcp --watch` run on pinned rust-lang/rust passed ([2026-11-10](#native-mac-watcher-acceptance-001-t011--2026-11-10)); the receipt corrects the earlier file-count description. |
 | 9 | 001 T010 and `--experimental-behavior-context` | "Lexical-only, drop T006 gate" | T010's own local gates and the 2026-10-19 G2 rule decide; the flag's semantic-store effects are removed and it defaults on only where lexical results are served (code to do). |
 | 24 | Query-time parse cost (001 T006, 007) | "Accept as named limitation" | No code change; reopen only after a measured failure on a real corpus. |
 

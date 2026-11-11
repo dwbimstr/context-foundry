@@ -31,10 +31,10 @@ None is released, and the [release checklist](release.md) runs only after every 
 spec is complete. At that point 005, 009 and 013 were open; the 2026-10-03 spec pass
 classified their remaining unknowns as settled decisions, owned decisions (both decided
 2026-10-04) or external prerequisites, all listed in the portfolio. Since then 013 has
-been frozen off (2026-10-07); 005 T005 is accepted at its written scope once its local
-gates receipt exists (to do), and 009 remains open
+been frozen off (2026-10-07); 005 T005 is accepted at its written scope
+([receipt](validation.md#boundary-scope-acceptance-005-t005--2026-11-10)), and 009 remains open
 ([owner decisions, 2026-11-06](validation.md#owner-decisions--2026-11-06)). 003
-T006–T009, 008 T003–T005, 001 T010–T011 and 010's device acceptance also remain open;
+T006–T009, 008 T003–T005, 001 T010 and 010's device acceptance also remain open;
 the [portfolio](../specs/README.md) owns current status. 001 D001 stays
 resolved: redb/Tantivy. Optional model choices do not reopen that decision by default.
 
@@ -62,9 +62,9 @@ libkrun is conditional infrastructure, needed only where an isolation profile re
 
 Federation and legacy migration need specific user failures before implementation;
 launch-time multi-root context (007) is not federation. Opt-in watching (001 T011) is
-implemented experimentally. F18's deadline failure was fixed on 2026-11-10 without loosening it; T011 still needs a native
-`mcp --watch` run on the 62,116-file rust-lang/rust corpus on the owner's Mac (to do),
-and it stays open if that run fails. Generated knowledge (010) is implemented
+accepted at the owner-selected native scope after the F18 repair and the pinned
+rust-lang/rust `mcp --watch` run on the owner's Mac
+([receipt](validation.md#native-mac-watcher-acceptance-001-t011--2026-11-10)). Generated knowledge (010) is implemented
 experimentally; its real-model acceptance is deferred and it stays unadvertised
 ([owner decisions, 2026-11-06](validation.md#owner-decisions--2026-11-06)). The
 [subtraction review](review/subtraction.md) explains the smaller design; do not

@@ -914,7 +914,9 @@ F6 is retired as a gate and F8 is retired.
   it, then run `mcp --watch` on the 62,116-file rust corpus on the owner's Mac against
   bounds stated before the run (about an hour, no spend). That run is the evidence for
   [001 T011](specs/001-source-state-recovery/spec.md#t011--maintain-the-admitted-workspace-from-filesystem-change-hints),
-  which stays open if it fails. The repair is done (status above); the rust run is
-  to do. The reread failures above were seen on the M3 Pro; the owner's Mac now
+  which stays open if it fails. The repair and native run are done
+  ([acceptance](docs/validation.md#native-mac-watcher-acceptance-001-t011--2026-11-10)). The receipt
+  corrects the 62,116-file description using the unchanged corpus pin and a fresh
+  manifest. The reread failures above were seen on the M3 Pro; the owner's Mac now
   reports an Apple M5 Max with 64 GiB. The read-count assertion now prints the
   watcher status, which is the distinguishing observation if the symptom returns.
