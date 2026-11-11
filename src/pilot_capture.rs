@@ -493,6 +493,19 @@ impl Journal {
         Ok(())
     }
 
+    /// Credential admission already consumed the run/authority claim. Persist
+    /// its terminal refusal before returning; a failed append is itself the
+    /// reported failure, never a claim that the refusal was recorded.
+    fn credential_refusal(&mut self, fault: CaptureFault) -> CaptureFault {
+        match self.append(
+            "halt",
+            json!({"phase": "credential_admission", "class": fault.class.as_str(), "code": fault.code}),
+        ) {
+            Ok(()) => fault,
+            Err(journal_fault) => journal_fault,
+        }
+    }
+
     fn digest(&self) -> Result<String, CaptureFault> {
         let bytes = fs::read(&self.path).map_err(|_| persistence("journal_unreadable"))?;
         Ok(sha256_hex(&bytes))
@@ -1444,68 +1457,81 @@ impl CaptureSession {
         let rt = runtime()?;
         let home = real_home()?;
         let boot = boot_identity()?;
-        let (mode, scope, run_dir, omp, transport_parts, manifest, faults, deny_literals) =
-            match admission {
-                LaunchAdmission::Verification(v) => {
-                    check_verification(&v)?;
-                    let manifest = check_verification_manifest(v.manifest.clone(), v.scope)?;
-                    let credential = wire::Credential::new(&v.credential)?;
-                    let endpoint = wire::Endpoint::Verification {
-                        addr: v.fixture_addr,
-                        ca_pem: v.fixture_ca_pem.clone(),
-                    };
-                    (
-                        Mode::Verification,
-                        v.scope,
-                        v.run_dir,
-                        v.omp,
-                        (endpoint, credential),
-                        manifest,
-                        v.faults,
-                        Vec::new(),
-                    )
+        let (
+            mode,
+            scope,
+            run_dir,
+            hosts_dir,
+            journal,
+            omp,
+            transport_parts,
+            manifest,
+            deny_literals,
+        ) = match admission {
+            LaunchAdmission::Verification(v) => {
+                check_verification(&v)?;
+                let manifest = check_verification_manifest(v.manifest.clone(), v.scope)?;
+                let (run_dir, hosts_dir) = claim_run_dir(&v.run_dir)?;
+                let mut journal =
+                    Journal::create(&run_dir.join("journal.jsonl"), v.faults.journal_fail_after)?;
+                let credential = wire::Credential::new(&v.credential)
+                    .map_err(|fault| journal.credential_refusal(fault))?;
+                let endpoint = wire::Endpoint::Verification {
+                    addr: v.fixture_addr,
+                    ca_pem: v.fixture_ca_pem.clone(),
+                };
+                (
+                    Mode::Verification,
+                    v.scope,
+                    run_dir,
+                    hosts_dir,
+                    journal,
+                    v.omp,
+                    (endpoint, credential),
+                    manifest,
+                    Vec::new(),
+                )
+            }
+            LaunchAdmission::Live(l) => {
+                let (manifest, receipt_sha256, seal) = validate_live(&l)?;
+                if seal.is_some() {
+                    // A fresh coding session may cite a sealed probe as
+                    // compatibility evidence, but the paid clock and
+                    // counters continue only through `open_after_probe`.
+                    return Err(authority("coding_requires_probe_handoff"));
                 }
-                LaunchAdmission::Live(l) => {
-                    let (manifest, receipt_sha256, seal) = validate_live(&l)?;
-                    if seal.is_some() {
-                        // A fresh coding session may cite a sealed probe as
-                        // compatibility evidence, but the paid clock and
-                        // counters continue only through `open_after_probe`.
-                        return Err(authority("coding_requires_probe_handoff"));
-                    }
-                    let target = canonical_run_dir(&l.run_dir)?;
-                    if target.symlink_metadata().is_ok() {
-                        return Err(authority("run_dir_claim_failed"));
-                    }
-                    claim_authority(&l.authority, &receipt_sha256, &target)?;
-                    let credential = read_credential(&l.credential_file, &target, &manifest)?;
-                    let credential_path = fs::canonicalize(&l.credential_file).map_err(|_| {
-                        CaptureFault::new(FaultClass::Privacy, "credential_missing")
-                    })?;
-                    (
-                        Mode::Live,
-                        l.scope,
-                        l.run_dir,
-                        l.omp,
-                        (wire::Endpoint::Live, credential),
-                        Some(manifest),
-                        VerificationFaults::default(),
-                        vec![credential_path],
-                    )
+                let target = canonical_run_dir(&l.run_dir)?;
+                if target.symlink_metadata().is_ok() {
+                    return Err(authority("run_dir_claim_failed"));
                 }
-            };
+                claim_authority(&l.authority, &receipt_sha256, &target)?;
+                let (run_dir, hosts_dir) = claim_run_dir(&target)?;
+                let mut journal = Journal::create(&run_dir.join("journal.jsonl"), None)?;
+                let credential = read_credential(&l.credential_file, &run_dir, &manifest)
+                    .map_err(|fault| journal.credential_refusal(fault))?;
+                let credential_path = fs::canonicalize(&l.credential_file).map_err(|_| {
+                    journal.credential_refusal(CaptureFault::new(
+                        FaultClass::Privacy,
+                        "credential_missing",
+                    ))
+                })?;
+                (
+                    Mode::Live,
+                    l.scope,
+                    run_dir,
+                    hosts_dir,
+                    journal,
+                    l.omp,
+                    (wire::Endpoint::Live, credential),
+                    Some(manifest),
+                    vec![credential_path],
+                )
+            }
+        };
         let transport = {
             let _guard = rt.enter();
             wire::Transport::new(&transport_parts.0, transport_parts.1)?
         };
-        let (run_dir, hosts_dir) = claim_run_dir(&run_dir)?;
-        let journal = Journal::create(
-            &run_dir.join("journal.jsonl"),
-            match mode {
-                Mode::Verification => faults.journal_fail_after,
-                Mode::Live => None,
-            },
-        )?;
         let mut inner = Inner {
             mode,
             scope,
@@ -1579,14 +1605,22 @@ impl CaptureSession {
                 "paid_wall_exhausted",
             ));
         }
-        let (mode, omp, transport, manifest, deny_literals) = match admission {
+        let (mode, journal, omp, transport, manifest, deny_literals) = match admission {
             LaunchAdmission::Verification(v) => {
                 if seal.mode != Mode::Verification || v.scope != Scope::Coding {
                     return Err(authority("probe_handoff_mode_mismatch"));
                 }
                 check_verification(&v)?;
                 let manifest = check_verification_manifest(v.manifest.clone(), Scope::Coding)?;
-                let credential = wire::Credential::new(&v.credential)?;
+                // Admit this verification path before touching the sealed journal.
+                let mut journal = Journal::reopen(
+                    &seal.run_dir.join("journal.jsonl"),
+                    &seal.journal_sha256,
+                    seal.journal_records,
+                )?;
+                verify_seal_against_journal(seal, &journal.path)?;
+                let credential = wire::Credential::new(&v.credential)
+                    .map_err(|fault| journal.credential_refusal(fault))?;
                 let endpoint = wire::Endpoint::Verification {
                     addr: v.fixture_addr,
                     ca_pem: v.fixture_ca_pem.clone(),
@@ -1594,6 +1628,7 @@ impl CaptureSession {
                 let _guard = rt.enter();
                 (
                     Mode::Verification,
+                    journal,
                     v.omp,
                     wire::Transport::new(&endpoint, credential)?,
                     manifest,
@@ -1611,13 +1646,28 @@ impl CaptureSession {
                     }
                     _ => return Err(authority("compatibility_evidence_not_this_probe")),
                 }
+                // Only validated coding admission may inspect this cited probe.
+                // A terminal prefix refuses before consuming fresh authority;
+                // no journal append is allowed until the claim succeeds.
+                let mut journal = Journal::reopen(
+                    &seal.run_dir.join("journal.jsonl"),
+                    &seal.journal_sha256,
+                    seal.journal_records,
+                )?;
+                verify_seal_against_journal(seal, &journal.path)?;
                 claim_authority(&l.authority, &receipt_sha256, &seal.run_dir)?;
-                let credential = read_credential(&l.credential_file, &seal.run_dir, &manifest)?;
-                let credential_path = fs::canonicalize(&l.credential_file)
-                    .map_err(|_| CaptureFault::new(FaultClass::Privacy, "credential_missing"))?;
+                let credential = read_credential(&l.credential_file, &seal.run_dir, &manifest)
+                    .map_err(|fault| journal.credential_refusal(fault))?;
+                let credential_path = fs::canonicalize(&l.credential_file).map_err(|_| {
+                    journal.credential_refusal(CaptureFault::new(
+                        FaultClass::Privacy,
+                        "credential_missing",
+                    ))
+                })?;
                 let _guard = rt.enter();
                 (
                     Mode::Live,
+                    journal,
                     l.omp,
                     wire::Transport::new(&wire::Endpoint::Live, credential)?,
                     Some(manifest),
@@ -1625,12 +1675,6 @@ impl CaptureSession {
                 )
             }
         };
-        let journal = Journal::reopen(
-            &seal.run_dir.join("journal.jsonl"),
-            &seal.journal_sha256,
-            seal.journal_records,
-        )?;
-        verify_seal_against_journal(seal, &journal.path)?;
         let mut inner = Inner {
             mode,
             scope: Scope::Coding,

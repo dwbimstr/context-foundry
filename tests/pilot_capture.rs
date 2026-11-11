@@ -9,6 +9,8 @@
 //! than skipping it.
 //!
 //! Run: `cargo test --features pilot-capture --test pilot_capture`.
+//! `CF_PILOT_TEST_OMP` may select an archived host at compile time; its bytes
+//! must still match the frozen host pin. The installed-host default is unchanged.
 #![cfg(all(feature = "pilot-capture", target_os = "macos"))]
 
 #[path = "pilot_capture/fixture.rs"]
@@ -24,7 +26,10 @@ use context_foundry::pilot_capture::{
 use fixture::{Fixture, Reply};
 use serde_json::{Value, json};
 
-const OMP: &str = "/Users/satishlomte/.local/bin/omp";
+const OMP: &str = match option_env!("CF_PILOT_TEST_OMP") {
+    Some(path) => path,
+    None => "/Users/satishlomte/.local/bin/omp",
+};
 const CANARY: &str = "sk-ant-verify-canary-7f3c1e9a5b2d4c6e8f0a1b3c5d7e9f11";
 const TASK: &str = "Repair malformed percent escapes in src/lib.rs so no bytes are dropped.";
 
@@ -222,6 +227,7 @@ fn stage1_probe_end_to_end_and_clean_handoff() {
     }
     // The Messages body is the host's exact serialized body.
     let records = journal(session.run_dir());
+    assert_eq!(records[0]["kind"], "admitted");
     let validated = records
         .iter()
         .find(|r| r["kind"] == "request_validated")
@@ -330,6 +336,7 @@ fn stage1_probe_end_to_end_and_clean_handoff() {
     assert_eq!(receipt.journal_records, seal.journal_records);
     assert_eq!(receipt.journal_sha256, seal.journal_sha256);
     assert_eq!(seal.attempt_seq, 2);
+    let sealed_bytes = std::fs::read(e.run_dir.join("journal.jsonl")).unwrap();
 
     // Verification never accepts a credential it does not own, also not
     // through the handoff.
@@ -390,6 +397,212 @@ fn stage1_probe_end_to_end_and_clean_handoff() {
     let handoff = after.last().unwrap();
     assert_eq!(handoff["kind"], "coding_handoff");
     assert_eq!(after.len() as u64, seal.journal_records + 1);
+    assert!(
+        std::fs::read(coding.run_dir().join("journal.jsonl"))
+            .unwrap()
+            .starts_with(&sealed_bytes)
+    );
+}
+
+/// An owned malformed key reaches the same claimed-run boundary as live
+/// credential loading. No host is launched and the TLS fixture sees no HTTP.
+#[test]
+fn claimed_credential_refusal_is_durable_and_append_failure_stays_closed() {
+    require_host();
+    for (fail_after, expected) in [
+        (None, "credential_shape_invalid"),
+        (Some(0), "journal_append_failed"),
+    ] {
+        let e = env();
+        let fx = Fixture::start(vec![]);
+        let malformed = format!("{CANARY} invalid");
+        let mut admission = match verification(
+            &e,
+            &fx,
+            Scope::Probe,
+            VerificationFaults {
+                journal_fail_after: fail_after,
+            },
+        ) {
+            LaunchAdmission::Verification(v) => v,
+            LaunchAdmission::Live(_) => unreachable!(),
+        };
+        admission.credential = malformed.clone();
+        let fault = CaptureSession::open(LaunchAdmission::Verification(admission))
+            .err()
+            .unwrap();
+        assert_eq!(fault.code, expected);
+        assert!(!fault.to_string().contains(CANARY));
+        assert!(e.run_dir.join("claim.json").is_file());
+        assert!(
+            fx.seen().is_empty(),
+            "credential refusal sent an HTTP request"
+        );
+        assert_eq!(
+            std::fs::read_dir(e.run_dir.join("hosts")).unwrap().count(),
+            0
+        );
+        if fail_after.is_none() {
+            let records = journal(&e.run_dir);
+            assert_eq!(records.len(), 1);
+            assert_eq!(records[0]["kind"], "halt");
+            assert_eq!(records[0]["phase"], "credential_admission");
+            assert_eq!(records[0]["class"], "authority");
+            assert_eq!(records[0]["code"], "credential_shape_invalid");
+            assert_eq!(records[0]["seq"], 1);
+            assert_eq!(records[0]["prev"], "");
+        } else {
+            assert_eq!(fault.class, FaultClass::Persistence);
+            assert!(
+                std::fs::read(e.run_dir.join("journal.jsonl"))
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+        assert_absent_under(&e.run_dir, CANARY);
+        assert_absent_under(&e.run_dir, &malformed);
+        assert_eq!(
+            CaptureSession::open(verification(&e, &fx, Scope::Probe, Default::default()))
+                .err()
+                .unwrap()
+                .code,
+            "run_dir_claim_failed",
+            "credential refusal must not release the consumed run claim"
+        );
+        assert!(fx.seen().is_empty());
+    }
+}
+
+#[test]
+fn coding_credential_refusal_preserves_the_seal_and_prevents_continuation() {
+    require_host();
+    let e = env();
+    let fx = Fixture::start(vec![
+        Reply::Count(2048),
+        fixture::text_reply("msg_refusal_probe", "PILOT_TRANSPORT_OK"),
+    ]);
+    let mut probe =
+        CaptureSession::open(verification(&e, &fx, Scope::Probe, Default::default())).unwrap();
+    let capture = probe
+        .run_slot(slot(&e, policy::PROBE_SLOT, policy::PROBE_INSTRUCTION))
+        .unwrap();
+    let seal = probe.seal_probe(&capture).unwrap();
+    probe.finish().unwrap();
+    let journal_path = e.run_dir.join("journal.jsonl");
+    let prefix = std::fs::read(&journal_path).unwrap();
+    assert_eq!(pilot_capture::sha256_hex(&prefix), seal.journal_sha256);
+    assert_eq!(journal(&e.run_dir)[0]["kind"], "admitted");
+    assert_eq!(fx.seen().len(), 2);
+
+    let malformed = format!("{CANARY} invalid");
+    let mut admission = match verification(&e, &fx, Scope::Coding, Default::default()) {
+        LaunchAdmission::Verification(v) => v,
+        LaunchAdmission::Live(_) => unreachable!(),
+    };
+    admission.credential = malformed.clone();
+    let fault = CaptureSession::open_after_probe(&seal, LaunchAdmission::Verification(admission))
+        .err()
+        .unwrap();
+    assert_eq!(fault.code, "credential_shape_invalid");
+    assert!(!fault.to_string().contains(CANARY));
+    let bytes = std::fs::read(&journal_path).unwrap();
+    assert!(bytes.starts_with(&prefix));
+    let records = journal(&e.run_dir);
+    assert_eq!(records.len() as u64, seal.journal_records + 1);
+    let refusal = records.last().unwrap();
+    assert_eq!(refusal["kind"], "halt");
+    assert_eq!(refusal["phase"], "credential_admission");
+    assert_eq!(refusal["code"], "credential_shape_invalid");
+    let previous = prefix
+        .split(|b| *b == b'\n')
+        .rfind(|line| !line.is_empty())
+        .unwrap();
+    assert_eq!(refusal["prev"], pilot_capture::sha256_hex(previous));
+    assert_eq!(refusal["seq"], seal.journal_records + 1);
+    assert_absent_under(&e.run_dir, CANARY);
+    assert_absent_under(&e.run_dir, &malformed);
+    assert_eq!(
+        fx.seen().len(),
+        2,
+        "coding refusal sent another HTTP request"
+    );
+
+    // Verification admission must refuse before opening even a missing
+    // caller-selected journal. An unowned credential is an admission failure,
+    // not an admitted credential-shape refusal to append to a run.
+    let root = e.run_dir.parent().unwrap();
+    let missing_journal = pilot_capture::ProbeSeal {
+        run_dir: root.join("missing-probe-run"),
+        ..seal.clone()
+    };
+    assert!(!missing_journal.run_dir.exists());
+    let mut unowned = match verification(&e, &fx, Scope::Coding, Default::default()) {
+        LaunchAdmission::Verification(v) => v,
+        LaunchAdmission::Live(_) => unreachable!(),
+    };
+    unowned.credential = "not-owned-and-must-not-be-examined".into();
+    assert_eq!(
+        CaptureSession::open_after_probe(&missing_journal, LaunchAdmission::Verification(unowned))
+            .err()
+            .unwrap()
+            .code,
+        "verification_credential_not_owned"
+    );
+    // An owned-prefix credential passes admission but has invalid wire shape.
+    // The terminal journal must refuse first, without appending another halt.
+    let mut owned_malformed = match verification(&e, &fx, Scope::Coding, Default::default()) {
+        LaunchAdmission::Verification(v) => v,
+        LaunchAdmission::Live(_) => unreachable!(),
+    };
+    owned_malformed.credential = malformed.clone();
+    assert_eq!(
+        CaptureSession::open_after_probe(&seal, LaunchAdmission::Verification(owned_malformed))
+            .err()
+            .unwrap()
+            .code,
+        "journal_digest_mismatch"
+    );
+    // Live cannot inspect a verification journal, even when its path is missing.
+    let unopened = root.join("unopened-evidence");
+    assert_eq!(
+        CaptureSession::open_after_probe(
+            &missing_journal,
+            LaunchAdmission::Live(LiveAdmission {
+                run_dir: e.run_dir.clone(),
+                omp: unopened.clone(),
+                scope: Scope::Coding,
+                contract: unopened.clone(),
+                authority: root.join("unused-authority.json"),
+                launch_manifest: unopened.clone(),
+                ratecard: unopened.clone(),
+                compatibility: Some(unopened.clone()),
+                credential_file: unopened,
+            })
+        )
+        .err()
+        .unwrap()
+        .code,
+        "probe_handoff_mode_mismatch"
+    );
+    assert!(!root.join("unused-authority.json.claim").exists());
+    // Replacing the supplied seal's digest/count cannot legitimize the halt.
+    let rewritten = pilot_capture::ProbeSeal {
+        journal_sha256: pilot_capture::sha256_hex(&bytes),
+        journal_records: seal.journal_records + 1,
+        ..seal.clone()
+    };
+    assert_eq!(
+        CaptureSession::open_after_probe(
+            &rewritten,
+            verification(&e, &fx, Scope::Coding, Default::default()),
+        )
+        .err()
+        .unwrap()
+        .code,
+        "probe_seal_not_journaled"
+    );
+    assert_eq!(std::fs::read(&journal_path).unwrap(), bytes);
+    assert_eq!(fx.seen().len(), 2);
 }
 
 /// Retry refusal: a failed generation is never re-sent, including by the
@@ -1196,8 +1409,128 @@ fn live_gates_refuse_in_order_and_claim_the_authority_once() {
     // absent, after the authority and the run were claimed exclusively.
     assert_eq!(open(&a4, &bound, "run-5"), "credential_missing");
     assert!(dir.join("authority-4.json.claim").is_file());
+    assert!(dir.join("run-5/claim.json").is_file());
+    let refused = journal(&dir.join("run-5"));
+    assert_eq!(refused.len(), 1);
+    assert_eq!(refused[0]["kind"], "halt");
+    assert_eq!(refused[0]["phase"], "credential_admission");
+    assert_eq!(refused[0]["class"], "privacy");
+    assert_eq!(refused[0]["code"], "credential_missing");
+    assert_eq!(refused[0]["prev"], "");
+    assert_eq!(refused[0]["seq"], 1);
     assert_eq!(open(&a4, &bound, "run-6"), "authority_already_claimed");
+
+    // A distinct authority is consumed by an owned malformed file as well.
+    // These bytes are synthetic, private and outside the claimed run.
+    use std::os::unix::fs::PermissionsExt;
+    let malformed = format!("{CANARY} invalid");
+    let key_path = write("no-such-credential", malformed.as_bytes());
+    std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let a5 = write(
+        "authority-5.json",
+        &serde_json::to_vec(&receipt(true, &exe, &bound)).unwrap(),
+    );
+    assert_eq!(open(&a5, &bound, "run-7"), "credential_shape_invalid");
+    assert!(dir.join("authority-5.json.claim").is_file());
+    assert!(dir.join("run-7/claim.json").is_file());
+    let refused = journal(&dir.join("run-7"));
+    assert_eq!(refused.len(), 1);
+    assert_eq!(refused[0]["kind"], "halt");
+    assert_eq!(refused[0]["class"], "authority");
+    assert_eq!(refused[0]["code"], "credential_shape_invalid");
+    assert_absent_under(&dir.join("run-7"), CANARY);
+    assert_absent_under(&dir.join("run-7"), &malformed);
+    assert_eq!(open(&a5, &bound, "run-8"), "authority_already_claimed");
+    assert!(!dir.join("run-8").exists());
     for run in ["run-1", "run-2", "run-3", "run-4", "run-6"] {
         assert!(!dir.join(run).exists(), "{run} claimed despite refusal");
     }
+
+    // A synthetic Live-shaped coding admission must reach the journal gate,
+    // not stop at mode/manifest/authority validation. The owned verification
+    // probe supplies current boot/clock/bridge fields only: relabeling this
+    // evidence does not establish an actual Live-compatible probe history.
+    let fx = Fixture::start(vec![
+        Reply::Count(2048),
+        fixture::text_reply("msg_live_shape_probe", "PILOT_TRANSPORT_OK"),
+    ]);
+    let mut probe =
+        CaptureSession::open(verification(&e, &fx, Scope::Probe, Default::default())).unwrap();
+    let capture = probe
+        .run_slot(slot(&e, policy::PROBE_SLOT, policy::PROBE_INSTRUCTION))
+        .unwrap();
+    let verification_seal = probe.seal_probe(&capture).unwrap();
+    probe.finish().unwrap();
+    assert_eq!(fx.seen().len(), 2);
+
+    let terminal_run = dir.join("run-5");
+    let terminal_path = terminal_run.join("journal.jsonl");
+    let terminal_bytes = std::fs::read(&terminal_path).unwrap();
+    let live_shape = pilot_capture::ProbeSeal {
+        mode: pilot_capture::Mode::Live,
+        run_dir: terminal_run.clone(),
+        journal_sha256: pilot_capture::sha256_hex(&terminal_bytes),
+        journal_records: journal(&terminal_run).len() as u64,
+        ..verification_seal
+    };
+    let cited = write(
+        "synthetic-live-seal.json",
+        &serde_json::to_vec(&live_shape).unwrap(),
+    );
+    let coding_manifest = LaunchManifest {
+        slots: policy::SLOT_ORDER
+            .iter()
+            .map(|id| ManifestSlot {
+                slot_id: (*id).into(),
+                arm: id.chars().last().unwrap().to_string(),
+                ..manifest.slots[0].clone()
+            })
+            .collect(),
+        ..manifest.clone()
+    };
+    let coding_manifest_path = write(
+        "coding-manifest.json",
+        &serde_json::to_vec(&coding_manifest).unwrap(),
+    );
+    let coding_authority = write(
+        "unused-coding-authority.json",
+        &serde_json::to_vec(&AuthorityReceipt {
+            scope: Scope::Coding,
+            launch_manifest_sha256: sha(&coding_manifest_path),
+            ..receipt(true, &exe, &bound)
+        })
+        .unwrap(),
+    );
+    let missing_key = dir.join("coding-key-must-not-be-read");
+    assert!(!missing_key.exists());
+    let fault = CaptureSession::open_after_probe(
+        &live_shape,
+        LaunchAdmission::Live(LiveAdmission {
+            run_dir: terminal_run,
+            omp: OMP.into(),
+            scope: Scope::Coding,
+            contract: contract.clone(),
+            authority: coding_authority,
+            launch_manifest: coding_manifest_path,
+            ratecard: bound.clone(),
+            compatibility: Some(cited),
+            credential_file: missing_key,
+        }),
+    )
+    .err()
+    .unwrap();
+    assert_eq!(
+        fault.code, "probe_seal_not_journaled",
+        "validated Live coding admission must reject the terminal journal before claim/key"
+    );
+    assert!(
+        !dir.join("unused-coding-authority.json.claim").exists(),
+        "terminal evidence must not consume fresh coding authority"
+    );
+    assert_eq!(std::fs::read(&terminal_path).unwrap(), terminal_bytes);
+    assert_eq!(
+        fx.seen().len(),
+        2,
+        "no additional fixture request is permitted"
+    );
 }
