@@ -599,7 +599,12 @@ compare state. They do not simulate power loss inside either database library. O
 process owns a store and a competing owner gets `store_busy`, so concurrent CLI
 processes are not a supported serving topology; the optional shared HTTP owner (003)
 serves several MCP clients through that one owner. Do not add process retries and
-lock stealing as a substitute for one serving owner.
+lock stealing as a substitute for one serving owner. Once redb ownership is held,
+opening the derived writer may retry its typed `LockBusy` for at most one second:
+a child between fork and exec can retain the previous owner's Tantivy descriptor
+after redb explicitly unlocks. Persistent derived contention reports `store_busy`,
+not repair advice. Authoritative ownership is never retried or stolen; this wait
+does not repair an index or change source records.
 
 The experimental store schema is version 12 (009 T008, 2026-10-10). `upgrade-store --to 12`
 is the one explicit transaction from v1–v11. Later steps preserve task state (v7),

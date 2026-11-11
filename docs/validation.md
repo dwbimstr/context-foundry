@@ -1,5 +1,47 @@
 # Validation
 
+## Derived writer contention after fork — 2026-11-11
+
+The retained-cleanup gates on `85369dd` completed all eight stages in 795.88 s:
+seven exited 0, but the default test gate exited 101. Its totals were 1,304 passed,
+one failed and 34 ignored; the separate pilot unit gate passed all 62 tests.
+`policy::the_cli_keeps_output_identical_without_a_policy_and_reports_it` failed
+at its first plain CLI context call with Tantivy `LockBusy`, incorrectly reported
+as `repair_required`. All observed owned processes exited naturally, without
+forced cleanup. This failed run is retained and does not count as acceptance.
+
+The existing `d72f3bb` field-order repair is present: redb ownership outlives the
+parent's search-writer teardown. A separate real-process witness identifies a
+remaining lifetime mismatch. Tantivy 0.26.2's `ReleaseLockFile::drop`
+(`src/directory/mmap_directory/mod.rs`) releases its BSD flock only by closing its
+file; redb 4.4.0's optimized file backend explicitly unlocks. A child held between
+fork and exec retains the inherited Tantivy descriptor. After the parent drops
+its Engine, a new Engine acquires redb but reports `repair_required/LockBusy`;
+releasing and reaping the child restores `ready` and the original search result,
+without repair. The native supervisor recorded natural exit and no remaining
+owned child. This establishes the mechanism; the original policy-test failure
+did not instrument its fork interval, so that specific occurrence is not causally
+attributed beyond the matching lock symptom.
+
+The repair preserves the typed lock error. After acquiring redb ownership, open
+retries only the derived writer's `LockBusy`, bounded to one second. Persistent
+contention returns `store_busy`; corruption and schema mismatches still require
+explicit repair. Competing redb owners are refused immediately. No lock is stolen,
+index rebuilt or source record changed. This local containment avoids a dependency
+fork or a new process-coordination layer; it does not change Tantivy's lock lifetime.
+
+Both new tests in `tests/store_lock.rs` fail before the repair and pass after it
+(2 passed in 1.23 s). The first uses real forked descriptors and releases the child
+only after the actual lock attempt fails; the second holds a real Tantivy writer,
+requires bounded `store_busy`, unchanged index metadata and a ready reopen with
+the original source revision/result. A native focused run passed all 88 core,
+22 policy and two lock tests in 87.82 s, including the original failing policy case;
+it exited naturally with no observed owned processes left. In-session review added
+a deadline check before starting any retry, so an expired wait cannot start another
+reader construction. Fresh full gates are still pending. Private evidence is in
+`runs/store-lock-2026-11-11/`; the original
+gate logs and receipt remain in `runs/t010-lexical-2026-11-11/gates-retained*`.
+
 ## T010 lexical default — 2026-11-11
 
 **HOLD: default promotion failed a frozen local guard.** One
@@ -76,8 +118,9 @@ its G1/G2 results. No new ranking rule was tuned to the failed fixture. The
 default-switch code and its dependent test changes are withdrawn; semantic isolation,
 the direct admission regression and the native supervisor repair remain. T010 is
 not accepted. A future lexical repair needs a separately declared candidate and
-fresh local/frozen measurements. Full implementation gates on the retained cleanup
-remain to run.
+fresh local/frozen measurements. The first complete implementation-gate run on the
+retained cleanup failed the separate writer-lock case [recorded above](#derived-writer-contention-after-fork--2026-11-11);
+fresh gates after that repair remain to run.
 
 Private protocols, binaries, complete outputs, failed receipts and resource samples
 are retained in `runs/t010-lexical-2026-11-11/` and

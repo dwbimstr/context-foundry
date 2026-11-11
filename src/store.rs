@@ -1748,20 +1748,50 @@ fn search_handles(index: Index) -> tantivy::Result<SearchHandles> {
     })
 }
 
-fn open_search(dir: &Path) -> Result<SearchHandles, String> {
+fn open_search(dir: &Path) -> FResult<SearchHandles> {
     let index_dir = dir.join("search");
     if !index_dir.join("meta.json").is_file() {
-        return Err("derived index is missing".into());
+        return Err(FoundryError::RepairRequired(
+            "derived index is missing".into(),
+        ));
     }
     if index_dir.is_symlink() {
-        return Err("derived index path is a symlink".into());
+        return Err(FoundryError::RepairRequired(
+            "derived index path is a symlink".into(),
+        ));
     }
-    let index = Index::open_in_dir(&index_dir).map_err(|e| format!("derived index open: {e}"))?;
+    let repair = |e| FoundryError::RepairRequired(format!("derived index open: {e}"));
+    let index = Index::open_in_dir(&index_dir).map_err(repair)?;
     // The actual Tantivy field set must be schema v2.
     if index.schema() != search_schema() {
-        return Err(SEARCH_SCHEMA_REASON.into());
+        return Err(FoundryError::RepairRequired(SEARCH_SCHEMA_REASON.into()));
     }
-    search_handles(index).map_err(|e| format!("derived index open: {e}"))
+    // redb ownership is already exclusive. Tantivy 0.26/0.27 releases its
+    // flock by closing the descriptor, so a child between fork and exec can
+    // keep the old lock alive after redb explicitly unlocks. Bound this wait;
+    // persistent contention is busy, never evidence that an index is corrupt.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    let mut retry = false;
+    loop {
+        if retry && std::time::Instant::now() >= deadline {
+            return Err(FoundryError::StoreBusy);
+        }
+        match search_handles(index.clone()) {
+            Err(tantivy::TantivyError::LockFailure(
+                tantivy::directory::error::LockError::LockBusy,
+                _,
+            )) => {
+                retry = true;
+                fault!(SEARCH_WRITER_BUSY, None, None, "")?;
+                let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                if remaining.is_zero() {
+                    return Err(FoundryError::StoreBusy);
+                }
+                std::thread::sleep(remaining.min(std::time::Duration::from_millis(10)));
+            }
+            result => return result.map_err(repair),
+        }
+    }
 }
 
 /// How a source's search documents are built.

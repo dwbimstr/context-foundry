@@ -230,7 +230,14 @@ cooperative cancellation, not a hard deadline on an OS/library call.
   `src/main.rs`, `tests/core.rs` and new `tests/recovery.rs`; no daemon/model work.
 - **Outcome/acceptance (FR-001, FR-005 / SC-001):** implement schema-2 upgrade, metadata-
   only status/export, bounded refresh and explicit repair as above. Unknown schema
-  changes no records; competing open returns `store_busy` without retry/lock stealing.
+  changes no records; competing authoritative open returns `store_busy` without
+  retry/lock stealing. After redb ownership is acquired, a forked child can briefly
+  retain the previous owner's Tantivy descriptor before exec. Only this derived
+  writer's typed `LockBusy` is retried, for at most one second; persistent contention
+  returns `store_busy`, never `repair_required`. No index repair or source mutation
+  occurs during that wait. Missing/corrupt/schema-mismatched indexes still require
+  explicit repair. Real inherited-descriptor and persistent-writer regressions are
+  in `tests/store_lock.rs`.
 - **Verification:** child-process exits at before/after source commit, after search
   commit before pending clear, during repair enqueue, after quarantine, and before
   marker clear. Reopen/retry; exact source hashes, graph rows and feedback records

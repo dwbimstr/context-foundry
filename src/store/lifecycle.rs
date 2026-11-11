@@ -209,7 +209,8 @@ impl Engine {
             } else {
                 match open_search(store_dir) {
                     Ok(handles) => search = Some(handles),
-                    Err(reason) => repair_reason = Some(reason),
+                    Err(FoundryError::RepairRequired(reason)) => repair_reason = Some(reason),
+                    Err(error) => return Err(error),
                 }
             }
         }
