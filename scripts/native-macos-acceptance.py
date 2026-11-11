@@ -471,6 +471,11 @@ class NativeFullCommand:
                             stop_at = now
                             self._signal_direct(process, signal.SIGINT, errors)
                     code = process.poll()
+                    if code is not None:
+                        # The snapshot above predates poll(): a child can finish
+                        # and be reaped while resource sampling runs. Judge
+                        # descendant liveness only after observing owner exit.
+                        root, remaining = self._observe(process, root, known)
                     if code is not None and not remaining:
                         natural_exit = stop_reason is None
                         break
