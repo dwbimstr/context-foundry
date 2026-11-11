@@ -143,12 +143,15 @@ and dated paragraphs below are history.
     ([receipt](validation.md#native-macos-acceptance--2026-11-10)); it must repeat on
     the signed release candidate. 001 T011 is accepted by the native Mac watch run on pinned rust
     ([receipt](validation.md#native-mac-watcher-acceptance-001-t011--2026-11-10));
-    001 T010's semantic effects are removed. Its lexical default promotion is held:
-    the candidate passed G1/G2 but failed a frozen economics guard, so the flag stays
-    off ([receipt](validation.md#t010-lexical-default--2026-11-11)). The retained
-    cleanup and bounded store-lock repair pass the local gates
+    001 T010 is accepted at its written lexical retrieval scope: behavioral selection
+    now defaults on with `--experimental-behavior-context=false` opt-out. Supplied
+    dense windows and semantic model admission retain their ordinary behavior
+    ([receipt](validation.md#t010-singleton-qualification--2026-11-11)). The first
+    failed default attempt and the test-only gate continuation remain recorded;
+    no semantic-quality or real-agent benefit is claimed. The retained cleanup and
+    bounded store-lock repair pass the local gates
     ([receipt](validation.md#derived-writer-contention-after-fork--2026-11-11)).
-    T010 remains unaccepted. The remaining release-path items are to do.
+    The remaining release-path items are to do.
   - **T006:** the [unfunded pilot v2 draft](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md)
     now records the arms, capture requirements and v1 gap repairs. It is not frozen:
     concrete held-out tasks, power/sample analysis, arm readiness, launch pins and a

@@ -301,6 +301,249 @@ red/green logs, final gate receipt and a 340-file SHA-256 evidence snapshot, is 
 `runs/store-lock-2026-11-11/`; the original
 gate logs and receipt remain in `runs/t010-lexical-2026-11-11/gates-retained*`.
 
+## T010 singleton qualification — 2026-11-11
+
+**PASS: T010 is accepted at its written lexical retrieval scope.** The actual-default
+singleton candidate passes the frozen G1/G2 measurement and the corrected full
+neural file plus all eight gates under the declared test-only continuation.
+Lexical behavioral selection defaults on with explicit opt-out. The first full
+gates on `f19d353` failed and remain recorded below; the earlier default candidate's
+failed economics guard and all of its receipts remain in
+[the first-attempt record](#t010-lexical-default--2026-11-11).
+
+The second candidate was selected before its tests. It is implementation commit
+`029b95281c4f8e2c38f1575d1f3aaaa7b0a9a839`, followed only by the option-comment
+correction `f19d35325d4f34f74b208eed816d328de569b9d0`. The complete isolated trial
+already contains the proposed default in the library, CLI context and MCP owner,
+with bare-flag compatibility and `--experimental-behavior-context=false` opt-out.
+That actual default was committed and built before broad measurement; the candidate
+MCP arguments contain no enabling flag. No ranking/default code change after the
+frozen measurements is part of this candidate.
+
+The accepted comparison baseline is parser/Tantivy code `68ed776` (record-only head
+`1b4cf0e`), with behavior selection off by default. Baseline binary SHA-256:
+`8b6b55d7dd7013cdebc9c6e3dec701c58ad2c6929857fc05e828c1ac0cb0e0ae`.
+Final candidate binary SHA-256:
+`60aff1025ba6515caa70b0854f233a1d2e2b4f8f83cfed290f143626e8c14011`.
+The source/search/unit/semantic-generation schemas remain 12/9/7/6. This retrieval
+repair does not change the parser bundle, persistent schema or semantic recipe.
+
+**Selected repair.** Eligible anchorless lexical prose may retain exact-run priority
+only when the complete existing restricted Count reports one indexed definition
+document. Stopwords and suppressed incidental descriptors stay excluded; no role,
+case or qualifier shortcut is added to the count. This is per-index uniqueness,
+not compiler or global-root identity. Ambiguous common-word definitions keep the
+existing prose ranking. Long prose candidates use the existing indexed-document
+bounds at both cross-tier deduplication and final admission, including tier 1, so
+promotion does not erase a later disjoint body match. The two-passage admission,
+source freshness, candidate/delivery caps and response budgets remain. Ordinary
+search and non-prose selection retain their rules. Any supplied dense window,
+including partial/empty, still suppresses the flag's effects; named fallback remains
+lexical. No new model call, scoring weight, corpus-specific exception or threshold
+variant is selected.
+
+**Focused red/green evidence.** Before the production repair, the frozen real-Engine
+singleton-delivery regression failed at the final packed-body assertion, with the
+other fourteen selected prose tests passing. The enabled economics boundary also
+failed its unchanged expected-unit assertion. Both expected-red commands exited
+101; these are retained failure witnesses, not passing implementation gates.
+After the repair, all 92 core tests and both active economics tests passed (one
+measurement report ignored); the four selected semantic-isolation tests passed.
+The economics harness now runs the same six frozen questions through default and
+explicit-enabled MCP owners. Its fixture bytes, markers, parser, body-identity
+checks, assertions and 2,048-token cap are unchanged. This is a harness extension,
+not a claim that the test file was untouched.
+
+The initial actual-default boundary run failed two legacy ordinary-control arms:
+`prose_diversity_backfills_independent_same_file_evidence_without_hiding_neighbors`
+and `prose_plural_acronyms_match_the_acronym_without_changing_symbol_requests`.
+Their default calls had become enabled under the proposed default; their explicit
+experimental assertions passed. Only those ordinary calls were changed to explicit
+`experimental_behavior:false`. Assertions, fixture source, caps and ranking stayed
+unchanged, and the original focused deadline was not extended. The failed attempt
+is retained. The complete corrected run passed 92 core, two active economics and
+93 MCP tests; the default-on semantic-isolation run passed its four selected tests.
+This exercises actual default, bare enabling flag, explicit opt-out and CLI/MCP
+parity at the tested boundary. Focused all-target Clippy also passed.
+
+The focused commands above ran on retained working-tree patches over `1b4cf0e`
+before the candidate commit; their logs preserve that distinction. After committing
+`f19d353` and building the final binary, the exact-default release-binary mixed
+fixture run passed: complete required method support was 0/6 for the accepted
+baseline and 6/6 for the candidate, all twelve locator/unknown-intent controls were
+identical, and every cap held. The same mixed protocol was used without new tasks
+or ground truth. These synthetic cases establish their stated retrieval outcomes,
+not representative coding-task benefit. Each inspected focused-command receipt
+recorded natural exit, no forced cleanup and no observed owned process remaining.
+The completed broad-run lifecycle and resource receipts are recorded below;
+the completed full-gates failure is retained separately below.
+
+**Frozen family and bounds.** K=2 covers the previous lexical/default candidate and
+this singleton candidate in the continuing promotion decision. The prior K=1
+G1/G2 result remains historical evidence; its failed default gate does not erase
+that attempt. The rule is exact one-sided McNemar p < 0.025, no net loss of verbatim
+bodies and every response within 2,048 tokens; mean tokens are reported only.
+This is repeated use of a frozen set, not a newly untouched holdout or a claim that
+all historical retrieval development was covered by two comparisons. No variant
+is authorized after measured failure.
+
+One heavy job runs at a time with no spend or provider work. The selected phase
+budgets are 1,800 seconds for builds/focused checks, 3,600 seconds for measurement
+and 1,800 seconds for full gates, with a 120-second cleanup reserve, 20 GiB free-disk
+floor and 30 GiB observed growth ceiling. The broad runner uses an 8 GiB aggregate
+sampled owned-process RSS cap, stricter than the selected per-process cap. Only
+owned copies of the pinned stores may be opened; source corpora and originals stay
+read-only. The fresh baseline/candidate comparison uses compatible parser-derived
+units, and no semantic preparation, training or corpus-code execution is selected.
+
+| Required evidence | Baseline | Actual-default candidate | Verdict |
+| --- | ---: | ---: | --- |
+| Full G1 checker / qualified / bun tasks | 6,881 / 2,551 / 1,000 | Same | All three groups pass in both arms |
+| G1 complete response records | 14,284 | 14,284 | Complete result, uncompressed response and source-identity hashes match in every group |
+| G2 located definitions, 388 questions | 0 | 10 | +10 / −0; exact one-sided McNemar p = 0.000977 < 0.025, K = 2 |
+| G2 verbatim definition bodies | 0 | 8 | +8 / −0; no net loss |
+| G2 mean delivered tokens | 2,023.2 | 2,023.0 | Reported only; all 388 responses in each arm stay within 2,048 |
+| All eight local gates on `f19d353` | — | FAILED | Seven exits 0; default test gate exits 101 with two neural-suite failures |
+| Corrected full neural file and all eight gates on test-only continuation | — | PASS | Full file passes on the retained patch; all eight gates exit 0 on `8e88a35` |
+| Final default-promotion/T010 disposition | — | ACCEPTED | Lexical default on, explicit opt-out; supplied dense windows and semantic model admission unchanged |
+
+G1 totals are 10,432 tasks per arm; checker, qualified and bun respectively have
+10,476, 2,779 and 1,029 response records per arm. Complete-file hashes compare the
+uncompressed response bytes, not gzip container bytes or normalized text. The G2
+split is Rust 0 → 4 located / 0 → 3 bodies on 197 questions, and bun 0 → 6 located /
+0 → 5 bodies on 191. The literal unchanged `scripts/g2.sh compare` returns ENABLE
+for this measurement. Overall acceptance additionally rests on the completed
+test-only gate continuation below; the failed local run is not relabeled.
+The first attempt's 13 located definitions and 10 bodies remain in its historical
+record with its failed default guard. This run establishes improvement over the
+declared current baseline, not superiority over that earlier candidate.
+
+**Measurement lifecycle and retained inputs: PASS.** All 33 phases exited naturally
+in 1,449.296 seconds, with no forced cleanup and no observed owned process remaining.
+The tracked candidate stayed clean at `f19d353` before and after; the pinned source
+corpora retained their heads and tracked bytes. Full original source-store manifests
+and both repaired master inputs remained unchanged. The measured layout retains
+three owned copies per corpus: one repaired lexical master shared by both G2 arms,
+and the G1 baseline/candidate pair. The Rust G1 pair serves checker and qualified.
+The literal frozen `scripts/g2.sh` creates and removes its own transient query
+copies; those query copies are not retained. Complete query outputs and the named
+retained stores remain private.
+
+Peak sampled aggregate RSS for the driver and observed owned processes was
+1,779,056,640 bytes, with 44 missed owned-process memory samples. This is a sampled
+lower bound on a true aggregate process peak, with shared mappings potentially
+counted repeatedly; it is not a GPU/global-memory measurement. Minimum free disk was
+274,779,361,280 bytes and maximum observed allocated bytes were 26,950,246,400.
+The recorded 8 GiB aggregate RSS, 20 GiB free-disk and 30 GiB allocation bounds held.
+The completed receipt records no resume/additional variant, native lifecycle complete
+and spend $0. These conclusions belong to this measurement, not a claim that the
+subsequent full gates passed.
+
+**First full gates: FAILED; retained separately from the passing continuation.**
+All eight stages completed on `f19d353` in 781.6757805 seconds. Formatting, Clippy,
+pilot-feature Clippy, pilot unit tests, actual Rust 1.90 check/Clippy and the Rust
+1.90 pilot check exited 0; the default test stage exited 101. The default suite
+reported 1,309 passed, two failed and 34 ignored. Its 21 custom recovery checks
+passed separately. The pilot unit gate passed all 62 tests. The failing neural
+suite itself reported 94 passed, two failed and one ignored:
+
+- `neural_candidates_crowded_by_other_evidence_are_still_delivered_in_budget`,
+  assertion at `tests/neural_retrieval.rs:1984`.
+- `without_a_usable_profile_cli_and_mcp_answers_are_the_plain_baseline_byte_for_byte`,
+  assertion at `tests/neural_retrieval.rs:5277`.
+
+The receipt records unchanged candidate source and unchanged measurement binary.
+It used Rust/Cargo 1.97.1, actual Rust/Cargo 1.90.0 and the macOS 26.5 SDK. The outer
+gate command exited naturally with no requested signals, forced cleanup or observed
+owned process remaining; the supervisor's process-exit status is not the verdict
+for the individual Rust test stage. `gates-result.json` correctly reports passed=false.
+The gate receipt's sampled owned-process RSS peak was 2,069,790,720 bytes with
+1,452 missed owned-process memory samples; minimum free disk was 270,781,730,816
+bytes. These are sampled process measurements, not true peaks or GPU/global memory.
+The 1,800-second stage limit and recorded resource bounds held. Test worker
+subprocesses were observed during this full suite; the measurement's no-worker
+scope must not be copied onto the gate run.
+
+**Confirmed fixture diagnosis; test-only continuation: PASS.** The two failing
+comparisons selected different behavior-option modes. The no-profile MCP helper
+explicitly selected false while CLI/default comparison owners inherited true;
+the mismatch was present before fallback. The crowding fixture compared a newly
+prose baseline with intentionally ordinary dense selection and failed before its
+delivery assertions. These are the confirmed fixture-option causes of the retained
+failures, not evidence that the delivery assertions passed.
+
+Only `tests/neural_retrieval.rs` changed: the crowding test's local baseline now
+sets `ContextOptions.experimental_behavior=false`, without changing the shared
+baseline helper, and `owner_with` inherits `ContextOptions::default`. All assertions,
+queries, fixture bytes and caps are preserved. Production source, ranking/default
+behavior and the frozen G1/G2 measured binary/receipts are unchanged.
+
+A separately declared 1,800-second shared continuation covers the full neural file
+and all eight gates, with a 120-second cleanup reserve, 20 GiB free-disk floor,
+8 GiB sampled owned-process RSS bound, one heavy job and spend $0. It does not
+extend or relabel the failed run. Protocol:
+`gate-fixture-continuation/protocol.json`; base `f19d353`, recorded production-source
+tree `b3bd8925e3e9ef289fe6ed1028285f291fbeb919`, and the same final measured binary
+SHA-256 above. The corrected full neural file passed on the retained test-only
+working-tree patch over `f19d353`: 96 passed, 0 failed, 1 ignored, in 44.409 seconds.
+The patch was then committed as `8e88a3599e7dee4675a207ac919aaa049faf9980`.
+Its only changed path from `f19d353` is `tests/neural_retrieval.rs`; the
+production-source tree and retained measured binary are unchanged. The full
+eight-gate continuation on `8e88a35` passed in 578.644 seconds,
+with formatting, Clippy, default tests, pilot-feature Clippy, pilot unit tests,
+actual Rust 1.90 check/Clippy and the Rust 1.90 pilot check all exiting 0.
+The default suite reported 1,311 passed, 0 failed and 34 ignored,
+plus 21 passing custom recovery checks. The pilot gate reported
+62 passed, 0 failed and 0 ignored. It used Rust/Cargo 1.97.1,
+actual Rust/Cargo 1.90.0 and the macOS 26.5 SDK. The completed shared stage
+occupied 680.205 seconds of its declared 1,800-second bound.
+
+Both commands exited naturally, with no forced cleanup or observed owned
+process remaining. The full-gate receipt records a maximum sampled individual
+owned-process RSS of 884,113,408 bytes, 1,375 missed owned-process
+memory samples and minimum free disk of 270,720,831,488 bytes. The corrected
+neural command separately recorded 625,229,824 bytes of sampled owned-process RSS,
+7 missed memory samples and 274,152,775,680 bytes minimum free disk.
+These sampled process maxima are not true peaks, aggregate process memory or
+GPU/global-memory measurements. The recorded resource bounds held; spend was
+$0. This successful continuation does not alter the failed gate receipt or
+rerun/tune the frozen retrieval measurement. A matching documentation
+consistency correction removes the obsolete semantic-prose exception from
+the context contract; it describes the already-tested dense-window exclusion
+and adds no runtime rule.
+
+No semantic-quality gain, real-agent benefit, provider savings, signed-package
+acceptance or release publication is established by this record. Git publication
+is a separate action from release publication.
+
+Private evidence: `runs/t010-singleton-2026-11-11/` and
+`datasets/context-foundry-t010-singleton-2026-11-11.noindex/`. Key focused owners are
+`selection.json`, `frozen-test-source-pin.json`, `focused/{red-prose,red-economics,green-core-economics,default-boundaries,default-boundaries-corrected,default-dense-isolation,final-default-mixed}/`,
+`default-boundaries-correction.json`, `candidate-binary.json`, `candidate-source-check.md`
+and `default-mixed/mixed-fixture/result.json`. Completed measurement owners are
+`measurement/result.json`, `measurement-summary.json`, `g1-cross-arm.json` and
+`measurement/commands/032-g2-compare-k2.stdout.txt`. The failed full-gate owners are
+`gates-result.json`, `gates/test.log`, `gates/pilot-test.log`, the two toolchain logs
+and `gates-supervisor/000-full-gates.receipt.json`. The completed continuation owners
+are `gate-fixture-continuation/{protocol,commit-pin,gates-protocol,gates-result}.json`,
+`gate-fixture-continuation/focused/corrected-neural-suite/`, the continuation
+`gates/` logs and its `gates-supervisor/000-full-gates.receipt.json`. The narrow in-session source check
+found no functional mismatch to the fixed rule; its one stale option comment was
+corrected in `f19d353`. That check was not independent certification or runtime proof.
+
+The input-freeze receipt passed without opening original stores. Recorded protocol
+SHA-256: `cc313a8bec1b79b5d77954956c2e71696af71bb028c24482037a4e06fad6d1bc`;
+recorded measurement-driver SHA-256:
+`2a64efdad550b98987d1f5b341820b6c875f6e2e14380595eba1e042d7b80cd1`.
+Selected-rule SHA-256:
+`a39cb7d1fcef9961092d3b74eec71b57d6101fb2c60a998464fcf1ef88d0ba4e`.
+Mixed-protocol SHA-256:
+`e2f8da77eacc76666d5de98a1178c9312c1eade23cb5c49bdcef66bdceb0c7af`.
+Completed measurement-result SHA-256:
+`3e9c4faa52f80133fae5cae7ba8182239c69b69a4fd4ae6829da84d9093c38a7`.
+These identities and metrics are copied from completed small receipts, not newly
+hashed or recomputed from question/response bodies for this draft.
+
 ## T010 lexical default — 2026-11-11
 
 **HOLD: default promotion failed a frozen local guard.** One
@@ -724,7 +967,7 @@ is work to do.
 | 12 | Device acceptance scope | "Script checks only" | What `scripts/native-macos-acceptance.py` checks decides; unbuilt GPU-pressure, residency, thermal/battery and eviction policies are named limitations. |
 | 13 | Native macOS acceptance (F7) | "Once now, unsigned" | Done: the ad-hoc-signed run on the owner's Mac passed ([2026-11-10](#native-macos-acceptance--2026-11-10)); repeat on the signed release candidate. |
 | 15 | 001 T011 watching | "Native Mac run on rust" | Done: F18's deadline repair and the bounded native `mcp --watch` run on pinned rust-lang/rust passed ([2026-11-10](#native-mac-watcher-acceptance-001-t011--2026-11-10)); the receipt corrects the earlier file-count description. |
-| 9 | 001 T010 and `--experimental-behavior-context` | "Lexical-only, drop T006 gate" | Semantic effects are removed; default promotion is held after the frozen economics guard failed despite passing G1/G2. The flag stays off; T010 remains unaccepted ([receipt](#t010-lexical-default--2026-11-11)). |
+| 9 | 001 T010 and `--experimental-behavior-context` | "Lexical-only, drop T006 gate" | Semantic effects remain removed. The fixed singleton candidate passes its required retrieval and local gates; lexical behavioral selection is accepted and defaults on with explicit opt-out ([receipt](#t010-singleton-qualification--2026-11-11)). The first failed default attempt remains recorded; no 003 T006 or semantic-quality acceptance is implied. |
 | 24 | Query-time parse cost (001 T006, 007) | "Accept as named limitation" | No code change; reopen only after a measured failure on a real corpus. |
 
 **T006 and task context**

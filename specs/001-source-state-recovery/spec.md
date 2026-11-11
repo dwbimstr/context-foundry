@@ -2,8 +2,9 @@
 
 Planning addition, 2026-10-09: [T010](#t010--retrieve-behavioral-evidence-for-a-named-symbol)
 is authorized for execution by the owner on 2026-10-09 under the [ecosystem plan](../../docs/context-ecosystem-plan.md).
-Existing task acceptance stands. The accepted experimental line keeps mixed-intent
-behavior opt-in; an isolated default-on candidate is undergoing qualification.
+Existing task acceptance stands. T010's lexical behavioral selection is accepted
+and enabled by default with explicit opt-out; see the
+[current status](../../docs/resume-context-ecosystem.md#current-status--2026-11-06).
 
 Status: T001–T006 implemented and verified locally; not released. T001–T003 were
 verified on 2026-10-01 (owner-approved scope: 001 + 003 first implementation). T004–T006
@@ -562,17 +563,20 @@ on it ([measurement handoff](../../docs/measurement-handoff.md)).
 
 ### T010 — Retrieve behavioral evidence for a named symbol
 
-**Status:** authorized 2026-10-09 (owner: “go for 1 then 2 and onwards”); in progress, not accepted.
+**Status:** authorized 2026-10-09 (owner: “go for 1 then 2 and onwards”); accepted
+at its lexical retrieval scope on 2026-11-11
+([evidence](../../docs/validation.md#t010-singleton-qualification--2026-11-11)).
 Owner decision, 2026-11-06 ("Lexical-only, drop T006 gate";
 [decision record](../../docs/validation.md#owner-decisions--2026-11-06)): T010's own
 local gates below and the 2026-10-19 G2 enable rule ([AGENTS.md](../../AGENTS.md))
 decide the flag; the 003 T006 agent-task gate no longer applies to it, and no
 real-agent benefit is claimed. G2 found that the flag helps lexical-only stores and
 costs the default hierarchy recipe ([validation](../../docs/validation.md)), so its
-effects on semantic stores are removed by the candidate below and, once the gates
-pass, it is to default on only where lexical results are served. Default promotion
-is held after the 2026-11-11 candidate failed the frozen economics guard, despite
-passing G1/G2 ([receipt](../../docs/validation.md#t010-lexical-default--2026-11-11)).
+effects on semantic stores are removed. Lexical behavioral selection is now enabled
+by default with explicit opt-out. The first default attempt failed the frozen
+economics guard despite passing G1/G2; that
+[failed receipt](../../docs/validation.md#t010-lexical-default--2026-11-11) remains
+separate from the accepted singleton candidate below.
 
 Implementation continuation, 2026-11-11: qualify one fixed candidate, without ranking
 tuning. Semantic model admission keeps the ordinary anchor rule regardless of this
@@ -591,14 +595,17 @@ It uses the accepted parser/Tantivy baseline `68ed776` (records `1b4cf0e`) and K
 for this continuing decision family, requiring p < 0.025 with the other owner
 enable conditions unchanged. The isolated trial includes the proposed default in
 the library, CLI and MCP before G1/G2, with the existing bare enabling flag and
-`--experimental-behavior-context=false` opt-out. Default promotion on the accepted
-branch remains held until all gates pass; there is no score-driven variant.
-The same six frozen economics cases now run through both default and explicit-on
-MCP boundaries, without changing their assertions, corpus or token caps. Existing
-ordinary comparison controls explicitly opt out of the proposed new default.
+`--experimental-behavior-context=false` opt-out. The singleton candidate is accepted
+at this written scope after its frozen retrieval checks and the test-only gate
+continuation; there was no score-driven variant. The same six frozen economics
+cases run through both default and explicit-on MCP boundaries, without changing
+their assertions, fixture bytes or token caps. Existing ordinary comparison
+controls explicitly opt out of the new default. The implementation, retained
+failed gates, fixture-option correction and passing continuation are recorded in
+[validation](../../docs/validation.md#t010-singleton-qualification--2026-11-11).
 
-The first candidate is implemented behind `--experimental-behavior-context` (CLI
-context / MCP owner), default off. It changes packing of existing, fresh candidates,
+The first candidate was implemented behind `--experimental-behavior-context` (CLI
+context / MCP owner), initially default off. It changes packing of existing, fresh candidates,
 not their recall or the embedding model. The
 [experimental amendment](contracts/context-v2.md#experimental-behavioral-support--001-t010-2026-10-09)
 defines its exact supported intent and ownership/budget behavior. Local trace evidence
@@ -606,8 +613,8 @@ found `QueryRuntime::dense_index` already selected at candidate rank 2 but omitt
 by anchored packing. On that frozen local query the candidate supplies the method
 and the owner's address at 357 delivered tokens versus 437 for the baseline's struct
 alone. This is one development example, not a G1/G2 or real-agent acceptance result.
-The promotion conditions below are not all satisfied; the retained cleanup's
-implementation gates pass. See the [dated receipt](../../docs/validation.md#t010-lexical-default--2026-11-11)
+The selected retrieval promotion conditions below are satisfied by the singleton
+candidate. See the [dated receipt](../../docs/validation.md#t010-singleton-qualification--2026-11-11)
 and [current status](../../docs/resume-context-ecosystem.md).
 
 - **Problem:** T007 resolves identity well, but its anchored packing can deliver a

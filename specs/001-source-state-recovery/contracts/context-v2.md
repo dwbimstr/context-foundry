@@ -571,7 +571,7 @@ holds per index state.
 
 With `experimental_behavior` enabled for lexical search-context requests, an anchorless
 plain-language query uses prose selection with conservative singleton exact-definition
-priority (the 2026-11-11 candidate; default promotion remains gated). It reuses
+priority (accepted for the lexical default on 2026-11-11). It reuses
 at most 32 lowercase, distinct tier-1 runs, excluding existing prose stopwords and
 runs corresponding to suppressed incidental group-3 anchors. A run precedes tier 2
 only when its restricted `def_name` query's complete Count is exactly one indexed
@@ -588,8 +588,10 @@ Queries starting with
 `where`, `find`, `locate`, `show` or `who` retain the baseline. Explicit code/path
 syntax, admitted anchors (including global multi-root anchors), graph strategy and
 policy-routed auto strategy retain their existing selection. The ordinary `search`
-operation is unchanged. The isolated default-on trial and its qualification gates
-are owned by [T010](../spec.md#t010--retrieve-behavioral-evidence-for-a-named-symbol).
+operation is unchanged. This lexical default and its explicit opt-out are owned by
+[T010](../spec.md#t010--retrieve-behavioral-evidence-for-a-named-symbol); the
+[dated evidence](../../../docs/validation.md#t010-singleton-qualification--2026-11-11)
+records qualification.
 
 Cause: many definitions named ordinary words such as `read` can occupy all 32 context
 slots ahead of a body matching the complete behavioral query. The candidate removes
@@ -635,7 +637,7 @@ body coverage; partial overlaps remain. Derived brief support requires delivered
 body coverage of the cited source. Every admission counts the current selected set
 with its final omitted count, avoiding a late header expansion that drops the only
 covering body.
-Owner decision, 2026-11-06, implemented for qualification 2026-11-11: the flag's
+Owner decision, 2026-11-06, implemented and accepted at lexical scope 2026-11-11: the flag's
 semantic effects are removed. Any supplied dense window, including partial or
 empty-hit windows, uses ordinary semantic ordering and source spans; it gets no
 prose refinement, local focusing, interleaving or owned-method support. Model
@@ -1182,29 +1184,28 @@ keeps today's ordering and packing rules, with two changes: its tier 1 sees one
 document per definition (§ Definitions and addresses), and when it requests doors it
 gets `doors:none` and search packing instead of graph expansion (§ Doors). When 009
 T004 is accepted and a semantic profile is enabled, its placement (dense candidates
-first, then lexical) overrides these rules for anchor-less queries only, except for
-experimental prose admission described above. `search` orders anchored locator lines
+first, then lexical) overrides these rules for anchor-less queries only. Any
+supplied dense window bypasses experimental prose admission, as specified above.
+`search` orders anchored locator lines
 by the resolver; `retrieve` is unchanged.
 
 #### Experimental behavioral support — 001 T010, 2026-10-09
 
-The owner authorized this candidate for implementation; the accepted branch keeps
-it **off by default** until T010 passes its own local gates and the 2026-10-19 G2 enable rule
-([AGENTS.md](../../../AGENTS.md)). Owner amendment, 2026-11-06 ("Lexical-only, drop
-T006 gate"): the 003 T006 agent-task gate no longer applies to this flag, and no
-real-agent benefit is claimed. The flag is to lose its effects on semantic stores,
-including the dense/lexical interleaving of
-[§ Experimental anchorless prose selection](#experimental-anchorless-prose-selection--009-t005-2026-10-10),
-and once those gates pass it is to default on only where lexical results are served.
-The 2026-11-11 candidate removes those semantic effects; lexical default promotion
-is held after the candidate failed the frozen economics guard
-([receipt](../../../docs/validation.md#t010-lexical-default--2026-11-11)).
-The second candidate adds singleton prose priority and passage preservation above.
-Its isolated trial defaults on in the library, CLI and MCP before qualification,
-retains bare `--experimental-behavior-context`, and accepts
-`--experimental-behavior-context=false` to select the ordinary lexical path.
-It must pass a fresh comparison against parser baseline `68ed776` with K = 2,
-all frozen local outcomes and full G1. A supplied dense window still bypasses it.
+Lexical behavioral selection is **on by default**, accepted 2026-11-11 after
+T010's local gates and the 2026-10-19 G2 enable rule
+([evidence](../../../docs/validation.md#t010-singleton-qualification--2026-11-11)).
+Owner amendment, 2026-11-06 ("Lexical-only, drop T006 gate"): the 003 T006 agent-task
+gate does not apply to this flag, and no real-agent benefit is claimed. The flag's
+semantic effects are removed, including the former dense/lexical interleaving of
+[§ Experimental anchorless prose selection](#experimental-anchorless-prose-selection--009-t005-2026-10-10).
+A supplied dense window still bypasses it, and model admission retains the ordinary
+anchor rule. The first default attempt's failed frozen economics guard remains in
+its [historical receipt](../../../docs/validation.md#t010-lexical-default--2026-11-11).
+The accepted singleton candidate adds the prose priority and passage preservation
+above. Its actual default was present in the library, CLI and MCP before the frozen
+comparison against parser baseline `68ed776` with K = 2; no ranking/default change
+followed measurement. Bare `--experimental-behavior-context` remains compatible,
+and `--experimental-behavior-context=false` selects the ordinary lexical path.
 The MCP tool schema and ordinary response wire do not change.
 
 The first candidate repairs packing only. It does not expand candidate windows,
@@ -1235,9 +1236,9 @@ allowed only if the global anchor remains uniquely resolved to that same workspa
 and source identity. No unit of another root may attach to it merely by name.
 
 This candidate does not solve missing methods, prior cap losses, cross-file behavior,
-unrecognized intent, or the 249 anchorless G2 misses. Its default stays off until
-those explicitly scoped retrieval gates are evaluated; task outcomes no longer gate
-it (owner, 2026-11-06).
+unrecognized intent, or the 249 anchorless G2 misses. Acceptance is limited to the
+explicitly scoped retrieval gates; task outcomes do not gate it (owner, 2026-11-06)
+and remain a separate requirement of 003 T006.
 
 ### Doors
 

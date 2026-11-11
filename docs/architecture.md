@@ -24,8 +24,12 @@ owning spec's amendments.
 The [context ecosystem plan](context-ecosystem-plan.md) proposes retrieval repairs
 first, followed by task state, reversible working context and memory lifecycle work.
 The owner activated the first retrieval tranche on 2026-10-09. Bounded diagnostic
-capture and experimental behavioral packing are implemented locally, with the
-candidate default off and quality measurements pending. The experimental branch also
+capture and lexical behavioral selection are implemented; 001 T010's lexical
+default is accepted at its written scope
+([current status](resume-context-ecosystem.md#current-status--2026-11-06),
+[dated evidence](validation.md#t010-singleton-qualification--2026-11-11)).
+Semantic retrieval quality belongs to 009; real-agent outcomes belong to 003 T006.
+The experimental branch also
 implements task-state, reversible views, exact-failure reminders and explicit decision
 promotion; applied host control and broader intervention policies remain future work.
 
@@ -432,9 +436,12 @@ directories and available doors without calling the embedding model. For anchorl
 queries with a prepared, explicitly enabled profile, dense candidates precede lexical
 candidates through the ordinary unit ladder; T004 replaced the earlier reciprocal-rank
 fusion. Evidence remains verbatim or deterministically outlined and exactly budgeted.
-The source owner validates freshness throughout. Proposed mixed-intent changes are
-owned by 001 T010; its implemented candidate is opt-in and not part of the default
-path. Keep the roles narrow:
+The source owner validates freshness throughout. 001 T010 owns lexical behavioral
+selection, now enabled by default with explicit opt-out. Supplied dense windows and
+semantic model admission keep their existing behavior. See the
+[current disposition](resume-context-ecosystem.md#current-status--2026-11-06) and
+[dated evidence](validation.md#t010-singleton-qualification--2026-11-11).
+Keep the roles narrow:
 
 | Component | Responsibility | What does not follow from enabling it |
 | --- | --- | --- |
