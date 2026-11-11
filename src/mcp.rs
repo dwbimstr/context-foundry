@@ -1134,7 +1134,7 @@ fn roots_argument(args: &JsonObject) -> FResult<Option<Vec<String>>> {
 pub struct ServerOptions {
     /// Explicit opt-in; a new private directory, never an existing run.
     pub retrieval_trace_dir: Option<PathBuf>,
-    /// Default off until 001 T010's retrieval and real-host gates pass.
+    /// Lexical behavioral selection; the owner forwards its default or explicit opt-out.
     pub experimental_behavior_context: bool,
     pub store: PathBuf,
     pub root: PathBuf,
