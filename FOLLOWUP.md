@@ -191,13 +191,14 @@ F6 is retired as a gate and F8 is retired.
   the `fe37eff3` baseline under the 2,048-token budget. Every earlier delivered span must
   survive.
 
-## F7. Native macOS acceptance beyond the CI runner (unparked for one run 2026-11-06)
+## F7. Native macOS acceptance beyond the CI runner (development run accepted 2026-11-10)
 
 - **Owner decisions, 2026-11-06:**
   - "Once now, unsigned": F7 is unparked for one run of
     `scripts/native-macos-acceptance.py` on the owner's Mac now, with ad-hoc signing,
-    for the first physical-device receipts (to do). The run is repeated on the signed
-    release candidate.
+    for the first physical-device receipts. That run passed on 2026-11-10
+    ([receipt](docs/validation.md#native-macos-acceptance--2026-11-10)); it is repeated
+    on the signed release candidate.
   - "Script checks only": device acceptance for 009 T008/T009 and 010 T002 is what the
     script checks. The unbuilt policies (global GPU pressure, combined embedding and
     generation residency, thermal/battery adaptation, embedding eviction) become named
@@ -209,10 +210,10 @@ F6 is retired as a gate and F8 is retired.
 - **Why blocked now:** only the signed run, which needs the owner's Developer ID signing
   identity. The owner's Mac is the work host, and GPU pressure and combined residency
   are named limitations.
-- **Required resource:** the owner's Mac for the unsigned run, and the owner's signing
-  identity for the signed release candidate.
+- **Required resource:** the owner's Mac and signing identity for the signed release
+  candidate. The unsigned development run is complete.
 - **Resume:**
-  1. On the Mac, run
+  1. Repeat on the signed release candidate, on the Mac:
      `python3 scripts/native-macos-acceptance.py --out /abs/new-out --work /abs/new-work.noindex --generation --scale-calibration`.
   2. Spotlight skips folders whose names end in `.noindex`. Spotlight indexing of build
      output caused the earlier CPU-pressure failures. Do not turn Spotlight off on a

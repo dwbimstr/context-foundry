@@ -2,6 +2,15 @@
 
 ## Native macOS acceptance — 2026-11-10
 
+**PASS at the owner's selected script scope, on `01a1152`.** The fresh retry ran
+all 33 stages of `scripts/native-macos-acceptance.py --generation --scale-calibration`
+successfully in 382.25 s on the physical M5 Max. This accepts the ad-hoc-signed
+development-device checks for 009 T008/T009 and 010 T002 under decisions 12/13;
+the signed release-candidate run and installed-package checks remain open.
+Only local inference and pinned public downloads were used: no paid provider,
+training or corpus-code execution. This was an in-session verification.
+
+**Retained failure and repair.**
 The first native run on `ec234b3` failed at the embedding-worker build. It ran
 `scripts/native-macos-acceptance.py --generation --scale-calibration` on the owner's
 M5 Max, with a two-hour outer budget, 20 GiB disk floor, ad-hoc signing and fresh
@@ -12,7 +21,7 @@ selects the same macOS 26.5 SDK as the gates. No host configuration changed.
 Before that build failure, both native CPU checks, both held-GGUF checks, all six
 synthetic lifecycle checks and a real Metal compute dispatch passed. The pinned
 public model/tokenizer downloads passed their hashes. No real embedding, generation
-or calibration ran in that attempt, so native acceptance remains open. The outer
+or calibration ran in that attempt, so it did not accept the native checks. The outer
 supervisor observed normal exit, reaped its child and confirmed no owned descendants
 remained. Private evidence is under `datasets/context-foundry-native-2026-11-10/out`
 and this checkout's `runs/native-macos-2026-11-10/`.
@@ -21,9 +30,59 @@ The compiler error is a concrete AST-type mismatch: `bindgen 0.73.2` resolved
 `syn 2.0.119`, while `prettyplease 0.3.0` uses `syn 3.0.6`. The `8600fc0` lock update
 had changed that bindgen edge from syn 3 to syn 2. `cargo update --offline -p bindgen
 --precise 0.73.2` restores the previous syn 3 edge; no package version, source,
-license, application code or default-build dependency changes. A fresh native run
-will decide acceptance of that repair and the remaining selected checks; the failed
-attempt is retained, not relabeled as passed.
+license, application code or default-build dependency changes. The one-edge repair
+is committed as `01a1152d463a09b48ee97ceb384dd19d80778b30`. The fresh retry below
+verifies it; the failed attempt is retained, not relabeled as passed.
+
+**Fresh retry, unchanged bounds and assertions.** Rust 1.90.0, macOS 26.5 SDK,
+the pinned llama.cpp `b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea`, Gemma BF16
+adapter 4 and Qwen 0.5B smoke artifact were built in new `.noindex` storage.
+Spotlight and host configuration were not changed. The 7,200 s outer deadline,
+20 GiB disk floor, script deadlines and 4 GiB embedding / 2 GiB generation ceilings
+were unchanged. The script itself is unchanged, SHA-256
+`6d7b1cd6cf5129005671b103dd81d828847f3976b300c334f957268247b239fc`.
+
+| Selected check | Observed result |
+| --- | --- |
+| CPU admission | Both native observation and actual pressure/pause/resume tests passed for semantic and generation lanes. |
+| Held models and synthetic lifecycle | Both held-GGUF tests and all six owner-death/resource-limit/forced-reap fixtures passed. |
+| Metal embedding | Real compute dispatch; five 768-dimensional vectors, including an 8,192-token input; observed worker gone and scratch empty. |
+| Owned Metal generation | Initial and changed source each generated one cited brief: 375/123 and 379/122 prompt/completion tokens. Current and restart/revert reuse each made zero calls and acquired no model resources; HTTP calls zero. Both workers were observed and gone. |
+| Fixed overview calibration | 128 sources, 128 distinct inputs/calls, 33,754 input tokens; 1.582 s supervised provider time, 13.968 s preparation, 19.839 s total test harness; unchanged replay made zero calls. |
+| Final lifecycle | Supervisor exited 0 naturally, without forced cleanup; no observed owned processes remained. Calibration worker reaped and scratch empty. |
+
+Calibration memory was sampled before/after each successful call: maximum observed
+physical footprint 321,734,072 bytes, excluding acquisition and between-sample peaks.
+The generation receipts observed at most 407,602,496 bytes physical footprint and
+617,201,664 bytes process GPU allocation, within their configured limits. Neither
+measurement is global GPU headroom or a combined-model residency result. The calibration
+uses the fixed public Rust/Go `overview-v1` sample; it is not a population-weighted
+estimate or completion of the 67,663-source corpus. Mac Rust hierarchy scale is
+accepted separately by the replay/change receipt below.
+
+**Evidence limits.** This run does not establish cross-host CPU/Metal numerical
+parity, real-model owner death under pressure, generator adversarial isolation,
+global GPU pressure, combined residency, thermal/battery policy, embedding eviction,
+retrieval/task utility, or signed installation. The generator remains an experimental
+smoke model, not the deferred 010 production provider/recipe selection. Existing
+default-feature gates on `65fd799` are reused: application code and their dependency
+graph are unchanged. The optional worker features were freshly built and exercised
+here; no hosted CI or release was run.
+
+Private retry evidence is in `datasets/context-foundry-native-2026-11-10-retry1/out`
+and this checkout's `runs/native-macos-2026-11-10-retry1/`. Both attempts retain
+the exact script/launcher, predeclared protocol, stage logs, process observations,
+final receipts and `SHA256SUMS`; no private artifacts are committed.
+
+| Retry evidence | SHA-256 |
+| --- | --- |
+| Protocol | `d99f7faf649905a549fb5d5f0678205f47a9b11bc72db945bb80c051423c79a3` |
+| Native result | `08826d4b0d859fc4470d079b7b49ec41942a4341761b94b71a2d1cf9e4760911` |
+| Metal receipt | `f9bca1279fcd778bed25be0ff7c684b30478503707d5c78c2f0cb53c92187687` |
+| Generation receipt | `d0b285aaabe6cd11da2bdc015e00c9e72a0a8f0879cc04f71c814bda0d6a5a4f` |
+| Calibration receipt | `836674dbd360bcad7ed4d5a5d329023a9027268338f5de9916ce8fef9ad931cb` |
+| Supervisor and acceptance result | `62896fc7d44070e3993d9fec13346a8b3ecf6cd43bc23ebeb0e18ebcd5ff3ce3` |
+| Evidence manifest | `73f1b01bafce96d2cc9ae274b7828d77a211673b1b631f7c07630582e3839972` |
 
 ## Semantic scale replay and changed-input acceptance — 2026-11-10
 
@@ -242,7 +301,7 @@ is work to do.
 | 16 | 005 T005 boundary relationships | "Accept at written scope" | Accepted using the `65fd799` local gates receipt ([2026-11-10](#boundary-scope-acceptance-005-t005--2026-11-10)); other producers remain named limitations. |
 | 11 | 009 T006–T009 scale | "Accept the Mac rust run" | Done: the existing Mac hierarchy-v1 preparation plus the [replay and changed-input check](#semantic-scale-replay-and-changed-input-acceptance--2026-11-10) accepts scale; F10/F11 retire; Linux x86 and the 67,663-source corpus are a named limitation. |
 | 12 | Device acceptance scope | "Script checks only" | What `scripts/native-macos-acceptance.py` checks decides; unbuilt GPU-pressure, residency, thermal/battery and eviction policies are named limitations. |
-| 13 | Native macOS acceptance (F7) | "Once now, unsigned" | One ad-hoc-signed run on the owner's Mac now (to do), repeated on the signed release candidate. |
+| 13 | Native macOS acceptance (F7) | "Once now, unsigned" | Done: the ad-hoc-signed run on the owner's Mac passed ([2026-11-10](#native-macos-acceptance--2026-11-10)); repeat on the signed release candidate. |
 | 15 | 001 T011 watching | "Native Mac run on rust" | Done: F18's deadline repair and the bounded native `mcp --watch` run on pinned rust-lang/rust passed ([2026-11-10](#native-mac-watcher-acceptance-001-t011--2026-11-10)); the receipt corrects the earlier file-count description. |
 | 9 | 001 T010 and `--experimental-behavior-context` | "Lexical-only, drop T006 gate" | T010's own local gates and the 2026-10-19 G2 rule decide; the flag's semantic-store effects are removed and it defaults on only where lexical results are served (code to do). |
 | 24 | Query-time parse cost (001 T006, 007) | "Accept as named limitation" | No code change; reopen only after a measured failure on a real corpus. |

@@ -104,8 +104,9 @@ cloud sessions.
   `scripts/native-macos-acceptance.py` on a Mac. Otherwise record it as an explicit
   gap; never mark it pending, and never let it block a merge. Owner decision,
   2026-11-06: "Once now, unsigned". F7 is unparked for one run on the owner's Mac
-  with ad-hoc signing, which gives the first physical-device receipts; it has not run
-  yet. The script must run again on the signed release candidate.
+  with ad-hoc signing. That run passed on 2026-11-10
+  ([receipt](docs/validation.md#native-macos-acceptance--2026-11-10)). The script must
+  run again on the signed release candidate.
 - Write new acceptance criteria as local checks from the start. If an existing
   criterion names a workflow run, amend it in place to say what local check now
   satisfies it and why.

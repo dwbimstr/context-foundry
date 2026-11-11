@@ -183,8 +183,8 @@ graph are unchanged. See the [native receipt](validation.md#native-macos-accepta
 for the failed build and subsequent verification.
 
 The feature adds one optional build dependency, `bindgen` 0.73 (BSD-3-Clause), for the
-C bindings; default and Rust 1.90 builds do not compile it. PyO3 and the MLX runtime
-closure are no longer product dependencies.
+C bindings; default-feature builds and their Rust 1.90 gates do not compile it.
+PyO3 and the MLX runtime closure are no longer product dependencies.
 
 
 ## Legacy prototype and planned optional components

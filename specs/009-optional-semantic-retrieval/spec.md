@@ -2074,7 +2074,8 @@ atomic publication and bounded compaction; USearch supplies ANN storage and sear
 
 ### T009 — Use model-owned geometry and contextual representations
 
-Implemented experimentally, 2026-10-10; real-device acceptance remains open. Owner
+Implemented experimentally, 2026-10-10; the selected development-device checks passed
+on the owner's Mac ([2026-11-10 receipt](../../docs/validation.md#native-macos-acceptance--2026-11-10)). Owner
 decision, 2026-11-06, "Script checks only": device acceptance for T008 and T009 is what
 `scripts/native-macos-acceptance.py` checks, with no new code. The unbuilt global GPU
 pressure, combined residency, thermal/battery and embedding-eviction policies are named
@@ -2299,11 +2300,13 @@ The profile's optional `cpu` controls affinity/thread count and lifetime CPU sec
 (defaults: two threads, 3,600 seconds; maximum 64 threads / 86,400 seconds). These
 ceilings are not vector identity. All admission remains explicit through the existing
 development-isolation switch; this change does not claim release or signed-package
-acceptance. macOS compilation, Metal numerics, hardware resources and installed package
-checks require the deferred native runner. Owner decision, 2026-11-06, "Once now,
-unsigned": `scripts/native-macos-acceptance.py` runs once on the owner's Mac with ad-hoc
-signing (to do) and again on the signed release candidate; installed package checks
-still need the signed package. Linux worker/model results are recorded in
+acceptance. Owner decision, 2026-11-06, "Once now, unsigned":
+`scripts/native-macos-acceptance.py` runs once on the owner's Mac with ad-hoc signing
+and again on the signed release candidate. The development run passed
+[2026-11-10](../../docs/validation.md#native-macos-acceptance--2026-11-10), covering
+native compilation, CPU admission, Metal embedding and the selected lifecycle checks;
+it did not repeat cross-host numerical comparison. Installed-package checks and the
+signed-candidate run still need the signed package. Linux worker/model results are recorded in
 [validation](../../docs/validation.md).
 
 #### T009 independent representations — 2026-10-11

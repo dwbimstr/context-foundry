@@ -67,8 +67,9 @@ is fixed before any release; a lexical-only package does not ship in its place. 
 passed, is superseded because it allowed a lexical-only release.
 
 Owner decision, 2026-11-06, "Once now, unsigned": `scripts/native-macos-acceptance.py`
-runs once on the owner's Mac with ad-hoc signing (to do) and is repeated on the signed
-release candidate. Owner decision, 2026-11-06, "Script checks only": device acceptance
+runs once on the owner's Mac with ad-hoc signing (passed
+[2026-11-10](validation.md#native-macos-acceptance--2026-11-10)) and is repeated on
+the signed release candidate. Owner decision, 2026-11-06, "Script checks only": device acceptance
 is what that script checks, and the release notes name the unbuilt global GPU
 pressure, combined embedding and generation residency, thermal/battery and
 embedding-eviction policies as limitations. They also state the other limitations the

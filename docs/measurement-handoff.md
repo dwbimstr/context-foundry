@@ -7,13 +7,17 @@ checks and synthetic worker lifecycle checks, then requires a successful Metal
 compute dispatch before downloading pinned public embedding artifacts. A signed
 development worker must produce the full-window receipt and be observed and reaped.
 The runner preserves failures and blocked hardware as such; adding the job does not
-establish acceptance. Its selected checks exclude generation, real-model owner death
-under pressure, global GPU headroom and signed installed-package acceptance.
+establish acceptance. `--generation` adds the owned local generation/change/reuse
+check and `--scale-calibration` adds the fixed 128-input overview sample. Real-model
+owner death under pressure, global GPU headroom and signed installed-package
+acceptance remain outside this development run.
 
 Owner decisions, 2026-11-06. "Once now, unsigned": the runner runs once on the
 owner's Mac with ad-hoc development signing, for the first physical-device receipts,
-and again on the signed release candidate; neither run has happened yet. "Script
-checks only": device acceptance is what this runner checks, and the unbuilt global
+and again on the signed release candidate. The development run, including generation
+and calibration, passed on 2026-11-10 ([receipt](validation.md#native-macos-acceptance--2026-11-10));
+the signed candidate run remains. "Script checks only": device acceptance is what
+this runner checks, and the unbuilt global
 GPU pressure, combined embedding-and-generation residency, thermal/battery and
 embedding-eviction policies become named limitations, each with a re-entry condition,
 and no new code.

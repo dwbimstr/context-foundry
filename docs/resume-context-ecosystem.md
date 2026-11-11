@@ -2,8 +2,8 @@
 
 ## Current status — 2026-11-06
 
-This section owns current status; other documents link here, and dated paragraphs
-below are history.
+Updated 2026-11-10. This section owns current status; other documents link here,
+and dated paragraphs below are history.
 
 - **Measurement.** G2 (388 questions over rust-lang/rust and oh-my-pi, run with
   [`scripts/g2.sh`](../scripts/g2.sh) on the owner's Mac) is now development evidence.
@@ -138,8 +138,10 @@ below are history.
     accepted at its written scope using the `65fd799` gates receipt
     ([acceptance](validation.md#boundary-scope-acceptance-005-t005--2026-11-10)); 009 scale is
     accepted through the Mac Rust preparation and completed replay/change checks
-    ([receipt](validation.md#semantic-scale-replay-and-changed-input-acceptance--2026-11-10)); device acceptance is what the native script
-    checks; 001 T011 is accepted by the native Mac watch run on pinned rust
+    ([receipt](validation.md#semantic-scale-replay-and-changed-input-acceptance--2026-11-10)); the ad-hoc-signed native script run passed,
+    accepting the selected device checks for 009 T008/T009 and 010 T002
+    ([receipt](validation.md#native-macos-acceptance--2026-11-10)); it must repeat on
+    the signed release candidate. 001 T011 is accepted by the native Mac watch run on pinned rust
     ([receipt](validation.md#native-mac-watcher-acceptance-001-t011--2026-11-10));
     001 T010's flag is decided by its own local gates and becomes lexical-only
     once its code change lands. The remaining release-path items are to do.
@@ -308,7 +310,7 @@ role metadata uses `kinds2`; overview/address recipes retain `kinds1`.
 | Representative scale | Exact overview fitting covers 67,663 admitted Rust/Go sources; 60,735–65,959 distinct inputs / 14.65–15.86 million tokens. | Owner decision, 2026-11-06 ("Accept the Mac rust run"): scale is accepted through the complete hierarchy-v1 Rust preparation and the [completed Mac replay/change check](validation.md#semantic-scale-replay-and-changed-input-acceptance--2026-11-10). No complete 67,663-source model run exists; that corpus and Linux x86 scale are a named limitation. |
 | Economics | Identical-source CLI delivery improves by 25% fewer calls and 6.48% fewer delivered tokens at 512 tokens. Provider/task benefit remains unproved. Failed attempts and unknown usage are retained. Selected history totals 71 requests, including the latest 13; 66 complete and five unknown. | Demonstrated completion benefit with bootstrap, acquisition, retrieval, maintenance and failed attempts included. Smaller failed prompts are not a benefit. |
 | Evidence | Bounded source call postings, conservative Python aliases, router dependency proofs and revision-bound execution snapshots; eight real framework/execution checks pass. | 005 T005 is accepted at its written scope ([receipt](validation.md#boundary-scope-acceptance-005-t005--2026-11-10)); broader collectors, frameworks and cross-language resolution are named limitations, and realistic task outcomes belong to pilot v2. Unsupported/dynamic cases remain explicitly incomplete. |
-| Mac/GPU | Real Metal embeddings, 8,192-token input, owned generation, cleanup and CPU/Metal parity pass. Actual 128-file calibration and zero-call replay pass. With Spotlight stopped on the runner, native CPU-pressure acceptance passes twice at unchanged thresholds (runs 38207948408, 38209502529). | One ad-hoc-signed native run on the owner's Mac (to do) and signed installed-package acceptance (row 4, which blocks release). Global GPU pressure, combined residency, thermal/battery and eviction are named limitations (owner, 2026-11-06, "Script checks only"). |
+| Mac/GPU | Earlier runner evidence includes CPU/Metal parity and native CPU pressure (runs 38207948408, 38209502529). The owner's physical Mac now passes the selected ad-hoc-signed native CPU, embedding, generation, calibration/replay and cleanup checks ([2026-11-10 receipt](validation.md#native-macos-acceptance--2026-11-10)); Spotlight was unchanged. | Repeat on the signed release candidate; signed installed-package acceptance (row 4) still blocks release. Global GPU pressure, combined residency, thermal/battery and eviction remain named limitations (owner, 2026-11-06, "Script checks only"). |
 
 The complete small-repository preparation accounts for 3,608,991 tokens and
 2,710,537 ms of preparation (2,413,715 ms provider time). Unchanged replay takes

@@ -7,12 +7,13 @@ CPU count changes and counter wrap/reset invalidate an interval. Ports are relea
 both successful and failed observations. Status identifies `macos_host_cpu_ticks`,
 not Linux affinity/cgroups. No CPU quota, GPU headroom, thermal or battery guarantee is
 added. Linux tests verify the arithmetic and existing pressure/lifetime behavior; the
-native sampler is neither compiled nor executed in this Linux sandbox. Run the ignored
-`native_macos_cpu_observation` test and real pressure/resume checks on macOS before
-acceptance; `scripts/native-macos-acceptance.py` runs both. Owner decision, 2026-11-06,
+native sampler was neither compiled nor executed in that Linux sandbox. The ignored
+`native_macos_cpu_observation` test and real pressure/resume checks both passed on the
+owner's Mac in the [2026-11-10 native run](../../docs/validation.md#native-macos-acceptance--2026-11-10).
+`scripts/native-macos-acceptance.py` runs both. Owner decision, 2026-11-06,
 "Once now, unsigned": that script runs once on the owner's Mac with ad-hoc signing
-(to do) and again on the signed release candidate. Owner decision, 2026-11-06, "Script
-checks only": global GPU policy, optional embedding eviction and combined-model
+(passed) and again on the signed release candidate (still required). Owner decision,
+2026-11-06, "Script checks only": global GPU policy, optional embedding eviction and combined-model
 residency are named limitations ([shared memory admission](#t002-shared-memory-admission--2026-10-10)).
 
 Binding reference inspected: libc **0.2.189**, `src/unix/bsd/apple/mod.rs` definitions
@@ -23,19 +24,21 @@ Status: Experimental T001 implemented locally; T002 now implements explicit sele
 HTTP generation, completion reuse, area lineage and opt-in continuous MCP maintenance.
 Shared client admission, derived MCP context and an experimental owned local generator
 with per-worker CPU/RAM/Metal controls and shared memory admission are implemented.
-Native CPU sampling and hardware acceptance remain selected work, limited to what
-`scripts/native-macos-acceptance.py` checks; global GPU pressure policies are a named
+Native CPU sampling and the selected development hardware checks passed, limited to
+what `scripts/native-macos-acceptance.py` checks; global GPU pressure policies are a named
 limitation (owner decision, 2026-11-06, "Script checks only"). The owner's
 large-repository direction supersedes the earlier blanket deferral. Owner decision,
 2026-11-06, "Defer 010 real-model acceptance", partly reverses the owner's 2026-10-09
 reactivation of 010:
 provider/recipe selection and real-model task acceptance are deferred, the release no
 longer waits on 010's task utility, the implemented code stays experimental and
-unadvertised, and nothing is downloaded or spent for it
+unadvertised, and nothing is downloaded or spent for that deferred task-utility work
 ([record](../../docs/validation.md#owner-decisions--2026-11-06)).
 Import and lifecycle fixtures use synthetic outputs through real storage, retrieval,
-HTTP/CLI and native-worker boundaries. Real CPU initial/changed-input generation and restart/revert reuse are recorded in validation;
-it is not a selected production model or task-quality result. 013 remains frozen off.
+HTTP/CLI and native-worker boundaries. Real CPU and Metal initial/changed-input
+generation and restart/revert reuse are recorded in validation. These smoke checks
+do not choose the deferred production provider/recipe or establish task quality.
+013 remains frozen off.
 
 ## Outcome and ownership
 
@@ -447,7 +450,7 @@ temporary pressure/headroom/unknown-observation waits preserve pending work and 
 within the existing pass deadline. They never enter provider-failure backoff or invent usage.
 
 Linux samples host `MemAvailable` and visible cgroup v2 ancestor high/max headroom; macOS
-conservatively samples free VM pages (hardware acceptance outstanding). Unknown observations
+conservatively samples free VM pages (selected native admission checks accepted above). Unknown observations
 defer. A low-memory latch clears only above reserve plus margin. New residency also needs
 headroom for its ceiling; samples are memoized for one second and invalidated on reservation
 changes. Status reads only observations. Source/current/cache reuse bypasses model admission;
