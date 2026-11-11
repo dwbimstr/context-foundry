@@ -39,7 +39,7 @@ fn usage() -> ExitCode {
         "usage:\n  foundry-pilot-capture preflight [--omp PATH] [--contract PATH]\n  \
          foundry-pilot-capture render --run-dir DIR --workspace DIR --prompt-file FILE [--omp PATH]\n  \
          foundry-pilot-capture materialize --pilot-root DIR --inputs FILE\n  \
-         foundry-pilot-capture manifests --pilot-root DIR --inputs FILE\n  \
+         foundry-pilot-capture manifests --pilot-root DIR --inputs FILE --run-dir DIR\n  \
          foundry-pilot-capture probe --admission FILE\n  \
          foundry-pilot-capture coding --admission FILE"
     );
@@ -198,15 +198,20 @@ fn materialize(args: &[String]) -> ExitCode {
 }
 
 fn manifests(args: &[String]) -> ExitCode {
+    let Some(run_dir) = flag(args, "--run-dir") else {
+        return usage();
+    };
     let result = verified_inputs(args).and_then(|(root, verified)| {
         let root = PilotRoot::open(&root)?;
-        apparatus::build_manifests(&root, &verified).map(|m| (root, m))
+        apparatus::build_manifests(&root, &verified, std::path::Path::new(&run_dir))
+            .map(|m| (root, m))
     });
     match result {
         Ok((root, (probe, coding))) => {
             println!(
                 "{}",
                 json!({
+                    "run_dir": probe.run_dir,
                     "probe_manifest": root.manifest(Scope::Probe),
                     "coding_manifest": root.manifest(Scope::Coding),
                     "probe_manifest_sha256": sha_file(&root.manifest(Scope::Probe)),

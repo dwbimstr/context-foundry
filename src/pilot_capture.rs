@@ -652,11 +652,18 @@ pub struct ManifestView {
     pub recipe_id: String,
 }
 
+/// Launch metadata revision 2 binds the capture run directory. This is a
+/// format revision for the frozen v1 policy, not pilot-v2 execution authority.
+pub const LAUNCH_MANIFEST_KIND: &str = "bounded-pilot-v1-launch-v2";
+
 /// Frozen launch manifest (gate 4).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LaunchManifest {
     pub kind: String,
+    /// Canonical shared probe/coding capture directory, authorized through
+    /// the receipt's digest of these exact manifest bytes. Never defaulted.
+    pub run_dir: PathBuf,
     pub contract_sha256: String,
     pub omp_sha256: String,
     pub slots: Vec<ManifestSlot>,
@@ -747,12 +754,13 @@ fn rate_micro(text: &str) -> Option<u64> {
 }
 
 /// Validate every live gate in order; returns the parsed manifest, the
-/// authority receipt digest and any cited probe seal. Nothing secret is
+/// authority receipt digest, canonical authorized run and any cited probe seal.
+/// Nothing secret is
 /// read here: the credential is read only after the authority and run
 /// claims succeed.
 fn validate_live(
     a: &LiveAdmission,
-) -> Result<(LaunchManifest, String, Option<ProbeSeal>), CaptureFault> {
+) -> Result<(LaunchManifest, String, PathBuf, Option<ProbeSeal>), CaptureFault> {
     let contract = read_evidence(&a.contract, "contract_missing", 1 << 20)?;
     if sha256_hex(&contract) != policy::CONTRACT_SHA256 {
         return Err(authority("contract_digest_mismatch"));
@@ -788,7 +796,7 @@ fn validate_live(
     }
     let manifest: LaunchManifest = serde_json::from_slice(&manifest_bytes)
         .map_err(|_| authority("launch_manifest_invalid"))?;
-    if manifest.kind != "bounded-pilot-v1-launch"
+    if manifest.kind != LAUNCH_MANIFEST_KIND
         || manifest.contract_sha256 != policy::CONTRACT_SHA256
         || manifest.omp_sha256 != policy::OMP_SHA256
     {
@@ -807,6 +815,7 @@ fn validate_live(
     {
         return Err(authority("launch_manifest_slot_order"));
     }
+    let run_dir = check_manifest_run_dir(&manifest, &a.run_dir)?;
     verify_manifest_pins(&manifest)?;
     let ratecard_bytes = read_evidence(&a.ratecard, "ratecard_missing", 64 * 1024)?;
     if sha256_hex(&ratecard_bytes) != receipt.ratecard_sha256 {
@@ -858,20 +867,21 @@ fn validate_live(
             Some(seal)
         }
     };
-    Ok((manifest, sha256_hex(&authority_bytes), seal))
+    Ok((manifest, sha256_hex(&authority_bytes), run_dir, seal))
 }
 
 /// A verification manifest gets the same structural and pin checks as live.
 fn check_verification_manifest(
     manifest: Option<LaunchManifest>,
     scope: Scope,
+    run_dir: &Path,
 ) -> Result<Option<LaunchManifest>, CaptureFault> {
     let Some(m) = manifest else { return Ok(None) };
     let expected: Vec<&str> = match scope {
         Scope::Probe => vec![policy::PROBE_SLOT],
         Scope::Coding => policy::SLOT_ORDER.to_vec(),
     };
-    if m.kind != "bounded-pilot-v1-launch"
+    if m.kind != LAUNCH_MANIFEST_KIND
         || m.contract_sha256 != policy::CONTRACT_SHA256
         || m.omp_sha256 != policy::OMP_SHA256
         || m.slots
@@ -882,6 +892,7 @@ fn check_verification_manifest(
     {
         return Err(authority("launch_manifest_invalid"));
     }
+    check_manifest_run_dir(&m, run_dir)?;
     verify_manifest_pins(&m)?;
     Ok(Some(m))
 }
@@ -936,6 +947,58 @@ fn canonical_run_dir(run_dir: &Path) -> Result<PathBuf, CaptureFault> {
     Ok(parent.join(run_dir.file_name().ok_or(authority("run_dir_invalid"))?))
 }
 
+/// Resolve an existing directory fully, or the canonical parent of a new
+/// run. In particular, an existing symlink leaf must not hide a different run.
+fn resolved_run_dir(run_dir: &Path) -> Result<PathBuf, CaptureFault> {
+    match fs::symlink_metadata(run_dir) {
+        Ok(_) => {
+            let resolved =
+                fs::canonicalize(run_dir).map_err(|_| authority("run_dir_unresolvable"))?;
+            if !resolved.is_dir() {
+                return Err(authority("run_dir_invalid"));
+            }
+            Ok(resolved)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => canonical_run_dir(run_dir),
+        Err(_) => Err(authority("run_dir_unresolvable")),
+    }
+}
+
+fn check_manifest_run_dir(
+    manifest: &LaunchManifest,
+    declared: &Path,
+) -> Result<PathBuf, CaptureFault> {
+    if !manifest.run_dir.is_absolute() {
+        return Err(authority("launch_manifest_run_not_canonical"));
+    }
+    let authorized = resolved_run_dir(&manifest.run_dir)?;
+    if authorized.as_os_str() != manifest.run_dir.as_os_str() {
+        return Err(authority("launch_manifest_run_not_canonical"));
+    }
+    let actual = resolved_run_dir(declared)?;
+    if actual != authorized {
+        return Err(authority("run_dir_authority_mismatch"));
+    }
+    Ok(actual)
+}
+
+/// A handoff continues precisely the existing sealed run, also when a
+/// verification caller has no manifest. Check before journal or key access.
+fn check_handoff_run_dir(declared: &Path, sealed: &Path) -> Result<(), CaptureFault> {
+    let actual = resolved_run_dir(declared)?;
+    if actual != sealed || fs::canonicalize(sealed).ok().as_deref() != Some(sealed) {
+        return Err(authority("probe_run_dir_mismatch"));
+    }
+    Ok(())
+}
+
+fn check_claimed_run_dir(actual: &Path, authorized: &Path) -> Result<(), CaptureFault> {
+    if fs::canonicalize(actual).ok().as_deref() != Some(authorized) {
+        return Err(authority("run_dir_changed"));
+    }
+    Ok(())
+}
+
 /// The handoff trusts nothing in a caller-supplied seal that its own
 /// journal does not state: the journal's terminal record is the seal, with
 /// the same counters, identity sequences, paid clock, boot and run; the run
@@ -959,6 +1022,12 @@ fn verify_seal_against_journal(seal: &ProbeSeal, journal: &Path) -> Result<(), C
         && admitted.get("scope") == Some(&json!(Scope::Probe))
         && admitted.get("mode") == Some(&json!(seal.mode))
         && admitted.get("boot_identity") == Some(&json!(seal.boot_identity))
+        && (seal.mode != Mode::Live
+            || (admitted.get("run_dir") == Some(&json!(seal.run_dir))
+                && admitted
+                    .get("authority_receipt_sha256")
+                    .and_then(Value::as_str)
+                    .is_some_and(protocol::is_sha256_hex)))
         && kind(last).as_deref() == Some("probe_sealed")
         && last.get("counters") == Some(&json!(seal.counters))
         && last.get("attempt_seq") == Some(&json!(seal.attempt_seq))
@@ -1470,11 +1539,15 @@ impl CaptureSession {
             transport_parts,
             manifest,
             deny_literals,
+            authority_receipt_sha256,
         ) = match admission {
             LaunchAdmission::Verification(v) => {
                 check_verification(&v)?;
-                let manifest = check_verification_manifest(v.manifest.clone(), v.scope)?;
-                let (run_dir, hosts_dir) = claim_run_dir(&v.run_dir)?;
+                let manifest =
+                    check_verification_manifest(v.manifest.clone(), v.scope, &v.run_dir)?;
+                let target = resolved_run_dir(&v.run_dir)?;
+                let (run_dir, hosts_dir) = claim_run_dir(&target)?;
+                check_claimed_run_dir(&run_dir, &target)?;
                 let mut journal =
                     Journal::create(&run_dir.join("journal.jsonl"), v.faults.journal_fail_after)?;
                 let credential = wire::Credential::new(&v.credential)
@@ -1493,22 +1566,23 @@ impl CaptureSession {
                     (endpoint, credential),
                     manifest,
                     Vec::new(),
+                    None,
                 )
             }
             LaunchAdmission::Live(l) => {
-                let (manifest, receipt_sha256, seal) = validate_live(&l)?;
+                let (manifest, receipt_sha256, target, seal) = validate_live(&l)?;
                 if seal.is_some() {
                     // A fresh coding session may cite a sealed probe as
                     // compatibility evidence, but the paid clock and
                     // counters continue only through `open_after_probe`.
                     return Err(authority("coding_requires_probe_handoff"));
                 }
-                let target = canonical_run_dir(&l.run_dir)?;
                 if target.symlink_metadata().is_ok() {
                     return Err(authority("run_dir_claim_failed"));
                 }
                 claim_authority(&l.authority, &receipt_sha256, &target)?;
                 let (run_dir, hosts_dir) = claim_run_dir(&target)?;
+                check_claimed_run_dir(&run_dir, &target)?;
                 let mut journal = Journal::create(&run_dir.join("journal.jsonl"), None)?;
                 let credential = read_credential(&l.credential_file, &run_dir, &manifest)
                     .map_err(|fault| journal.credential_refusal(fault))?;
@@ -1528,6 +1602,7 @@ impl CaptureSession {
                     (wire::Endpoint::Live, credential),
                     Some(manifest),
                     vec![credential_path],
+                    Some(receipt_sha256),
                 )
             }
         };
@@ -1564,6 +1639,8 @@ impl CaptureSession {
             "admitted",
             json!({
                 "mode": mode, "scope": scope,
+                "authority_receipt_sha256": authority_receipt_sha256,
+                "run_dir": inner.run_dir,
                 "contract_sha256": policy::CONTRACT_SHA256,
                 "omp_sha256": policy::OMP_SHA256,
                 "bridge_sha256": sha256_hex(host::BRIDGE_SOURCE),
@@ -1609,76 +1686,83 @@ impl CaptureSession {
                 "paid_wall_exhausted",
             ));
         }
-        let (mode, journal, omp, transport, manifest, deny_literals) = match admission {
-            LaunchAdmission::Verification(v) => {
-                if seal.mode != Mode::Verification || v.scope != Scope::Coding {
-                    return Err(authority("probe_handoff_mode_mismatch"));
-                }
-                check_verification(&v)?;
-                let manifest = check_verification_manifest(v.manifest.clone(), Scope::Coding)?;
-                // Admit this verification path before touching the sealed journal.
-                let mut journal = Journal::reopen(
-                    &seal.run_dir.join("journal.jsonl"),
-                    &seal.journal_sha256,
-                    seal.journal_records,
-                )?;
-                verify_seal_against_journal(seal, &journal.path)?;
-                let credential = wire::Credential::new(&v.credential)
-                    .map_err(|fault| journal.credential_refusal(fault))?;
-                let endpoint = wire::Endpoint::Verification {
-                    addr: v.fixture_addr,
-                    ca_pem: v.fixture_ca_pem.clone(),
-                };
-                let _guard = rt.enter();
-                (
-                    Mode::Verification,
-                    journal,
-                    v.omp,
-                    wire::Transport::new(&endpoint, credential)?,
-                    manifest,
-                    Vec::new(),
-                )
-            }
-            LaunchAdmission::Live(l) => {
-                if seal.mode != Mode::Live || l.scope != Scope::Coding {
-                    return Err(authority("probe_handoff_mode_mismatch"));
-                }
-                let (manifest, receipt_sha256, cited) = validate_live(&l)?;
-                match cited {
-                    Some(c)
-                        if c.journal_sha256 == seal.journal_sha256 && c.run_dir == seal.run_dir => {
+        let (mode, journal, omp, transport, manifest, deny_literals, authority_receipt_sha256) =
+            match admission {
+                LaunchAdmission::Verification(v) => {
+                    if seal.mode != Mode::Verification || v.scope != Scope::Coding {
+                        return Err(authority("probe_handoff_mode_mismatch"));
                     }
-                    _ => return Err(authority("compatibility_evidence_not_this_probe")),
+                    check_verification(&v)?;
+                    let manifest =
+                        check_verification_manifest(v.manifest.clone(), Scope::Coding, &v.run_dir)?;
+                    check_handoff_run_dir(&v.run_dir, &seal.run_dir)?;
+                    // Admit this verification path before touching the sealed journal.
+                    let mut journal = Journal::reopen(
+                        &seal.run_dir.join("journal.jsonl"),
+                        &seal.journal_sha256,
+                        seal.journal_records,
+                    )?;
+                    verify_seal_against_journal(seal, &journal.path)?;
+                    journal.fail_after = v.faults.journal_fail_after;
+                    let credential = wire::Credential::new(&v.credential)
+                        .map_err(|fault| journal.credential_refusal(fault))?;
+                    let endpoint = wire::Endpoint::Verification {
+                        addr: v.fixture_addr,
+                        ca_pem: v.fixture_ca_pem.clone(),
+                    };
+                    let _guard = rt.enter();
+                    (
+                        Mode::Verification,
+                        journal,
+                        v.omp,
+                        wire::Transport::new(&endpoint, credential)?,
+                        manifest,
+                        Vec::new(),
+                        None,
+                    )
                 }
-                // Only validated coding admission may inspect this cited probe.
-                // A terminal prefix refuses before consuming fresh authority;
-                // no journal append is allowed until the claim succeeds.
-                let mut journal = Journal::reopen(
-                    &seal.run_dir.join("journal.jsonl"),
-                    &seal.journal_sha256,
-                    seal.journal_records,
-                )?;
-                verify_seal_against_journal(seal, &journal.path)?;
-                claim_authority(&l.authority, &receipt_sha256, &seal.run_dir)?;
-                let credential = read_credential(&l.credential_file, &seal.run_dir, &manifest)
-                    .map_err(|fault| journal.credential_refusal(fault))?;
-                let credential_path = fs::canonicalize(&l.credential_file).map_err(|_| {
-                    journal.credential_refusal(CaptureFault::new(
-                        FaultClass::Privacy,
-                        "credential_missing",
-                    ))
-                })?;
-                let _guard = rt.enter();
-                (
-                    Mode::Live,
-                    journal,
-                    l.omp,
-                    wire::Transport::new(&wire::Endpoint::Live, credential)?,
-                    Some(manifest),
-                    vec![credential_path],
-                )
-            }
-        };
+                LaunchAdmission::Live(l) => {
+                    if seal.mode != Mode::Live || l.scope != Scope::Coding {
+                        return Err(authority("probe_handoff_mode_mismatch"));
+                    }
+                    let (manifest, receipt_sha256, target, cited) = validate_live(&l)?;
+                    check_handoff_run_dir(&target, &seal.run_dir)?;
+                    match cited {
+                        Some(c)
+                            if c.journal_sha256 == seal.journal_sha256
+                                && c.run_dir == seal.run_dir => {}
+                        _ => return Err(authority("compatibility_evidence_not_this_probe")),
+                    }
+                    // Only validated coding admission may inspect this cited probe.
+                    // A terminal prefix refuses before consuming fresh authority;
+                    // no journal append is allowed until the claim succeeds.
+                    let mut journal = Journal::reopen(
+                        &seal.run_dir.join("journal.jsonl"),
+                        &seal.journal_sha256,
+                        seal.journal_records,
+                    )?;
+                    verify_seal_against_journal(seal, &journal.path)?;
+                    claim_authority(&l.authority, &receipt_sha256, &seal.run_dir)?;
+                    let credential = read_credential(&l.credential_file, &seal.run_dir, &manifest)
+                        .map_err(|fault| journal.credential_refusal(fault))?;
+                    let credential_path = fs::canonicalize(&l.credential_file).map_err(|_| {
+                        journal.credential_refusal(CaptureFault::new(
+                            FaultClass::Privacy,
+                            "credential_missing",
+                        ))
+                    })?;
+                    let _guard = rt.enter();
+                    (
+                        Mode::Live,
+                        journal,
+                        l.omp,
+                        wire::Transport::new(&wire::Endpoint::Live, credential)?,
+                        Some(manifest),
+                        vec![credential_path],
+                        Some(receipt_sha256),
+                    )
+                }
+            };
         let mut inner = Inner {
             mode,
             scope: Scope::Coding,
@@ -1709,7 +1793,9 @@ impl CaptureSession {
         }
         inner.journal.append(
             "coding_handoff",
-            json!({"probe_journal_sha256": seal.journal_sha256, "counters": seal.counters, "session": inner.session_id}),
+            json!({"probe_journal_sha256": seal.journal_sha256, "counters": seal.counters,
+                   "session": inner.session_id, "scope": Scope::Coding,
+                   "authority_receipt_sha256": authority_receipt_sha256, "run_dir": inner.run_dir}),
         )?;
         Ok(Self { rt, inner })
     }
@@ -4111,5 +4197,95 @@ mod tests {
         let b = continuous_nanos().unwrap();
         assert!(b >= a);
         assert!(!boot_identity().unwrap().is_empty());
+    }
+
+    // Insert inside src/pilot_capture.rs's existing #[cfg(test)] mod tests.
+    // Real owned journal files; no OMP, host, credential or provider required.
+    #[test]
+    fn live_probe_seal_requires_chained_authority_and_run_binding() {
+        for case in [
+            "bound",
+            "missing-authority",
+            "invalid-authority",
+            "missing-run",
+            "wrong-run",
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let run_dir = fs::canonicalize(temp.path()).unwrap();
+            let authority_bytes = b"owned synthetic probe authority evidence";
+            fs::write(run_dir.join("synthetic-authority"), authority_bytes).unwrap();
+            let mut seal = ProbeSeal {
+                kind: "bounded-pilot-v1-probe-seal".into(),
+                mode: Mode::Live,
+                contract_sha256: policy::CONTRACT_SHA256.into(),
+                omp_sha256: policy::OMP_SHA256.into(),
+                implementation_sha256: "0".repeat(64),
+                bridge_sha256: sha256_hex(host::BRIDGE_SOURCE),
+                run_dir: run_dir.clone(),
+                journal_sha256: String::new(),
+                journal_records: 3,
+                counters: Counters::default(),
+                paid_started_ns: 10,
+                paid_deadline_ns: 20,
+                boot_identity: "owned synthetic boot".into(),
+                attempt_seq: 1,
+                host_seq: 1,
+                probe_message_id: "synthetic-message".into(),
+                probe_request_id: None,
+            };
+            let path = run_dir.join("journal.jsonl");
+            let mut journal = Journal::create(&path, None).unwrap();
+            let mut admitted = json!({"scope":Scope::Probe, "mode":Mode::Live,
+            "boot_identity":seal.boot_identity, "run_dir":run_dir,
+            "authority_receipt_sha256":sha256_hex(authority_bytes)});
+            match case {
+                "missing-authority" => {
+                    admitted
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("authority_receipt_sha256");
+                }
+                "invalid-authority" => {
+                    admitted["authority_receipt_sha256"] = json!("not-a-digest");
+                }
+                "missing-run" => {
+                    admitted.as_object_mut().unwrap().remove("run_dir");
+                }
+                "wrong-run" => {
+                    admitted["run_dir"] = json!(run_dir.join("another-run"));
+                }
+                "bound" => {}
+                _ => unreachable!(),
+            }
+            journal.append("admitted", admitted).unwrap();
+            journal
+                .append(
+                    "paid_phase_started",
+                    json!({"started_ns":10, "deadline_ns":20}),
+                )
+                .unwrap();
+            journal.append("probe_sealed", json!({
+            "counters":seal.counters, "attempt_seq":seal.attempt_seq, "host_seq":seal.host_seq,
+            "paid_started_ns":seal.paid_started_ns, "paid_deadline_ns":seal.paid_deadline_ns,
+            "message_id":seal.probe_message_id, "run_dir":seal.run_dir,
+        })).unwrap();
+            seal.journal_sha256 = journal.digest().unwrap();
+            drop(journal);
+            let before = fs::read(&path).unwrap();
+            if case == "bound" {
+                verify_seal_against_journal(&seal, &path).unwrap();
+            } else {
+                assert_eq!(
+                    verify_seal_against_journal(&seal, &path).unwrap_err().code,
+                    "probe_seal_not_journaled",
+                    "{case}"
+                );
+            }
+            assert_eq!(
+                fs::read(&path).unwrap(),
+                before,
+                "verification rewrote {case}"
+            );
+        }
     }
 }

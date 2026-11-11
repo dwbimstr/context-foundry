@@ -1165,7 +1165,9 @@ fn full_pilot_pipeline_qualifies_without_provider() {
             .iter()
             .all(|v| v.header.contains("semantic:ready") && v.delivered_o200k_tokens <= 2048)
     );
-    let (probe_manifest, coding_manifest) = apparatus::build_manifests(&root, &verified).unwrap();
+    let capture_run = root.root.join("runs/pilot");
+    let (probe_manifest, coding_manifest) =
+        apparatus::build_manifests(&root, &verified, &capture_run).unwrap();
 
     // The scripted model: the upstream repair is one replaced hunk.
     let seed = std::fs::read_to_string(inputs.paired_root.join("inputs/seed-lib.rs")).unwrap();
@@ -1228,11 +1230,28 @@ fn full_pilot_pipeline_qualifies_without_provider() {
     let seal =
         seal.unwrap_or_else(|f| panic!("probe not sealed: {f:?} {:?}", probe_capture.disposition));
     probe.finish().unwrap();
-    let coding = CaptureSession::open_after_probe(
-        &seal,
-        admission(Scope::Coding, "unused", coding_manifest),
-    )
-    .unwrap();
+    let sealed_bytes = std::fs::read(capture_run.join("journal.jsonl")).unwrap();
+    let request_count = fx.seen().len();
+    assert_eq!(
+        CaptureSession::open_after_probe(
+            &seal,
+            admission(Scope::Coding, "unused", coding_manifest.clone()),
+        )
+        .err()
+        .unwrap()
+        .code,
+        "run_dir_authority_mismatch"
+    );
+    assert_eq!(
+        std::fs::read(capture_run.join("journal.jsonl")).unwrap(),
+        sealed_bytes
+    );
+    assert_eq!(fx.seen().len(), request_count);
+    assert!(!root.root.join("runs/unused").exists());
+    let coding =
+        CaptureSession::open_after_probe(&seal, admission(Scope::Coding, "pilot", coding_manifest))
+            .unwrap();
+    assert_eq!(coding.counters(), seal.counters);
     let report = apparatus::run_coding(coding, &root, &verified).unwrap();
 
     assert_eq!(report.receipt.halt, None, "{:?}", report.slots);
@@ -1307,7 +1326,8 @@ fn live_gates_refuse_in_order_and_claim_the_authority_once() {
         })
         .collect();
     let manifest = LaunchManifest {
-        kind: "bounded-pilot-v1-launch".into(),
+        kind: pilot_capture::LAUNCH_MANIFEST_KIND.into(),
+        run_dir: dir.join("run-5"),
         contract_sha256: policy::CONTRACT_SHA256.into(),
         omp_sha256: policy::OMP_SHA256.into(),
         slots: vec![ManifestSlot {
@@ -1387,23 +1407,31 @@ fn live_gates_refuse_in_order_and_claim_the_authority_once() {
         "authority-1.json",
         &serde_json::to_vec(&receipt(false, &exe, &bound)).unwrap(),
     );
-    assert_eq!(open(&a1, &bound, "run-1"), "rights_not_approved");
+    assert_eq!(open(&a1, &bound, "run-5"), "rights_not_approved");
+    assert!(!dir.join("authority-1.json.claim").exists());
+    assert!(!dir.join("run-5").exists());
     let a2 = write(
         "authority-2.json",
         &serde_json::to_vec(&receipt(true, &"c".repeat(64), &bound)).unwrap(),
     );
-    assert_eq!(open(&a2, &bound, "run-2"), "implementation_digest_mismatch");
+    assert_eq!(open(&a2, &bound, "run-5"), "implementation_digest_mismatch");
+    assert!(!dir.join("authority-2.json.claim").exists());
+    assert!(!dir.join("run-5").exists());
     let a3 = write(
         "authority-3.json",
         &serde_json::to_vec(&receipt(true, &exe, &unbound)).unwrap(),
     );
-    assert_eq!(open(&a3, &unbound, "run-3"), "ratecard_account_unbound");
+    assert_eq!(open(&a3, &unbound, "run-5"), "ratecard_account_unbound");
+    assert!(!dir.join("authority-3.json.claim").exists());
+    assert!(!dir.join("run-5").exists());
     std::fs::write(dir.join("view-2.txt"), b"tampered").unwrap();
     let a4 = write(
         "authority-4.json",
         &serde_json::to_vec(&receipt(true, &exe, &bound)).unwrap(),
     );
-    assert_eq!(open(&a4, &bound, "run-4"), "launch_view_changed");
+    assert_eq!(open(&a4, &bound, "run-5"), "launch_view_changed");
+    assert!(!dir.join("authority-4.json.claim").exists());
+    assert!(!dir.join("run-5").exists());
     std::fs::write(dir.join("view-2.txt"), b"view 2").unwrap();
     // Every gate passes; the credential is the last thing read and is
     // absent, after the authority and the run were claimed exclusively.
@@ -1418,7 +1446,7 @@ fn live_gates_refuse_in_order_and_claim_the_authority_once() {
     assert_eq!(refused[0]["code"], "credential_missing");
     assert_eq!(refused[0]["prev"], "");
     assert_eq!(refused[0]["seq"], 1);
-    assert_eq!(open(&a4, &bound, "run-6"), "authority_already_claimed");
+    assert_eq!(open(&a4, &bound, "run-6"), "run_dir_authority_mismatch");
 
     // A distinct authority is consumed by an owned malformed file as well.
     // These bytes are synthetic, private and outside the claimed run.
@@ -1426,11 +1454,41 @@ fn live_gates_refuse_in_order_and_claim_the_authority_once() {
     let malformed = format!("{CANARY} invalid");
     let key_path = write("no-such-credential", malformed.as_bytes());
     std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    // A new positive claim has its own manifest-bound target. Earlier owned
+    // fixture bytes are preserved; the open closure below selects this path.
+    let malformed_manifest_path = write(
+        "malformed-key-manifest.json",
+        &serde_json::to_vec(&LaunchManifest {
+            run_dir: dir.join("run-7"),
+            ..manifest.clone()
+        })
+        .unwrap(),
+    );
     let a5 = write(
         "authority-5.json",
-        &serde_json::to_vec(&receipt(true, &exe, &bound)).unwrap(),
+        &serde_json::to_vec(&AuthorityReceipt {
+            launch_manifest_sha256: sha(&malformed_manifest_path),
+            ..receipt(true, &exe, &bound)
+        })
+        .unwrap(),
     );
-    assert_eq!(open(&a5, &bound, "run-7"), "credential_shape_invalid");
+    let malformed_open = |run: &str| {
+        CaptureSession::open(LaunchAdmission::Live(LiveAdmission {
+            run_dir: dir.join(run),
+            omp: OMP.into(),
+            scope: Scope::Probe,
+            contract: contract.clone(),
+            authority: a5.clone(),
+            launch_manifest: malformed_manifest_path.clone(),
+            ratecard: bound.clone(),
+            compatibility: None,
+            credential_file: key_path.clone(),
+        }))
+        .err()
+        .unwrap()
+        .code
+    };
+    assert_eq!(malformed_open("run-7"), "credential_shape_invalid");
     assert!(dir.join("authority-5.json.claim").is_file());
     assert!(dir.join("run-7/claim.json").is_file());
     let refused = journal(&dir.join("run-7"));
@@ -1440,9 +1498,11 @@ fn live_gates_refuse_in_order_and_claim_the_authority_once() {
     assert_eq!(refused[0]["code"], "credential_shape_invalid");
     assert_absent_under(&dir.join("run-7"), CANARY);
     assert_absent_under(&dir.join("run-7"), &malformed);
-    assert_eq!(open(&a5, &bound, "run-8"), "authority_already_claimed");
+    assert_eq!(malformed_open("run-8"), "run_dir_authority_mismatch");
     assert!(!dir.join("run-8").exists());
-    for run in ["run-1", "run-2", "run-3", "run-4", "run-6"] {
+    // Single-use claim behavior is covered directly by the library test;
+    // a differently named root must now fail identity before claim reuse.
+    for run in ["run-6", "run-8"] {
         assert!(!dir.join(run).exists(), "{run} claimed despite refusal");
     }
 
@@ -1478,6 +1538,7 @@ fn live_gates_refuse_in_order_and_claim_the_authority_once() {
         &serde_json::to_vec(&live_shape).unwrap(),
     );
     let coding_manifest = LaunchManifest {
+        run_dir: terminal_run.clone(),
         slots: policy::SLOT_ORDER
             .iter()
             .map(|id| ManifestSlot {
@@ -1533,4 +1594,459 @@ fn live_gates_refuse_in_order_and_claim_the_authority_once() {
         2,
         "no additional fixture request is permitted"
     );
+}
+
+// Owned JSON files intentionally keep this test-only addition compilable on
+// the preceding capture format. The format/path failures must be runtime results.
+struct AuthorityFiles {
+    root: PathBuf,
+    scope: Scope,
+    manifest: Value,
+    authority: Value,
+}
+
+fn private_fixture_file(path: &Path, bytes: &[u8]) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::write(path, bytes).unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+}
+
+impl AuthorityFiles {
+    fn new(e: &Env, label: &str, scope: Scope, run_dir: &Path) -> Self {
+        use std::os::unix::fs::PermissionsExt;
+        let root = e.run_dir.parent().unwrap().join(label);
+        std::fs::create_dir(&root).unwrap();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let pinned = root.join("pinned.txt");
+        private_fixture_file(&pinned, b"owned admission fixture");
+        let views: Vec<Value> = (1..=4u8)
+            .map(|pair| {
+                let path = root.join(format!("view-{pair}.txt"));
+                private_fixture_file(&path, format!("owned view {pair}").as_bytes());
+                json!({"pair":pair, "path":path,
+                    "sha256":pilot_capture::sha256_hex(&std::fs::read(&path).unwrap()),
+                    "delivered_o200k_tokens":3, "store_revision":"owned-fixture",
+                    "citations_sha256":"0".repeat(64), "recipe_id":"owned-fixture"})
+            })
+            .collect();
+        let ids = match scope {
+            Scope::Probe => vec![policy::PROBE_SLOT],
+            Scope::Coding => policy::SLOT_ORDER.to_vec(),
+        };
+        let slots: Vec<Value> = ids.into_iter().map(|id| json!({
+            "slot_id":id, "arm":if id == policy::PROBE_SLOT { "probe".to_string() } else { id.chars().last().unwrap().to_string() },
+            "workspace":e.workspace, "prompt_sha256":"0".repeat(64), "sources":sources(&e.workspace),
+            "render":{"system_sha256":"", "tools_sha256":"", "settings_sha256":"", "stable_prefix_sha256":"",
+                      "beta":"", "cache_layout":[], "initial_user_sha256":""}
+        })).collect();
+        let card = json!({"kind":"bounded-pilot-v1-ratecard", "model":policy::MODEL,
+            "service":"standard", "input_usd_per_mtok":"2", "cache_write_usd_per_mtok":"2.5",
+            "cache_read_usd_per_mtok":"0.1", "output_usd_per_mtok":"10",
+            "account_identity_sha256":"b".repeat(64), "evidence_sha256":"a".repeat(64)});
+        let card_bytes = serde_json::to_vec(&card).unwrap();
+        private_fixture_file(&root.join("ratecard.json"), &card_bytes);
+        let mut files = Self {
+            root,
+            scope,
+            manifest: json!({"kind":"bounded-pilot-v1-launch-v2", "run_dir":run_dir,
+                "contract_sha256":policy::CONTRACT_SHA256, "omp_sha256":policy::OMP_SHA256,
+                "slots":slots, "pins":[{"name":"owned input", "path":pinned,
+                    "sha256":pilot_capture::sha256_hex(b"owned admission fixture")}],
+                "allocation_sha256":"0".repeat(64), "views":views,
+                "isolation_root":e.run_dir.parent().unwrap()}),
+            authority: json!({"kind":"bounded-pilot-v1-authority", "contract_sha256":policy::CONTRACT_SHA256,
+                "implementation_sha256":pilot_capture::sha256_hex(&std::fs::read(std::env::current_exe().unwrap()).unwrap()),
+                "launch_manifest_sha256":"", "ratecard_sha256":pilot_capture::sha256_hex(&card_bytes),
+                "scope":scope, "authorized_by":"owned synthetic test", "authorized_at":"2026-11-11",
+                "rights_approved":true}),
+        };
+        files.save_manifest();
+        files
+    }
+
+    fn save_manifest(&mut self) {
+        let bytes = serde_json::to_vec(&self.manifest).unwrap();
+        private_fixture_file(&self.root.join("manifest.json"), &bytes);
+        self.authority["launch_manifest_sha256"] = json!(pilot_capture::sha256_hex(&bytes));
+        private_fixture_file(
+            &self.root.join("authority.json"),
+            &serde_json::to_vec(&self.authority).unwrap(),
+        );
+    }
+
+    fn admission(&self, run_dir: &Path, compatibility: Option<PathBuf>) -> LaunchAdmission {
+        LaunchAdmission::Live(LiveAdmission {
+            run_dir: run_dir.to_path_buf(),
+            omp: OMP.into(),
+            scope: self.scope,
+            contract: Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("specs/003-agent-retrieval-context/contracts/bounded-pilot-v1.md"),
+            authority: self.root.join("authority.json"),
+            launch_manifest: self.root.join("manifest.json"),
+            ratecard: self.root.join("ratecard.json"),
+            compatibility,
+            credential_file: self.root.join("synthetic-key"),
+        })
+    }
+
+    fn authority_sha256(&self) -> String {
+        pilot_capture::sha256_hex(&std::fs::read(self.root.join("authority.json")).unwrap())
+    }
+
+    fn assert_unclaimed(&self) {
+        assert!(!self.root.join("authority.json.claim").exists());
+    }
+}
+
+#[test]
+fn authority_missing_or_legacy_run_binding_refuses_before_claim() {
+    require_host();
+    for (label, kind, remove_run) in [
+        ("legacy", "bounded-pilot-v1-launch", true),
+        ("missing", "bounded-pilot-v1-launch-v2", true),
+        ("null", "bounded-pilot-v1-launch-v2", false),
+    ] {
+        let e = env();
+        let mut files = AuthorityFiles::new(&e, label, Scope::Probe, &e.run_dir);
+        files.manifest["kind"] = json!(kind);
+        if remove_run {
+            files.manifest.as_object_mut().unwrap().remove("run_dir");
+        } else {
+            files.manifest["run_dir"] = Value::Null;
+        }
+        files.save_manifest();
+        let before = std::fs::read(files.root.join("manifest.json")).unwrap();
+        let fault = CaptureSession::open(files.admission(&e.run_dir, None))
+            .err()
+            .unwrap();
+        assert_eq!(fault.code, "launch_manifest_invalid", "{label}");
+        files.assert_unclaimed();
+        assert!(!e.run_dir.exists());
+        assert!(!files.root.join("synthetic-key").exists());
+        assert_eq!(
+            std::fs::read(files.root.join("manifest.json")).unwrap(),
+            before
+        );
+    }
+}
+
+#[test]
+fn authority_run_mismatch_and_noncanonical_binding_refuse_before_claim() {
+    require_host();
+    let e = env();
+    let mut files = AuthorityFiles::new(&e, "path-authority", Scope::Probe, &e.run_dir);
+    let other = e.run_dir.with_file_name("other-run");
+    let fault = CaptureSession::open(files.admission(&other, None))
+        .err()
+        .unwrap();
+    assert_eq!(fault.code, "run_dir_authority_mismatch");
+    files.assert_unclaimed();
+    assert!(!e.run_dir.exists() && !other.exists());
+    // Equivalent filesystem resolution must not silently canonicalize the
+    // authorized bytes: the manifest itself must already name the canonical root.
+    let alias_parent = e.run_dir.with_file_name("parent-alias");
+    std::os::unix::fs::symlink(e.run_dir.parent().unwrap(), &alias_parent).unwrap();
+    // Path equality can normalize away '.', so retain the exact JSON spelling.
+    for stored in [
+        "run".to_string(),
+        format!("{}/./run", e.run_dir.parent().unwrap().display()),
+        alias_parent.join("run").to_str().unwrap().to_string(),
+    ] {
+        files.manifest["run_dir"] = json!(stored);
+        files.save_manifest();
+        let fault = CaptureSession::open(files.admission(&e.run_dir, None))
+            .err()
+            .unwrap();
+        assert_eq!(fault.code, "launch_manifest_run_not_canonical", "{stored}");
+        files.assert_unclaimed();
+        assert!(!e.run_dir.exists());
+        assert!(!files.root.join("synthetic-key").exists());
+    }
+}
+
+#[test]
+fn authority_probe_admission_is_chained_before_a_session_is_returned() {
+    require_host();
+    let e = env();
+    let files = AuthorityFiles::new(&e, "positive-authority", Scope::Probe, &e.run_dir);
+    // Only this owned dummy is read. open/finish construct and close a client;
+    // run_slot/count/messages are never called, and no host is launched.
+    private_fixture_file(&files.root.join("synthetic-key"), CANARY.as_bytes());
+    let session = CaptureSession::open(files.admission(&e.run_dir, None)).unwrap();
+    let records = journal(session.run_dir());
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["kind"], "admitted");
+    assert_eq!(
+        records[0]["authority_receipt_sha256"],
+        files.authority_sha256()
+    );
+    assert_eq!(
+        records[0]["run_dir"],
+        json!(std::fs::canonicalize(&e.run_dir).unwrap())
+    );
+    assert_eq!(records[0]["scope"], json!(Scope::Probe));
+    assert_eq!(records[0]["prev"], "");
+    assert_eq!(records[0]["seq"], 1);
+    assert_eq!(session.counters().count_calls, 0);
+    assert_eq!(session.counters().messages_attempts, 0);
+    assert_eq!(
+        std::fs::read_dir(e.run_dir.join("hosts")).unwrap().count(),
+        0
+    );
+    assert_absent_under(&e.run_dir, CANARY);
+    let receipt = session.finish().unwrap();
+    assert!(!receipt.paid_started);
+}
+
+#[test]
+fn authority_journal_admission_append_failure_returns_no_session() {
+    require_host();
+    let e = env();
+    let fx = Fixture::start(vec![]);
+    let fault = CaptureSession::open(verification(
+        &e,
+        &fx,
+        Scope::Probe,
+        VerificationFaults {
+            journal_fail_after: Some(0),
+        },
+    ))
+    .err()
+    .unwrap();
+    assert_eq!(fault.code, "journal_append_failed");
+    assert_eq!(fault.class, FaultClass::Persistence);
+    assert!(e.run_dir.join("claim.json").is_file());
+    assert!(
+        std::fs::read(e.run_dir.join("journal.jsonl"))
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        std::fs::read_dir(e.run_dir.join("hosts")).unwrap().count(),
+        0
+    );
+    assert!(fx.seen().is_empty());
+}
+
+#[test]
+fn authority_handoff_path_mismatch_preserves_sealed_bytes_and_requests() {
+    require_host();
+    let e = env();
+    let fx = Fixture::start(vec![
+        Reply::Count(2048),
+        fixture::text_reply("msg_path_probe", "PILOT_TRANSPORT_OK"),
+    ]);
+    let mut probe =
+        CaptureSession::open(verification(&e, &fx, Scope::Probe, Default::default())).unwrap();
+    let capture = probe
+        .run_slot(slot(&e, policy::PROBE_SLOT, policy::PROBE_INSTRUCTION))
+        .unwrap();
+    let seal = probe.seal_probe(&capture).unwrap();
+    probe.finish().unwrap();
+    let bytes = std::fs::read(e.run_dir.join("journal.jsonl")).unwrap();
+    let other = e.run_dir.with_file_name("other-owned-run");
+    std::fs::create_dir(&other).unwrap();
+    let alias = e.run_dir.with_file_name("wrong-run-alias");
+    std::os::unix::fs::symlink(&other, &alias).unwrap();
+    for declared in [e.run_dir.with_file_name("unused"), alias] {
+        let mut admission = match verification(&e, &fx, Scope::Coding, Default::default()) {
+            LaunchAdmission::Verification(v) => v,
+            LaunchAdmission::Live(_) => unreachable!(),
+        };
+        admission.run_dir = declared;
+        assert_eq!(
+            CaptureSession::open_after_probe(&seal, LaunchAdmission::Verification(admission))
+                .err()
+                .unwrap()
+                .code,
+            "probe_run_dir_mismatch"
+        );
+        assert_eq!(
+            std::fs::read(e.run_dir.join("journal.jsonl")).unwrap(),
+            bytes
+        );
+        assert_eq!(fx.seen().len(), 2);
+    }
+    let coding = CaptureSession::open_after_probe(
+        &seal,
+        verification(&e, &fx, Scope::Coding, Default::default()),
+    )
+    .unwrap();
+    assert_eq!(coding.counters(), seal.counters);
+    let rows = journal(coding.run_dir());
+    let last = rows.last().unwrap();
+    assert_eq!(last["kind"], "coding_handoff");
+    assert_eq!(last["run_dir"], json!(seal.run_dir));
+    assert_eq!(last["scope"], json!(Scope::Coding));
+    assert!(last.get("authority_receipt_sha256").unwrap().is_null());
+    assert_eq!(fx.seen().len(), 2);
+}
+
+#[test]
+fn authority_journal_handoff_append_failure_returns_no_session() {
+    require_host();
+    let e = env();
+    let fx = Fixture::start(vec![
+        Reply::Count(2048),
+        fixture::text_reply("msg_append_probe", "PILOT_TRANSPORT_OK"),
+    ]);
+    let mut probe =
+        CaptureSession::open(verification(&e, &fx, Scope::Probe, Default::default())).unwrap();
+    let capture = probe
+        .run_slot(slot(&e, policy::PROBE_SLOT, policy::PROBE_INSTRUCTION))
+        .unwrap();
+    let seal = probe.seal_probe(&capture).unwrap();
+    probe.finish().unwrap();
+    let bytes = std::fs::read(e.run_dir.join("journal.jsonl")).unwrap();
+    let hosts = std::fs::read_dir(e.run_dir.join("hosts")).unwrap().count();
+    let fault = CaptureSession::open_after_probe(
+        &seal,
+        verification(
+            &e,
+            &fx,
+            Scope::Coding,
+            VerificationFaults {
+                journal_fail_after: Some(seal.journal_records),
+            },
+        ),
+    )
+    .err()
+    .unwrap();
+    assert_eq!(fault.code, "journal_append_failed");
+    assert_eq!(fault.class, FaultClass::Persistence);
+    assert_eq!(
+        std::fs::read(e.run_dir.join("journal.jsonl")).unwrap(),
+        bytes
+    );
+    assert_eq!(
+        std::fs::read_dir(e.run_dir.join("hosts")).unwrap().count(),
+        hosts
+    );
+    assert_eq!(fx.seen().len(), 2);
+    // No permanent burn is claimed for an injected Verification append failure.
+}
+
+#[test]
+fn authority_live_shaped_handoff_is_chained_to_exact_coding_authority() {
+    require_host();
+    let e = env();
+    let fx = Fixture::start(vec![
+        Reply::Count(2048),
+        fixture::text_reply("msg_synthetic_live_probe", "PILOT_TRANSPORT_OK"),
+    ]);
+    let mut probe =
+        CaptureSession::open(verification(&e, &fx, Scope::Probe, Default::default())).unwrap();
+    let capture = probe
+        .run_slot(slot(&e, policy::PROBE_SLOT, policy::PROBE_INSTRUCTION))
+        .unwrap();
+    let verification_seal = probe.seal_probe(&capture).unwrap();
+    probe.finish().unwrap();
+
+    let live_run = e.run_dir.with_file_name("synthetic-live-run");
+    let probe_files = AuthorityFiles::new(&e, "live-probe-authority", Scope::Probe, &live_run);
+    private_fixture_file(&probe_files.root.join("synthetic-key"), CANARY.as_bytes());
+    let live_constructor = CaptureSession::open(probe_files.admission(&live_run, None)).unwrap();
+    let first = journal(&live_run).remove(0);
+    drop(live_constructor); // No run_slot, paid attempt or real Live probe.
+    assert_eq!(
+        first["authority_receipt_sha256"],
+        probe_files.authority_sha256()
+    );
+
+    // Explicitly synthetic handoff input: the real constructor's admission
+    // plus re-chained verification records. This is not Live-compatible history.
+    let mut rows = journal(&e.run_dir);
+    rows[0] = first;
+    rows.last_mut().unwrap()["run_dir"] = json!(live_run);
+    let mut bytes = Vec::new();
+    let mut prev = String::new();
+    for (index, row) in rows.iter_mut().enumerate() {
+        row["seq"] = json!(index + 1);
+        row["prev"] = json!(prev);
+        let line = serde_json::to_vec(row).unwrap();
+        prev = pilot_capture::sha256_hex(&line);
+        bytes.extend(line);
+        bytes.push(b'\n');
+    }
+    private_fixture_file(&live_run.join("journal.jsonl"), &bytes);
+    let seal = pilot_capture::ProbeSeal {
+        mode: pilot_capture::Mode::Live,
+        run_dir: live_run.clone(),
+        journal_sha256: pilot_capture::sha256_hex(&bytes),
+        journal_records: rows.len() as u64,
+        ..verification_seal
+    };
+    let files = AuthorityFiles::new(&e, "live-coding-authority", Scope::Coding, &live_run);
+    let cited = files.root.join("synthetic-seal.json");
+    private_fixture_file(&cited, &serde_json::to_vec(&seal).unwrap());
+    private_fixture_file(&files.root.join("synthetic-key"), CANARY.as_bytes());
+    let wrong_run = e.run_dir.with_file_name("different-existing-run");
+    std::fs::create_dir(&wrong_run).unwrap();
+    assert_eq!(
+        CaptureSession::open_after_probe(&seal, files.admission(&wrong_run, Some(cited.clone())))
+            .err()
+            .unwrap()
+            .code,
+        "run_dir_authority_mismatch"
+    );
+    files.assert_unclaimed();
+    assert_eq!(
+        std::fs::read(live_run.join("journal.jsonl")).unwrap(),
+        bytes
+    );
+    assert_eq!(fx.seen().len(), 2);
+    let coding =
+        CaptureSession::open_after_probe(&seal, files.admission(&live_run, Some(cited))).unwrap();
+    assert_eq!(coding.counters(), seal.counters);
+    let rows = journal(&live_run);
+    let last = rows.last().unwrap();
+    assert_eq!(last["kind"], "coding_handoff");
+    assert_eq!(last["scope"], json!(Scope::Coding));
+    assert_eq!(last["run_dir"], json!(live_run));
+    assert_eq!(last["authority_receipt_sha256"], files.authority_sha256());
+    assert_ne!(
+        last["authority_receipt_sha256"],
+        probe_files.authority_sha256()
+    );
+    let previous_line = bytes
+        .split(|b| *b == b'\n')
+        .rfind(|line| !line.is_empty())
+        .unwrap();
+    assert_eq!(last["prev"], pilot_capture::sha256_hex(previous_line));
+    assert_eq!(last["seq"], seal.journal_records + 1);
+    assert!(
+        std::fs::read(live_run.join("journal.jsonl"))
+            .unwrap()
+            .starts_with(&bytes)
+    );
+    assert_eq!(fx.seen().len(), 2);
+    coding.finish().unwrap();
+}
+
+#[test]
+fn authority_manifests_cli_requires_explicit_run_dir_before_inputs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("must-not-be-created");
+    let inputs = tmp.path().join("nonexistent-inputs.json");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_foundry-pilot-capture"))
+        .args(["manifests", "--pilot-root"])
+        .arg(&root)
+        .arg("--inputs")
+        .arg(&inputs)
+        .current_dir(tmp.path())
+        .env_clear()
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.starts_with("usage:"), "{stderr}");
+    assert!(
+        stderr
+            .lines()
+            .any(|line| line.contains("foundry-pilot-capture manifests")
+                && line.contains("--run-dir DIR")),
+        "{stderr}"
+    );
+    assert!(output.stdout.is_empty());
+    assert!(!root.exists() && !inputs.exists());
 }

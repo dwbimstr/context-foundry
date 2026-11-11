@@ -82,6 +82,30 @@ The private launch manifest binds the contract digest, apparatus/executable hash
 host/model/settings, task and oracle manifests, allocation, profile/model inputs,
 all permitted routes, permissions and actual run directory. Rehash inputs at use.
 
+**Selected authority/run-path repair, 2026-11-11 — not yet qualified.** Launch
+metadata uses `bounded-pilot-v1-launch-v2` with required canonical `run_dir`, distinct
+from `isolation_root`. The existing `manifests` command requires `--run-dir`;
+`build_manifests(root, verified, run_dir: &Path)` binds the same explicit capture
+root into probe and coding manifests before rendering. `AuthorityReceipt` keeps
+its existing shape: its exact manifest digest authorizes that path. Missing or
+legacy unbound metadata refuses; no default path or historical-file migration is
+allowed. Fresh admission checks the canonical parent/final name before claims and
+rechecks the created root before credential access. Coding admission requires the
+declared, authorized and supplied/cited-seal roots to resolve to the same canonical
+directory before journal access, fresh authority claim or credential loading.
+
+The existing synced `admitted` and `coding_handoff` records bind flat
+`authority_receipt_sha256`, `scope` and actual canonical `run_dir` before a runnable
+session returns. Live uses the digest of the exact authority bytes already
+validated; Verification records null authority and still enforces supplied-manifest
+and handoff path identity. Append failure must prevent a runnable session. Live
+handoff also requires the probe's bound admission record; missing historical
+authorization/path bindings refuse as `probe_seal_not_journaled`. Preserve the
+existing credential-refusal terminal shapes, halt ordering and restore repairs.
+This is capture metadata revision 2 under unchanged v1 policy, not pilot-v2
+execution authorization. Frozen v1 contract, manifests, claims, journals and
+receipts remain immutable history; v2 remains unfunded, unfrozen and unaccepted.
+
 Preserve v1's essential admission invariants: final serialized request identity
 after hooks; a pinned compatible counter projection; one generation in flight;
 single-use permits; no automatic retries; checked integer reservations; terminal

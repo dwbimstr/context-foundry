@@ -801,7 +801,9 @@ type SlotInputs = (PathBuf, String, Vec<(String, String)>);
 pub fn build_manifests(
     root: &PilotRoot,
     verified: &Verified,
+    run_dir: &Path,
 ) -> Result<(LaunchManifest, LaunchManifest), CaptureFault> {
+    let run_dir = super::resolved_run_dir(run_dir)?;
     let mut views = Vec::new();
     let mut prompts: BTreeMap<String, SlotInputs> = BTreeMap::new();
     for pair in pins::PAIRS {
@@ -874,7 +876,8 @@ pub fn build_manifests(
         &probe_sources,
     )?;
     let manifest = |slots: Vec<ManifestSlot>| LaunchManifest {
-        kind: "bounded-pilot-v1-launch".into(),
+        kind: super::LAUNCH_MANIFEST_KIND.into(),
+        run_dir: run_dir.clone(),
         contract_sha256: policy::CONTRACT_SHA256.into(),
         omp_sha256: policy::OMP_SHA256.into(),
         slots,
