@@ -1,5 +1,106 @@
 # Validation
 
+## Parser bundle and complete unit comparison — 2026-11-11
+
+Owner decision 21 is implemented in `68ed776`: tree-sitter-scala 0.26.2 →
+0.26.4, tree-sitter-powershell 0.26.4 → 0.26.6 and pulldown-cmark 0.13.5 →
+0.13.6 move together. **Accepted after all eight local gates passed on this commit.**
+The final lock changes only those three package blocks. Resolution initially
+rewrote unrelated bindgen/syn and tempfile/getrandom edges; those rewrites were
+restored, with the intermediate lock and exact comparison retained.
+
+**Complete input/output comparison: PASS.** Baseline `7f1c0d3` and candidate
+`68ed776` used the same Rust 1.97.1 compiler and snapshot helper, and the same
+captured bytes for every production-admitted source in both pinned G2 corpus
+roots plus all 23 frozen fixture files. Fresh owned scratch indexing established
+admission; neither git-tracked files alone nor answer paths selected the inputs.
+The snapshots retain complete ordered syntax forests, effective delivery units,
+index documents, imports/calls, coverage and parse-stop/fallback results. Source
+identity and build provenance are bound separately. Exact JSONL comparison
+ignores no output fields; all three sets are byte-identical, with zero changed
+sources and zero stopped parses in either arm.
+
+| Input | Sources | Admitted bytes | Identical snapshot SHA-256 |
+| --- | ---: | ---: | --- |
+| Rust `b940084d7eb6a299eb4bfeb8e34901bc051e7ac4` | 60,739 | 177,769,746 | `6922b248d5fd38f6fb5857574ca67843279fb5cb552477afaf818061f590a9e1` |
+| bun `5b8d5b8a15ab1711597584aadbdc112c55befed1` | 8,436 | 99,926,130 | `c505eccbc9791e0a7fee9a2af7e8f3cddcd667ba390b883b2b04bdc85df54567` |
+| Frozen parser fixtures | 23 | 218,058 | `4285ead755493c89c997fe8d6618bf35ef5f2ae62e7a181624f4ae9b48fd87d4` |
+
+Raw and effective units in both G2 corpora are unchanged, so the owner's
+conditional fresh 388-question G2 run is **not triggered**. This is no new G2
+score, retrieval-quality result or coding-task benefit. It does not establish
+equivalence on unmeasured inputs.
+
+**Migration remains explicit.** The selected bundle advances derived search
+schema 8 → 9 and `SOURCE_UNIT_SCHEMA` 6 → 7 even though these measured bytes are
+unchanged: the dependency/grammar identity changes beyond this finite comparison.
+Authoritative store schema 12 and semantic generation schema 6 stay fixed.
+Under the [existing repair contract](../specs/001-source-state-recovery/contracts/context-v2.md#parser-bundle--2026-11-11),
+old indexes require explicit `repair-index`; authoritative sources, hashes,
+revisions, memories and tasks remain. Old semantic partitions/state/generation
+metadata remain inspectable history, never current. Explicit `semantic prepare`
+refits every source under units7, including zero-unit sources, reusing only exact
+cached model inputs. Ordinary open/status does not repair or republish old state.
+No original measurement store was opened, repaired or semantically migrated by
+the corpus comparison; migration checks use test stores.
+
+**Executed local checks.** The 58 syntax tests and one test each for recipe
+eligibility, search repair, retained semantic-state migration and changed-range
+refitting all pass: 62 tests, zero failures, in five focused commands on `68ed776`.
+Baseline preparation took 323.33 s; candidate build/snapshot/comparison took
+210.83 s; focused checks took 54.79 s. These phases perform different work and
+are elapsed receipts, not a performance comparison. Each arm's eight native
+phases and all five focused commands exited 0 naturally, with no forced cleanup
+or observed owned process remaining. No provider/model calls, training or corpus
+code execution occurred.
+
+**Clock correction.** The initial shared deadline passed Python 3.9
+`time.monotonic()` values across processes on this Mac, where their origins
+differed; that shared guard was ineffective for the focused phase. Its local
+900-second cap remained effective, and the actual 54.79-second run finished
+before the originally selected UTC end, `2026-11-11T17:11:46.981248Z`. Subsequent
+candidate/gate admission uses the shared `CLOCK_MONOTONIC` clock, preserving
+that original end without an extension. This correction does not retroactively
+claim that the earlier shared guard enforced the bound.
+
+**Full local gates: PASS on `68ed776`.** All eight stages exit 0: fmt,
+clippy, default tests, pilot clippy/tests, actual Rust 1.90 check/clippy and
+Rust 1.90 pilot check. The default suite has 1,307 passed, zero failed and
+34 ignored; the custom recovery binary adds 21 passing crash checks, and the
+pilot unit suite has 62 passed. The four watch tests finish in 26.97 s.
+The complete gate run takes 738.89 s, exits naturally, requests no cleanup signal
+and leaves no observed owned process. Both Rust 1.97.1 and 1.90 use SDK 26.5.
+The sampled maximum among owned roots/descendants is 2,135,736,320 bytes RSS
+(includes compilers), with 1,475 missed process samples; this is not a true peak.
+The observed free-space minimum is 276,552,712,192 bytes, above the 20 GiB floor;
+no sampled process crosses 8 GiB. These are development gates, not signed-package
+acceptance or actual-host pilot qualification.
+
+**Upstream source inspected, not upstream tests executed.** Scala 0.26.4
+(`8c0b6d44bfd66bf7bc9a1fc15084ef17cef2f97e`) changes declaration/layout ownership
+in `grammar.js::_function_declaration`/`_function_constructor` and scanner
+`scan_impl`; its packaged `bindings/rust/lib.rs:53::test_can_load_grammar` was
+inspected. PowerShell 0.26.6 (`65ea6919e816a7ac142acec7ee72757f89db8439`)
+changes `grammar.js::command_parameter`/`_command_argument` and
+`src/scanner.c::scan_bare_dashes`; its corresponding Rust binding test at line 54
+was inspected. Neither grammar crate packages its upstream grammar corpus tests.
+Cmark 0.13.6 (`014b61d38d235f382935bb676bab872b7680afa2`) changes
+`src/parse.rs::handle_wikilink`; `tests/suite/wikilinks.rs::wikilinks_test_15`
+was inspected. Foundry's [`markdown_sections`](../src/syntax/markdown.rs) uses
+`Parser::new` with wikilinks off. Foundry owns bounded syntax units/import hints
+under 001 T008, not upstream editor queries or compiler-proven relationships.
+These references explain the selected risk; the measured comparison supplies
+the output evidence. No upstream performance or security improvement is claimed.
+
+Private evidence: `runs/parser-bump-2026-11-11/` contains
+`baseline-receipts/final-receipt.json`, `candidate-receipts/final-receipt.json`,
+their native command receipts, `focused/result.json`, `candidate-clock.json`,
+`lock-diff.json`, `lock-after-resolution.toml` and `upstream-inspection/NOTES.md`.
+Complete captured inputs and snapshots remain in the owned parser baseline and
+candidate `.noindex` directories. The selection/inspection documents' earlier
+"not started"/"not run" labels remain preparation history; they are not substitutes
+for these later executed receipts or the completed full-gate receipt.
+
 ## Encrypted evidence backups — 2026-11-11
 
 Owner decisions 7/30 are complete at the selected local-disk boundary. Five
@@ -651,7 +752,7 @@ is work to do.
 |---|---|---|---|
 | 2 | rustls 0.23.45 alerts, PR #49 and the main merge | "Bump rustls, then merge" | rustls 0.23.46 on experimental, one gates run, one PR to main merged by the owner with a merge commit. Done: PR #52 merged as `d94b013` on 2026-11-07; alerts #9–#12 closed and PR #49 closed as superseded. |
 | 5 | zip 0.6.6 alerts via the optional tch worker | "Dismiss as unused" | Done: Dependabot alerts #13–#16 dismissed as not used, with a recheck if 013 is unfrozen or npz loading is added. |
-| 21 | tree-sitter-scala 0.26.4, tree-sitter-powershell 0.26.6, pulldown-cmark 0.13.6 | "One bump, gated on unit diff" | One schema bump after a unit diff on fixtures and both G2 corpora; G2 on the Mac only if G2-corpus units change (to do). |
+| 21 | tree-sitter-scala 0.26.4, tree-sitter-powershell 0.26.6, pulldown-cmark 0.13.6 | "One bump, gated on unit diff" | Done on `68ed776`, with search schema 9 and units7. Complete fixture and both G2-corpus snapshots are identical; the conditional fresh G2 run is not triggered. Focused checks and all eight local gates pass ([receipt](#parser-bundle-and-complete-unit-comparison--2026-11-11)). |
 | 22 | Tantivy 0.27.0 (PR #47) | "Apply only if neutral" | Done: existing 0.26 stores open without repair, all G1 result/response bytes are identical, and all eight local gates pass on `2929769` ([receipt](#tantivy-027-store-compatibility-and-g1-neutrality--2026-11-11)). Accepted for experimental. |
 | 23 | tree-sitter-dart 0.3.0 (PR #48) | "Close; stay on 0.2.0" | Done: PR #48 closed with the reason. |
 

@@ -24,7 +24,8 @@ under the optional `learning-worker` feature, via `tch` → `zip` → `pbkdf2`. 
 six updates from Dependabot #35 were applied: libc 0.2.191, redb 4.4.0, serde_json
 1.0.154, tokio 1.53.3, usearch 2.26.5 (exact pin) and uuid 1.28.0; serde_json now also
 depends on the already locked foldhash. The declared licenses are unchanged. The same
-PR's tree-sitter-scala 0.26.3 is not applied: a grammar change can change units, which
+PR's tree-sitter-scala 0.26.3 was held at that point: a grammar change can change
+units, which
 [§ Index version gate](../specs/001-source-state-recovery/contracts/context-v2.md#index-version-gate)
 and the partition recipes' `SOURCE_UNIT_SCHEMA` tie to schema bumps, an owner decision.
 The owner settled it on 2026-11-06 ("One bump, gated on unit diff", below).
@@ -47,12 +48,19 @@ grammar change can change units the same way, an owner decision, settled on
 Owner decisions of 2026-11-06 ([validation](validation.md#owner-decisions--2026-11-06))
 settle the held and open Dependabot updates:
 
-- **Parser updates** ("One bump, gated on unit diff"). tree-sitter-scala 0.26.4,
-  tree-sitter-powershell 0.26.6 and pulldown-cmark 0.13.6 go in together, in one
-  search and source-unit schema bump, after a unit diff on the fixtures and both G2
-  corpora. G2 runs on the owner's Mac only if units in a G2 corpus change. The other
-  updates in the same Dependabot group stay separate decisions. To do: `Cargo.toml`
-  still pins 0.26.2, 0.26.4 and 0.13.5.
+- **Parser updates** ("One bump, gated on unit diff"). Implemented together on
+  `68ed776`: tree-sitter-scala 0.26.4, tree-sitter-powershell 0.26.6 and
+  pulldown-cmark 0.13.6, with derived search schema 9 and source-unit schema 7.
+  Complete ordered output snapshots are identical for all admitted sources in
+  both G2 corpus roots and the frozen parser fixtures, so the conditional fresh
+  G2 run is not triggered. Syntax and migration checks and all eight local gates
+  pass; this bundle is accepted. Existing stores preserve authoritative and old
+  semantic state, requiring explicit `repair-index`/`semantic prepare` under the
+  new grammar identity. Authoritative schema 12 and semantic generation 6 are
+  unchanged. Only these three lock package blocks change; unrelated resolver
+  rewrites were restored. The three packages still declare MIT, and their
+  packaged license bytes match their baselines. See the
+  [comparison and migration receipt](validation.md#parser-bundle-and-complete-unit-comparison--2026-11-11).
 - **Tantivy 0.27.0, PR #47** ("Apply only if neutral"). Done on the experimental
   line: `2929769` needs no Foundry API adaptation or schema bump. Existing 0.26
   stores open without repair; all 10,432 G1 tasks and 14,284 response records per
@@ -76,7 +84,7 @@ settle the held and open Dependabot updates:
 | ignore | 0.4.33 | Unlicense OR MIT | normal |
 | imbl | 7.0.2 | MPL-2.0+ | normal (009 T008 persistent location snapshots; unmodified) |
 | libc | 0.2.191 | MIT OR Apache-2.0 | normal (held-root opens) |
-| pulldown-cmark | 0.13.5 | MIT | normal (Markdown sections; default features off) |
+| pulldown-cmark | 0.13.6 | MIT | normal (Markdown sections; default features off) |
 | redb | 4.4.0 | MIT OR Apache-2.0 | normal |
 | rmcp | 3.6.0 | Apache-2.0 | normal (server and live-host client); dev adds child-process transport |
 | serde | 1.0.229 | MIT OR Apache-2.0 | normal |
@@ -92,8 +100,10 @@ settle the held and open Dependabot updates:
 | tree-sitter-go | 0.25.0 | MIT | normal (Go grammar) |
 | tree-sitter-java | 0.23.5 | MIT | normal (Java grammar) |
 | tree-sitter-javascript | 0.25.0 | MIT | normal (JavaScript/JSX grammar) |
+| tree-sitter-powershell | 0.26.6 | MIT | normal (PowerShell grammar) |
 | tree-sitter-python | 0.25.0 | MIT | normal (Python grammar) |
 | tree-sitter-rust | 0.24.2 | MIT | normal (Rust grammar) |
+| tree-sitter-scala | 0.26.4 | MIT | normal (Scala grammar) |
 | tree-sitter-typescript | 0.23.2 | MIT | normal (TypeScript/TSX grammars) |
 | ureq | 3.5.0 | MIT OR Apache-2.0 | normal (bounded gateway-launcher health check) |
 | uuid | 1.28.0 | Apache-2.0 OR MIT | normal |

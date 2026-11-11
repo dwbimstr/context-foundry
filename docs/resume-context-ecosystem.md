@@ -167,7 +167,12 @@ and dated paragraphs below are history.
     dismissed as not used and Dart 0.3 declined (done); Tantivy 0.27 is accepted
     on experimental after store compatibility, exact G1 neutrality and all eight
     local gates ([receipt](validation.md#tantivy-027-store-compatibility-and-g1-neutrality--2026-11-11)).
-    The combined parser update remains to do.
+    The combined parser update is accepted on `68ed776`: complete corpus/fixture
+    snapshots are identical, focused migration checks and all eight local gates
+    pass, and the conditional G2 run is not triggered
+    ([receipt](validation.md#parser-bundle-and-complete-unit-comparison--2026-11-11)).
+    Existing indexes require explicit repair for search9/units7; old semantic
+    state remains history until explicit preparation.
   - **Closed or kept:** rows 5 and 6 and the historical CI re-run retire; the
     Nemotron comparison closes (its files are kept); `overview-v1` stays; query-time
     parse cost is a named limitation.
