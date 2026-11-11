@@ -163,6 +163,12 @@ and dated paragraphs below are history.
     ([record](validation.md#pilot-credential-refusal-durability--2026-11-11)). This
     does not qualify the current installed host or accept pilot v2/T006; other
     apparatus gaps and freeze requirements remain.
+    Workspace restoration failures halt at the selected local fixture boundary;
+    healthy journal finalization retains unstarted rows, and a failed halt
+    append prevents a later success receipt
+    ([record](validation.md#pilot-workspace-restoration-and-halt-persistence--2026-11-11)).
+    This does not qualify live admission, the current installed host or pilot
+    v2/T006; the other apparatus and freeze requirements remain.
   - **Hosts and evidence:** the owner's Mac is the work host. The 2026-10-11
     sandbox and its archive are declared lost; F2, F6, F8, F10 and F11 retire.
     Five encrypted backups are built and checksum-verified in

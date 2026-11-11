@@ -301,6 +301,168 @@ red/green logs, final gate receipt and a 340-file SHA-256 evidence snapshot, is 
 `runs/store-lock-2026-11-11/`; the original
 gate logs and receipt remain in `runs/t010-lexical-2026-11-11/gates-retained*`.
 
+## Pilot workspace restoration and halt persistence — 2026-11-11
+
+**PASS at the selected local no-provider repair boundary.** Focused red/green,
+serial pinned-host checks and all eight local gates pass. This does not accept
+pilot v2 or 003 T006. The selected combined repair
+starts from `ff75a5fdb74b8b77a06637cc42919fa8a52f7ec5`, after the separate accepted
+[credential-refusal repair](#pilot-credential-refusal-durability--2026-11-11).
+The completed focused/host checks below ran on retained working-tree patches over
+that base. The exact combined sources are now committed as
+`e320614f2aca7376f481d140b40d6dc78f73a79f`; all eight gates pass on that
+commit. The retained working-patch checks and committed gate run are distinct
+evidence; private source preparation is not substituted for either.
+003 T006 and pilot v2 remain unfunded, unfrozen and unaccepted.
+
+**Selected repair.** Workspace restoration failures in the existing
+`apparatus::run_probe` and `run_coding` enter the same monotonic session halt that
+blocks subsequent slots. With healthy journal persistence, the existing finalizer
+retains the terminal halt and `not_started` rows. Probe's post-admission CLI function
+finishes the failed session, prints its existing receipt and returns exit 2. A
+halted coding run retains its descriptive report and returns exit 1. No next host
+is launched at the failed restore boundary; prior slot cleanup continues to use
+the existing owner. The focused tests below exercise these selected behaviors.
+
+The original private restore patch alone could hide a halt append failure:
+`Inner::enter_halt` discarded that persistence error, and a later successful
+`finish` could append `finished` and return a receipt. The selected amendment
+retains the first append error in the existing `Inner` owner. `finish` drops its
+transport and returns that error before any new finished record or success receipt,
+even if the journal becomes writable again. The original causal halt still blocks
+admission. If capture persistence fails, partial existing evidence remains; the
+repair does not manufacture completed rows or a durable success report. The CLI
+reports the persistence refusal. There is no new journal/schema, retry, recovery
+policy or process manager.
+
+**Written selection and bounds.** The selected source packet is
+`runs/pilot-v2-2026-11-11/restore-halt-draft/journal-amendment/`; its combined patch
+supersedes the original private restore-only candidate. Both packets and their
+static preparation history remain retained. Their README/pins use source base
+`7f5ba75`; the later execution protocol names the accepted record head `ff75a5f`
+and pins the actual source bytes. Preparation statements such as “not executed”
+remain historical and do not substitute for runtime results.
+
+`runs/pilot-restore-halt-2026-11-11/protocol.json` declares one heavy job, spend $0,
+one shared 1,800-second stage with 120 seconds reserved for cleanup, a 20 GiB
+free-disk floor and 8 GiB sampled per-owned-process RSS bound. Focused commands are
+capped at 180 seconds and the full host file at 600 seconds, further constrained
+by the remaining shared deadline. All eight gates must run on the final committed
+candidate within the declared allowance; an incomplete run remains incomplete.
+
+The real-file unit test constructs the existing session/journal over private
+temporary files with no transport, host, credential or live admission. Its healthy
+control requires `admitted`, `halt`, `finished`, an unstarted probe row and matching
+receipt digest. Its negative control fails the halt append, clears that injection
+so a later append could succeed, and requires finalization to return
+`Persistence/journal_append_failed` without changing the journal. It also checks
+that a later fault cannot replace the original halt. This is deterministic
+real-owner/file evidence, not a power-loss, partial-write or fsync-failure campaign.
+
+The binary tests call the exact post-admission CLI functions using Verification
+mode and owned synthetic TLS fixtures. They reuse the prior run's read-only archived
+OMP artifact through compile-time `CF_PILOT_TEST_OMP`, with required SHA-256
+`38c3645283ceba06f66462830ae15f27270cc7f84575e40a4c6bd68452a63d0f`.
+The installed host remains untouched. The probe cases select empty seed inventory
+and changed seed bytes; the coding case performs a local fixture probe/handoff,
+then fails restoration before unavailable downstream inputs or any oracle are used.
+It must retain the original probe counters, journal prefix and fixture-request count,
+with every coding row unstarted and no correctness result or completed pair.
+These do not qualify process-argument/live-front-door admission, actual-provider
+compatibility, private evidence, oracle execution or the current installed host.
+
+**Completed focused receipts.** All seven commands record base HEAD `ff75a5f` with
+their retained working-tree patches. Expected-red exit 101 is a failure witness;
+the result's `passed:true` means it matched that expected failure, not that the
+implementation passed. Times below are command-receipt elapsed time, including
+setup/build overhead, rather than just the Rust test duration.
+
+| Command under `focused/` | Tests passed / failed / ignored | Exit | Elapsed seconds |
+| --- | ---: | ---: | ---: |
+| `red-restore-cli` | 0 / 2 / 0 | 101, expected | 25.436 |
+| `red-halt-persistence` | 0 / 1 / 0 | 101, expected | 32.901 |
+| `green-halt-persistence` | 1 / 0 / 0 | 0 | 32.271 |
+| `green-restore-cli` | 2 / 0 / 0 | 0 | 14.163 |
+| `red-cli-only` | 0 / 2 / 0 | 101, expected | 11.118 |
+| `green-restore-cli-final` | 2 / 0 / 0 | 0 | 14.629 |
+| `green-full-host-suite` | 17 / 0 / 1 | 0 | 142.952 |
+
+The original CLI red run found an absent probe halt and coding exit 2 instead of
+the required retained-report exit 1. The halt-persistence counterfactual failed at
+`unwrap_err()`: after the halt append failed and injection was cleared, `finish`
+returned a successful `CaptureReceipt` with two journal records. The setup's
+`admitted` and later `finished` record omitted the terminal halt. The restored
+amendment passes the unchanged real-file unit: a later writable journal does not
+erase the retained persistence error or permit a new success receipt.
+
+The first green CLI run passes both restoration cases. The separate CLI-only
+counterfactual keeps repaired halt/apparatus behavior but restores the old CLI
+handling. It fails both unchanged tests: coding returns exit 0 instead of 1, and
+the probe journal's last record is `halt` instead of `finished`. All three selected
+production source hashes were restored before the final green CLI run, which
+passes both tests again. These controls separately exercise session halting,
+truthful persistence finalization and CLI failure classification.
+
+The complete serial pinned-host fixture file passed with 17 tests, no failures
+and one ignored test in 142.951550541 command seconds. It uses the exact archived
+pin and `--test-threads=1`. The ignored
+`full_pilot_pipeline_qualifies_without_provider` requires private evidence roots;
+that evidence-backed pipeline was not run or qualified here. This serial elapsed
+time is a run receipt, not a performance comparison with a prior parallel run.
+
+All seven completed commands exit naturally, with no forced cleanup or observed
+owned process remaining. Their largest sampled individual owned-process RSS is
+2,138,996,736 bytes; minimum sampled free disk is 272,238,710,784 bytes; 34 owned-
+process memory samples were missed. The 8 GiB process bound and 20 GiB free-disk
+floor hold for these commands. These are sampled observations, not true peaks,
+aggregate process memory or GPU memory. Every completed result records spend $0.
+
+**Full gates: PASS on `e320614`.** All eight named stages exit 0 in 604.639
+seconds: formatting, Clippy, default tests, pilot-feature Clippy and unit
+tests, actual Rust 1.90 check/Clippy and the Rust 1.90 pilot check. The default
+suite reports 1,311 passed, 0 failed and 34 ignored; 21 custom recovery
+checks pass separately. The pilot unit gate reports 63 passed, 0 failed and 0
+ignored. Rust/Cargo 1.97.1 and actual Rust/Cargo 1.90.0 use macOS SDK 26.5.
+The opt-in binary regressions retain their separate focused evidence.
+
+The gate command exits naturally, with no forced cleanup or observed owned
+process remaining. Its largest sampled individual owned-process RSS is
+1,396,670,464 bytes, with 1,360 missed owned-process memory samples;
+minimum free disk is 268,764,352,512 bytes. These are sampled process
+measurements, not true peaks, aggregate memory or GPU memory. The recorded
+resource bounds held. The completed shared stage occupied 1241.485 seconds of
+the original 1,800-second bound, with no extension. The result records unchanged
+source, frozen v1 contract and pinned host; the commit pin retains the unchanged
+policy prefix. Spend is $0. All red/counterfactual failures remain retained.
+The final owners are `gates-result.json`, `gates/` and
+`gates-supervisor/000-full-gates.receipt.json` in the private run directory.
+
+The existing healthy-probe finish-error classification and report-write failure
+classification remain outside this selected restore/halt-capture repair, as the
+private packet states. These checks do not qualify every capture-persistence
+failure, arbitrary journal corruption or recovery policy.
+
+Private evidence owner: `runs/pilot-restore-halt-2026-11-11/`, including each
+`focused/{red-restore-cli,red-halt-persistence,green-halt-persistence,green-restore-cli,red-cli-only,green-restore-cli-final,green-full-host-suite}/result.json`
+and its named command receipt/stdout/stderr, plus the retained command patches.
+`commit-pin.json` binds the exact final source hashes and records
+`policy_prefix_unchanged:true`; `gates-protocol.json` names the committed gate run.
+Selected combined
+patch SHA-256:
+`4384cb21562235b36ab23b44853129ab6bb192bec6f1f592bc73cf947dbbc9a2`.
+The protocol and completed commit pin agree on the final source SHA-256 values:
+
+- `src/pilot_capture.rs`: `b8395f43f3a4fd3662902eea171229c2e5eeb501a5933d4699adadcb2d0e0737`.
+- `src/pilot_capture/apparatus.rs`: `ea2ba430bad448d2f9b12f2a96a37313f549c9e8a0a20a6092519563952ab058`.
+- `src/bin/foundry_pilot_capture.rs`: `b063d09cf4e63f62f5f69a9f9bcd033df695ebf4252be2c82a196ecc9160ab95`.
+
+The commit pin verifies these exact selected sources in `e320614` and the unchanged
+policy prefix. The frozen v1 contract's recorded SHA-256 is
+`1a00758ffdafbfa18a59dd69e0b9912ef8beca9f7010f375bab8e553c554502d`.
+No corpus, owner credential/private key or actual provider is selected. Other v1
+gap rows, harder held-out tasks, sample/power analysis, arm readiness and costed
+owner authorization retain their existing status.
+
 ## Pilot credential-refusal durability — 2026-11-11
 
 **PASS at the selected local repair boundary.** Focused red/green checks, the
