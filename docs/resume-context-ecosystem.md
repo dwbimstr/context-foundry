@@ -180,6 +180,9 @@ and dated paragraphs below are history.
     Checker provenance and retained diagnostics pass the selected local checks
     ([record](validation.md#pilot-checker-provenance-and-retained-diagnostics--2026-11-11));
     broader permissions/startup-network gaps and pilot v2/T006 remain open.
+    Startup-network observation remains open: matching-release source exposes
+    partial diagnostics but no established complete early observation/barrier
+    ([source finding](validation.md#pilot-startup-network-source-feasibility--2026-11-11)).
   - **Hosts and evidence:** the owner's Mac is the work host. The 2026-10-11
     sandbox and its archive are declared lost; F2, F6, F8, F10 and F11 retire.
     Five encrypted backups are built and checksum-verified in

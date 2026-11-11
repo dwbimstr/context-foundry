@@ -301,6 +301,55 @@ red/green logs, final gate receipt and a 340-file SHA-256 evidence snapshot, is 
 `runs/store-lock-2026-11-11/`; the original
 gate logs and receipt remain in `runs/t010-lexical-2026-11-11/gates-retained*`.
 
+## Pilot startup-network source feasibility — 2026-11-11
+
+**Source feasibility finding; startup-network qualification remains open.** Owning
+requirement: 003 T006's [existing v2 startup row](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#required-v1-gap-repairs-and-qualification).
+Capture denied startup attempts with destination/classification before any paid
+request and disallow unobserved routes. This in-session source inspection neither
+implements that outcome nor establishes runtime coverage or OS-denial causality.
+
+The official [v18.13.2 release metadata](https://api.github.com/repos/can1357/oh-my-pi/releases/tags/v18.13.2)
+associates `omp-darwin-arm64` asset `682434495` (217,260,176 bytes) with
+[asset SHA-256](https://api.github.com/repos/can1357/oh-my-pi/releases/assets/682434495)
+`38c3645283ceba06f66462830ae15f27270cc7f84575e40a4c6bd68452a63d0f`, exactly the frozen host pin.
+The [tag reference](https://api.github.com/repos/can1357/oh-my-pi/git/ref/tags/v18.13.2)
+resolves to immutable source commit `e996e1c7ac476f60e02b8ed9764cf30fa8c00a8e`;
+all source/test links below use that commit. Release metadata reports `immutable:false`.
+This establishes release association, not reproducible-build/source-to-artifact
+correspondence. No artifact was downloaded/rehashed, built or executed in this inspection.
+
+| Inspected source owner | Finding and implication |
+| --- | --- |
+| [`ModelRegistry` constructor](https://github.com/can1357/oh-my-pi/blob/e996e1c7ac476f60e02b8ed9764cf30fa8c00a8e/packages/coding-agent/src/config/model-registry.ts#L518), [trusted-extension load](https://github.com/can1357/oh-my-pi/blob/e996e1c7ac476f60e02b8ed9764cf30fa8c00a8e/packages/coding-agent/src/main.ts#L2450) | Private fetch is captured before the extension factory; a later global-fetch wrapper cannot cover it. |
+| [`prewarmModelConnection`](https://github.com/can1357/oh-my-pi/blob/e996e1c7ac476f60e02b8ed9764cf30fa8c00a8e/packages/ai/src/providers/connection-prewarm.ts#L28), [`sendCoworkRequest`](https://github.com/can1357/oh-my-pi/blob/e996e1c7ac476f60e02b8ed9764cf30fa8c00a8e/packages/ai/src/providers/cowork-fetch.ts#L185), [SDK startup](https://github.com/can1357/oh-my-pi/blob/e996e1c7ac476f60e02b8ed9764cf30fa8c00a8e/packages/coding-agent/src/sdk.ts#L2177) | Official Anthropic prewarm can use direct Node HTTPS; startup discards its promise. The inference relay and registry await do not cover it. |
+| [`ExtensionAPI.pi`](https://github.com/can1357/oh-my-pi/blob/e996e1c7ac476f60e02b8ed9764cf30fa8c00a8e/packages/coding-agent/src/extensibility/extensions/types.ts#L1720) / [`registerLogSink`](https://github.com/can1357/oh-my-pi/blob/e996e1c7ac476f60e02b8ed9764cf30fa8c00a8e/packages/utils/src/logger.ts#L28), [`awaitBackgroundRefresh`](https://github.com/can1357/oh-my-pi/blob/e996e1c7ac476f60e02b8ed9764cf30fa8c00a8e/packages/coding-agent/src/config/model-registry.ts#L615) | Useful partial diagnostics/current registry settlement; neither supplies every attempt, prior events or a complete startup barrier. |
+| [Discovery fallback](https://github.com/can1357/oh-my-pi/blob/e996e1c7ac476f60e02b8ed9764cf30fa8c00a8e/packages/coding-agent/src/config/model-discovery.ts#L604), [silent metadata](https://github.com/can1357/oh-my-pi/blob/e996e1c7ac476f60e02b8ed9764cf30fa8c00a8e/packages/catalog/src/provider-models/openai-compat.ts#L4378), [timeout wrapper](https://github.com/can1357/oh-my-pi/blob/e996e1c7ac476f60e02b8ed9764cf30fa8c00a8e/packages/coding-agent/src/config/model-discovery.ts#L79) | Provider warnings can omit fallback/metadata destinations; wrapper timeout can settle while fetch ignores abort. Quiet logs or registry settlement cannot certify a complete inventory. |
+
+Relevant upstream tests were **read, not run**: [prewarm injected-fetch HEAD](https://github.com/can1357/oh-my-pi/blob/e996e1c7ac476f60e02b8ed9764cf30fa8c00a8e/packages/ai/test/connection-prewarm.test.ts#L50),
+[awaited/coalesced discovery](https://github.com/can1357/oh-my-pi/blob/e996e1c7ac476f60e02b8ed9764cf30fa8c00a8e/packages/coding-agent/test/model-discovery.test.ts#L239),
+[8080→9931 fallback](https://github.com/can1357/oh-my-pi/blob/e996e1c7ac476f60e02b8ed9764cf30fa8c00a8e/packages/coding-agent/test/model-discovery.test.ts#L1635)
+and [fetch ignoring abort](https://github.com/can1357/oh-my-pi/blob/e996e1c7ac476f60e02b8ed9764cf30fa8c00a8e/packages/coding-agent/test/model-discovery.test.ts#L1764).
+These test sources support the individual behavior boundaries; they do not prove a
+compiled host exposes the injected logger singleton or complete startup observation.
+
+Foundry's [bridge Ready](../src/pilot_capture/bridge.ts), inference-only [`FetchBegin`](../src/pilot_capture/protocol.rs)
+and [`Host::launch` sandbox policy](../src/pilot_capture/host.rs) do
+not supply that guarantee. Preserve the frozen inference routes and reuse the
+owned bridge/channel and durable journal if a complete early host seam is built.
+Concrete missing seam: inject observation/refusal before `ModelRegistry` captures
+fetch, retain/await prewarm and every other allowed startup owner, then acknowledge
+the complete durable observation prefix before count/messages admission. Prove
+non-bypass coverage and failure/cleanup at the actual host boundary; a logger sink,
+late fetch hook or quiet timer alone is insufficient. No host re-pin is selected.
+
+Private `runs/pilot-private-permissions-2026-11-11/startup-source-plan.md` and
+`startup-local-interface-plan.md` retain module/blob identities and Foundry interface pointers;
+no host launch, test, provider call, private-input read or runtime acceptance is
+claimed here. Possible source destinations are not a measured inventory. Host
+ENOTFOUND/EPERM text is not independent OS-denial proof. This is a narrow source
+finding, not a repository-wide absence claim; T006 and pilot v2 remain unaccepted.
+
 ## Pilot checker provenance and retained diagnostics — 2026-11-11
 
 **PASS at the selected local checker boundary.** Pilot v2/T006 remain unfunded and unaccepted.

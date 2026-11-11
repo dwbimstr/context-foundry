@@ -153,7 +153,7 @@ The current source pointers establish ownership, not completed qualification.
 
 | Disclosed gap | Required evidence |
 | --- | --- |
-| Host startup network denials absent from journal | Capture denied startup attempts and their destination/classification before any paid request; disallow unobserved routes. A sandbox denial is not evidence of journal completeness. |
+| Host startup network denials absent from journal | Capture denied startup attempts and their destination/classification before any paid request; disallow unobserved routes. A sandbox denial is not evidence of journal completeness. Matching-release source establishes only partial diagnostics; a complete early observer and completion boundary remain needed ([source finding](../../../docs/validation.md#pilot-startup-network-source-feasibility--2026-11-11)). |
 | Checker binds environment names only | Bind exact sanitized environment values, sandbox profile bytes and freshly hashed oracle/compiler bytes to each checker receipt. Credentials are absent from the checker environment. The selected local checks pass ([record](../../../docs/validation.md#pilot-checker-provenance-and-retained-diagnostics--2026-11-11)); the limits in the selected repair below and broader v2 qualification remain. |
 | Compile stderr only hashed | Retain bounded private stderr bytes and their digest, with explicit overflow/failure behavior. Inspect errors; a matching binary hash cannot explain omitted diagnostics. The selected local checks pass ([record](../../../docs/validation.md#pilot-checker-provenance-and-retained-diagnostics--2026-11-11)); the limits in the selected repair below and broader v2 qualification remain. |
 | Coding authority outside chain; declared/actual paths differ | Append the authorization digest to the durable chain before a paid attempt and require the canonical actual run root to equal the authorized root. The selected metadata/path and chained-authority fixtures pass ([record](../../../docs/validation.md#pilot-authority-and-run-path-binding--2026-11-11)); historical v1 evidence is unchanged. Current installed-host compatibility and actual Live-compatible probe history remain unproved. |
@@ -206,6 +206,58 @@ dynamic libraries/sysroot, compiler-version preflight bounds, broader private-ar
 permissions and startup-network observation remain separate gaps. This repair neither
 runs the original calibration harness nor accepts or funds pilot v2/T006.
 [Qualification evidence](../../../docs/validation.md#pilot-checker-provenance-and-retained-diagnostics--2026-11-11); broader v2 freeze requirements remain.
+
+**Startup-network source finding, 2026-11-11 — requirement remains open.**
+Matching-release source supports an extension logger sink and awaiting registry
+refresh, but captured early fetch, direct HTTPS prewarm, discarded prewarm promises
+and silent/fallback discovery prevent a complete extension-only claim. The repair
+needs an earlier observation/refusal seam covering every allowed startup owner and
+an acknowledged complete observation prefix before count/messages admission.
+Source inspection is not shipped-runtime coverage or OS-denial proof; no host re-pin
+is selected. See the [source finding](../../../docs/validation.md#pilot-startup-network-source-feasibility--2026-11-11).
+
+**Selected private-output permissions repair, 2026-11-11 — implementation and qualification pending.**
+The selected repair requires exact owner-only modes on newly owned pilot
+outputs: directories 0700 and regular private files 0600, including special bits.
+Only a checker root's exact `out/check` is a declared 0700 executable exception.
+Existing wrong-mode objects are refused rather than repaired. Shared external
+executables, models and the public frozen contract retain their existing identity
+checks; named private inputs are checked at their specific read sites without
+normalizing historical trees or shared ancestors.
+
+One capture-specific, nonfollowing metadata walk checks the selected owned roots
+at admission, before transmission and after producer completion. Each logical pass
+shares hard limits of 16,384 entries, depth 64 and 8 MiB of relative-path bytes,
+and checks an enclosing deadline where one exists. Descriptor-relative traversal
+checks type, owner, exact mode and directory identity; missing, replaced or
+unverifiable entries refuse the pass. Ordinary active-file growth does not fail
+merely because its size or modification time changes. This is a bounded metadata
+observation, not atomic protection against arbitrary concurrent same-user changes.
+
+Exclusive new-object writers establish and verify their own exact modes, sync the
+artifact and its parent, and never widen a preexisting object to make it pass.
+Host, Foundry and checker children receive umask 0077 in their existing pre-exec
+operation; the parent mask is unchanged. Checks after each selected closed
+producer and before receipt publication establish the observed output modes;
+inheritance alone is insufficient evidence. Private source copies preserve bytes
+and refuse links or special files. Checker diagnostic and artifact checks keep
+their existing identity, completion, retention and failure requirements.
+
+The existing capture owner refuses privacy failures before reserving/sending a
+count request and rechecks before sending Messages. A failure after an observed
+count preserves that observation, releases only the provisional reservation,
+halts and sends no Messages. Post-send failures retain actual usage and halt;
+they cannot retroactively prove earlier privacy. Admission, restoration, view
+loading and host finalization route failures through their existing terminal
+owners. CLI success additionally requires successful finalization and exclusive,
+durable seal/report persistence. A sidecar failure after journal finalization is
+reported by the CLI without reopening or rewriting the terminal journal.
+
+Qualification must distinguish helper/child-launcher controls, actual current
+Foundry stores, pinned-host fixture requests and the real checker producer.
+Unexecuted semantic-worker, original private full-pipeline and current-installed-
+host boundaries remain explicit. This repair neither authorizes a provider call
+nor freezes or accepts pilot v2/T006; startup-network observation remains separate.
 
 Preserve v1's original failures and interpretation. Its two blocked `read .` calls
 remain constraint violations with the owner's accepted oracle outcomes. V2's task
