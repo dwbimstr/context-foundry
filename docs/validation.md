@@ -16,6 +16,24 @@ The next authorized slice is 001 T010's lexical-only behavior decision. Its fixe
 candidate and no-spend bounds are recorded before measurement in private
 `runs/t010-lexical-2026-11-11/protocol.json`; qualification is in progress.
 
+The [pilot v2 draft](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md)
+records the selected comparison, task-context outcomes, capture/accounting boundary,
+v1 gap repairs and execution locks. It is deliberately not labeled frozen or
+powered: concrete held-out tasks, sample calculation, implemented arm matrix and
+costed launch schedule remain to be prepared. This is documentation work with no
+provider calls or credential access; v1's frozen bytes are unchanged.
+
+The G1 measurement supervisor initially refused the baseline qualified set after
+its wrapper exited 0: its process snapshot preceded the exit poll, so a descendant
+could finish between the two observations. The final identity check found none
+remaining, with no forced cleanup. `NativeFullCommand.run` now refreshes descendant
+liveness after observing owner exit. `python3 tests/native_supervisor.py` passes two
+real-process regressions: a forced snapshot/exit race and a genuinely live orphan
+that must still fail and be cleaned up. The race test fails against the prior
+script. This changes observation ordering, not the lifecycle acceptance rule.
+The failed receipt is retained; a fresh qualified baseline and the remaining G1
+sets continue with the same binaries/scoring and the original one-hour wall bound.
+
 ## Native macOS acceptance — 2026-11-10
 
 **PASS at the owner's selected script scope, on `01a1152`.** The fresh retry ran
@@ -326,7 +344,7 @@ is work to do.
 
 | # | Item | Owner's choice | Result |
 |---|---|---|---|
-| 1 | 003 T006 after bounded pilot v1 | "Draft pilot v2, unfunded" | A new frozen contract with several harder held-out tasks, a powered sample and the v1 gap fixes (to do); no spend until the owner authorizes a key, rights and a budget. |
+| 1 | 003 T006 after bounded pilot v1 | "Draft pilot v2, unfunded" | The [unfunded v2 draft](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md) records the design and v1 gap requirements; task/sample/launch inputs and apparatus repairs remain before freeze. No spend until the owner authorizes a key, rights and a budget. |
 | 8 | 003 T007–T009 and 008 T003–T005 | "Measure them in pilot v2" | Their outcome tasks join the T006 suite; 008 T004's semantic triggers get built; all six stay open until an authorized run passes. |
 | 17 | `pilot-capture` apparatus and its embedded TypeScript bridge | "Keep, with an exception" | A narrow architecture exception for embedded host-extension source in an opt-in feature; the local gates gained a `pilot-capture` step with the main merge (see below). |
 | 19 | F2 local 30B pair and F3 economics | "Retire F2; F3 to T006" | F2 is retired; F3's economics gate points to T006 and pilot v2. |

@@ -721,7 +721,7 @@ not hidden work inside packing; T005 carries the owner's 2026-10-03 economics pr
 
 **Next: pilot v2, unfunded.** Owner decision, 2026-11-06, "Draft pilot v2,
 unfunded": because v1 cannot accept T006, the next step is a new frozen contract,
-pilot v2 (to draft; [v1](contracts/bounded-pilot-v1.md) stays frozen). It needs
+pilot v2 ([unfunded draft](contracts/bounded-pilot-v2.md); [v1](contracts/bounded-pilot-v1.md) stays frozen). It needs
 several harder held-out tasks, a powered sample size and fixes for v1's
 [disclosed gaps](../../docs/validation.md#containment-and-disclosed-gaps), and it
 reuses the qualified `pilot-capture` apparatus (below). Nothing is spent until the

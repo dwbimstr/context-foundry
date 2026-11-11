@@ -2,7 +2,7 @@
 
 ## Current status — 2026-11-06
 
-Updated 2026-11-10. This section owns current status; other documents link here,
+Updated 2026-11-11. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
 - **Measurement.** G2 (388 questions over rust-lang/rust and oh-my-pi, run with
@@ -145,7 +145,10 @@ and dated paragraphs below are history.
     ([receipt](validation.md#native-mac-watcher-acceptance-001-t011--2026-11-10));
     001 T010's flag is decided by its own local gates and becomes lexical-only
     once its code change lands. The remaining release-path items are to do.
-  - **T006:** pilot v2 is to be drafted, unfunded (not drafted yet), and the
+  - **T006:** the [unfunded pilot v2 draft](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md)
+    now records the arms, capture requirements and v1 gap repairs. It is not frozen:
+    concrete held-out tasks, power/sample analysis, arm readiness, launch pins and a
+    costed schedule remain. The
     task-context tasks (003 T007–T009, 008 T003–T005) are to be measured in it. Nothing is spent until the
     owner authorizes a key, rights and a budget.
   - **Hosts and evidence:** the owner's Mac is the work host. The 2026-10-11
