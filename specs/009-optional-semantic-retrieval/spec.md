@@ -1500,10 +1500,12 @@ linked above; it is not a new provider, corpus scan or default promotion.
 Owner decision, 2026-11-06, "Lexical-only, drop T006 gate": the
 [003 T006](../003-agent-retrieval-context/spec.md#t006--validate-retrieval-repairs-in-real-coding-tasks)
 agent-task gate no longer applies to this opt-in, and no real-agent benefit is claimed.
-Its effects on semantic stores are to be removed. Once 001 T010's own local gates and
-the 2026-10-19 G2 enable rule pass, it defaults on only where lexical results are
-served (code to do). Until that change lands, the semantic-store rules in this spec
-stay as written.
+The lexical-only change and default are implemented and accepted at T010's written
+scope ([receipt](../../docs/validation.md#t010-singleton-qualification--2026-11-11));
+see the [current status](../../docs/resume-context-ecosystem.md#current-status--2026-11-06).
+The semantic-store opt-in behavior described above is historical. Supplied dense
+windows and semantic model admission retain their ordinary behavior. This does
+not accept T005 or establish semantic-quality or real-agent benefit.
 
 Inspection of the public Rust losses also found three relevant rank-2 callables
 whose excerpts contained leading documentation but omitted the declaration. The

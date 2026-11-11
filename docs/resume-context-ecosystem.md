@@ -29,9 +29,20 @@ and dated paragraphs below are history.
   is an unmerged experiment that would need its own pre-registration. Its serving
   owner peaks at 4.91 GB on rust, against 3.34 GB for hierarchy and 1.97 GB for cards
   measured the same way ([validation](validation.md#f4-and-the-hierarchy-default--2026-10-22)).
-- **Losses now.** Ranking loses 79 answers to the caps and 44 to the packer; recall
-  loses 80 never retrieved. Hierarchy's 17 newly lost G1 tasks are mostly tier-1
+- **Historical loss attribution.** The 79 cap losses, 44 packing losses and 80
+  never-retrieved answers belong to the unmerged one-score fusion experiment,
+  not the accepted hierarchy arm ([dated receipt](review/g1-fusion-2026-10-22.json)).
+  That receipt records hierarchy's own losses separately. Neither histogram is a
+  current-baseline measurement; T005 requires fresh identity and trace checks.
+  The historical review of hierarchy's 17 newly lost G1 tasks found mostly tier-1
   lexical hits placed behind every dense unit.
+- **T005 baseline readiness, 2026-11-11.** Status and audit on verified copies
+  confirm both singleton masters have ready lexical indexes but obsolete units6
+  semantic recipes. Original stores pass complete unchanged readbacks. A current
+  semantic baseline requires separately bounded preparation on owned copies for
+  units7, then current coverage, model, corpus and query checks
+  ([preflight receipt](validation.md#t005-current-baseline-identity-preflight--2026-11-11)).
+  No ranking variant or new G2 quality result is established; T005 remains unaccepted.
 - **Scale.** Publication streams cached vectors (no 2 GiB vector bound) and
   generation v6 interns label-map paths and hashes (rust map 191 → 69 MB). At rust's
   density the next bounds are the mapping-view estimate near 120k files, then the label
@@ -41,8 +52,11 @@ and dated paragraphs below are history.
   dependency updates ([validation](validation.md#architecture-refactor-and-dependency-updates--2026-10-25)).
   usearch 2.26.5 builds a different ANN graph than 2.26.4 from the same cache, so the
   next republish can move G2 as the v6 rebuild did; G2 was not rerun.
-  The held Scala, PowerShell and pulldown-cmark updates now go in one schema bump
-  gated on a unit diff (owner, 2026-11-06).
+  The Scala, PowerShell and pulldown-cmark bundle is implemented and qualified
+  through the complete unit comparison and local gates
+  ([receipt](validation.md#parser-bundle-and-complete-unit-comparison--2026-11-11)).
+  That qualification does not establish a current prepared Gemma store or a new
+  semantic-quality measurement.
 - **Open.** Local gates are the receipt; pushes from this line start no CI. Since
   2026-10-12, hosted runs came only from Dependabot and from the 2026-10-25 fix
   branches and their pushes to main. The 6,000-file watcher test missed its deadline on

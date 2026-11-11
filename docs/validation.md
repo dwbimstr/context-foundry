@@ -1,5 +1,61 @@
 # Validation
 
+## T005 current-baseline identity preflight — 2026-11-11
+
+**Metadata preflight passed; semantic query readiness is not established.** On
+`5bef761`, the archived normal binary from `f19d353` (SHA-256
+`60aff1025ba6515caa70b0854f233a1d2e2b4f8f83cfed290f143626e8c14011`)
+opened only verified disposable copies of the T010 singleton Rust and bun masters.
+Normal runtime, build and dependency files are unchanged since that binary's
+source commit; intervening runtime changes are confined to the pilot feature.
+This is not a claim that the binary was rebuilt at the current documentation head.
+
+Both ordinary indexes report ready, complete scans, no pending sources and no
+parse failures: 60,739 Rust sources and 8,436 bun sources, at source schema 12.
+Both semantic progress reports are stale. Full audits refuse their recorded
+`hierarchy-v1+overview4+context2+kinds2+units6:512+parent64+tokenizers 0.23.2 onig`
+recipe with `unit_schema_obsolete`; every source is unpartitioned for the current
+recipe and no current semantic generation is available. Retained caches contain
+624,325 and 183,311 entries respectively, with zero corrupt entries observed.
+The audit's zero missing units accompanies zero eligible current units; it does
+not mean complete coverage. Recorded provider-ready observations and bootstrap
+usage are historical, not calls or readiness established by this preflight.
+
+Opaque byte checks pin the profile, 388-question instrument, G1/G2 harnesses,
+counter, binary and Cargo lock. Corpus HEADs match their frozen commits. Corpus
+working-tree contents, model/worker artifact bytes, current local-model capability,
+full response parity and retrieval quality remain unchecked at this stage.
+The original profile and both original stores were never opened through Foundry.
+Complete original file-byte and metadata manifests match before and after each
+attempt; all quarantines, caches, scratch and failed copies remain retained.
+
+**Copy failures and bounded continuation.** The first attempt stopped before a
+store open because `cp -c -R` inherited group 0 instead of 20. Its retry with
+`cp -c -p -R` preserved modes but still changed the group of 322 regular files.
+Both failures remain recorded; the retry used the original absolute deadline and
+closed at 431.670 s elapsed (10.570 s in the retry itself). A tiny owned fixture
+then verified descriptor-bound group preservation without changing bytes, mode
+or inode. A separately selected 600-second continuation applies that correction
+only to fresh copies and requires exact byte, kind, mode, UID and GID identity
+before opening them. It completed in 16.033 s, with all 13 native commands exiting
+naturally, no observed model workers and no observed owned processes remaining.
+
+Both selections reserve 120 seconds for cleanup, keep one heavy job, a 20 GiB
+free-space floor, 20 GiB apparent-growth ceiling, 8 GiB sampled individual-process
+RSS ceiling and USD 0 spend. The successful continuation observed 1,434,107,904 B
+peak owned-process RSS, 203,358,208 B driver RSS, 266,857,476,096 B minimum free
+space and 7,102,255,589 B apparent growth; 13 owned-process samples were missed.
+Sampling does not establish transient or GPU peaks. No model, query, preparation,
+repair, provider request or source program ran.
+
+Private evidence is retained under `runs/t005-baseline-preflight-2026-11-11/`,
+including both failed attempts, copy fixture, selected bounds, raw status/audits,
+input pins and complete original readbacks. The next runtime dependency is a
+separately bounded local `semantic prepare` on new owned copies for units7,
+followed by current identity, coverage and query checks; no ranking variant is
+selected. [T005](../specs/009-optional-semantic-retrieval/spec.md#t005--diagnose-and-improve-anchorless-evidence-retrieval)
+remains unaccepted. Fresh traces cannot retroactively explain historical misses.
+
 ## Pilot private-output permissions and terminal publication — 2026-11-11
 
 **Qualified at the selected local boundaries on `c399c1e`.** The
