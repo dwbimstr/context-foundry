@@ -559,10 +559,14 @@ mod tests {
     fn recorded_recipe_unit_grammar_eligibility_boundaries() {
         use super::recipe_uses_current_units as current;
         let units = crate::store::SOURCE_UNIT_SCHEMA;
+        let version: u32 = units.parse().expect("the unit schema is numeric");
+        assert!(version > 1, "the fixture needs a previous unit grammar");
+        let previous = (version - 1).to_string();
+        let future = version.checked_add(1).unwrap().to_string();
         // Every builder output is eligible, whatever the tokenizer names.
         for recipe in [
             recipe_id("fake-bytes 1", 128),
-            recipe_id("tok+units5", 128),
+            recipe_id(&format!("tok+units{previous}"), 128),
             Representation::Body { parent_tokens: 64 }.recipe_id("t", 512),
             Representation::Hierarchy { parent_tokens: 64 }.recipe_id("t", 512),
             Representation::Overview.recipe_id("t", 512),
@@ -570,34 +574,43 @@ mod tests {
             assert!(current(&recipe), "{recipe}");
         }
         let cards = |version: &str| format!("cards-v1+kinds1+units{version}:128+t");
+        assert!(current(&cards(units)));
         // The previous grammar is retained history, never current.
+        assert!(!current(&cards(&previous)));
         assert!(!current(&cards("5")));
         assert!(!current(&cards("4")));
         // A future grammar is not current either.
-        assert!(!current(&cards("7")));
-        // `units60` is version 60, not version 6 plus noise.
-        assert!(!current(&cards("60")));
-        assert!(!current(&cards("6x")));
+        assert!(!current(&cards(&future)));
+        // A marker starting with the current version is not a prefix match.
+        assert!(!current(&cards(&format!("{units}0"))));
+        assert!(!current(&cards(&format!("{units}x"))));
         assert!(!current(&cards("six")));
         // Missing marker, or no parameter colon at all.
         assert!(!current("cards-v1+kinds1:128+t"));
-        assert!(!current("cards-v1+kinds1+units6"));
+        assert!(!current(&format!("cards-v1+kinds1+units{units}")));
         assert!(!current(""));
         // Exactly one marker: duplicates and obsolete-plus-current mixes fail.
         assert!(!current(&format!(
             "cards-v1+units{units}+kinds1+units{units}:128+t"
         )));
-        assert!(!current("cards-v1+kinds1+units5+units6:128+t"));
-        assert!(!current("cards-v1+kinds1+units6+units5:128+t"));
+        assert!(!current(&format!(
+            "cards-v1+kinds1+units{previous}+units{units}:128+t"
+        )));
+        assert!(!current(&format!(
+            "cards-v1+kinds1+units{units}+units{previous}:128+t"
+        )));
         // Unknown or misplaced families are not this build's grammar.
-        assert!(!current("cards-v2+kinds1+units6:128+t"));
-        assert!(!current("bodies-v1+kinds2+units6:512+t"));
+        assert!(!current(&format!("cards-v2+kinds1+units{units}:128+t")));
+        assert!(!current(&format!("bodies-v1+kinds2+units{units}:512+t")));
         assert!(!current(&format!("x+cards-v1+kinds1+units{units}:128+t")));
         // The tokenizer suffix lives after the colon: it cannot smuggle a
         // grammar marker into eligibility, and a marker there is ignored.
-        assert!(!current("cards-v1+kinds1+units5:128+tok+units6"));
+        assert!(!current(&format!(
+            "cards-v1+kinds1+units{previous}:128+tok+units{units}"
+        )));
+        assert!(!current(&format!("cards-v1+kinds1:128+tok+units{units}")));
         assert!(current(&format!(
-            "cards-v1+kinds1+units{units}:128+tok+units5"
+            "cards-v1+kinds1+units{units}:128+tok+units{previous}"
         )));
     }
 

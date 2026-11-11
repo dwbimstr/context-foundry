@@ -642,8 +642,10 @@ draws its units from this same materialized ranking.
 
 ### Index version gate
 
-The current value is `"8"` (2026-10-26, [§ Unit-grammar repair](#unit-grammar-repair--2026-10-26):
-Markdown re-indexed under pulldown-cmark 0.13.5). As history: `"7"` (2026-10-11)
+The current value is `"9"` (2026-11-11, [§ Parser bundle](#parser-bundle--2026-11-11):
+Scala, PowerShell and Markdown parser versions move together with source-unit schema 7).
+As history: `"8"` (2026-10-26, [§ Unit-grammar repair](#unit-grammar-repair--2026-10-26))
+re-indexed Markdown under pulldown-cmark 0.13.5; `"7"` (2026-10-11)
 enriched call-name postings with import aliases, `"6"` introduced them, `"5"` was
 the value since 001 T008 (units, addresses and import keys of 15 more languages),
 `"4"` since 001 T007 (§ City map: one definition document per unit and the
@@ -954,7 +956,7 @@ own invalidation rules. The bounded consumer and final identity/AST checks are i
 
 ### Unit-grammar repair — 2026-10-26
 
-The current derived search schema is `"8"` and `SOURCE_UNIT_SCHEMA` is `"6"`:
+The 2026-10-26 repair set derived search schema `"8"` and `SOURCE_UNIT_SCHEMA` `"6"`:
 pulldown-cmark 0.13.5 fixes the Markdown list/indentation grammar (the 0.13.4
 default CLI exits 101 on the 13-byte `- [o]:u`, four spaces, tab input), which
 can change Markdown units, so the search postings and the semantic partition
@@ -972,6 +974,41 @@ admission recognizes only the `cards-v1`/`body-v1`/`hierarchy-v1`/`overview-v1`
 families with exactly one current unit marker in the header before the
 parameter colon. Search-only posting changes still do not change model inputs
 on their own.
+
+### Parser bundle — 2026-11-11
+
+Owner decision 21 selects tree-sitter-scala 0.26.4, tree-sitter-powershell 0.26.6
+and pulldown-cmark 0.13.6 together. Derived search schema is `"9"` and
+`SOURCE_UNIT_SCHEMA` is `"7"`; authoritative store schema 12 and semantic generation
+6 are unchanged. A schema-8 or older search index requires explicit `repair-index`.
+Repair rebuilds derived documents from retained authoritative sources without
+changing their hashes/revisions or discarding memories and tasks. Old semantic
+partitions, state and generation metadata remain history and cannot be served as
+current. Explicit `semantic prepare` refits every source under units7, including
+previously zero-unit sources, and reuses only exact cached model inputs. Ordinary
+open/status must not repair, republish or label old grammar current.
+
+The bundle must pass the parser fixtures, existing migration/consumer checks and
+local gates. Before acceptance, compare full ordered syntax forests, effective
+delivery units, documents, imports/calls, coverage and stopped-parse fallback on
+all production-admitted sources of both pinned G2 corpora and the frozen fixtures.
+Both builds consume the same captured bytes with the same compiler and helper.
+A raw or effective unit change in either G2 corpus requires a fresh all-388 G2
+comparison on the owner's Mac; a neutral corpus diff does not claim retrieval
+improvement or coding-task benefit. No original measurement store is migrated.
+
+Upstream references: Scala 0.26.4 (`8c0b6d44bfd66bf7bc9a1fc15084ef17cef2f97e`),
+`grammar.js::_function_declaration`/`_function_constructor` and scanner `scan_impl`;
+PowerShell 0.26.6 (`65ea6919e816a7ac142acec7ee72757f89db8439`),
+`grammar.js::command_parameter`/`_command_argument` and `scanner.c::scan_bare_dashes`.
+Both packaged `bindings/rust/lib.rs::test_can_load_grammar` tests were inspected,
+not rerun. cmark 0.13.6 (`014b61d38d235f382935bb676bab872b7680afa2`) changes
+`parse.rs::handle_wikilink`, with `tests/suite/wikilinks.rs::wikilinks_test_15`;
+that test was inspected, not rerun. Foundry uses `Parser::new` with wikilinks off,
+extracts its own bounded units/import hints, and does not inherit editor queries
+or treat parser nodes as compiler proof. Exact crate checksums, source inspection
+and executed results belong to the dated validation receipt; source inspection
+alone does not satisfy the corpus-diff gate.
 
 ### Roles
 
@@ -1295,11 +1332,11 @@ unless noted):
 | PHP | `.php .phtml` | `tree-sitter-php` 0.25.1 | MIT |
 | Perl | `.pl .pm .t .psgi` | `tree-sitter-perl` 1.1.2 (requires `tree-sitter` 0.26) | MIT |
 | shell | `.sh .bash .zsh` | `tree-sitter-bash` 0.25.1 | MIT |
-| PowerShell | `.ps1 .psm1 .psd1` | `tree-sitter-powershell` 0.26.4 | MIT |
+| PowerShell | `.ps1 .psm1 .psd1` | `tree-sitter-powershell` 0.26.6 | MIT |
 | Ruby | `.rb .rake`, `Rakefile`, `Gemfile` | `tree-sitter-ruby` 0.23.1 | MIT |
 | Kotlin | `.kt .kts` | `tree-sitter-kotlin-ng` 1.1.0 | MIT |
 | Swift | `.swift` | `tree-sitter-swift` 0.7.4 | MIT |
-| Scala | `.scala .sc` | `tree-sitter-scala` 0.26.2 | MIT |
+| Scala | `.scala .sc` | `tree-sitter-scala` 0.26.4 | MIT |
 | Lua | `.lua` | `tree-sitter-lua` 0.5.0 | MIT |
 | Dart | `.dart` | `tree-sitter-dart` 0.2.0 | MIT |
 | Elixir | `.ex .exs` | `tree-sitter-elixir` 0.3.5 | Apache-2.0 |

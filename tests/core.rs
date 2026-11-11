@@ -5450,22 +5450,32 @@ fn call_posting_search_upgrade_requires_explicit_derived_repair_without_source_u
     // to exactly it, not to any pinned literal.
     let fresh = testkit::meta_value(store.path(), "search_schema")
         .expect("initialization publishes the search schema marker");
+    let version: u32 = fresh.parse().expect("the search schema is numeric");
+    assert!(version > 1, "the fixture needs a previous search schema");
+    let previous = (version - 1).to_string();
     // Schema 6 has the same fields but lacks canonical Python alias postings.
-    // Its recipe must be refused even when the Tantivy field schema still fits.
-    testkit::set_meta(store.path(), "search_schema", Some("6"));
-    let engine = Engine::open_existing(store.path()).unwrap();
-    assert_eq!(engine.status().unwrap().index_state, "repair_required");
-    assert!(engine.search("callee", 8).is_err());
-    assert_eq!(engine.source_revision().unwrap(), source_revision);
-    assert_eq!(engine.source("callee.rs").unwrap().unwrap().hash, source);
-    drop(engine);
-    Engine::repair_index(store.path(), &Control::unbounded()).unwrap();
-    assert_eq!(
-        testkit::meta_value(store.path(), "search_schema").as_deref(),
-        Some(fresh.as_str()),
-        "repair republishes the initializing marker"
-    );
-    let engine = Engine::open_existing(store.path()).unwrap();
-    assert!(!engine.search("callee", 8).unwrap().hits.is_empty());
-    assert_eq!(engine.source_revision().unwrap(), source_revision);
+    // Both that historical recipe and the immediately previous recipe must
+    // be refused even when the Tantivy field schema still fits.
+    for old in ["6", previous.as_str()] {
+        assert_ne!(old, fresh.as_str());
+        testkit::set_meta(store.path(), "search_schema", Some(old));
+        let engine = Engine::open_existing(store.path()).unwrap();
+        assert_eq!(engine.status().unwrap().index_state, "repair_required");
+        assert!(engine.search("callee", 8).is_err());
+        assert_eq!(engine.source_revision().unwrap(), source_revision);
+        assert_eq!(engine.source("callee.rs").unwrap().unwrap().hash, source);
+        drop(engine);
+        Engine::repair_index(store.path(), &Control::unbounded()).unwrap();
+        assert_eq!(
+            testkit::meta_value(store.path(), "search_schema").as_deref(),
+            Some(fresh.as_str()),
+            "repair republishes the initializing marker"
+        );
+        let engine = Engine::open_existing(store.path()).unwrap();
+        assert_eq!(engine.status().unwrap().index_state, "ready");
+        assert!(!engine.search("callee", 8).unwrap().hits.is_empty());
+        assert_eq!(engine.source_revision().unwrap(), source_revision);
+        assert_eq!(engine.source("callee.rs").unwrap().unwrap().hash, source);
+        drop(engine);
+    }
 }

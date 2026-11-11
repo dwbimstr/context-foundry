@@ -388,9 +388,8 @@ impl Corpus {
     }
 
     /// Synthetically age this prepared store into the environment the
-    /// previous unit grammar left behind (the pulldown-cmark 0.13.4 era,
-    /// search schema 7): EVERY partition row, the state row's recipe, its
-    /// coverage snapshot and the published generation manifest move one
+    /// previous unit grammar left behind: EVERY partition row, the state row's
+    /// recipe, its coverage snapshot and the published generation manifest move one
     /// unit grammar back, and the derived search marker regresses one
     /// schema with them. The aging relabels identity strings only — the
     /// vectors, label locations and cache rows are the retained
@@ -406,6 +405,15 @@ impl Corpus {
         // Every closed-store read happens with the engine dropped: no
         // second live open of the database.
         self.engine = None;
+        let search_schema: u32 = testkit::meta_value(&self.store, "search_schema")
+            .expect("preparation publishes the current search schema")
+            .parse()
+            .expect("the search schema is numeric");
+        assert!(
+            search_schema > 1,
+            "the fixture needs a previous search schema"
+        );
+        let previous_search_schema = (search_schema - 1).to_string();
         let mut rows = testkit::table_rows(&self.store, "semantic_partitions");
         assert!(rows.len() > 1, "the corpus partitions populate the store");
         rows.sort_by(|left, right| left.0.cmp(&right.0));
@@ -488,7 +496,11 @@ impl Corpus {
             stats["recipe_id"] = previous_recipe.as_str().into();
         }
         std::fs::write(&manifest, serde_json::to_vec(&document).unwrap()).unwrap();
-        testkit::set_meta(&self.store, "search_schema", Some("7"));
+        testkit::set_meta(
+            &self.store,
+            "search_schema",
+            Some(previous_search_schema.as_str()),
+        );
         self.engine = Some(Engine::open_existing(&self.store).unwrap());
         previous_recipe
     }
@@ -7168,9 +7180,9 @@ fn previous_unit_grammar(recipe: &str) -> String {
     format!("{}:{params}", components.join("+"))
 }
 
-/// 2026-10-26 unit-grammar migration (pulldown-cmark 0.13.5, search schema
-/// 8, source-unit schema 6). A populated, SYNTHETICALLY AGGED schema-7/
-/// units-5 store — every partition under the old recipe, a real published
+/// Unit-grammar migration, introduced for pulldown-cmark 0.13.5 on 2026-10-26.
+/// A populated, SYNTHETICALLY AGED store under the immediately previous search
+/// and unit schemas — every partition under the old recipe, a real published
 /// generation and a coverage snapshot naming it (identity strings relabelled
 /// over the retained current-build bytes; the parser's own range change is
 /// pinned separately below), plus sources, memory, pending work and the

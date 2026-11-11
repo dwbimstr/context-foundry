@@ -153,7 +153,9 @@ pub(crate) const TIE_GROUP: usize = 4;
 pub(crate) const GROUP_FILES: usize = DOOR_FILES / TIE_GROUP;
 /// Approximate doors examine at most this many delivery units.
 const DOOR_WINDOW: usize = 256;
-/// The META value naming the current search index format. `"8"` (2026-10-26)
+/// The META value naming the current search index format. `"9"` (2026-11-11)
+/// takes Scala 0.26.4, PowerShell 0.26.6 and pulldown-cmark 0.13.6 together
+/// with source-unit schema 7. `"8"` (2026-10-26)
 /// re-indexes Markdown under pulldown-cmark 0.13.5, whose fixed
 /// list/indentation grammar changes some units; it moves in step with
 /// SOURCE_UNIT_SCHEMA. `"7"` enriched the source-level call-name postings
@@ -167,14 +169,15 @@ const DOOR_WINDOW: usize = 256;
 /// (its head) and the leading-run unit ranges (§ Unit forest).
 /// Semantic partitions independently name SOURCE_UNIT_SCHEMA; search-only
 /// posting changes do not refit or re-embed model inputs.
-pub(crate) const SEARCH_SCHEMA: &str = "8";
+pub(crate) const SEARCH_SCHEMA: &str = "9";
 /// The source-unit grammar version the semantic partition recipes pin
-/// (001's index version gate, applied to units). `"6"` (2026-10-26) is the
+/// (001's index version gate, applied to units). `"7"` (2026-11-11) is the
+/// combined Scala/PowerShell/Markdown parser bundle; `"6"` (2026-10-26) is the
 /// pulldown-cmark 0.13.5 Markdown grammar; `"5"` was the grammar through
 /// 0.13.4. A recipe under another unit grammar is retained history, never
 /// current: `semantic prepare` refits it and reuses only exact cached
 /// inputs.
-pub(crate) const SOURCE_UNIT_SCHEMA: &str = "6";
+pub(crate) const SOURCE_UNIT_SCHEMA: &str = "7";
 const SEARCH_SCHEMA_REASON: &str =
     "search_schema: search index format changed; run `foundry repair-index`";
 

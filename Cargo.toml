@@ -40,16 +40,16 @@ tree-sitter-vb-dotnet = "0.1.0"
 tree-sitter-php = "0.25.1"
 tree-sitter-perl = "1.1.2"
 tree-sitter-bash = "0.25.1"
-tree-sitter-powershell = "0.26.4"
+tree-sitter-powershell = "0.26.6"
 tree-sitter-ruby = "0.23.1"
 tree-sitter-kotlin-ng = "1.1.0"
 tree-sitter-swift = "0.7.4"
-tree-sitter-scala = "0.26.2"
+tree-sitter-scala = "0.26.4"
 tree-sitter-lua = "0.5.0"
 tree-sitter-dart = "0.2.0"
 tree-sitter-elixir = "0.3.5"
 tree-sitter-haskell = "0.24.1"
-pulldown-cmark = { version = "0.13.5", default-features = false }
+pulldown-cmark = { version = "0.13.6", default-features = false }
 
 # 005 T001 compiler-fact import: the SCIP protobuf types and the streaming
 # wire reader. rust-analyzer 2026-08-31 builds its artifact with scip 0.7.1
