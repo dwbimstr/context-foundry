@@ -138,8 +138,8 @@ file scan or fitting inventory alone cannot close semantic scale acceptance.
 
 Owner decision, 2026-11-06: "Accept the Mac rust run". 009 T006–T009 scale
 acceptance cites the complete hierarchy-v1 preparation of rust-lang/rust (62,035
-files) on the owner's Mac, plus a short replay and changed-input check there, which
-has not run yet. The 67,663-source Rust/Go corpus and Linux x86 scale become a named
+Git entries) on the owner's Mac, plus the
+[completed replay and changed-input check](validation.md#semantic-scale-replay-and-changed-input-acceptance--2026-11-10). The 67,663-source Rust/Go corpus and Linux x86 scale become a named
 limitation, and F10 and F11 are retired. The full-corpus and Linux commands below
 remain reproduction instructions; they no longer decide acceptance.
 

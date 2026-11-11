@@ -1527,12 +1527,13 @@ acceptance. The raw comparison and rejected patch are retained outside Git in th
 
 Status: implemented experimentally in the shared CLI/MCP pipeline; sandbox evidence
 is in [validation](../../docs/validation.md#large-repository-architecture-and-parallel-partitioning--2026-10-09).
-Bounded representative CPU progress is recorded in [current validation](../../docs/validation.md#retrieval-scale-and-host-economics--2026-10-11); complete repository throughput and task benefit remain unaccepted.
+Bounded representative CPU progress is recorded in [current validation](../../docs/validation.md#retrieval-scale-and-host-economics--2026-10-11); the selected Mac scale boundary is accepted below; task benefit remains unaccepted.
 Owner decision, 2026-11-06, "Accept the Mac rust run": T006–T009 scale acceptance cites
 the existing complete hierarchy-v1 preparation of rust-lang/rust (62,035 files) on the
 owner's Mac ([record](../../docs/validation.md#complete-hierarchy-on-rust--2026-10-21))
-plus a short replay and changed-input check on the owner's Mac, which is still to run;
-scale is not accepted until it passes. Linux x86 scale and the 67,663-source
+plus the completed replay and changed-input check on the owner's Mac
+([receipt](../../docs/validation.md#semantic-scale-replay-and-changed-input-acceptance--2026-11-10)). Scale is accepted
+at that boundary; device and signed-package acceptance remain separate. Linux x86 scale and the 67,663-source
 representative Rust+Go corpus are a named limitation, and the parked Linux calibration
 and full-overview runs (FOLLOWUP F10/F11) retire.
 

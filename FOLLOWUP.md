@@ -345,7 +345,8 @@ F6 is retired as a gate and F8 is retired.
 - **Retired (owner, 2026-11-06, "Accept the Mac rust run"):** 009 T006–T009 scale
   acceptance now cites the existing complete hierarchy-v1 preparation of
   `rust-lang/rust` (62,035 files) on the owner's Mac, plus a short replay and
-  changed-input check on the Mac that is still to run. Linux x86 scale and the
+  changed-input check on the Mac that now passes
+  ([receipt](docs/validation.md#semantic-scale-replay-and-changed-input-acceptance--2026-11-10)). Linux x86 scale and the
   67,663-source representative corpus become a named limitation. The sandbox this entry
   waited for is lost (see the top). The rest of this entry is the parked protocol as it
   stood.

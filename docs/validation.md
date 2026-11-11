@@ -1,5 +1,70 @@
 # Validation
 
+## Semantic scale replay and changed-input acceptance — 2026-11-10
+
+**PASS for 009 T006–T009 scale under decision 11.** The owner's M5 Max ran the
+existing complete Rust hierarchy store through replay, add/edit/revert/delete,
+full audits and actual dense serving. This accepts the selected Mac Rust scale
+boundary together with the preserved complete preparation; it does not accept
+retrieval quality, task benefit, Linux x86/the 67,663-source corpus, native device
+checks or signed installation.
+
+**Pins and bounds, declared before launch.** Code at `d52e903` (Rust sources unchanged
+from `65fd799`), Rust corpus `b940084d7eb6a299eb4bfeb8e34901bc051e7ac4`, release
+CLI SHA-256 `c9e497a74e02fd8d12f2b16b6334fe5f442c40af511df81d8a0885b419806e94`.
+The existing `repair-units6-9WjnwU/rust` store was APFS-cloned before opening;
+function `01dcfe57…`, `hierarchy-v1+overview4+context2+kinds2+units6:512+parent64+tokenizers 0.23.2 onig`,
+768 dimensions and the pinned Gemma BF16 Metal worker were unchanged. A unique
+scratch subdirectory stayed inside the signed development bundle's existing grant.
+Budget: 1,800 s total, 300 s per preparation, 4 GiB cache cap, 20 GiB disk reserve,
+sampled owner/tree RSS stops at 8/12 GiB, fewer than 64 embedded units per probe
+change. Only local inference; no paid provider, training or corpus-code execution.
+
+**Observed, 46 checks passed in 104.4 s.**
+
+| Phase | Wall time | Document calls / embedded units / input tokens |
+| --- | --- | --- |
+| Unchanged replay | 4.83 s | 0 / 0 / 0; no repartitioning |
+| Add one owned probe | 5.80 s preparation | 2 / 2 / 172; one partitioned source |
+| Edit that probe | 5.73 s preparation | 2 / 2 / 172; one partitioned source |
+| Revert to original probe bytes | 4.50 s preparation | 0 / 0 / 0; retained vectors reused |
+| Remove the probe | 4.82 s preparation | 0 / 0 / 0 |
+| Final unchanged replay | 4.50 s | 0 / 0 / 0; no repartitioning |
+
+Every preparation completed and published. Full audits returned to 60,739 sources,
+685,623 eligible/cached/searchable current units and 624,325 ANN entries, with zero
+unpartitioned sources, missing units or corrupt cache entries. The four new vectors
+remain cached (624,329 cache entries); source revision advances normally. Per-run
+selection counters revisit sources/units and are not corpus-size counts.
+The old edited handle was rejected as stale; new and reverted declaration bytes and
+hashes matched, and deletion removed the probe from search. The final real context
+request used dense serving (64 hits), delivered 1,996 tokens under 2,048, and all
+26 delivered citation hashes/ranges matched disk. This is a serving/freshness check,
+not a retrieval-quality comparison. Peak sampled RSS: owner 2.83 GiB, owned tree
+3.54 GiB; no global GPU/true-peak claim. Three workers were observed and absent at
+completion, scratch was empty, the probe was removed, and byte/hash manifests of
+both the original corpus and original store were unchanged.
+
+**Retained preparation failures.** The initial release build selected incompatible
+macOS 27 SDK stubs; explicitly selecting the gates' macOS 26.5 SDK completed the
+build. The first private driver run passed replay and add/preparation, then failed
+because it omitted CLI `retrieve --handle`. It removed its probe and verified both
+original manifests and worker cleanup. The corrected driver passed the entire
+sequence on a fresh store copy; no product code or acceptance threshold changed.
+The existing green Rust gates are reused, not rerun for these documentation changes.
+
+Private evidence: `runs/semantic-scale-2026-11-10/` in this checkout; `run-1` preserves
+the failed attempt, `run-2` the accepted run. The latter contains the exact driver,
+predeclared protocol, before manifests, raw reports, serving trace, process samples
+summarized per phase, final receipt and `SHA256SUMS`.
+
+| Evidence | SHA-256 |
+| --- | --- |
+| Protocol | `90b07a2749adc01101372e140970ee4dd369fb7cbd39a362002eaa9cba1a92d5` |
+| Driver | `0d85325d18978916f38cebd006e0746b87f99f0e480028aacb74452bcf570ff3` |
+| Result | `647b1f79250c8500162bf88cb7a8e7066a15c2b51c136800e13d8630540e5ded` |
+| Original-store manifest | `4afee773e03f633a86eb445bfd1bdc625281e99416c48b910c01b2965d1383e5` |
+
 ## Native Mac watcher acceptance (001 T011) — 2026-11-10
 
 **PASS at the owner-selected native scope.** Self-review on the owner's Apple M5 Max,
@@ -150,7 +215,7 @@ is work to do.
 | 14 | 010 real-model acceptance | "Defer 010 real-model acceptance" | The release no longer waits on 010's task utility; the code stays experimental and unadvertised. |
 | 20 | 003 T004 meter-only Z.ai gateway | "Release it separately" | CLI and MCP release without advertising it; it gets its own release once proven live. |
 | 16 | 005 T005 boundary relationships | "Accept at written scope" | Accepted using the `65fd799` local gates receipt ([2026-11-10](#boundary-scope-acceptance-005-t005--2026-11-10)); other producers remain named limitations. |
-| 11 | 009 T006–T009 scale | "Accept the Mac rust run" | The existing Mac hierarchy-v1 preparation of rust-lang/rust, plus a short replay and changed-input check (to do), accepts scale; F10/F11 retire; Linux x86 and the 67,663-source corpus are a named limitation. |
+| 11 | 009 T006–T009 scale | "Accept the Mac rust run" | Done: the existing Mac hierarchy-v1 preparation plus the [replay and changed-input check](#semantic-scale-replay-and-changed-input-acceptance--2026-11-10) accepts scale; F10/F11 retire; Linux x86 and the 67,663-source corpus are a named limitation. |
 | 12 | Device acceptance scope | "Script checks only" | What `scripts/native-macos-acceptance.py` checks decides; unbuilt GPU-pressure, residency, thermal/battery and eviction policies are named limitations. |
 | 13 | Native macOS acceptance (F7) | "Once now, unsigned" | One ad-hoc-signed run on the owner's Mac now (to do), repeated on the signed release candidate. |
 | 15 | 001 T011 watching | "Native Mac run on rust" | Done: F18's deadline repair and the bounded native `mcp --watch` run on pinned rust-lang/rust passed ([2026-11-10](#native-mac-watcher-acceptance-001-t011--2026-11-10)); the receipt corrects the earlier file-count description. |
