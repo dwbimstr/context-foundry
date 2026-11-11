@@ -284,13 +284,27 @@ fn probe(args: &[String]) -> ExitCode {
         Err(f) => return refuse(f),
     };
     let admission = live_admission(&file, Scope::Probe, &root, verified.inputs.omp.clone());
-    let mut session = match CaptureSession::open(LaunchAdmission::Live(admission)) {
+    let session = match CaptureSession::open(LaunchAdmission::Live(admission)) {
         Ok(s) => s,
         Err(f) => return refuse(f),
     };
-    let (capture, seal) = match apparatus::run_probe(&mut session, &root) {
+    probe_session(session, &root)
+}
+
+fn probe_session(mut session: CaptureSession, root: &PilotRoot) -> ExitCode {
+    let (capture, seal) = match apparatus::run_probe(&mut session, root) {
         Ok(v) => v,
-        Err(f) => return refuse(f),
+        Err(f) => {
+            let receipt = match session.finish() {
+                Ok(receipt) => receipt,
+                Err(finish_fault) => return refuse(finish_fault),
+            };
+            println!(
+                "{}",
+                json!({"probe": null, "seal_file": null, "seal_refusal": f.code, "receipt": receipt})
+            );
+            return refuse(f);
+        }
     };
     // A sealed probe is kept privately in its run (0600, exclusive) so an
     // explicit coding authorization can cite it as compatibility evidence.
@@ -333,15 +347,27 @@ fn coding(args: &[String]) -> ExitCode {
         Ok(s) => s,
         Err(f) => return refuse(f),
     };
+    coding_session(session, &root, &verified)
+}
+
+fn coding_session(
+    session: CaptureSession,
+    root: &PilotRoot,
+    verified: &apparatus::Verified,
+) -> ExitCode {
     let report_path = session.run_dir().join("coding-report.json");
-    match apparatus::run_coding(session, &root, &verified) {
+    match apparatus::run_coding(session, root, verified) {
         Ok(report) => {
             let written = write_private(&report_path, &report);
             println!(
                 "{}",
                 json!({"report": report_path, "written": written, "pairs": report.pairs, "arms": report.arms, "halt": report.receipt.halt})
             );
-            ExitCode::SUCCESS
+            if report.receipt.halt.is_some() {
+                ExitCode::from(1)
+            } else {
+                ExitCode::SUCCESS
+            }
         }
         Err(f) => refuse(f),
     }
@@ -357,5 +383,265 @@ fn main() -> ExitCode {
         Some("probe") => probe(&args[1..]),
         Some("coding") => coding(&args[1..]),
         _ => usage(),
+    }
+}
+
+// These tests enter the same post-admission CLI path with Verification mode.
+// They cannot authorize a live launch or qualify real-provider compatibility.
+#[cfg(all(test, target_os = "macos"))]
+#[allow(dead_code)]
+#[path = "../../tests/pilot_capture/fixture.rs"]
+mod restore_fixture;
+
+#[cfg(all(test, target_os = "macos"))]
+mod restore_tests {
+    use super::*;
+    use context_foundry::pilot_capture::{Counters, VerificationAdmission};
+    use restore_fixture::{Fixture, Reply};
+    use serde_json::Value;
+    use std::path::Path;
+
+    const OMP: &str = match option_env!("CF_PILOT_TEST_OMP") {
+        Some(path) => path,
+        None => DEFAULT_OMP,
+    };
+    const CANARY: &str = "sk-ant-verify-restore-halt-7f3c1e9a5b2d4c6e8f0a1b3c5d7e9f11";
+
+    fn admission(run_dir: &Path, fixture: &Fixture, scope: Scope) -> LaunchAdmission {
+        LaunchAdmission::Verification(VerificationAdmission {
+            run_dir: run_dir.to_path_buf(),
+            omp: OMP.into(),
+            scope,
+            fixture_addr: fixture.addr,
+            fixture_ca_pem: fixture.ca_pem.clone(),
+            credential: CANARY.into(),
+            faults: Default::default(),
+            manifest: None,
+        })
+    }
+
+    fn journal(run_dir: &Path) -> Vec<Value> {
+        std::fs::read_to_string(run_dir.join("journal.jsonl"))
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect()
+    }
+
+    fn assert_terminal(run_dir: &Path, code: &str, counters: Counters) -> Vec<Value> {
+        let records = journal(run_dir);
+        let halts: Vec<_> = records.iter().filter(|r| r["kind"] == "halt").collect();
+        assert_eq!(halts.len(), 1);
+        assert_eq!(halts[0]["class"], FaultClass::Pins.as_str());
+        assert_eq!(halts[0]["code"], code);
+        let last = records.last().unwrap();
+        assert_eq!(last["kind"], "finished");
+        assert_eq!(last["halt"], json!([FaultClass::Pins.as_str(), code]));
+        assert_eq!(last["counters"], json!(counters));
+        assert!(
+            !std::fs::read_to_string(run_dir.join("journal.jsonl"))
+                .unwrap()
+                .contains(CANARY)
+        );
+        records
+    }
+
+    #[test]
+    fn probe_restore_failure_finishes_halted_without_http() {
+        for invalid_contents in [false, true] {
+            let temp = tempfile::tempdir().unwrap();
+            let base = std::fs::canonicalize(temp.path()).unwrap();
+            let root = PilotRoot::create(&base.join("pilot")).unwrap();
+            if invalid_contents {
+                std::fs::create_dir(root.seed().join("src")).unwrap();
+                for (rel, _) in apparatus::pins::SEED {
+                    std::fs::write(root.seed().join(rel), b"synthetic invalid seed\n").unwrap();
+                }
+            }
+            let code = if invalid_contents {
+                "seed_changed"
+            } else {
+                "seed_tree_not_exact"
+            };
+            let run_dir = base.join("run");
+            let fixture = Fixture::start(vec![]);
+            let mut session =
+                CaptureSession::open(admission(&run_dir, &fixture, Scope::Probe)).unwrap();
+            let fault = apparatus::run_probe(&mut session, &root).err().unwrap();
+            assert_eq!(fault.code, code);
+            assert_eq!(session.halted().unwrap().code, code);
+            // Preparation failed before any host. Even a direct caller cannot
+            // bypass that halt by submitting the next otherwise valid slot id.
+            assert_eq!(
+                session
+                    .run_slot(PreparedSlot {
+                        slot_id: policy::PROBE_SLOT.into(),
+                        workspace: root.seed(),
+                        initial_user_text: policy::PROBE_INSTRUCTION.into(),
+                        expected_sources: Vec::new(),
+                    })
+                    .err()
+                    .unwrap()
+                    .code,
+                "session_halted"
+            );
+            assert_eq!(probe_session(session, &root), ExitCode::from(2));
+            let records = assert_terminal(&run_dir, code, Counters::default());
+            assert_eq!(records[0]["kind"], "admitted");
+            assert_eq!(
+                records.last().unwrap()["slots"],
+                json!([[policy::PROBE_SLOT, "not_started"]])
+            );
+            assert_eq!(std::fs::read_dir(run_dir.join("hosts")).unwrap().count(), 0);
+            assert!(fixture.seen().is_empty());
+            assert_eq!(fixture.remaining_script(), 0);
+            assert!(!run_dir.join("probe-seal.json").exists());
+        }
+    }
+
+    #[test]
+    fn coding_restore_failure_after_fixture_probe_retains_all_rows_and_fails_cli() {
+        let temp = tempfile::tempdir().unwrap();
+        let base = std::fs::canonicalize(temp.path()).unwrap();
+        let root = PilotRoot::create(&base.join("pilot")).unwrap();
+        let workspace = base.join("synthetic-probe");
+        std::fs::create_dir_all(workspace.join("src")).unwrap();
+        for (rel, bytes) in [
+            (
+                "Cargo.toml",
+                "[package]\nname = \"records\"\nversion = \"0.0.0\"\n",
+            ),
+            (
+                "src/lib.rs",
+                "pub fn decode(input: &[u8]) -> Vec<u8> { input.to_vec() }\n",
+            ),
+            ("src/ascii_set.rs", "pub struct AsciiSet;\n"),
+            ("LICENSE-MIT", "MIT synthetic\n"),
+            ("LICENSE-APACHE", "Apache synthetic\n"),
+        ] {
+            std::fs::write(workspace.join(rel), bytes).unwrap();
+        }
+        let fixture = Fixture::start(vec![
+            Reply::Count(2048),
+            restore_fixture::text_reply("msg_restore_probe", "PILOT_TRANSPORT_OK"),
+        ]);
+        let run_dir = base.join("run");
+        let mut probe = CaptureSession::open(admission(&run_dir, &fixture, Scope::Probe)).unwrap();
+        let capture = probe
+            .run_slot(PreparedSlot {
+                slot_id: policy::PROBE_SLOT.into(),
+                workspace: workspace.clone(),
+                initial_user_text: policy::PROBE_INSTRUCTION.into(),
+                expected_sources: policy::READ_SET
+                    .iter()
+                    .map(|rel| {
+                        (
+                            rel.to_string(),
+                            pilot_capture::sha256_hex(&std::fs::read(workspace.join(rel)).unwrap()),
+                        )
+                    })
+                    .collect(),
+            })
+            .unwrap();
+        let seal = probe.seal_probe(&capture).unwrap();
+        probe.finish().unwrap();
+        let sealed_prefix = std::fs::read(run_dir.join("journal.jsonl")).unwrap();
+        assert_eq!(
+            pilot_capture::sha256_hex(&sealed_prefix),
+            seal.journal_sha256
+        );
+        assert_eq!(fixture.seen().len(), 2);
+        assert_eq!(fixture.remaining_script(), 0);
+        let coding =
+            CaptureSession::open_after_probe(&seal, admission(&run_dir, &fixture, Scope::Coding))
+                .unwrap();
+        // Deliberately unavailable downstream inputs. Restore must halt before
+        // reading a view, building an arm prompt, or executing an oracle.
+        // This value is synthetic, not a claim that frozen evidence verified.
+        let absent = base.join("must-not-be-used");
+        let verified = apparatus::Verified {
+            inputs: EvidenceInputs {
+                paired_root: absent.clone(),
+                freeze_root: absent.clone(),
+                foundry: absent.clone(),
+                profile: absent.clone(),
+                omp: OMP.into(),
+            },
+            pins: Vec::new(),
+            task: String::new(),
+            arm_a_prompt: String::new(),
+            oracle: absent,
+            seed: Vec::new(),
+        };
+        assert_eq!(coding_session(coding, &root, &verified), ExitCode::from(1));
+        let report: apparatus::PilotReport =
+            serde_json::from_slice(&std::fs::read(run_dir.join("coding-report.json")).unwrap())
+                .unwrap();
+        let records = assert_terminal(&run_dir, "seed_tree_not_exact", seal.counters);
+        assert_eq!(report.receipt.counters, seal.counters);
+        assert_eq!(
+            report.receipt.halt,
+            Some((
+                FaultClass::Pins.as_str().into(),
+                "seed_tree_not_exact".into()
+            ))
+        );
+        assert_eq!(
+            report
+                .slots
+                .iter()
+                .map(|s| s.slot_id.as_str())
+                .collect::<Vec<_>>(),
+            policy::SLOT_ORDER
+        );
+        assert!(
+            report
+                .slots
+                .iter()
+                .all(|s| s.state == "not_started" && s.disposition.is_none() && s.check.is_none())
+        );
+        assert_eq!(
+            report
+                .receipt
+                .slots
+                .iter()
+                .map(|s| s.slot_id.as_str())
+                .collect::<Vec<_>>(),
+            policy::SLOT_ORDER
+        );
+        assert!(
+            report
+                .receipt
+                .slots
+                .iter()
+                .all(|s| s.state == "not_started" && s.disposition.is_none() && s.check.is_none())
+        );
+        assert!(report.pairs.iter().all(|p| !p.valid
+            && p.a_pass.is_none()
+            && p.b_pass.is_none()
+            && p.b_minus_a.is_none()));
+        assert!(report.arms.iter().all(|a| a.checked == 0 && a.passed == 0));
+        let final_journal = std::fs::read(run_dir.join("journal.jsonl")).unwrap();
+        assert!(final_journal.starts_with(&sealed_prefix));
+        assert_eq!(
+            report.receipt.journal_sha256,
+            pilot_capture::sha256_hex(&final_journal)
+        );
+        assert_eq!(report.receipt.journal_records as usize, records.len());
+        assert_eq!(std::fs::read_dir(run_dir.join("hosts")).unwrap().count(), 1);
+        assert_eq!(
+            fixture.seen().len(),
+            2,
+            "restore failure must add no HTTP request"
+        );
+        assert_eq!(fixture.remaining_script(), 0);
+        assert_eq!(
+            CaptureSession::open_after_probe(&seal, admission(&run_dir, &fixture, Scope::Coding))
+                .err()
+                .unwrap()
+                .code,
+            "journal_digest_mismatch"
+        );
+        assert_eq!(fixture.seen().len(), 2);
     }
 }

@@ -1375,7 +1375,13 @@ pub fn run_probe(
     session: &mut super::CaptureSession,
     root: &PilotRoot,
 ) -> Result<(super::SlotCapture, Result<super::ProbeSeal, CaptureFault>), CaptureFault> {
-    let (workspace, sources) = restore_workspace(root, "probe", Some("probe-before-run"))?;
+    let (workspace, sources) = match restore_workspace(root, "probe", Some("probe-before-run")) {
+        Ok(restored) => restored,
+        Err(fault) => {
+            session.halt(fault);
+            return Err(fault);
+        }
+    };
     let capture = session.run_slot(PreparedSlot {
         slot_id: policy::PROBE_SLOT.into(),
         workspace,
@@ -1407,7 +1413,14 @@ pub fn run_coding(
         }
         let archive = previous.get(&pair).map(|prev| format!("after-{prev}"));
         let (workspace, sources) =
-            restore_workspace(root, &format!("pair-{pair}"), archive.as_deref())?;
+            match restore_workspace(root, &format!("pair-{pair}"), archive.as_deref()) {
+                Ok(restored) => restored,
+                Err(fault) => {
+                    session.halt(fault);
+                    rows.push(slot_row(slot_id, None, None));
+                    continue;
+                }
+            };
         let (view, _) = load_view(root, pair)?;
         let prompt = arm_prompt(verified, arm, &view);
         let capture = match session.run_slot(PreparedSlot {

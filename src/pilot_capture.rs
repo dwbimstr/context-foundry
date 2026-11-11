@@ -1392,6 +1392,9 @@ struct Inner {
     paid_deadline_ns: Option<u64>,
     boot_identity: String,
     halt: Option<CaptureFault>,
+    // A failed halt append cannot be made complete by a later successful
+    // finished append. Keep its failure until the session is consumed.
+    halt_record_error: Option<CaptureFault>,
     slot_index: usize,
     awaiting_seal: Option<SlotCapture>,
     summaries: Vec<SlotSummary>,
@@ -1550,6 +1553,7 @@ impl CaptureSession {
             paid_deadline_ns: None,
             boot_identity: boot,
             halt: None,
+            halt_record_error: None,
             slot_index: 0,
             awaiting_seal: None,
             summaries: planned_slots(scope),
@@ -1693,6 +1697,7 @@ impl CaptureSession {
             paid_deadline_ns: Some(seal.paid_deadline_ns),
             boot_identity: seal.boot_identity.clone(),
             halt: None,
+            halt_record_error: None,
             slot_index: 0,
             awaiting_seal: None,
             summaries: planned_slots(Scope::Coding),
@@ -1719,6 +1724,12 @@ impl CaptureSession {
 
     pub fn halted(&self) -> Option<CaptureFault> {
         self.inner.halt
+    }
+
+    // The apparatus can fail while preparing a workspace, before run_slot
+    // owns admission. Keep that failure in the same monotonic session halt.
+    fn halt(&mut self, fault: CaptureFault) {
+        self.inner.enter_halt(fault);
     }
 
     pub fn run_dir(&self) -> &Path {
@@ -1783,6 +1794,7 @@ pub fn render_binding(
         paid_deadline_ns: None,
         boot_identity: boot_identity()?,
         halt: None,
+        halt_record_error: None,
         slot_index: 0,
         awaiting_seal: None,
         summaries: Vec::new(),
@@ -1962,9 +1974,10 @@ impl Inner {
     fn enter_halt(&mut self, f: CaptureFault) {
         if self.halt.is_none() {
             self.halt = Some(f);
-            let _ = self
+            self.halt_record_error = self
                 .journal
-                .append("halt", json!({"class": f.class.as_str(), "code": f.code}));
+                .append("halt", json!({"class": f.class.as_str(), "code": f.code}))
+                .err();
         }
     }
 
@@ -3845,6 +3858,10 @@ impl Inner {
     }
 
     fn finish(&mut self) -> Result<CaptureReceipt, CaptureFault> {
+        if let Some(fault) = self.halt_record_error {
+            self.transport = None;
+            return Err(fault);
+        }
         let elapsed = match self.paid_started_ns {
             Some(s) => Some(continuous_nanos()?.saturating_sub(s) / 1_000_000),
             None => None,
@@ -3973,6 +3990,119 @@ mod tests {
             failing.append("b", json!({})).unwrap_err().code,
             "journal_append_failed"
         );
+    }
+
+    #[test]
+    fn restore_halt_append_failure_cannot_be_hidden_by_a_later_successful_finish() {
+        for fail_halt_append in [false, true] {
+            let temp = tempfile::tempdir().unwrap();
+            let root = apparatus::PilotRoot::create(&temp.path().join("pilot")).unwrap();
+            let run_dir = root.root.join("runs/test-restore");
+            create_private_dir(&run_dir).unwrap();
+            let hosts_dir = run_dir.join("hosts");
+            create_private_dir(&hosts_dir).unwrap();
+            let journal_path = run_dir.join("journal.jsonl");
+            let mut journal =
+                Journal::create(&journal_path, fail_halt_append.then_some(1)).unwrap();
+            journal
+                .append("admitted", json!({"synthetic_owner_fixture": true}))
+                .unwrap();
+            // Construct the real session owner without live admission, a
+            // credential, transport or host. This test qualifies restore ->
+            // halt -> finish persistence only; it cannot launch a pilot.
+            let mut session = CaptureSession {
+                rt: runtime().unwrap(),
+                inner: Inner {
+                    mode: Mode::Verification,
+                    scope: Scope::Probe,
+                    run_dir: run_dir.clone(),
+                    hosts_dir: hosts_dir.clone(),
+                    omp: root.root.join("unused-omp"),
+                    real_home: root.root.clone(),
+                    deny_literals: Vec::new(),
+                    journal,
+                    transport: None,
+                    manifest: None,
+                    session_id: "synthetic-restore-finish".into(),
+                    host_seq: 0,
+                    attempt_seq: 0,
+                    counters: Counters::default(),
+                    paid_started_ns: None,
+                    paid_deadline_ns: None,
+                    boot_identity: String::new(),
+                    halt: None,
+                    halt_record_error: None,
+                    slot_index: 0,
+                    awaiting_seal: None,
+                    summaries: planned_slots(Scope::Probe),
+                    probe_sealed: false,
+                },
+            };
+            let fault = apparatus::run_probe(&mut session, &root).err().unwrap();
+            assert_eq!(fault.class, FaultClass::Pins);
+            assert_eq!(fault.code, "seed_tree_not_exact");
+            assert_eq!(session.halted().unwrap(), fault);
+            let journal_after_restore = fs::read(&journal_path).unwrap();
+            // Unlike a permanently broken journal, the next append could
+            // now succeed. That must not certify the failed terminal record.
+            session.inner.journal.fail_after = None;
+            session.halt(CaptureFault::new(
+                FaultClass::Protocol,
+                "synthetic_later_fault",
+            ));
+            assert_eq!(session.halted().unwrap(), fault, "first halt still wins");
+            assert_eq!(fs::read(&journal_path).unwrap(), journal_after_restore);
+            let result = session.finish();
+            if fail_halt_append {
+                let error = result.unwrap_err();
+                assert_eq!(error.class, FaultClass::Persistence);
+                assert_eq!(error.code, "journal_append_failed");
+                assert_eq!(
+                    fs::read(&journal_path).unwrap(),
+                    journal_after_restore,
+                    "failed halt must not be followed by a successful finished receipt"
+                );
+                let records: Vec<Value> = fs::read_to_string(&journal_path)
+                    .unwrap()
+                    .lines()
+                    .map(|line| serde_json::from_str(line).unwrap())
+                    .collect();
+                assert_eq!(records.len(), 1);
+                assert_eq!(records[0]["kind"], "admitted");
+            } else {
+                let receipt = result.unwrap();
+                assert_eq!(
+                    receipt.halt,
+                    Some((
+                        FaultClass::Pins.as_str().into(),
+                        "seed_tree_not_exact".into()
+                    ))
+                );
+                assert_eq!(receipt.counters, Counters::default());
+                assert_eq!(receipt.slots.len(), 1);
+                assert_eq!(receipt.slots[0].slot_id, policy::PROBE_SLOT);
+                assert_eq!(receipt.slots[0].state, "not_started");
+                assert_eq!(receipt.journal_records, 3);
+                assert_eq!(
+                    receipt.journal_sha256,
+                    sha256_hex(&fs::read(&journal_path).unwrap())
+                );
+                let records: Vec<Value> = fs::read_to_string(&journal_path)
+                    .unwrap()
+                    .lines()
+                    .map(|line| serde_json::from_str(line).unwrap())
+                    .collect();
+                assert_eq!(
+                    records
+                        .iter()
+                        .map(|r| r["kind"].as_str().unwrap())
+                        .collect::<Vec<_>>(),
+                    ["admitted", "halt", "finished"]
+                );
+            }
+            assert_eq!(fs::read_dir(&hosts_dir).unwrap().count(), 0);
+            assert!(!root.workspace("probe").exists());
+        }
     }
 
     #[test]
