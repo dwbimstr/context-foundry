@@ -158,6 +158,11 @@ and dated paragraphs below are history.
     costed schedule remain. The
     task-context tasks (003 T007–T009, 008 T003–T005) are to be measured in it. Nothing is spent until the
     owner authorizes a key, rights and a budget.
+    Credential-after-claim refusal journaling passes its selected local no-provider
+    checks on an owned copy of the exact frozen OMP artifact
+    ([record](validation.md#pilot-credential-refusal-durability--2026-11-11)). This
+    does not qualify the current installed host or accept pilot v2/T006; other
+    apparatus gaps and freeze requirements remain.
   - **Hosts and evidence:** the owner's Mac is the work host. The 2026-10-11
     sandbox and its archive are declared lost; F2, F6, F8, F10 and F11 retire.
     Five encrypted backups are built and checksum-verified in

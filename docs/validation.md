@@ -301,6 +301,173 @@ red/green logs, final gate receipt and a 340-file SHA-256 evidence snapshot, is 
 `runs/store-lock-2026-11-11/`; the original
 gate logs and receipt remain in `runs/t010-lexical-2026-11-11/gates-retained*`.
 
+## Pilot credential-refusal durability — 2026-11-11
+
+**PASS at the selected local repair boundary.** Focused red/green checks, the
+pinned-host file and all eight gates pass. This is one no-provider
+repair of the disclosed credential-after-claim failure path, based on
+`031989862defcb4602cd32fb7567cd072a9af39a`. It does not accept 003 T006, freeze or
+fund pilot v2, certify the current installed host, or repair the other v1 gaps.
+The repaired source/tests are now committed as
+`7f5ba75c9810a18f1acbc741afb5642cf5c869fc`; all eight gates passed on that commit.
+T010's preceding publication is recorded separately in private
+`runs/t010-singleton-2026-11-11/publication.json`; its acceptance is unchanged.
+
+**Preflight refusal, retained.** The installed `/Users/satishlomte/.local/bin/omp`
+was refused before testing: SHA-256
+`ce80099f10c5ea4367523767230cb5b920f30cc139b9cf8758c1cc4b2f1f9409`
+did not match the required frozen host
+`38c3645283ceba06f66462830ae15f27270cc7f84575e40a4c6bd68452a63d0f`.
+The shell continued after the failed preflight assertion and applied only the test
+patch; that patch was retained and exactly reversed without executing tests or the
+host. No production patch was applied in that refused attempt. Its receipt records
+zero provider requests and spend $0; it is not a successful test run.
+
+The exact pinned artifact was then found at
+`~/.local/bin/omp.1794156108095.11575.0.bak` (217,260,176 bytes) and copied into the
+owned run's `bin/omp`. The integration test now accepts the compile-time
+`CF_PILOT_TEST_OMP` path override while retaining its installed-path default and
+strict frozen SHA-256 check. This selects an exact archived artifact for the local
+fixture tests; it does not install or certify the current installed host. Frozen v1 policy and
+contract bytes are unchanged.
+
+**Qualified implementation.** Existing `CaptureSession::open`
+and `open_after_probe` create or reopen the existing journal after branch admission
+and before admitted credential loading. A refusal after the durable claim appends
+`halt` with `phase:credential_admission`, the fault class and stable code, never the
+credential. The consumed claim remains consumed. The existing journal's append
+failure is returned as a persistence fault rather than claiming a durable refusal.
+The selected handoff ordering admits the branch before journal access, verifies
+Live's cited journal before consuming fresh authority, and permits appends only
+after the claim. The journal format/chain and existing session owners are reused.
+
+The revised private source plan is
+`runs/pilot-v2-2026-11-11/credential-refusal-ordering-draft/`; the earlier ordering
+draft remains at its sibling `credential-refusal-draft/`. Their revision history
+is source preparation, not runtime evidence. The earlier fabricated cross-mode
+Live case establishes mode refusal only. The subsequently declared
+`additional-live-guard.json` extends the existing Live admission test with a
+valid-shaped synthetic coding manifest, authority and cited seal pointing at an
+owned terminal journal. It retains the original deadline and repair rule. Its
+local branch-ordering evidence is recorded below; no actual Live-compatible probe
+history, provider compatibility or owner credential is supplied by this fixture.
+
+**Declared run.** `runs/pilot-credential-refusal-2026-11-11/protocol.json` freezes
+one heavy job at a time, a shared 1,800-second stage with 120 seconds reserved for
+cleanup, 20 GiB free-disk floor, an 8 GiB sampled per-owned-process RSS bound and
+spend $0. Only owned synthetic credentials and local TLS fixtures are selected.
+No owner credential/private-key file is read and no actual provider call is
+selected. A local fixture request is not a provider call; refusal tests must show
+no additional fixture transmission across the refusal boundary.
+
+**Completed focused evidence.** All nine commands ran on retained working-tree
+patches over `031989862defcb4602cd32fb7567cd072a9af39a`; the repair was uncommitted
+when they ran. Their command records bind `CF_PILOT_TEST_OMP` to the owned archived
+artifact. Expected-red exit 101 is a failure witness, not an implementation pass;
+the step result's `passed:true` means that its expected failure was observed.
+
+| Command under `focused/` | Tests passed / failed / ignored | Exit | Receipt elapsed seconds |
+| --- | ---: | ---: | ---: |
+| `red-credential-refusal` | 0 / 2 / 0 | 101, expected | 30.955 |
+| `red-live-gates` | 0 / 1 / 0 | 101, expected | 10.635 |
+| `green-credential-refusal` | 2 / 0 / 0 | 0 | 32.107 |
+| `green-live-gates` | 1 / 0 / 0 | 0 | 16.223 |
+| `green-handoff` | 1 / 0 / 0 | 0 | 14.846 |
+| `green-full-host-suite` | 17 / 0 / 1 | 0 | 19.832 |
+| `red-live-terminal` | 0 / 1 / 0 | 101, expected | 40.710 |
+| `green-live-terminal` | 1 / 0 / 0 | 0 | 39.356 |
+| `green-full-host-suite-final` | 17 / 0 / 1 | 0 | 26.649 |
+
+The two new red tests failed at the intended boundaries: the fresh refusal lacked
+`claim.json`, and the coding refusal kept 17 journal records where the terminal
+record required 18. The existing Live admission test failed because the consumed
+authority's refused run lacked its own claim. After the selected repair, the same
+cases pass: claims remain consumed, the refusal is chained without credential
+bytes, refusal sends no additional local fixture request, and injected append
+failure returns the persistence fault. The positive probe/handoff passes its
+initial `admitted` ordering and unchanged sealed-prefix assertions.
+
+**Additional synthetic Live ordering guard: red/green PASS.** The counterfactual
+temporarily restored only the old `open_after_probe` method, retaining the
+fresh-open repair so the extended assertion was reached. It failed exactly there:
+`credential_missing` was returned instead of `probe_seal_not_journaled`. The fault
+assertion failed before the subsequent claim-absence assertion, so that run did
+not directly report whether the old path left a fresh claim; no such runtime
+observation is claimed. The exact repaired source was restored with SHA-256
+`596f8cb316c00e7ddd2d09f87ab0c7fe3028e02828f547dd6dbe9fc2d3197d79`.
+
+The unchanged extended test's valid-shaped synthetic Live coding admission passes
+validation, then rejects the terminal journal with `probe_seal_not_journaled`
+before the missing-credential fault. It asserts no new coding-authority claim file,
+a byte-identical terminal journal and zero additional local fixture requests.
+This establishes the selected synthetic branch
+ordering, while its relabeled verification-derived seal does not establish an
+actual Live-compatible probe history. The final complete pinned-artifact test
+file also passed after this extension.
+
+The complete non-ignored pinned-host file passes. Its one ignored case is
+`full_pilot_pipeline_qualifies_without_provider`, which requires private pilot
+evidence roots and was not selected or executed. These results do not qualify that
+full evidence-backed pipeline. The totals above come from Rust summaries; elapsed
+times come from the command receipts and include command setup/build overhead.
+
+All nine commands exited naturally with no forced cleanup or observed owned process
+remaining. Across these completed receipts, the largest sampled individual owned
+process RSS was 3,116,990,464 bytes, minimum sampled free disk was 271,579,947,008
+bytes, and 76 owned-process memory samples were missed. The sampled 8 GiB process
+bound and 20 GiB free-disk floor held for these commands. These are sampled maxima,
+not true peaks, aggregate process memory or GPU/global memory. Every completed
+result records spend $0. No provider-transmission conclusion is inferred from exit
+status alone; the refusal tests' owned fixture assertions establish their stated
+local transmission boundary.
+
+**Committed-candidate gates: PASS.** All eight named stages exit 0 on `7f5ba75`
+in 741.560 seconds. The default suite reports 1,311 passed,
+0 failed and 34 ignored, with 21 additional passing custom recovery
+checks. The pilot unit gate reports 62 passed, 0 failed and 0 ignored.
+The toolchains are Rust/Cargo 1.97.1 and actual Rust/Cargo 1.90.0 with macOS SDK 26.5.
+The gate command exits naturally, with no forced cleanup or observed owned process
+remaining. Its largest sampled individual owned-process RSS is
+2,060,304,384 bytes, with 1,430 missed memory samples;
+minimum sampled free disk is 268,721,946,624 bytes. These are sampled process bounds,
+not true peaks or GPU/global-memory measurements.
+
+The completed shared stage takes 1579.356 seconds of its original 1,800-second
+bound, including the added synthetic Live guard; the deadline was not extended.
+Source identity, the exact owned host and frozen v1 contract are unchanged across
+the gate run. `commit-pin.json` also binds the unchanged policy prefix and focused
+patches. The selected repair is complete at these local boundaries; the original
+preflight refusal, red failures and counterfactual remain evidence, not green runs.
+Final owners: `gates-result.json`, `gates-supervisor/000-full-gates.receipt.json`,
+the eight gate logs and toolchain logs. No provider spend occurred.
+
+Private evidence: `runs/pilot-credential-refusal-2026-11-11/`, including
+`preflight-refusal.json`, `local-backup-host-pins.json`, `unexecuted-red-test.patch`,
+`protocol.json`, `additional-live-guard.json`, `commit-pin.json`,
+`gates-protocol.json`, the owned host, retained per-command patches, and each completed
+`focused/{red-credential-refusal,red-live-gates,green-credential-refusal,green-live-gates,green-handoff,green-full-host-suite}/result.json`
+and `focused/{red-live-terminal,green-live-terminal,green-full-host-suite-final}/result.json`
+with its named command receipt/stdout/stderr.
+Source plan pins: implementation patch
+`9a7dd2b9767e20d332d079b456c5c16f969339fd584cd507613d855055c7ab31`;
+red-test patch
+`cea56c02387c6447ad4b7d38717acf369fadc843e5ab8877f16e461cd7c35f1e`.
+These are the selected draft patch pins; the compiled host-path override is an
+additional recorded integration-harness amendment. The final commit pin includes
+the extended test SHA-256
+`f971715fa0e89b1ffce7365fdbe099f5e8e025ae52521bfe11f5827190a546c9`,
+the restored source SHA-256 above and `policy_prefix_unchanged:true`.
+The recorded unchanged v1 contract SHA-256 is
+`1a00758ffdafbfa18a59dd69e0b9912ef8beca9f7010f375bab8e553c554502d`.
+
+The unfunded [pilot v2 draft](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md)
+and 003 T006 remain open. Startup network-denial journaling, checker environment/
+sandbox/compiler binding, retained compile stderr, coding-authority chain/path
+binding, private-artifact modes, workspace-restore halts and `seal_slot` completion
+binding retain their existing requirements and status. This repair supplies no
+harder held-out task set, powered sample, arm-readiness proof, paid authority or
+provider-economics result.
+
 ## T010 singleton qualification — 2026-11-11
 
 **PASS: T010 is accepted at its written lexical retrieval scope.** The actual-default
