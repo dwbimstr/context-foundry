@@ -24,8 +24,8 @@ owning spec's amendments.
 The [context ecosystem plan](context-ecosystem-plan.md) proposes retrieval repairs
 first, followed by task state, reversible working context and memory lifecycle work.
 The owner activated the first retrieval tranche on 2026-10-09. Bounded diagnostic
-capture and behavioral packing are implemented locally. The qualified T010 policy
-defaults on for lexical delivery; semantic delivery does not use it. The experimental branch also
+capture and experimental behavioral packing are implemented locally, with the
+candidate default off and quality measurements pending. The experimental branch also
 implements task-state, reversible views, exact-failure reminders and explicit decision
 promotion; applied host control and broader intervention policies remain future work.
 
@@ -432,9 +432,9 @@ directories and available doors without calling the embedding model. For anchorl
 queries with a prepared, explicitly enabled profile, dense candidates precede lexical
 candidates through the ordinary unit ladder; T004 replaced the earlier reciprocal-rank
 fusion. Evidence remains verbatim or deterministically outlined and exactly budgeted.
-The source owner validates freshness throughout. 001 T010 owns mixed-intent
-selection, enabled by default only for lexical delivery with an explicit opt-out.
-Keep the roles narrow:
+The source owner validates freshness throughout. Proposed mixed-intent changes are
+owned by 001 T010; its implemented candidate is opt-in and not part of the default
+path. Keep the roles narrow:
 
 | Component | Responsibility | What does not follow from enabling it |
 | --- | --- | --- |

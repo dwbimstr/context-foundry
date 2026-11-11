@@ -87,10 +87,8 @@ enum Command {
         /// Write bounded private diagnostics in a NEW directory; never changes evidence.
         #[arg(long, value_name = "DIR")]
         retrieval_trace_dir: Option<PathBuf>,
-        /// Select behavioral evidence for lexical context; disable with =false.
-        #[arg(long, action = clap::ArgAction::Set, num_args = 0..=1,
-              require_equals = true, default_missing_value = "true",
-              default_value_t = crate::store::DEFAULT_BEHAVIOR_CONTEXT)]
+        /// Test behavior/prose selection; default off pending retrieval/host validation.
+        #[arg(long)]
         experimental_behavior_context: bool,
         #[arg(long, default_value = "auto")]
         strategy: String,

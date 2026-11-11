@@ -442,7 +442,7 @@ impl Shared {
         let workspace_id = engine.workspace_id().unwrap_or_default();
         Self {
             trace_sink: None,
-            experimental_behavior_context: crate::store::DEFAULT_BEHAVIOR_CONTEXT,
+            experimental_behavior_context: false,
             engines: Arc::new(Mutex::new(vec![Some(engine)])),
             meta: Arc::new(vec![RootMeta {
                 alias: "primary".to_owned(),

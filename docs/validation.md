@@ -2,13 +2,13 @@
 
 ## T010 lexical default — 2026-11-11
 
-**Retrieval qualification passes; final implementation gates are pending.** One
+**HOLD: default promotion failed a frozen local guard.** One
 fixed candidate, `ceca2d8`, removes the behavioral flag's semantic effects and keeps
 the existing lexical algorithm. No ranking was tuned from these results. The
 comparison ran on the owner's M5 Max against `a456c53`, with no provider calls,
-training or corpus-code execution. The default-switch candidate now enables that
-same lexical policy through the library, CLI context and MCP owner; an explicit
-`false` retains the prior lexical behavior. A supplied dense window, including
+training or corpus-code execution. The default-switch candidate was tested through
+the library, CLI context and MCP owner, then withdrawn after the failure below.
+The flag remains **off by default**. Its semantic cleanup is retained: a supplied dense window, including
 partial/empty windows, ignores the option. Ordinary semantic admission is unchanged
 by the flag; named fallback remains lexical.
 
@@ -46,8 +46,8 @@ passed 96 tests, with one ignored. Existing source identity, freshness and resou
 checks remain. The process-observation race and its red/green tests are recorded
 below; the fresh qualified baseline reproduced all 2,779 responses from the failed
 apparatus attempt. Default promotion exposed two core fixtures implicitly relying
-on the former default; their baseline calls now explicitly set `false`, with their
-assertions unchanged. The fresh boundary suites passed all 88 core and 93 MCP tests,
+on the former default; that trial made their baseline calls explicitly set `false`,
+with assertions unchanged. The trial boundary suites passed all 88 core and 93 MCP tests,
 including library defaults, bare-flag compatibility, explicit opt-out and exact
 CLI/MCP parity. Default binary `aac40dd` reproduced all 388 G2 response records and
 result rows exactly; its SHA-256 is
@@ -56,13 +56,33 @@ The first full gate attempt stopped after Clippy rejected a literal-boolean
 `assert_eq!` in a semantic regression. The assertion now uses `is_none()` without
 changing its condition. The supervisor's 60-second interrupt grace expired during
 the test suite, then bounded cleanup removed all observed owned processes. That
-partial run is retained and does not count as acceptance. The fresh eight-gate run
-remains pending.
+partial run is retained and does not count as acceptance. The next full attempt
+passed formatting and Clippy but failed
+`economics::question_contexts_surface_their_expected_units`: “session allowance
+refund” did not deliver the independently frozen `fn refund(` marker at 2,048 tokens.
+The other five frozen subsystem questions pass in a separate CLI reproduction;
+the baseline passes all six. That gate attempt was also stopped and its observed
+owned processes were cleaned up. Neither partial run counts as acceptance.
+
+The untruncated trace shows the same fresh `Shared::refund` unit at bytes
+13,528–13,841 of the frozen `src/mcp.rs`: baseline selection/packing rank 0, delivered
+verbatim; the candidate disables exact-run promotion, keeps it at selection rank 18,
+then drops its signature at packing rank 23 for the token budget. This establishes
+ordering and packing loss, not missing recall. Scores and term contributions are
+not traced. The fixture's marker, source bytes, cap and assertions are unchanged.
+
+Candidate family 1 therefore **does not qualify for default promotion**, despite
+its G1/G2 results. No new ranking rule was tuned to the failed fixture. The
+default-switch code and its dependent test changes are withdrawn; semantic isolation,
+the direct admission regression and the native supervisor repair remain. T010 is
+not accepted. A future lexical repair needs a separately declared candidate and
+fresh local/frozen measurements. Full implementation gates on the retained cleanup
+remain to run.
 
 Private protocols, binaries, complete outputs, failed receipts and resource samples
 are retained in `runs/t010-lexical-2026-11-11/` and
 `datasets/context-foundry-t010-2026-11-11.noindex`. The baseline binary SHA-256 is
-`c9e497a74e02fd8d12f2b16b6334fe5f442c40af511df81d8a0885b419806e94`; the qualified
+`c9e497a74e02fd8d12f2b16b6334fe5f442c40af511df81d8a0885b419806e94`; the measured
 explicit-flag candidate is
 `1fd668cff5bc2c564e1e43c54967a0aae63eddd5d1da330ea4c2f1ff64db250a`.
 
@@ -402,7 +422,7 @@ is work to do.
 | 12 | Device acceptance scope | "Script checks only" | What `scripts/native-macos-acceptance.py` checks decides; unbuilt GPU-pressure, residency, thermal/battery and eviction policies are named limitations. |
 | 13 | Native macOS acceptance (F7) | "Once now, unsigned" | Done: the ad-hoc-signed run on the owner's Mac passed ([2026-11-10](#native-macos-acceptance--2026-11-10)); repeat on the signed release candidate. |
 | 15 | 001 T011 watching | "Native Mac run on rust" | Done: F18's deadline repair and the bounded native `mcp --watch` run on pinned rust-lang/rust passed ([2026-11-10](#native-mac-watcher-acceptance-001-t011--2026-11-10)); the receipt corrects the earlier file-count description. |
-| 9 | 001 T010 and `--experimental-behavior-context` | "Lexical-only, drop T006 gate" | T010's own local gates and the 2026-10-19 G2 rule decide; the flag's semantic-store effects are removed and it defaults on only where lexical results are served (code to do). |
+| 9 | 001 T010 and `--experimental-behavior-context` | "Lexical-only, drop T006 gate" | Semantic effects are removed; default promotion is held after the frozen economics guard failed despite passing G1/G2. The flag stays off; T010 remains unaccepted ([receipt](#t010-lexical-default--2026-11-11)). |
 | 24 | Query-time parse cost (001 T006, 007) | "Accept as named limitation" | No code change; reopen only after a measured failure on a real corpus. |
 
 **T006 and task context**

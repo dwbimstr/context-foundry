@@ -1639,7 +1639,7 @@ impl RecordPlan {
 /// window, a configured 013 policy routing an `auto` strategy, and the
 /// anchors a multi-root owner chose over every serving root (007; `None`
 /// chooses them from this store's index).
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct ContextOptions<'a> {
     pub compose_evidence: bool,
     pub compact_evidence: bool,
@@ -1652,27 +1652,6 @@ pub struct ContextOptions<'a> {
     pub dense: Option<&'a crate::neural::query::DenseWindow>,
     pub policy: Option<&'a crate::policy::Policy>,
     pub anchors: Option<&'a [AnchorCandidate]>,
-}
-
-// One default shared by the library and both command-line entry points.
-pub(crate) const DEFAULT_BEHAVIOR_CONTEXT: bool = true;
-
-impl Default for ContextOptions<'_> {
-    fn default() -> Self {
-        Self {
-            compose_evidence: false,
-            compact_evidence: false,
-            boundary_config: None,
-            task: None,
-            memory: false,
-            briefs: false,
-            experimental_behavior: DEFAULT_BEHAVIOR_CONTEXT,
-            #[cfg(feature = "semantic")]
-            dense: None,
-            policy: None,
-            anchors: None,
-        }
-    }
 }
 
 /// The query's tokens for path detection: whitespace- and backtick-separated

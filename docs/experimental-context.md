@@ -298,11 +298,11 @@ qualification 2026-11-11: `--experimental-behavior-context` changes lexical deli
 only. Dense results retain ordinary ordering and their scored source spans; the flag
 does not admit a model call, refine published vectors, focus a semantic unit locally
 or interleave lexical candidates. A named semantic fallback still serves lexical
-results. The qualified lexical policy now defaults on; use
-`--experimental-behavior-context=false` on CLI context or at MCP owner startup to
-opt out ([context v2](../specs/001-source-state-recovery/contracts/context-v2.md#experimental-behavioral-support--001-t010-2026-10-09)).
-See the [current status](resume-context-ecosystem.md#current-status--2026-11-06)
-for final acceptance.
+results. Once 001 T010's own gates pass, lexical behavior is to default on
+([context v2](../specs/001-source-state-recovery/contracts/context-v2.md#experimental-behavioral-support--001-t010-2026-10-09)).
+Default promotion is held: the 2026-11-11 candidate passed G1/G2 but lost the required
+`refund` definition in the frozen economics fixture. The flag remains off by default;
+see the [receipt](validation.md#t010-lexical-default--2026-11-11).
 
 CLI requests that resolve explicit/defined anchors now skip unused semantic startup,
 using the same path/prose rules as retrieval. Eligible requests still load their
