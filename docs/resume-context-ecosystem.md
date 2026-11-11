@@ -41,7 +41,10 @@ and dated paragraphs below are history.
   preparation and audits using cached vectors, with zero embedding calls and
   unchanged-original readbacks
   ([preparation receipt](validation.md#t005-units7-baseline-preparation--2026-11-11)).
-  Current corpus identity and traced/untraced query parity remain to verify.
+  Fresh admitted-source captures match both frozen corpus manifests, and the
+  diagnostic helper passes its synthetic checks
+  ([receipt](validation.md#t005-corpus-identity-and-diagnostic-helper-checks--2026-11-11)).
+  Actual traced/untraced query parity and complete diagnostic accounting remain.
   No ranking variant or new G2 quality result is established; T005 remains unaccepted.
 - **Scale.** Publication streams cached vectors (no 2 GiB vector bound) and
   generation v6 interns label-map paths and hashes (rust map 191 → 69 MB). At rust's

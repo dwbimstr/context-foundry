@@ -1,5 +1,66 @@
 # Validation
 
+## T005 corpus identity and diagnostic helper checks — 2026-11-11
+
+**The current admitted corpora match the frozen parser manifests.** A separate
+600-second, no-model stage used the archived parser candidate from `68ed776`
+(SHA-256 `9853f8afebd457bd694362c6d92f829976a195e4285d85263994d33000d4bcf8`)
+to capture each corpus into a new owned store and source bundle. It did not open
+an original G2 store. The command's complete production admission and reconstructed
+source-byte checks pass; new manifests exactly match the frozen ordered path,
+SHA-256, length and language-override records:
+
+| Corpus | Sources | Source bytes | Manifest SHA-256 |
+| --- | --- | --- | --- |
+| Rust | 60,739 | 177,769,746 | `2b36b53aef11ee64ef0b9cf6cba2110192efc0a15039a33948e96e6c3e3a1542` |
+| bun | 8,436 | 99,926,130 | `f855b1b80c316cbac73efd0e3a5712868bea54c92dfe45fb12a24cd50187b5ab` |
+
+Binding checks rehash all 59,387 unique Rust and 8,346 unique bun source blobs,
+then repeat the complete bundle readback. Frozen input bytes and metadata match
+before and after. Both corpus HEADs match their frozen commits and tracked files
+are clean on both observations. Git excludes untracked files; the fresh capture,
+rather than that Git check, establishes the complete admitted-set comparison.
+This is separate fresh-store evidence, not a row-by-row export of the prepared
+semantic store or an atomic filesystem snapshot under concurrent edits.
+
+Rust capture took 108.489 s and bun 18.803 s; the stage completed in **135.983 s**.
+All 10 native commands exited naturally, with no observed model workers or owned
+processes remaining. Bounds: 120 seconds for cleanup, one heavy job, USD 0 spend,
+300/120-second native capture ceilings with 270/90-second internal budgets,
+20 GiB free-space and apparent-growth bounds, and 8 GiB sampled individual RSS.
+Observed RSS peak: 1,269,481,472 B; minimum free space: 262,207,369,216 B;
+apparent growth: 1,337,574,430 B; 10 missed process samples and three disappearing
+temporary entries during growth observations. These are sampled observations.
+Private stores and bundles remain under the new
+`datasets/context-foundry-t005-corpus-freshness-a9rz0a1k.noindex` directory;
+receipts and pins are in `runs/t005-corpus-identity-2026-11-11/`.
+
+**Diagnostic helper checks are synthetic qualification only.** The private stdout
+wrapper and offline validator first passed 25 tests. A narrow subsequent correction
+validates supplied source identities, half-open ranges and stage-specific outcomes
+before assigning an observed pipeline stage; malformed evidence remains unknown.
+It also removes the inference that a locator's range proves visible definition
+content. The final helper passes **34 tests in 1.954 s** (2.219 s including native
+supervision), with unchanged source pins and no observed remaining owned processes.
+The wrapper itself is byte-identical between these versions. Raw logs and both
+source versions are retained in `runs/t005-trace-qualification-2026-11-11/`.
+
+Tests exercise exact forwarding under backpressure, unchanged stdin, output/line
+limits, refusal, deadline cleanup and malformed/missing trace or identity rejection.
+Transport fixtures substitute a synthetic manifest in test-process memory; they do
+not qualify real manifest admission, model calls, source freshness or the full
+388-question accounting. Each check has a separately selected 180-second envelope,
+60-second test limit and 120-second cleanup reserve. No private questions, real
+stores, model or provider were used by these checks.
+
+The frozen G2 harness can retry a busy/deadline response; zero retries is a later
+run-validity condition, not a guarantee made by the transparent wrapper. The
+qualified helper preserves exact text and full parsed envelopes, checks complete
+request/notification accounting and records raw stdout equality separately.
+Delivered-token counts come from the frozen harness; the offline validator does
+not recount them or infer host/provider consumption. Actual G2 parity, trace
+completeness, current scores and T005 acceptance remain to establish.
+
 ## T005 units7 baseline preparation — 2026-11-11
 
 **Both owned copies pass current units7 metadata readiness; no query-quality
