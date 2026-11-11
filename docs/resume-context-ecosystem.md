@@ -177,6 +177,9 @@ and dated paragraphs below are history.
     Checker completion and artifact binding pass the selected consumer checks and
     real checker run ([record](validation.md#pilot-checker-completion-and-artifact-binding--2026-11-11)).
     This does not accept the full private pipeline or pilot v2/T006; other gaps remain.
+    Checker provenance and retained diagnostics pass the selected local checks
+    ([record](validation.md#pilot-checker-provenance-and-retained-diagnostics--2026-11-11));
+    broader permissions/startup-network gaps and pilot v2/T006 remain open.
   - **Hosts and evidence:** the owner's Mac is the work host. The 2026-10-11
     sandbox and its archive are declared lost; F2, F6, F8, F10 and F11 retire.
     Five encrypted backups are built and checksum-verified in

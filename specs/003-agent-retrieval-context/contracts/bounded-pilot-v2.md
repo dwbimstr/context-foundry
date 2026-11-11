@@ -154,8 +154,8 @@ The current source pointers establish ownership, not completed qualification.
 | Disclosed gap | Required evidence |
 | --- | --- |
 | Host startup network denials absent from journal | Capture denied startup attempts and their destination/classification before any paid request; disallow unobserved routes. A sandbox denial is not evidence of journal completeness. |
-| Checker binds environment names only | Bind exact sanitized environment values, sandbox profile bytes and freshly hashed oracle/compiler bytes to each checker receipt. Credentials are absent from the checker environment. |
-| Compile stderr only hashed | Retain bounded private stderr bytes and their digest, with explicit overflow/failure behavior. Inspect errors; a matching binary hash cannot explain omitted diagnostics. |
+| Checker binds environment names only | Bind exact sanitized environment values, sandbox profile bytes and freshly hashed oracle/compiler bytes to each checker receipt. Credentials are absent from the checker environment. The selected local checks pass ([record](../../../docs/validation.md#pilot-checker-provenance-and-retained-diagnostics--2026-11-11)); the limits in the selected repair below and broader v2 qualification remain. |
+| Compile stderr only hashed | Retain bounded private stderr bytes and their digest, with explicit overflow/failure behavior. Inspect errors; a matching binary hash cannot explain omitted diagnostics. The selected local checks pass ([record](../../../docs/validation.md#pilot-checker-provenance-and-retained-diagnostics--2026-11-11)); the limits in the selected repair below and broader v2 qualification remain. |
 | Coding authority outside chain; declared/actual paths differ | Append the authorization digest to the durable chain before a paid attempt and require the canonical actual run root to equal the authorized root. The selected metadata/path and chained-authority fixtures pass ([record](../../../docs/validation.md#pilot-authority-and-run-path-binding--2026-11-11)); historical v1 evidence is unchanged. Current installed-host compatibility and actual Live-compatible probe history remain unproved. |
 | Some private artifacts have wider permissions | Enforce and verify 0700 directories/0600 private files, including host/store outputs; fail before transmission if this cannot be established. Executables need explicitly declared private executable modes. |
 | Rejected credential after claim has no terminal journal outcome | Preserve consumed claim and append a terminal refusal without printing the credential; prove no provider transmission. The selected local repair passes the pinned-artifact fixture checks, including synthetic Live admission ordering ([record](../../../docs/validation.md#pilot-credential-refusal-durability--2026-11-11)). Current installed-host compatibility and actual Live-compatible probe history remain unproved; v2 still requires its declared host/arm qualification. |
@@ -177,7 +177,7 @@ synthetic consumer tests from the real fixed compiler/oracle on new owned copies
 it does not rerun the original calibration harness or accept pilot v2/T006.
 [Qualification evidence](../../../docs/validation.md#pilot-checker-completion-and-artifact-binding--2026-11-11); the broader v2 freeze requirements remain.
 
-**Selected checker provenance and diagnostics repair, 2026-11-11 — not yet qualified.**
+**Selected checker provenance and diagnostics repair, 2026-11-11 — qualified at the selected local checker boundary.**
 The required checker receipt metadata revision is `bounded-pilot-v1-check-v2`,
 distinct from pilot-v2 execution authority. New receipts bind the exact six-value
 sanitized environment and sandbox profile bytes used for the checker, plus the
@@ -205,6 +205,7 @@ on fresh owned copies. A pre-execution pathname hash is not atomic exec attestat
 dynamic libraries/sysroot, compiler-version preflight bounds, broader private-artifact
 permissions and startup-network observation remain separate gaps. This repair neither
 runs the original calibration harness nor accepts or funds pilot v2/T006.
+[Qualification evidence](../../../docs/validation.md#pilot-checker-provenance-and-retained-diagnostics--2026-11-11); broader v2 freeze requirements remain.
 
 Preserve v1's original failures and interpretation. Its two blocked `read .` calls
 remain constraint violations with the owner's accepted oracle outcomes. V2's task

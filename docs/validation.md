@@ -301,6 +301,73 @@ red/green logs, final gate receipt and a 340-file SHA-256 evidence snapshot, is 
 `runs/store-lock-2026-11-11/`; the original
 gate logs and receipt remain in `runs/t010-lexical-2026-11-11/gates-retained*`.
 
+## Pilot checker provenance and retained diagnostics — 2026-11-11
+
+**PASS at the selected local checker boundary.** Pilot v2/T006 remain unfunded and unaccepted.
+Production `351f638dce5cc2aa245653ad969df2357b6eed87` follows `ac0850cba7409bdb13914461a07ac645c1266bad`;
+final gate candidate `1f434cae92bd48e60f5dad0b235b8a3ca637e59f` changes only the declared test cleanup conditional.
+Exact frozen policy/pins modules and v1 contract are unchanged. Required metadata
+`bounded-pilot-v1-check-v2` binds exact sanitized environment/SBPL, fresh executable observations
+and complete private stderr files/lengths/digests. Legacy fields receive no defaults. Capped partial
+capture faults halt; complete nonzero checks remain ordinary Fail. One deadline covers process/readers.
+
+| Original focused command | Passed / failed / ignored | Actual / expected exit | Seconds | Evidence |
+| --- | ---: | ---: | ---: | --- |
+| `green-actual-producer` | 1/0/0 | 0/0 | 4.257 | green |
+| `green-actual-producer-final` | 1/0/0 | 0/0 | 4.123 | green |
+| `green-full-host-suite` | 22/8/2 | 101/0 | 221.768 | retained failure |
+| `green-full-host-suite-retry` | 30/0/2 | 0/0 | 250.458 | green |
+| `green-unit` | 76/1/0 | 101/0 | 35.005 | retained failure |
+| `green-unit-final` | 77/0/0 | 0/0 | 34.359 | green |
+| `green-unit-retry` | 77/0/0 | 0/0 | 34.999 | green |
+| `red-compiler` | 0/1/0 | 101/101 | 30.388 | expected red |
+| `red-environment` | 0/1/0 | 101/101 | 31.871 | expected red |
+| `red-kind` | 0/1/0 | 101/101 | 31.563 | expected red |
+| `red-oracle-executable` | 0/1/0 | 101/101 | 31.821 | expected red |
+| `red-pipe-deadline` | 0/1/0 | 101/101 | 35.320 | expected red |
+| `red-producer-environment` | 0/1/0 | 101/101 | 17.787 | expected red |
+| `red-profile` | 0/1/0 | 101/101 | 33.822 | expected red |
+| `red-special-mode` | 0/1/0 | 101/101 | 30.699 | expected red |
+| `red-stderr-cap` | 0/1/0 | 101/101 | 31.218 | expected red |
+| `red-stderr-file` | 0/1/0 | 101/101 | 31.087 | expected red |
+| `red-stderr-read` | 0/1/0 | 101/101 | 31.284 | expected red |
+
+Initial unit failure passed deadline/group cleanup but retained 15-byte stderr with a complete
+filename after cleanup EOF; stopped-group output is now conservatively partial, with assertions unchanged.
+Initial host failures reached unadapted fixture roots (0755 versus 0700), before intended assertions;
+eight fresh-directory sites now establish 0700, with production/assertions unchanged. Both failures remain.
+All eleven selected reds reach assertions, restore exact source and precede final greens. The pipe
+control gets err() None before its later two-second assertion; producer-environment completes four
+zero-exit steps then rejects the emptied receipt map, before the negative phase. Neither proves a
+child-environment syscall trace or compiler replacement. Expected-red success is not acceptance.
+Consumer/file, owned-process and actual compiler/oracle evidence remain distinct. The producer uses
+fresh owned five-file copies; final readback retains 34 regular private files. Four positive steps exit zero;
+one new compile-error step exits 1 without a checker. Complete stderr: 0/0/457/0 positive / 230
+negative bytes, all 0600, with the public negative marker. Exact environment/profile/digest metadata matches.
+Private diagnostic inspection found no unexpected error headers; raw diagnostics remain private.
+Inputs retain original candidate bytes/mode/mtime/inode, oracle/historical stdout bytes, owned bytes/modes
+and compiler pin. Original oracle mode was not compared; no new stdout length is claimed. The full host
+file ignores actual-producer/private-full-pipeline tests; actual producer is separately selected. No calibration rerun.
+
+Original gates on `351f638` FAILED: only pilot-clippy exit 101 (two collapsible_if findings in
+test cleanup); seven exits zero. Tests 1,311/0/34, 21 recovery checks, 77 pilot pass. Gates 619.161 s;
+original stage closed failed at 1941.598/2,400 s, with no extension. A separate 1,800-second
+lint continuation preserves exact reverse-replacement equality, production prefix, other three source files
+and all assertions. No new focused run was required; the fresh pilot-unit gate exercises cleanup again.
+Fresh eight gates PASS in 638.859 s; default 1311/0/34, pilot 77/0/0
+passed/failed/ignored plus 21 recovery checks. Continuation shared time 755.163/1,800 s.
+Both stages retain 120-second cleanup reserves, one heavy job and $0 spend; Rust/Cargo 1.97.1 and
+actual 1.90.0 use SDK 26.5. Every observed command exits naturally, without forced cleanup or owned survivors.
+Focused sampled individual RSS max 2,146,254,848 B, free min 268,272,418,816 B,
+109 misses. Original gates: RSS 1,407,909,888 B, free 265,131,134,976 B, 1415 misses;
+continuation: RSS 2,114,453,504 B, free 265,360,961,536 B, 1387 misses. Bounds held; not true peaks.
+
+Private owner: `runs/pilot-checker-provenance-2026-11-11/`, including immutable original pins/results,
+safe command/readback/control metadata, both corrections and `lint-continuation/` protocol/equivalence/gates.
+Prehash/exec remains non-atomic; dynamic libraries/sysroot, compiler-version preflight bounds,
+broader permissions and startup-network capture remain open.
+No current-host/provider compatibility, private full-pipeline/agent/economics or pilot-v2/T006 acceptance follows.
+
 ## Pilot checker completion and artifact binding — 2026-11-11
 
 **PASS at the selected local checker boundary.** Pilot v2/T006 remain unfunded and unaccepted.
