@@ -146,8 +146,126 @@ fn assert_absent_under(dir: &Path, needle: &str) {
     }
 }
 
+// Expected values are independently spelled out for the producer/consumer tests.
+// No ambient environment values, private credential or private source is read.
+fn checker_expected_environment(root: &Path) -> std::collections::BTreeMap<String, String> {
+    let root = root.to_str().unwrap();
+    [
+        ("HOME", format!("{root}/home")),
+        ("LANG", "C".into()),
+        ("PATH", "/usr/bin:/bin".into()),
+        ("TMPDIR", format!("{root}/tmp/")),
+        ("XDG_CONFIG_HOME", format!("{root}/home/.config")),
+        ("XDG_DATA_HOME", format!("{root}/home/.local/share")),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.into(), v))
+    .collect()
+}
+
+fn checker_account_home() -> PathBuf {
+    // SAFETY: caller-owned buffers, with all pointers checked before use.
+    unsafe {
+        let mut pwd: libc::passwd = std::mem::zeroed();
+        let mut buf = vec![0 as libc::c_char; 16 * 1024];
+        let mut out: *mut libc::passwd = std::ptr::null_mut();
+        assert_eq!(
+            libc::getpwuid_r(
+                libc::getuid(),
+                &mut pwd,
+                buf.as_mut_ptr(),
+                buf.len(),
+                &mut out
+            ),
+            0
+        );
+        assert!(!out.is_null() && !pwd.pw_dir.is_null());
+        let home = std::ffi::CStr::from_ptr(pwd.pw_dir).to_str().unwrap();
+        std::fs::canonicalize(home).unwrap()
+    }
+}
+
+fn checker_expected_profile(root: &Path) -> String {
+    let root = root.to_str().unwrap();
+    let home = checker_account_home();
+    let home = home.to_str().unwrap();
+    format!(
+        "(version 1)(allow default)(deny network*)\
+         (deny file-read-data (subpath \"{home}\"))(deny file-write* (subpath \"{home}\"))\
+         (deny file-write* (subpath \"/private/tmp\"))(deny file-write* (subpath \"/private/var/folders\"))\
+         (allow file-read-data (subpath \"{root}\"))(allow file-write* (subpath \"{root}\"))"
+    )
+}
+
+fn checker_assert_diagnostics(receipt: &IndependentCheckReceipt) {
+    use std::os::unix::fs::MetadataExt;
+    let root = &receipt.checker_root;
+    assert_eq!(receipt.kind, "bounded-pilot-v1-check-v2");
+    assert_eq!(receipt.environment, checker_expected_environment(root));
+    assert_eq!(receipt.sandbox_profile, checker_expected_profile(root));
+    assert_eq!(receipt.compiler, Path::new(policy::RUSTC));
+    assert_eq!(receipt.compiler_sha256, policy::RUSTC_SHA256);
+    for directory in [root.clone(), root.join("diagnostics")] {
+        let meta = std::fs::symlink_metadata(directory).unwrap();
+        assert!(meta.is_dir());
+        assert_eq!(meta.mode() & 0o7777, 0o700);
+        assert_eq!(meta.uid(), unsafe { libc::getuid() });
+    }
+    for step in &receipt.steps {
+        assert_eq!(
+            step.stderr_path,
+            format!("diagnostics/{}.stderr", step.step)
+        );
+        let path = root.join(&step.stderr_path);
+        let meta = std::fs::symlink_metadata(&path).unwrap();
+        assert!(meta.is_file() && !meta.file_type().is_symlink());
+        assert_eq!(meta.mode() & 0o7777, 0o600);
+        assert_eq!(meta.uid(), unsafe { libc::getuid() });
+        let bytes = std::fs::read(path).unwrap();
+        assert!(bytes.len() <= 1_048_576);
+        assert_eq!(step.stderr_bytes, bytes.len() as u64);
+        assert_eq!(step.stderr_sha256, pilot_capture::sha256_hex(&bytes));
+        let executable = if step.step == "oracle_run" {
+            assert_eq!(step.artifacts.len(), 1);
+            step.artifacts[0].1.as_str()
+        } else {
+            policy::RUSTC_SHA256
+        };
+        assert_eq!(step.executable_sha256, executable);
+    }
+}
+
+// The receipt fixture owns this fresh directory; create it with the same
+// declared privacy as the real checker instead of inheriting an ambient mask.
+fn private_checker_tempdir() -> tempfile::TempDir {
+    use std::os::unix::fs::PermissionsExt;
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    directory
+}
+
 fn fixture_receipt(capture: &pilot_capture::SlotCapture, root: &Path) -> IndependentCheckReceipt {
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt};
     let root_s = root.to_str().unwrap();
+    let diagnostics = root.join("diagnostics");
+    if !diagnostics.exists() {
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&diagnostics)
+            .unwrap();
+    }
+    assert_eq!(
+        std::fs::symlink_metadata(&diagnostics).unwrap().mode() & 0o7777,
+        0o700
+    );
+    for (name, _) in policy::CHECK_RECIPE {
+        let path = diagnostics.join(format!("{name}.stderr"));
+        if path.exists() {
+            assert_eq!(std::fs::read(path).unwrap(), b"");
+        } else {
+            private_fixture_file(&path, b"");
+        }
+    }
     let steps = policy::CHECK_RECIPE
         .iter()
         .map(|(name, argv)| CheckStep {
@@ -163,6 +281,13 @@ fn fixture_receipt(capture: &pilot_capture::SlotCapture, root: &Path) -> Indepen
             } else {
                 pilot_capture::sha256_hex(name.as_bytes())
             },
+            executable_sha256: if *name == "oracle_run" {
+                pilot_capture::sha256_hex(b"owned synthetic checker image; never executed")
+            } else {
+                policy::RUSTC_SHA256.into()
+            },
+            stderr_path: format!("diagnostics/{name}.stderr"),
+            stderr_bytes: 0,
             stderr_sha256: pilot_capture::sha256_hex(b""),
             artifacts: match *name {
                 "noalloc_compile" => vec![(
@@ -183,6 +308,7 @@ fn fixture_receipt(capture: &pilot_capture::SlotCapture, root: &Path) -> Indepen
         })
         .collect();
     IndependentCheckReceipt {
+        kind: "bounded-pilot-v1-check-v2".into(),
         slot_id: capture.slot_id.clone(),
         checker_root: root.to_path_buf(),
         candidate: capture.candidate_inventory.clone(),
@@ -190,7 +316,8 @@ fn fixture_receipt(capture: &pilot_capture::SlotCapture, root: &Path) -> Indepen
         compiler: policy::RUSTC.into(),
         compiler_sha256: policy::RUSTC_SHA256.into(),
         compiler_version: "rustc 1.97.1 (fixture)".into(),
-        env_names: vec!["PATH".into(), "HOME".into()],
+        environment: checker_expected_environment(root),
+        sandbox_profile: checker_expected_profile(root),
         steps,
         fixture: true,
     }
@@ -776,7 +903,7 @@ fn coding_slot_tool_followup_seal_and_order() {
         session.run_slot(slot(&e, "1A", TASK)).unwrap_err().code,
         "previous_slot_unsealed"
     );
-    let checker = tempfile::tempdir().unwrap();
+    let checker = private_checker_tempdir();
     let root = std::fs::canonicalize(checker.path()).unwrap();
     let sealed = session
         .seal_slot(&capture, &fixture_receipt(&capture, &root))
@@ -821,7 +948,7 @@ fn forbidden_edit_is_blocked_and_recorded_without_effect() {
     assert_eq!(sources(&e.workspace), before);
     // An independent check whose recipe drifted is a provenance fault that
     // halts the session; it is never a correctness result.
-    let checker = tempfile::tempdir().unwrap();
+    let checker = private_checker_tempdir();
     let root = std::fs::canonicalize(checker.path()).unwrap();
     let mut drifted = fixture_receipt(&capture, &root);
     drifted.steps[1].argv.retain(|a| a != "--cfg");
@@ -1130,7 +1257,7 @@ fn truncated_all_success_check_receipt_is_a_provenance_fault() {
     let mut session =
         CaptureSession::open(verification(&e, &fx, Scope::Coding, Default::default())).unwrap();
     let capture = session.run_slot(slot(&e, "1B", TASK)).unwrap();
-    let checker = tempfile::tempdir().unwrap();
+    let checker = private_checker_tempdir();
     let root = std::fs::canonicalize(checker.path()).unwrap();
     let mut truncated = fixture_receipt(&capture, &root);
     truncated.steps.truncate(2);
@@ -2154,7 +2281,7 @@ fn oracle_zero_exit_without_exact_completion_is_a_terminal_provenance_fault() {
         let e = env();
         let fx = Fixture::start(vec![Reply::Count(30_721)]);
         let (session, capture) = oracle_awaiting_capture(&e, &fx);
-        let checker = tempfile::tempdir().unwrap();
+        let checker = private_checker_tempdir();
         let mut receipt =
             oracle_bound_fixture_receipt(&capture, &std::fs::canonicalize(checker.path()).unwrap());
         receipt.steps[3].stdout_sha256 = pilot_capture::sha256_hex(stdout);
@@ -2177,7 +2304,7 @@ fn oracle_successful_steps_require_the_exact_named_artifact() {
         let e = env();
         let fx = Fixture::start(vec![Reply::Count(30_721)]);
         let (session, capture) = oracle_awaiting_capture(&e, &fx);
-        let checker = tempfile::tempdir().unwrap();
+        let checker = private_checker_tempdir();
         let mut receipt =
             oracle_bound_fixture_receipt(&capture, &std::fs::canonicalize(checker.path()).unwrap());
         if wrong_name {
@@ -2202,7 +2329,7 @@ fn oracle_executed_checker_must_match_the_compiled_checker() {
     let e = env();
     let fx = Fixture::start(vec![Reply::Count(30_721)]);
     let (session, capture) = oracle_awaiting_capture(&e, &fx);
-    let checker = tempfile::tempdir().unwrap();
+    let checker = private_checker_tempdir();
     let mut receipt =
         oracle_bound_fixture_receipt(&capture, &std::fs::canonicalize(checker.path()).unwrap());
     receipt.steps[3].artifacts[0].1 =
@@ -2224,7 +2351,7 @@ fn oracle_bound_success_and_observed_nonzero_keep_distinct_outcomes() {
         let e = env();
         let fx = Fixture::start(vec![Reply::Count(30_721)]);
         let (mut session, capture) = oracle_awaiting_capture(&e, &fx);
-        let checker = tempfile::tempdir().unwrap();
+        let checker = private_checker_tempdir();
         let mut receipt =
             oracle_bound_fixture_receipt(&capture, &std::fs::canonicalize(checker.path()).unwrap());
         if nonzero {
@@ -2368,16 +2495,14 @@ fn oracle_actual_producer_binds_completion_binary_and_owned_sources() {
             .collect()
     };
     let unchanged_inputs = || {
-        assert_eq!(
-            std::fs::read(&oracle).unwrap(),
-            oracle_before,
-            "original oracle bytes changed"
+        assert!(
+            std::fs::read(&oracle).unwrap() == oracle_before,
+            "original oracle bytes changed; raw private bytes withheld"
         );
         for (rel, bytes) in &source_before {
-            assert_eq!(
-                &std::fs::read(source.join(rel)).unwrap(),
-                bytes,
-                "input candidate changed: {rel}"
+            assert!(
+                &std::fs::read(source.join(rel)).unwrap() == bytes,
+                "input candidate changed: {rel}; raw private bytes withheld"
             );
         }
     };
@@ -2396,8 +2521,8 @@ fn oracle_actual_producer_binds_completion_binary_and_owned_sources() {
         &owned.join("positive-receipt.json"),
         &serde_json::to_vec_pretty(&positive_receipt).unwrap(),
     );
-    // Check input identity before the new artifact assertion, including on a
-    // baseline red where oracle_run has no pre-execution artifact observation.
+    // Check input identity before the provenance/diagnostic assertions, including
+    // on a deliberately disabled-guard or producer-observation control.
     unchanged_inputs();
     assert_eq!(inventory(&positive), positive_before);
     assert_eq!(inventory(&positive_checker), positive_before);
@@ -2417,6 +2542,7 @@ fn oracle_actual_producer_binds_completion_binary_and_owned_sources() {
         pilot_capture::sha256_hex(&std::fs::read(policy::RUSTC).unwrap()),
         policy::RUSTC_SHA256
     );
+    checker_assert_diagnostics(&positive_receipt);
     assert!(!positive_receipt.fixture);
     assert_eq!(positive_receipt.steps.len(), 4);
     let checker_text = positive_checker.to_str().unwrap();
@@ -2438,8 +2564,8 @@ fn oracle_actual_producer_binds_completion_binary_and_owned_sources() {
         assert!(!step.timed_out);
     }
     assert_eq!(positive_receipt.steps[3].stdout_sha256, EXPECTED_COMPLETION);
-    // Require an actual observation of the executed image, not just the
-    // compile artifact. This is the intended baseline producer-red boundary.
+    // Preserve the accepted actual pre-execution observation and its binding
+    // to the compile output while extending diagnostic/provenance coverage.
     let executed = &positive_receipt.steps[3].artifacts;
     assert_eq!(
         executed.len(),
@@ -2489,6 +2615,14 @@ fn oracle_actual_producer_binds_completion_binary_and_owned_sources() {
         pilot_capture::sha256_hex(&std::fs::read(negative_checker.join("check.rs")).unwrap()),
         EXPECTED_ORACLE
     );
+    checker_assert_diagnostics(&negative_receipt);
+    let negative_stderr =
+        std::fs::read(negative_checker.join(&negative_receipt.steps[0].stderr_path)).unwrap();
+    let marker = b"owned checker-producer regression";
+    assert!(
+        negative_stderr.windows(marker.len()).any(|w| w == marker),
+        "the actual compiler stderr must retain the owned compile_error marker"
+    );
     assert!(!negative_receipt.fixture);
     assert_eq!(negative_receipt.steps.len(), 1);
     let failed = &negative_receipt.steps[0];
@@ -2508,4 +2642,21 @@ fn oracle_actual_producer_binds_completion_binary_and_owned_sources() {
         }))
         .unwrap(),
     );
+}
+
+#[test]
+fn checker_stderr_tampering_is_terminal_before_another_fixture_request() {
+    require_host();
+    let e = env();
+    let fx = Fixture::start(vec![Reply::Count(30_721)]);
+    let (session, capture) = oracle_awaiting_capture(&e, &fx);
+    let checker = private_checker_tempdir();
+    let root = std::fs::canonicalize(checker.path()).unwrap();
+    let receipt = fixture_receipt(&capture, &root);
+    checker_assert_diagnostics(&receipt);
+    private_fixture_file(
+        &root.join(&receipt.steps[0].stderr_path),
+        b"owned changed diagnostic",
+    );
+    oracle_assert_terminal_refusal(session, &capture, &receipt, &e, &fx, "check_stderr_unbound");
 }

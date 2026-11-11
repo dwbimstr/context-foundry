@@ -177,6 +177,35 @@ synthetic consumer tests from the real fixed compiler/oracle on new owned copies
 it does not rerun the original calibration harness or accept pilot v2/T006.
 [Qualification evidence](../../../docs/validation.md#pilot-checker-completion-and-artifact-binding--2026-11-11); the broader v2 freeze requirements remain.
 
+**Selected checker provenance and diagnostics repair, 2026-11-11 — not yet qualified.**
+The required checker receipt metadata revision is `bounded-pilot-v1-check-v2`,
+distinct from pilot-v2 execution authority. New receipts bind the exact six-value
+sanitized environment and sandbox profile bytes used for the checker, plus the
+measured compiler header and fresh pre-execution executable digest at each step.
+The copied oracle is rehashed before oracle compilation. The consumer requires
+these exact bindings; legacy or incomplete receipts cannot acquire them through
+serde defaults or historical-file rewrites. Frozen v1 policy/history stay unchanged.
+
+Retain each complete stderr as the private `diagnostics/<step>.stderr` artifact,
+including empty output, with required relative path and byte count beside its
+existing digest. The consumer checks the exact named file without following links,
+its owner/type/0600 mode, bounded length and digest. Limit stderr to 1 MiB per step
+and 4 MiB across the four-step recipe. Overflow or read failure retains at most the
+cap as an explicitly named private partial file and digest when persistence succeeds,
+then returns a terminal capture error; it cannot become an ordinary checker failure.
+Failure to persist diagnostics remains a failure. Complete observed nonzero checks
+still produce ordinary Fail. Do not emit raw diagnostics in shared output or Git.
+
+One existing absolute checker deadline covers the process and both pipe readers,
+including a leader that exits while an owned descendant keeps a pipe open. Capture
+failure or deadline stops the owned group, joins the readers and leaves later steps
+and slots unstarted through the existing halt owner. Qualification separates real
+consumer/file checks, owned-process lifecycle fixtures, and the fixed compiler/oracle
+on fresh owned copies. A pre-execution pathname hash is not atomic exec attestation;
+dynamic libraries/sysroot, compiler-version preflight bounds, broader private-artifact
+permissions and startup-network observation remain separate gaps. This repair neither
+runs the original calibration harness nor accepts or funds pilot v2/T006.
+
 Preserve v1's original failures and interpretation. Its two blocked `read .` calls
 remain constraint violations with the owner's accepted oracle outcomes. V2's task
 manifest must distinguish blocked out-of-scope reads, forbidden tools and actual

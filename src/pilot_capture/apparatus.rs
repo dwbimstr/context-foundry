@@ -10,10 +10,13 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::Read;
+use std::os::fd::AsRawFd;
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, ExitStatus, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -21,9 +24,9 @@ use serde_json::Value;
 
 use super::protocol::FaultClass;
 use super::{
-    CaptureFault, CheckStep, IndependentCheckReceipt, LaunchManifest, ManifestSlot, ManifestView,
-    PinEntry, PreparedSlot, PreviewAdmission, RenderCommitments, create_private_dir, policy,
-    render_binding, sha256_hex, write_private_new,
+    CHECK_RECEIPT_KIND, CHECK_STDERR_MAX_BYTES, CaptureFault, CheckStep, IndependentCheckReceipt,
+    LaunchManifest, ManifestSlot, ManifestView, PinEntry, PreparedSlot, PreviewAdmission,
+    RenderCommitments, create_private_dir, policy, render_binding, sha256_hex, write_private_new,
 };
 
 /// Frozen input pins (contract §2) beyond those in [`policy`].
@@ -924,15 +927,6 @@ pub fn build_manifests(
 // The contained independent checker (contract §9).
 // ---------------------------------------------------------------------------
 
-const CHECK_ENV_NAMES: [&str; 6] = [
-    "HOME",
-    "LANG",
-    "PATH",
-    "TMPDIR",
-    "XDG_CONFIG_HOME",
-    "XDG_DATA_HOME",
-];
-
 fn sbpl(path: &Path) -> Result<String, CaptureFault> {
     let text = path.to_str().ok_or(fault(
         FaultClass::CheckerProvenance,
@@ -951,9 +945,9 @@ fn sbpl(path: &Path) -> Result<String, CaptureFault> {
     Ok(text.to_string())
 }
 
-/// The checker's sandbox: no network, the owner's home unreadable and
-/// unwritable except the private checker root, no writes outside it.
-fn check_policy(root: &Path, real_home: &Path) -> Result<String, CaptureFault> {
+/// The existing checker sandbox bytes, also validated by the receipt owner.
+/// This binds the profile actually supplied; it is not an OS-jail attestation.
+pub(super) fn check_policy(root: &Path, real_home: &Path) -> Result<String, CaptureFault> {
     let (root, home) = (sbpl(root)?, sbpl(real_home)?);
     Ok(format!(
         "(version 1)(allow default)(deny network*)\
@@ -961,6 +955,21 @@ fn check_policy(root: &Path, real_home: &Path) -> Result<String, CaptureFault> {
          (deny file-write* (subpath \"/private/tmp\"))(deny file-write* (subpath \"/private/var/folders\"))\
          (allow file-read-data (subpath \"{root}\"))(allow file-write* (subpath \"{root}\"))"
     ))
+}
+
+/// The complete sanitized environment supplied to each fixed checker step.
+pub(super) fn check_environment(root: &Path) -> Result<BTreeMap<String, String>, CaptureFault> {
+    let root = sbpl(root)?;
+    Ok([
+        ("HOME".into(), format!("{root}/home")),
+        ("LANG".into(), "C".into()),
+        ("PATH".into(), "/usr/bin:/bin".into()),
+        ("TMPDIR".into(), format!("{root}/tmp/")),
+        ("XDG_CONFIG_HOME".into(), format!("{root}/home/.config")),
+        ("XDG_DATA_HOME".into(), format!("{root}/home/.local/share")),
+    ]
+    .into_iter()
+    .collect())
 }
 
 /// Hash only a completely observed checker stream. A read failure must
@@ -983,12 +992,260 @@ fn check_output_sha256(mut pipe: impl Read) -> Result<String, CaptureFault> {
         .collect())
 }
 
+/// Retain at most the selected cap; an error carries only its observed prefix.
+fn check_stderr_bytes(mut pipe: impl Read) -> Result<Vec<u8>, (CaptureFault, Vec<u8>)> {
+    let mut bytes = Vec::new();
+    let mut buf = [0u8; 16 * 1024];
+    loop {
+        let n = match pipe.read(&mut buf) {
+            Ok(n) => n,
+            Err(_) => {
+                return Err((
+                    fault(FaultClass::CheckerProvenance, "check_stderr_read_failed"),
+                    bytes,
+                ));
+            }
+        };
+        if n == 0 {
+            return Ok(bytes);
+        }
+        let remaining = CHECK_STDERR_MAX_BYTES - bytes.len();
+        bytes.extend_from_slice(&buf[..n.min(remaining)]);
+        if n > remaining {
+            return Err((
+                fault(FaultClass::CheckerProvenance, "check_stderr_overflow"),
+                bytes,
+            ));
+        }
+    }
+}
+
+/// Poll only these owned pipe descriptors, so cancellation also bounds reads
+/// after the leader exits while an owned descendant still holds a pipe open.
+struct CheckPipe<R> {
+    pipe: R,
+    cancelled: Arc<AtomicBool>,
+}
+
+impl<R: Read + AsRawFd> Read for CheckPipe<R> {
+    fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+        if bytes.is_empty() {
+            return Ok(0);
+        }
+        loop {
+            if self.cancelled.load(Ordering::Acquire) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Interrupted,
+                    "checker capture cancelled",
+                ));
+            }
+            let mut fd = libc::pollfd {
+                fd: self.pipe.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            // SAFETY: fd points to one initialized pollfd for this live owned
+            // descriptor; poll neither takes ownership nor changes the fd.
+            let ready = unsafe { libc::poll(&mut fd, 1, 10) };
+            if ready < 0 {
+                let error = std::io::Error::last_os_error();
+                if error.kind() == std::io::ErrorKind::Interrupted {
+                    continue;
+                }
+                return Err(error);
+            }
+            if ready == 0 {
+                continue;
+            }
+            if fd.revents & (libc::POLLIN | libc::POLLHUP) != 0 {
+                // This thread is the sole reader of this pipe. Read only after
+                // readiness/HUP; HUP can still have buffered bytes before EOF.
+                return self.pipe.read(bytes);
+            }
+            return Err(std::io::Error::other("checker pipe unavailable"));
+        }
+    }
+}
+
+#[derive(Debug)]
+struct CheckProcessOutput {
+    status: ExitStatus,
+    stdout_sha256: String,
+    stderr_sha256: String,
+    stderr_path: String,
+    stderr_bytes: u64,
+}
+
+fn retain_check_stderr(
+    root: &Path,
+    name: &str,
+    bytes: &[u8],
+    partial: bool,
+) -> Result<String, CaptureFault> {
+    let suffix = if partial {
+        ".partial.stderr"
+    } else {
+        ".stderr"
+    };
+    let relative = format!("diagnostics/{name}{suffix}");
+    write_private_new(&root.join(&relative), bytes)?;
+    if partial {
+        write_private_new(
+            &root.join(format!("{relative}.sha256")),
+            format!("{}\n", sha256_hex(bytes)).as_bytes(),
+        )?;
+    }
+    super::fsync_dir(&root.join("diagnostics"))?;
+    Ok(relative)
+}
+
+/// Execute one actual fixed checker step. The caller supplies the same absolute
+/// deadline to all four steps; it covers the leader and both pipe readers.
+fn run_check_step(
+    cmd: &mut Command,
+    root: &Path,
+    name: &str,
+    deadline: Instant,
+) -> Result<CheckProcessOutput, CaptureFault> {
+    let prov = |code| fault(FaultClass::CheckerProvenance, code);
+    if !policy::CHECK_RECIPE.iter().any(|(step, _)| *step == name) {
+        return Err(prov("check_recipe_mismatch"));
+    }
+    super::validate_check_directory(root)?;
+    super::validate_check_directory(&root.join("diagnostics"))?;
+    if Instant::now() >= deadline {
+        return Err(prov("post_check_wall_exceeded"));
+    }
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .process_group(0);
+    let mut child = cmd.spawn().map_err(|_| prov("check_spawn_failed"))?;
+    let pgid = child.id() as i32;
+    let stop_group = || {
+        // SAFETY: only the process group created above for this owned child is
+        // signalled. Keep this group cleanup even after its leader has exited.
+        unsafe {
+            libc::kill(-pgid, libc::SIGKILL);
+        }
+    };
+    let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
+        stop_group();
+        let _ = child.wait();
+        return Err(prov("check_spawn_failed"));
+    };
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let (send_fault, faults) = std::sync::mpsc::channel();
+    let out_cancelled = cancelled.clone();
+    let out_fault = send_fault.clone();
+    let out_t = std::thread::spawn(move || {
+        let output = check_output_sha256(CheckPipe {
+            pipe: stdout,
+            cancelled: out_cancelled,
+        });
+        if let Err(error) = output.as_ref() {
+            let _ = out_fault.send(*error);
+        }
+        output
+    });
+    let err_cancelled = cancelled.clone();
+    let err_t = std::thread::spawn(move || {
+        let output = check_stderr_bytes(CheckPipe {
+            pipe: stderr,
+            cancelled: err_cancelled,
+        });
+        if let Err((error, _)) = output.as_ref() {
+            let _ = send_fault.send(*error);
+        }
+        output
+    });
+    let mut status = None;
+    let mut first_fault = None;
+    let mut stopped = false;
+    loop {
+        if first_fault.is_none() {
+            first_fault = faults.try_recv().ok();
+        }
+        if first_fault.is_none() && status.is_none() {
+            match child.try_wait() {
+                Ok(observed) => status = observed,
+                Err(_) => first_fault = Some(prov("check_wait_failed")),
+            }
+        }
+        if first_fault.is_none() && Instant::now() >= deadline {
+            first_fault = Some(prov("post_check_wall_exceeded"));
+        }
+        if first_fault.is_some() {
+            cancelled.store(true, Ordering::Release);
+            stop_group();
+            let _ = child.wait();
+            stopped = true;
+            break;
+        }
+        if status.is_some() && out_t.is_finished() && err_t.is_finished() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    // Both readers use cancellable polling; always join both before returning,
+    // including on timeout or an earlier reader failure.
+    let stdout = out_t.join();
+    let stderr = err_t.join();
+    if first_fault.is_none() {
+        first_fault = faults.try_recv().ok();
+    }
+    let (stderr_bytes, partial) = match stderr {
+        // Killing the group can produce EOF before a reader observes cancellation.
+        // Stopped capture is conservatively partial, never certified by cleanup EOF.
+        Ok(Ok(bytes)) => (bytes, stopped),
+        Ok(Err((error, bytes))) => {
+            first_fault.get_or_insert(error);
+            (bytes, true)
+        }
+        Err(_) => {
+            if !stopped {
+                stop_group();
+                let _ = child.wait();
+            }
+            return Err(first_fault.unwrap_or(prov("check_output_unbound")));
+        }
+    };
+    let stdout = match stdout {
+        Ok(result) => result,
+        Err(_) => Err(prov("check_output_unbound")),
+    };
+    if let Err(error) = stdout.as_ref() {
+        first_fault.get_or_insert(*error);
+    }
+    if first_fault.is_some() && !stopped {
+        stop_group();
+        let _ = child.wait();
+    }
+    // Retain the complete bytes or explicitly labelled partial prefix even if
+    // another capture fault prevents a normal receipt. Persistence failure is
+    // itself an error; never claim an artifact was retained when it was not.
+    let stderr_path = retain_check_stderr(root, name, &stderr_bytes, partial)?;
+    if let Some(error) = first_fault {
+        return Err(error);
+    }
+    let stdout_sha256 = stdout?;
+    Ok(CheckProcessOutput {
+        status: status.ok_or(prov("check_wait_failed"))?,
+        stdout_sha256,
+        stderr_sha256: sha256_hex(&stderr_bytes),
+        stderr_path,
+        stderr_bytes: stderr_bytes.len() as u64,
+    })
+}
+
 /// Copy the stopped host's candidate and the private oracle into a new
 /// checker root outside agent access, then run the accepted four-step recipe
 /// under containment with a minimal no-credential environment and the 60 s
 /// post-check ceiling. Untrusted candidate code only ever runs inside the
 /// sandbox. The result binds slot, candidate, oracle, compiler, argv,
-/// environment names, exits and output/artifact digests.
+/// exact environment/profile, exits and retained output/artifact digests.
+/// Capture failures retain bounded partial stderr and return Err; only complete
+/// output can be represented by a normal receipt.
 pub fn run_independent_check(
     slot_id: &str,
     workspace: &Path,
@@ -1005,7 +1262,7 @@ pub fn run_independent_check(
     }
     create_private_dir(checker_root)?;
     let root = fs::canonicalize(checker_root).map_err(|_| prov("check_root_unresolvable"))?;
-    for d in ["src", "out", "home", "tmp"] {
+    for d in ["src", "out", "home", "tmp", "diagnostics"] {
         create_private_dir(&root.join(d))?;
     }
     let mut candidate = Vec::new();
@@ -1025,26 +1282,15 @@ pub fn run_independent_check(
         return Err(prov("check_oracle_changed"));
     }
     write_private_new(&root.join("check.rs"), &oracle_bytes)?;
-    let home = fs::canonicalize(std::env::var("HOME").unwrap_or_else(|_| "/".into()))
-        .unwrap_or_else(|_| PathBuf::from("/"));
-    let real_home = super::real_home_for_checks().unwrap_or(home);
+    let real_home = super::real_home_for_checks()?;
     let sandbox = check_policy(&root, &real_home)?;
-    let env: Vec<(&str, String)> = vec![
-        ("HOME", root.join("home").to_string_lossy().into_owned()),
-        ("LANG", "C".into()),
-        ("PATH", "/usr/bin:/bin".into()),
-        ("TMPDIR", format!("{}/", root.join("tmp").display())),
-        (
-            "XDG_CONFIG_HOME",
-            root.join("home/.config").to_string_lossy().into_owned(),
-        ),
-        (
-            "XDG_DATA_HOME",
-            root.join("home/.local/share")
-                .to_string_lossy()
-                .into_owned(),
-        ),
-    ];
+    let environment = check_environment(&root)?;
+    // This is the observed header value, not a copied policy constant. The
+    // compiler is freshly observed again immediately before each compile step.
+    let compiler_sha256 = file_sha256(Path::new(policy::RUSTC))?;
+    if compiler_sha256 != policy::RUSTC_SHA256 {
+        return Err(prov("check_compiler_changed"));
+    }
     let version = Command::new(policy::RUSTC)
         .arg("--version")
         .env_clear()
@@ -1052,7 +1298,7 @@ pub fn run_independent_check(
         .output()
         .map_err(|_| prov("check_compiler_unavailable"))?;
     let compiler_version = String::from_utf8_lossy(&version.stdout).trim().to_string();
-    if !compiler_version.starts_with(policy::RUSTC_VERSION_PREFIX) {
+    if !version.status.success() || !compiler_version.starts_with(policy::RUSTC_VERSION_PREFIX) {
         return Err(prov("check_compiler_changed"));
     }
     let root_text = root
@@ -1066,12 +1312,22 @@ pub fn run_independent_check(
             .iter()
             .map(|a| a.replace("<ROOT>", &root_text))
             .collect();
-        let left = deadline.saturating_duration_since(Instant::now());
         let started = Instant::now();
-        let executed_checker_sha256 = if name == "oracle_run" {
-            Some(file_sha256(&root.join("out/check")).map_err(|_| prov("check_artifact_unbound"))?)
+        if name == "oracle_compile"
+            && file_sha256(&root.join("check.rs")).map_err(|_| prov("check_oracle_changed"))?
+                != oracle_sha256
+        {
+            return Err(prov("check_oracle_changed"));
+        }
+        // Fresh pathname observations are not an atomic hash-and-exec binding.
+        let executable_sha256 = if name == "oracle_run" {
+            file_sha256(&root.join("out/check")).map_err(|_| prov("check_artifact_unbound"))?
         } else {
-            None
+            let observed = file_sha256(Path::new(policy::RUSTC))?;
+            if observed != compiler_sha256 {
+                return Err(prov("check_compiler_changed"));
+            }
+            observed
         };
         let mut cmd = Command::new("/usr/bin/sandbox-exec");
         cmd.arg("-p")
@@ -1079,42 +1335,9 @@ pub fn run_independent_check(
             .args(&argv)
             .current_dir(&root)
             .env_clear()
-            .envs(env.iter().map(|(k, v)| (*k, v.as_str())))
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .process_group(0);
-        let mut child = cmd.spawn().map_err(|_| prov("check_spawn_failed"))?;
-        let capture =
-            |pipe: Box<dyn Read + Send>| std::thread::spawn(move || check_output_sha256(pipe));
-        let out_t = capture(Box::new(
-            child.stdout.take().ok_or(prov("check_spawn_failed"))?,
-        ));
-        let err_t = capture(Box::new(
-            child.stderr.take().ok_or(prov("check_spawn_failed"))?,
-        ));
-        let pgid = child.id() as i32;
-        let mut timed_out = false;
-        let status = loop {
-            if let Ok(Some(s)) = child.try_wait() {
-                break s;
-            }
-            if started.elapsed() >= left {
-                timed_out = true;
-                // SAFETY: signalling our own child's process group.
-                unsafe {
-                    libc::kill(-pgid, libc::SIGKILL);
-                }
-                break child.wait().map_err(|_| prov("check_wait_failed"))?;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        };
-        // Reap both owned readers even when either output is incomplete.
-        let stdout = out_t.join();
-        let stderr = err_t.join();
-        let stdout_sha256 = stdout.map_err(|_| prov("check_output_unbound"))??;
-        let stderr_sha256 = stderr.map_err(|_| prov("check_output_unbound"))??;
-        let ok = status.code() == Some(0) && status.signal().is_none() && !timed_out;
+            .envs(&environment);
+        let output = run_check_step(&mut cmd, &root, name, deadline)?;
+        let ok = output.status.success();
         let artifact = |rel: &str| -> Result<Vec<(String, String)>, CaptureFault> {
             match fs::read(root.join(rel)) {
                 Ok(bytes) => Ok(vec![(rel.to_string(), sha256_hex(&bytes))]),
@@ -1126,20 +1349,20 @@ pub fn run_independent_check(
             "noalloc_compile" => artifact("out/librecords-noalloc.rlib")?,
             "alloc_compile" => artifact("out/librecords-alloc.rlib")?,
             "oracle_compile" => artifact("out/check")?,
-            "oracle_run" => vec![(
-                "out/check".into(),
-                executed_checker_sha256.ok_or(prov("check_artifact_unbound"))?,
-            )],
+            "oracle_run" => vec![("out/check".into(), executable_sha256.clone())],
             _ => Vec::new(),
         };
         steps.push(CheckStep {
             step: name.to_string(),
             argv,
-            exit: status.code(),
-            signal: status.signal(),
-            timed_out,
-            stdout_sha256,
-            stderr_sha256,
+            executable_sha256,
+            exit: output.status.code(),
+            signal: output.status.signal(),
+            timed_out: false,
+            stdout_sha256: output.stdout_sha256,
+            stderr_sha256: output.stderr_sha256,
+            stderr_path: output.stderr_path,
+            stderr_bytes: output.stderr_bytes,
             artifacts,
             wall_ms: started.elapsed().as_millis() as u64,
         });
@@ -1148,14 +1371,16 @@ pub fn run_independent_check(
         }
     }
     Ok(IndependentCheckReceipt {
+        kind: CHECK_RECEIPT_KIND.into(),
         slot_id: slot_id.to_string(),
         checker_root: root,
         candidate,
         oracle_sha256,
         compiler: PathBuf::from(policy::RUSTC),
-        compiler_sha256: policy::RUSTC_SHA256.into(),
+        compiler_sha256,
         compiler_version,
-        env_names: CHECK_ENV_NAMES.iter().map(|s| s.to_string()).collect(),
+        environment,
+        sandbox_profile: sandbox,
         steps,
         fixture: false,
     })
@@ -1606,7 +1831,17 @@ mod tests {
             CaptureSession, Counters, Disposition, Inner, Journal, Mode, Scope, SlotCapture,
             planned_slots, runtime,
         };
-        for producer_failure in [true, false] {
+        for failure in [
+            "stdout-read",
+            "stderr-read",
+            "stderr-overflow",
+            "stderr-persist",
+            "receipt-persist",
+            "stderr-halt-persist",
+            "refusal-persist",
+        ] {
+            eprintln!("owned checker chain case: {failure}");
+            let producer_failure = !matches!(failure, "receipt-persist" | "refusal-persist");
             let temp = tempfile::tempdir().unwrap();
             let root = PilotRoot::create(&temp.path().join("pilot")).unwrap();
             let run_dir = root.root.join("runs/owned-check-chain");
@@ -1614,7 +1849,11 @@ mod tests {
             let hosts_dir = run_dir.join("hosts");
             create_private_dir(&hosts_dir).unwrap();
             let journal_path = run_dir.join("journal.jsonl");
-            let mut journal = Journal::create(&journal_path, None).unwrap();
+            let mut journal = Journal::create(
+                &journal_path,
+                matches!(failure, "stderr-halt-persist" | "refusal-persist").then_some(1),
+            )
+            .unwrap();
             journal
                 .append(
                     "admitted",
@@ -1666,23 +1905,79 @@ mod tests {
                 host_wall_ms: 0,
                 prompt_status: None,
             };
+            if failure == "refusal-persist" {
+                session.inner.awaiting_seal = Some(capture.clone());
+            }
             let receipt_path = root.root.join("checks/1B-owned-capture.receipt.json");
             let (input, expected_class, expected_code) = if producer_failure {
-                let error = check_output_sha256(OraclePrefixThenError {
-                    prefix: std::io::Cursor::new(b"owned prefix before error".to_vec()),
-                })
-                .unwrap_err();
-                (
-                    Err(error),
-                    FaultClass::CheckerProvenance,
-                    "check_output_unbound",
-                )
+                let error = match failure {
+                    "stdout-read" => check_output_sha256(OraclePrefixThenError {
+                        prefix: std::io::Cursor::new(b"owned prefix before error".to_vec()),
+                    })
+                    .unwrap_err(),
+                    "stderr-read" | "stderr-halt-persist" | "stderr-overflow" => {
+                        let (error, bytes) = if failure == "stderr-overflow" {
+                            check_stderr_bytes(std::io::Cursor::new(vec![b'x'; 1_048_577]))
+                                .unwrap_err()
+                        } else {
+                            check_stderr_bytes(OraclePrefixThenError {
+                                prefix: std::io::Cursor::new(
+                                    b"owned stderr prefix before error".to_vec(),
+                                ),
+                            })
+                            .unwrap_err()
+                        };
+                        let diagnostics = root.root.join("checks/owned-stderr");
+                        create_private_dir(&diagnostics).unwrap();
+                        create_private_dir(&diagnostics.join("diagnostics")).unwrap();
+                        let relative =
+                            retain_check_stderr(&diagnostics, "noalloc_compile", &bytes, true)
+                                .unwrap();
+                        checker_assert_retained(&diagnostics, &relative, &bytes);
+                        checker_assert_retained(
+                            &diagnostics,
+                            &format!("{relative}.sha256"),
+                            format!("{}\n", sha256_hex(&bytes)).as_bytes(),
+                        );
+                        error
+                    }
+                    "stderr-persist" => {
+                        let diagnostics = root.root.join("checks/owned-stderr");
+                        create_private_dir(&diagnostics).unwrap();
+                        create_private_dir(&diagnostics.join("diagnostics")).unwrap();
+                        let path = diagnostics.join("diagnostics/noalloc_compile.stderr");
+                        write_private_new(&path, b"owned sentinel").unwrap();
+                        let error = retain_check_stderr(
+                            &diagnostics,
+                            "noalloc_compile",
+                            b"new stderr",
+                            false,
+                        )
+                        .unwrap_err();
+                        assert_eq!(fs::read(path).unwrap(), b"owned sentinel");
+                        error
+                    }
+                    _ => unreachable!(),
+                };
+                let expected = match failure {
+                    "stdout-read" => (FaultClass::CheckerProvenance, "check_output_unbound"),
+                    "stderr-read" | "stderr-halt-persist" => {
+                        (FaultClass::CheckerProvenance, "check_stderr_read_failed")
+                    }
+                    "stderr-overflow" => (FaultClass::CheckerProvenance, "check_stderr_overflow"),
+                    "stderr-persist" => (FaultClass::Persistence, "private_file_create_failed"),
+                    _ => unreachable!(),
+                };
+                (Err(error), expected.0, expected.1)
             } else {
                 // Exclusive receipt creation must fail without replacing this
                 // owned sentinel. The real helper must halt on this path too.
-                create_private_dir(&receipt_path).unwrap();
+                if failure == "receipt-persist" {
+                    create_private_dir(&receipt_path).unwrap();
+                }
                 (
                     Ok(IndependentCheckReceipt {
+                        kind: "bounded-pilot-v1-check-v2".into(),
                         slot_id: capture.slot_id.clone(),
                         checker_root: root.root.join("checks/unused-checker"),
                         candidate: Vec::new(),
@@ -1690,12 +1985,17 @@ mod tests {
                         compiler: PathBuf::from(policy::RUSTC),
                         compiler_sha256: policy::RUSTC_SHA256.into(),
                         compiler_version: "rustc 1.97.1 (owned fixture; not executed)".into(),
-                        env_names: Vec::new(),
+                        environment: std::collections::BTreeMap::new(),
+                        sandbox_profile: String::new(),
                         steps: Vec::new(),
                         fixture: true,
                     }),
                     FaultClass::Persistence,
-                    "private_file_create_failed",
+                    if failure == "refusal-persist" {
+                        "journal_append_failed"
+                    } else {
+                        "private_file_create_failed"
+                    },
                 )
             };
             let fault = finish_candidate_check(&mut session, &root, &capture, input).unwrap_err();
@@ -1703,6 +2003,14 @@ mod tests {
             assert_eq!(session.halted(), Some(fault));
             if producer_failure {
                 assert!(!receipt_path.exists());
+            } else if failure == "refusal-persist" {
+                assert!(receipt_path.is_file());
+                let persisted: IndependentCheckReceipt =
+                    serde_json::from_slice(&fs::read(&receipt_path).unwrap()).unwrap();
+                assert!(
+                    persisted.candidate.is_empty(),
+                    "owned invalid candidate reaches the real refusal append"
+                );
             } else {
                 assert!(receipt_path.is_dir());
                 assert_eq!(fs::read_dir(&receipt_path).unwrap().count(), 0);
@@ -1723,6 +2031,21 @@ mod tests {
             };
             // A missing seed/host would fail if run_coding tried even one slot.
             // Its halted branch must leave all workspace/host paths untouched.
+            if matches!(failure, "stderr-halt-persist" | "refusal-persist") {
+                let before = fs::read(&journal_path).unwrap();
+                session.inner.journal.fail_after = None;
+                let error = run_coding(session, &root, &verified).err().unwrap();
+                assert_eq!(
+                    (error.class, error.code),
+                    (FaultClass::Persistence, "journal_append_failed")
+                );
+                assert_eq!(fs::read(&journal_path).unwrap(), before);
+                assert_eq!(fs::read_dir(&hosts_dir).unwrap().count(), 0);
+                for pair in pins::PAIRS {
+                    assert!(!root.workspace(&format!("pair-{pair}")).exists());
+                }
+                continue;
+            }
             let report = run_coding(session, &root, &verified).unwrap();
             assert_eq!(
                 report.receipt.halt,
@@ -1766,5 +2089,297 @@ mod tests {
                 sha256_hex(&fs::read(&journal_path).unwrap())
             );
         }
+    }
+    fn checker_owned_diagnostics_root(label: &str) -> PathBuf {
+        let temp = tempfile::Builder::new()
+            .prefix("cf-checker-pipes-")
+            .tempdir()
+            .unwrap();
+        let base = fs::canonicalize(temp.path()).unwrap();
+        std::mem::forget(temp);
+        let root = base.join(label);
+        create_private_dir(&root).unwrap();
+        create_private_dir(&root.join("diagnostics")).unwrap();
+        eprintln!("owned checker pipe evidence: {}", root.display());
+        root
+    }
+
+    fn checker_assert_retained(root: &Path, relative: &str, expected: &[u8]) {
+        use std::os::unix::fs::MetadataExt;
+        let path = root.join(relative);
+        let meta = fs::symlink_metadata(&path).unwrap();
+        assert!(meta.is_file() && !meta.file_type().is_symlink());
+        assert_eq!(meta.mode() & 0o7777, 0o600);
+        assert_eq!(meta.uid(), unsafe { libc::getuid() });
+        assert_eq!(meta.len(), expected.len() as u64);
+        assert_eq!(fs::read(path).unwrap(), expected);
+    }
+
+    #[test]
+    fn checker_stderr_reader_requires_eof_and_caps_retained_prefix() {
+        assert_eq!(CHECK_STDERR_MAX_BYTES, 1_048_576);
+        for bytes in [
+            Vec::new(),
+            b"owned\xff\0diagnostic\n".to_vec(),
+            vec![b'x'; 1_048_576],
+        ] {
+            assert_eq!(
+                check_stderr_bytes(std::io::Cursor::new(&bytes)).unwrap(),
+                bytes
+            );
+        }
+        let oversized = vec![b'x'; 1_048_577];
+        let overflow = check_stderr_bytes(std::io::Cursor::new(oversized));
+        assert!(
+            overflow.is_err(),
+            "stderr beyond the cap must be a capture error"
+        );
+        let (fault, prefix) = overflow.unwrap_err();
+        assert_eq!(
+            (fault.class, fault.code),
+            (FaultClass::CheckerProvenance, "check_stderr_overflow")
+        );
+        assert_eq!(prefix, vec![b'x'; 1_048_576]);
+        let original = b"owned diagnostic before read error\xff".to_vec();
+        let (fault, prefix) = check_stderr_bytes(OraclePrefixThenError {
+            prefix: std::io::Cursor::new(original.clone()),
+        })
+        .unwrap_err();
+        assert_eq!(
+            (fault.class, fault.code),
+            (FaultClass::CheckerProvenance, "check_stderr_read_failed")
+        );
+        assert_eq!(prefix, original);
+    }
+
+    #[test]
+    fn checker_stderr_retention_is_private_exact_and_exclusive() {
+        let root = checker_owned_diagnostics_root("retention");
+        let bytes = b"owned diagnostic\xff\0\n";
+        let complete = retain_check_stderr(&root, "noalloc_compile", bytes, false).unwrap();
+        assert_eq!(complete, "diagnostics/noalloc_compile.stderr");
+        checker_assert_retained(&root, &complete, bytes);
+        let partial = retain_check_stderr(&root, "alloc_compile", bytes, true).unwrap();
+        assert_eq!(partial, "diagnostics/alloc_compile.partial.stderr");
+        checker_assert_retained(&root, &partial, bytes);
+        checker_assert_retained(
+            &root,
+            &format!("{partial}.sha256"),
+            format!("{}\n", sha256_hex(bytes)).as_bytes(),
+        );
+        for (name, partial, relative) in [
+            ("noalloc_compile", false, complete),
+            ("alloc_compile", true, partial),
+        ] {
+            let fault =
+                retain_check_stderr(&root, name, b"replacement must not overwrite", partial)
+                    .unwrap_err();
+            assert_eq!(
+                (fault.class, fault.code),
+                (FaultClass::Persistence, "private_file_create_failed")
+            );
+            checker_assert_retained(&root, &relative, bytes);
+        }
+        // Failure after prefix creation cannot be called successfully retained.
+        let digest = root.join("diagnostics/oracle_compile.partial.stderr.sha256");
+        write_private_new(&digest, b"owned sentinel digest").unwrap();
+        let fault = retain_check_stderr(&root, "oracle_compile", bytes, true).unwrap_err();
+        assert_eq!(fault.code, "private_file_create_failed");
+        checker_assert_retained(&root, "diagnostics/oracle_compile.partial.stderr", bytes);
+        assert_eq!(fs::read(digest).unwrap(), b"owned sentinel digest");
+    }
+
+    // Defensive cleanup on a failed assertion. This guard can signal only the
+    // fresh group whose leader wrote its PID into this test's private root.
+    struct CheckerOwnedGroupGuard(PathBuf);
+    impl Drop for CheckerOwnedGroupGuard {
+        fn drop(&mut self) {
+            if let Ok(text) = fs::read_to_string(self.0.join("leader.pid")) {
+                if let Ok(pid) = text.trim().parse::<i32>() {
+                    if pid > 1 {
+                        unsafe {
+                            libc::kill(-pid, libc::SIGKILL);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn checker_assert_group_gone(root: &Path) {
+        let pid: i32 = fs::read_to_string(root.join("leader.pid"))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        let until = Instant::now() + Duration::from_secs(2);
+        loop {
+            let result = unsafe { libc::kill(-pid, 0) };
+            if result == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+                break;
+            }
+            assert!(
+                Instant::now() < until,
+                "owned checker group {pid} survived cleanup"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn checker_owned_shell(root: &Path, script: &str) -> Command {
+        let mut cmd = Command::new("/bin/sh");
+        cmd.arg("-c")
+            .arg(script)
+            .current_dir(root)
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin");
+        cmd
+    }
+
+    #[test]
+    fn checker_real_step_preserves_complete_stderr_and_ordinary_nonzero() {
+        for exit in [0, 9] {
+            let root = checker_owned_diagnostics_root(&format!("complete-{exit}"));
+            let _guard = CheckerOwnedGroupGuard(root.clone());
+            let mut cmd = checker_owned_shell(
+                &root,
+                &format!(
+                    "echo $$ > leader.pid; printf 'owned stdout'; printf '\\377\\000owned diagnostic\\n' >&2; exit {exit}"
+                ),
+            );
+            let output = run_check_step(
+                &mut cmd,
+                &root,
+                "noalloc_compile",
+                Instant::now() + Duration::from_secs(3),
+            )
+            .unwrap();
+            assert_eq!(output.status.code(), Some(exit));
+            assert_eq!(output.stdout_sha256, sha256_hex(b"owned stdout"));
+            assert_eq!(output.stderr_path, "diagnostics/noalloc_compile.stderr");
+            assert_eq!(
+                output.stderr_bytes,
+                b"\xff\0owned diagnostic\n".len() as u64
+            );
+            assert_eq!(
+                output.stderr_sha256,
+                sha256_hex(b"\xff\0owned diagnostic\n")
+            );
+            checker_assert_retained(&root, &output.stderr_path, b"\xff\0owned diagnostic\n");
+            checker_assert_group_gone(&root);
+        }
+    }
+
+    #[test]
+    fn checker_real_step_overflow_is_not_a_nonzero_result_and_cleans_owned_group() {
+        let root = checker_owned_diagnostics_root("overflow");
+        let _guard = CheckerOwnedGroupGuard(root.clone());
+        let mut cmd = checker_owned_shell(
+            &root,
+            "echo $$ > leader.pid; /usr/bin/yes owned-diagnostic >&2",
+        );
+        let started = Instant::now();
+        let fault = run_check_step(
+            &mut cmd,
+            &root,
+            "noalloc_compile",
+            started + Duration::from_secs(3),
+        )
+        .err()
+        .unwrap();
+        assert_eq!(
+            (fault.class, fault.code),
+            (FaultClass::CheckerProvenance, "check_stderr_overflow")
+        );
+        assert!(started.elapsed() < Duration::from_secs(3));
+        checker_assert_group_gone(&root);
+        let relative = "diagnostics/noalloc_compile.partial.stderr";
+        let bytes = fs::read(root.join(relative)).unwrap();
+        assert_eq!(bytes.len(), 1_048_576);
+        checker_assert_retained(&root, relative, &bytes);
+        checker_assert_retained(
+            &root,
+            &format!("{relative}.sha256"),
+            format!("{}\n", sha256_hex(&bytes)).as_bytes(),
+        );
+        assert!(!root.join("diagnostics/noalloc_compile.stderr").exists());
+    }
+
+    #[test]
+    fn checker_real_step_deadline_covers_descendant_held_pipe_after_leader_exit() {
+        let root = checker_owned_diagnostics_root("held-pipe");
+        let _guard = CheckerOwnedGroupGuard(root.clone());
+        // The leader exits zero immediately, while its owned same-group child
+        // retains both pipes for five seconds unless the production owner kills it.
+        let mut cmd = checker_owned_shell(
+            &root,
+            "echo $$ > leader.pid; /bin/sleep 5 & echo $! > descendant.pid; printf 'owned held pipe' >&2; exit 0",
+        );
+        let started = Instant::now();
+        let fault = run_check_step(
+            &mut cmd,
+            &root,
+            "noalloc_compile",
+            started + Duration::from_millis(500),
+        )
+        .err()
+        .unwrap();
+        assert_eq!(
+            (fault.class, fault.code),
+            (FaultClass::CheckerProvenance, "post_check_wall_exceeded")
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "leader-only deadline left reader joins unbounded"
+        );
+        checker_assert_group_gone(&root);
+        let descendant: i32 = fs::read_to_string(root.join("descendant.pid"))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        assert_eq!(
+            unsafe { libc::kill(descendant, 0) },
+            -1,
+            "owned descendant survived"
+        );
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
+        let relative = "diagnostics/noalloc_compile.partial.stderr";
+        checker_assert_retained(&root, relative, b"owned held pipe");
+        checker_assert_retained(
+            &root,
+            &format!("{relative}.sha256"),
+            format!("{}\n", sha256_hex(b"owned held pipe")).as_bytes(),
+        );
+        assert!(!root.join("diagnostics/noalloc_compile.stderr").exists());
+    }
+
+    #[test]
+    fn checker_real_step_diagnostic_persistence_failure_returns_error_without_overwrite() {
+        let root = checker_owned_diagnostics_root("persistence");
+        let _guard = CheckerOwnedGroupGuard(root.clone());
+        let path = root.join("diagnostics/noalloc_compile.stderr");
+        write_private_new(&path, b"owned sentinel").unwrap();
+        let mut cmd = checker_owned_shell(
+            &root,
+            "echo $$ > leader.pid; printf 'new diagnostic' >&2; exit 0",
+        );
+        let fault = run_check_step(
+            &mut cmd,
+            &root,
+            "noalloc_compile",
+            Instant::now() + Duration::from_secs(3),
+        )
+        .err()
+        .unwrap();
+        assert_eq!(
+            (fault.class, fault.code),
+            (FaultClass::Persistence, "private_file_create_failed")
+        );
+        assert_eq!(fs::read(path).unwrap(), b"owned sentinel");
+        checker_assert_group_gone(&root);
     }
 }

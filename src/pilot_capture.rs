@@ -18,6 +18,7 @@ pub mod host;
 pub mod protocol;
 pub mod wire;
 
+use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::net::SocketAddr;
@@ -1337,6 +1338,11 @@ pub struct SlotCapture {
     pub prompt_status: Option<String>,
 }
 
+/// Required checker-observation metadata; historical receipts are not upgraded.
+pub const CHECK_RECEIPT_KIND: &str = "bounded-pilot-v1-check-v2";
+/// Maximum retained stderr bytes for each of the four fixed checker steps.
+pub const CHECK_STDERR_MAX_BYTES: usize = 1_048_576;
+
 /// SHA256 of the pinned oracle's complete successful stdout (106 bytes),
 /// recovered from its source and accepted positive evidence. This capture
 /// guard does not alter the frozen v1 policy or authorize pilot-v2 execution.
@@ -1349,11 +1355,16 @@ pub const ORACLE_COMPLETION_STDOUT_SHA256: &str =
 pub struct CheckStep {
     pub step: String,
     pub argv: Vec<String>,
+    /// Fresh pathname observation immediately before this step is spawned.
+    pub executable_sha256: String,
     pub exit: Option<i32>,
     pub signal: Option<i32>,
     pub timed_out: bool,
     pub stdout_sha256: String,
     pub stderr_sha256: String,
+    /// Complete private stderr artifact, relative to checker_root.
+    pub stderr_path: String,
+    pub stderr_bytes: u64,
     /// Successful compile outputs, or the actual checker hash observed
     /// immediately before oracle_run. Relative names follow CHECK_RECIPE.
     pub artifacts: Vec<(String, String)>,
@@ -1366,6 +1377,7 @@ pub struct CheckStep {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct IndependentCheckReceipt {
+    pub kind: String,
     pub slot_id: String,
     pub checker_root: PathBuf,
     pub candidate: Vec<(String, String)>,
@@ -1373,10 +1385,55 @@ pub struct IndependentCheckReceipt {
     pub compiler: PathBuf,
     pub compiler_sha256: String,
     pub compiler_version: String,
-    pub env_names: Vec<String>,
+    pub environment: BTreeMap<String, String>,
+    pub sandbox_profile: String,
     pub steps: Vec<CheckStep>,
     /// Fixture receipts may satisfy verification, never live admission.
     pub fixture: bool,
+}
+
+fn validate_check_directory(path: &Path) -> Result<(), CaptureFault> {
+    let invalid = || CaptureFault::new(FaultClass::CheckerProvenance, "check_root_not_private");
+    let meta = fs::symlink_metadata(path).map_err(|_| invalid())?;
+    if !meta.is_dir() || meta.uid() != current_uid() || meta.mode() & 0o7777 != 0o700 {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
+/// Validate the retained bytes through the same no-follow file descriptor.
+/// The name is derived from the already validated fixed recipe, not user input.
+fn validate_check_stderr(root: &Path, step: &CheckStep) -> Result<(), CaptureFault> {
+    let invalid = || CaptureFault::new(FaultClass::CheckerProvenance, "check_stderr_unbound");
+    let expected = format!("diagnostics/{}.stderr", step.step);
+    if step.stderr_path != expected || step.stderr_bytes > CHECK_STDERR_MAX_BYTES as u64 {
+        return Err(invalid());
+    }
+    validate_check_directory(root).map_err(|_| invalid())?;
+    validate_check_directory(&root.join("diagnostics")).map_err(|_| invalid())?;
+    let file = OpenOptions::new()
+        .read(true)
+        // O_NONBLOCK also prevents an unexpected FIFO from blocking before
+        // the descriptor's regular-file check below.
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(root.join(expected))
+        .map_err(|_| invalid())?;
+    let meta = file.metadata().map_err(|_| invalid())?;
+    if !meta.is_file()
+        || meta.uid() != current_uid()
+        || meta.mode() & 0o7777 != 0o600
+        || meta.len() != step.stderr_bytes
+    {
+        return Err(invalid());
+    }
+    let mut bytes = Vec::new();
+    file.take(CHECK_STDERR_MAX_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| invalid())?;
+    if bytes.len() as u64 != step.stderr_bytes || sha256_hex(&bytes) != step.stderr_sha256 {
+        return Err(invalid());
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -3739,6 +3796,9 @@ impl Inner {
             return Err(authority("seal_capture_mismatch"));
         }
         let result = (|| -> Result<CheckOutcome, CaptureFault> {
+            if receipt.kind != CHECK_RECEIPT_KIND {
+                return Err(prov("check_receipt_version_mismatch"));
+            }
             if receipt.slot_id != capture.slot_id {
                 return Err(prov("check_slot_mismatch"));
             }
@@ -3764,6 +3824,12 @@ impl Inner {
                 .to_str()
                 .filter(|r| receipt.checker_root.is_absolute() && !r.is_empty())
                 .ok_or(prov("check_root_invalid"))?;
+            let canonical =
+                fs::canonicalize(&receipt.checker_root).map_err(|_| prov("check_root_invalid"))?;
+            if canonical.as_os_str() != receipt.checker_root.as_os_str() {
+                return Err(prov("check_root_invalid"));
+            }
+            validate_check_directory(&receipt.checker_root)?;
             let overlaps = |p: &Path| {
                 receipt.checker_root.starts_with(p) || p.starts_with(&receipt.checker_root)
             };
@@ -3776,14 +3842,13 @@ impl Inner {
             {
                 return Err(prov("check_root_not_private"));
             }
-            if receipt.env_names.iter().any(|n| {
-                let upper = n.to_ascii_uppercase();
-                upper.contains("KEY")
-                    || upper.contains("TOKEN")
-                    || upper.contains("PROXY")
-                    || upper.contains("ANTHROPIC")
-            }) {
+            if receipt.environment != apparatus::check_environment(&receipt.checker_root)? {
                 return Err(prov("check_environment_not_minimal"));
+            }
+            if receipt.sandbox_profile
+                != apparatus::check_policy(&receipt.checker_root, &self.real_home)?
+            {
+                return Err(prov("check_sandbox_mismatch"));
             }
             if receipt.steps.is_empty() || receipt.steps.len() > policy::CHECK_RECIPE.len() {
                 return Err(prov("check_steps_invalid"));
@@ -3802,6 +3867,10 @@ impl Inner {
                     || !protocol::is_sha256_hex(&step.stderr_sha256)
                 {
                     return Err(prov("check_output_unbound"));
+                }
+                validate_check_stderr(&receipt.checker_root, step)?;
+                if name != "oracle_run" && step.executable_sha256 != receipt.compiler_sha256 {
+                    return Err(prov("check_compiler_mismatch"));
                 }
                 if step
                     .artifacts
@@ -3831,7 +3900,9 @@ impl Inner {
                         compiled_checker_sha256 = Some(digest.as_str());
                     }
                     if name == "oracle_run" {
-                        if compiled_checker_sha256 != Some(digest.as_str()) {
+                        if compiled_checker_sha256 != Some(digest.as_str())
+                            || step.executable_sha256 != *digest
+                        {
                             return Err(prov("check_oracle_executable_mismatch"));
                         }
                         if ok && step.stdout_sha256 != ORACLE_COMPLETION_STDOUT_SHA256 {
@@ -4322,6 +4393,490 @@ mod tests {
                 before,
                 "verification rewrote {case}"
             );
+        }
+    }
+    // New tests use the actual seal owner and owned files. No transport/host exists.
+    fn checker_owned_receipt_fixture() -> (CaptureSession, SlotCapture, IndependentCheckReceipt) {
+        let temp = tempfile::Builder::new()
+            .prefix("cf-checker-consumer-")
+            .tempdir()
+            .unwrap();
+        let base = fs::canonicalize(temp.path()).unwrap();
+        std::mem::forget(temp);
+        eprintln!("owned checker consumer evidence: {}", base.display());
+        let run_dir = base.join("run");
+        create_private_dir(&run_dir).unwrap();
+        let hosts_dir = run_dir.join("hosts");
+        create_private_dir(&hosts_dir).unwrap();
+        let checker = base.join("checker");
+        create_private_dir(&checker).unwrap();
+        create_private_dir(&checker.join("diagnostics")).unwrap();
+        let home = base.join("synthetic-account-home");
+        create_private_dir(&home).unwrap();
+        let mut journal = Journal::create(&run_dir.join("journal.jsonl"), None).unwrap();
+        journal
+            .append(
+                "admitted",
+                serde_json::json!({"synthetic_owner_fixture":true}),
+            )
+            .unwrap();
+        let capture = SlotCapture {
+            slot_id: "1B".into(),
+            host_id: "owned-checker-capture".into(),
+            disposition: Disposition::Completed {
+                terminal_status: "synthetic-only".into(),
+            },
+            render: None,
+            generations: Vec::new(),
+            tools: Vec::new(),
+            candidate_inventory: vec![("src/lib.rs".into(), sha256_hex(b"owned source identity"))],
+            native: None,
+            host_exit: None,
+            host_wall_ms: 0,
+            prompt_status: None,
+        };
+        let session = CaptureSession {
+            rt: runtime().unwrap(),
+            inner: Inner {
+                mode: Mode::Verification,
+                scope: Scope::Coding,
+                run_dir,
+                hosts_dir,
+                omp: base.join("unused-omp"),
+                real_home: home.clone(),
+                deny_literals: Vec::new(),
+                journal,
+                transport: None,
+                manifest: None,
+                session_id: "owned-checker-consumer".into(),
+                host_seq: 0,
+                attempt_seq: 0,
+                counters: Counters::default(),
+                paid_started_ns: None,
+                paid_deadline_ns: None,
+                boot_identity: String::new(),
+                halt: None,
+                halt_record_error: None,
+                slot_index: 0,
+                awaiting_seal: Some(capture.clone()),
+                summaries: planned_slots(Scope::Coding),
+                probe_sealed: false,
+            },
+        };
+        let image = sha256_hex(b"owned synthetic checker image; not executed");
+        let steps = policy::CHECK_RECIPE
+            .iter()
+            .enumerate()
+            .map(|(i, (name, argv))| {
+                let stderr = if i == 0 {
+                    b"owned diagnostic\xff\0\n".as_slice()
+                } else {
+                    b"".as_slice()
+                };
+                let stderr_path = format!("diagnostics/{name}.stderr");
+                write_private_new(&checker.join(&stderr_path), stderr).unwrap();
+                let artifact = match *name {
+                    "noalloc_compile" => {
+                        ("out/librecords-noalloc.rlib", sha256_hex(b"owned noalloc"))
+                    }
+                    "alloc_compile" => ("out/librecords-alloc.rlib", sha256_hex(b"owned alloc")),
+                    "oracle_compile" | "oracle_run" => ("out/check", image.clone()),
+                    _ => unreachable!(),
+                };
+                CheckStep {
+                    step: name.to_string(),
+                    argv: argv
+                        .iter()
+                        .map(|a| a.replace("<ROOT>", checker.to_str().unwrap()))
+                        .collect(),
+                    executable_sha256: if *name == "oracle_run" {
+                        image.clone()
+                    } else {
+                        policy::RUSTC_SHA256.into()
+                    },
+                    exit: Some(0),
+                    signal: None,
+                    timed_out: false,
+                    stdout_sha256: if *name == "oracle_run" {
+                        "aac03c0ded8403eb8bd3ca53e9880313cde11fa658db4fc7444d737eef33127d".into()
+                    } else {
+                        sha256_hex(b"")
+                    },
+                    stderr_path,
+                    stderr_bytes: stderr.len() as u64,
+                    stderr_sha256: sha256_hex(stderr),
+                    artifacts: vec![(artifact.0.into(), artifact.1)],
+                    wall_ms: 1,
+                }
+            })
+            .collect();
+        let r = checker.to_str().unwrap();
+        let h = home.to_str().unwrap();
+        let environment = [
+            ("HOME", format!("{r}/home")),
+            ("LANG", "C".into()),
+            ("PATH", "/usr/bin:/bin".into()),
+            ("TMPDIR", format!("{r}/tmp/")),
+            ("XDG_CONFIG_HOME", format!("{r}/home/.config")),
+            ("XDG_DATA_HOME", format!("{r}/home/.local/share")),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.into(), v))
+        .collect();
+        let sandbox_profile = format!(
+            "(version 1)(allow default)(deny network*)\
+             (deny file-read-data (subpath \"{h}\"))(deny file-write* (subpath \"{h}\"))\
+             (deny file-write* (subpath \"/private/tmp\"))(deny file-write* (subpath \"/private/var/folders\"))\
+             (allow file-read-data (subpath \"{r}\"))(allow file-write* (subpath \"{r}\"))"
+        );
+        let receipt = IndependentCheckReceipt {
+            kind: "bounded-pilot-v1-check-v2".into(),
+            slot_id: capture.slot_id.clone(),
+            checker_root: checker,
+            candidate: capture.candidate_inventory.clone(),
+            oracle_sha256: policy::ORACLE_SHA256.into(),
+            compiler: policy::RUSTC.into(),
+            compiler_sha256: policy::RUSTC_SHA256.into(),
+            compiler_version: format!(
+                "{} (owned fixture; not executed)",
+                policy::RUSTC_VERSION_PREFIX
+            ),
+            environment,
+            sandbox_profile,
+            steps,
+            fixture: true,
+        };
+        (session, capture, receipt)
+    }
+
+    fn checker_refusal_is_durable(
+        mut session: CaptureSession,
+        capture: &SlotCapture,
+        receipt: &IndependentCheckReceipt,
+        code: &str,
+    ) {
+        let path = session.inner.run_dir.join("journal.jsonl");
+        let hosts = session.inner.hosts_dir.clone();
+        let fault = session.seal_slot(capture, receipt).unwrap_err();
+        assert_eq!(
+            (fault.class, fault.code),
+            (FaultClass::CheckerProvenance, code)
+        );
+        assert_eq!(session.halted(), Some(fault));
+        assert!(session.inner.transport.is_none());
+        session.halt(CaptureFault::new(FaultClass::Protocol, "owned-later-fault"));
+        assert_eq!(session.halted(), Some(fault));
+        let report = session.finish().unwrap();
+        assert_eq!(report.counters, Counters::default());
+        assert!(report.slots.iter().all(|s| s.state == "not_started"));
+        assert_eq!(fs::read_dir(hosts).unwrap().count(), 0);
+        let rows: Vec<serde_json::Value> = fs::read_to_string(&path)
+            .unwrap()
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert_eq!(rows.iter().filter(|r| r["kind"] == "halt").count(), 1);
+        assert!(!rows.iter().any(|r| r["kind"] == "slot_sealed"));
+        let refused = rows.iter().find(|r| r["kind"] == "check_refused").unwrap();
+        assert_eq!(refused["code"], code);
+        assert_eq!(
+            refused["receipt_sha256"],
+            sha256_hex(&serde_json::to_vec(receipt).unwrap())
+        );
+        assert_eq!(rows.last().unwrap()["kind"], "finished");
+        assert_eq!(report.journal_sha256, sha256_hex(&fs::read(path).unwrap()));
+    }
+
+    #[test]
+    fn checker_receipt_metadata_requires_exact_environment_profile_and_executable_observations() {
+        for case in [
+            "kind",
+            "env-empty",
+            "env-missing",
+            "env-extra",
+            "HOME",
+            "LANG",
+            "PATH",
+            "TMPDIR",
+            "XDG_CONFIG_HOME",
+            "XDG_DATA_HOME",
+            "profile",
+            "compiler-header",
+            "compile-0",
+            "compile-1",
+            "compile-2",
+            "execute",
+        ] {
+            eprintln!("owned checker metadata case: {case}");
+            let (session, capture, mut receipt) = checker_owned_receipt_fixture();
+            let code = match case {
+                "kind" => {
+                    receipt.kind = "bounded-pilot-v1-check-v1".into();
+                    "check_receipt_version_mismatch"
+                }
+                "env-empty" => {
+                    receipt.environment.clear();
+                    "check_environment_not_minimal"
+                }
+                "env-missing" => {
+                    receipt.environment.remove("LANG");
+                    "check_environment_not_minimal"
+                }
+                "env-extra" => {
+                    receipt
+                        .environment
+                        .insert("SAFE_LOOKING".into(), "owned".into());
+                    "check_environment_not_minimal"
+                }
+                "HOME" | "LANG" | "PATH" | "TMPDIR" | "XDG_CONFIG_HOME" | "XDG_DATA_HOME" => {
+                    receipt
+                        .environment
+                        .get_mut(case)
+                        .unwrap()
+                        .push_str("-changed");
+                    "check_environment_not_minimal"
+                }
+                "profile" => {
+                    receipt.sandbox_profile.push(' ');
+                    "check_sandbox_mismatch"
+                }
+                "compiler-header" => {
+                    receipt.compiler_sha256 = sha256_hex(b"stale compiler header");
+                    "check_compiler_mismatch"
+                }
+                "compile-0" | "compile-1" | "compile-2" => {
+                    let i = case.as_bytes()[8] as usize - b'0' as usize;
+                    receipt.steps[i].executable_sha256 = sha256_hex(b"stale per-step compiler");
+                    "check_compiler_mismatch"
+                }
+                "execute" => {
+                    receipt.steps[3].executable_sha256 =
+                        sha256_hex(b"different observed executable");
+                    "check_oracle_executable_mismatch"
+                }
+                _ => unreachable!(),
+            };
+            checker_refusal_is_durable(session, &capture, &receipt, code);
+        }
+    }
+
+    #[test]
+    fn checker_receipt_schema_does_not_default_new_required_provenance() {
+        let (_session, _capture, receipt) = checker_owned_receipt_fixture();
+        let value = serde_json::to_value(receipt).unwrap();
+        for field in ["kind", "environment", "sandbox_profile"] {
+            for null in [false, true] {
+                let mut missing = value.clone();
+                if null {
+                    missing[field] = serde_json::Value::Null;
+                } else {
+                    missing.as_object_mut().unwrap().remove(field);
+                }
+                assert!(
+                    serde_json::from_value::<IndependentCheckReceipt>(missing).is_err(),
+                    "{field}, null={null}"
+                );
+            }
+        }
+        for field in ["executable_sha256", "stderr_path", "stderr_bytes"] {
+            let mut missing = value.clone();
+            missing["steps"][0].as_object_mut().unwrap().remove(field);
+            assert!(
+                serde_json::from_value::<IndependentCheckReceipt>(missing).is_err(),
+                "{field}"
+            );
+        }
+        let mut legacy = value;
+        for field in ["kind", "environment", "sandbox_profile"] {
+            legacy.as_object_mut().unwrap().remove(field);
+        }
+        legacy["env_names"] = serde_json::json!(["HOME", "PATH"]);
+        for step in legacy["steps"].as_array_mut().unwrap() {
+            for field in ["executable_sha256", "stderr_path", "stderr_bytes"] {
+                step.as_object_mut().unwrap().remove(field);
+            }
+        }
+        assert!(serde_json::from_value::<IndependentCheckReceipt>(legacy).is_err());
+    }
+
+    #[test]
+    fn checker_receipt_stderr_requires_real_private_complete_bounded_bytes() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        for case in [
+            "missing",
+            "wrong-name",
+            "traversal",
+            "partial",
+            "bytes",
+            "length",
+            "hash",
+            "oversize",
+            "symlink",
+            "directory",
+            "fifo",
+            "mode",
+            "special-mode",
+            "diagnostics-mode",
+            "diagnostics-special-mode",
+            "diagnostics-symlink",
+        ] {
+            eprintln!("owned checker stderr case: {case}");
+            let (session, capture, mut receipt) = checker_owned_receipt_fixture();
+            let root = &receipt.checker_root;
+            let path = root.join(&receipt.steps[0].stderr_path);
+            let original = fs::read(&path).unwrap();
+            match case {
+                "missing" => fs::remove_file(&path).unwrap(),
+                "wrong-name" => receipt.steps[0].stderr_path = "diagnostics/another.stderr".into(),
+                "traversal" => {
+                    receipt.steps[0].stderr_path =
+                        "diagnostics/../diagnostics/noalloc_compile.stderr".into()
+                }
+                "partial" => {
+                    receipt.steps[0].stderr_path =
+                        "diagnostics/noalloc_compile.partial.stderr".into()
+                }
+                "bytes" => fs::write(&path, b"owned changed bytes").unwrap(),
+                "length" => receipt.steps[0].stderr_bytes += 1,
+                "hash" => receipt.steps[0].stderr_sha256 = sha256_hex(b"owned wrong digest"),
+                "oversize" => {
+                    let bytes = vec![b'x'; 1_048_577];
+                    fs::write(&path, &bytes).unwrap();
+                    receipt.steps[0].stderr_bytes = bytes.len() as u64;
+                    receipt.steps[0].stderr_sha256 = sha256_hex(&bytes);
+                }
+                "symlink" => {
+                    let target = root.join("owned-link-target");
+                    write_private_new(&target, &original).unwrap();
+                    fs::remove_file(&path).unwrap();
+                    symlink(target, &path).unwrap();
+                }
+                "directory" => {
+                    fs::remove_file(&path).unwrap();
+                    create_private_dir(&path).unwrap();
+                }
+                "fifo" => {
+                    use std::os::unix::ffi::OsStrExt;
+                    fs::remove_file(&path).unwrap();
+                    let path = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+                    assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+                }
+                "mode" => fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap(),
+                "special-mode" => {
+                    fs::set_permissions(&path, fs::Permissions::from_mode(0o1600)).unwrap()
+                }
+                "diagnostics-mode" => {
+                    fs::set_permissions(root.join("diagnostics"), fs::Permissions::from_mode(0o750))
+                        .unwrap()
+                }
+                "diagnostics-special-mode" => fs::set_permissions(
+                    root.join("diagnostics"),
+                    fs::Permissions::from_mode(0o1700),
+                )
+                .unwrap(),
+                "diagnostics-symlink" => {
+                    fs::rename(
+                        root.join("diagnostics"),
+                        root.join("owned-diagnostics-target"),
+                    )
+                    .unwrap();
+                    symlink(
+                        root.join("owned-diagnostics-target"),
+                        root.join("diagnostics"),
+                    )
+                    .unwrap();
+                }
+                _ => unreachable!(),
+            }
+            checker_refusal_is_durable(session, &capture, &receipt, "check_stderr_unbound");
+        }
+    }
+
+    #[test]
+    fn checker_receipt_root_requires_canonical_private_directory_identity() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        for case in [
+            "relative",
+            "dot",
+            "symlink",
+            "mode",
+            "special-mode",
+            "regular-file",
+        ] {
+            eprintln!("owned checker root case: {case}");
+            let (session, capture, mut receipt) = checker_owned_receipt_fixture();
+            let root = receipt.checker_root.clone();
+            let code = match case {
+                "relative" => {
+                    receipt.checker_root = PathBuf::from("checker");
+                    "check_root_invalid"
+                }
+                "dot" => {
+                    receipt.checker_root =
+                        PathBuf::from(format!("{}/./checker", root.parent().unwrap().display()));
+                    "check_root_invalid"
+                }
+                "symlink" => {
+                    let alias = root.with_file_name("checker-alias");
+                    symlink(&root, &alias).unwrap();
+                    receipt.checker_root = alias;
+                    "check_root_invalid"
+                }
+                "mode" => {
+                    fs::set_permissions(&root, fs::Permissions::from_mode(0o750)).unwrap();
+                    "check_root_not_private"
+                }
+                "special-mode" => {
+                    fs::set_permissions(&root, fs::Permissions::from_mode(0o1700)).unwrap();
+                    "check_root_not_private"
+                }
+                "regular-file" => {
+                    let file = root.with_file_name("owned-checker-file");
+                    write_private_new(&file, b"owned file").unwrap();
+                    receipt.checker_root = file;
+                    "check_root_not_private"
+                }
+                _ => unreachable!(),
+            };
+            checker_refusal_is_durable(session, &capture, &receipt, code);
+        }
+    }
+
+    #[test]
+    fn checker_receipt_complete_diagnostics_preserve_pass_and_ordinary_nonzero_fail() {
+        for nonzero in [false, true] {
+            let (mut session, capture, mut receipt) = checker_owned_receipt_fixture();
+            if nonzero {
+                receipt.steps.truncate(1);
+                receipt.steps[0].exit = Some(1);
+                receipt.steps[0].artifacts.clear();
+            }
+            let expected = if nonzero {
+                CheckOutcome::Fail
+            } else {
+                CheckOutcome::Pass
+            };
+            let journal = session.inner.run_dir.join("journal.jsonl");
+            assert_eq!(
+                session.seal_slot(&capture, &receipt).unwrap().outcome,
+                expected
+            );
+            let report = session.finish().unwrap();
+            assert_eq!(report.halt, None);
+            assert_eq!(report.slots[0].check, Some(expected));
+            assert!(report.slots[1..].iter().all(|s| s.state == "not_started"));
+            assert_eq!(report.counters, Counters::default());
+            let rows: Vec<serde_json::Value> = fs::read_to_string(journal)
+                .unwrap()
+                .lines()
+                .map(|l| serde_json::from_str(l).unwrap())
+                .collect();
+            let sealed = rows.iter().find(|r| r["kind"] == "slot_sealed").unwrap();
+            assert_eq!(
+                sealed["receipt_sha256"],
+                sha256_hex(&serde_json::to_vec(&receipt).unwrap())
+            );
+            assert!(!rows.iter().any(|r| r["kind"] == "halt"));
         }
     }
 }
