@@ -1,5 +1,30 @@
 # Validation
 
+## Native macOS acceptance — 2026-11-10
+
+The first native run on `ec234b3` failed at the embedding-worker build. It ran
+`scripts/native-macos-acceptance.py --generation --scale-calibration` on the owner's
+M5 Max, with a two-hour outer budget, 20 GiB disk floor, ad-hoc signing and fresh
+`.noindex` work storage. Task-local launchers select the actual installed Rust 1.90
+binaries because the host's Cargo does not dispatch `+toolchain`; SDKROOT explicitly
+selects the same macOS 26.5 SDK as the gates. No host configuration changed.
+
+Before that build failure, both native CPU checks, both held-GGUF checks, all six
+synthetic lifecycle checks and a real Metal compute dispatch passed. The pinned
+public model/tokenizer downloads passed their hashes. No real embedding, generation
+or calibration ran in that attempt, so native acceptance remains open. The outer
+supervisor observed normal exit, reaped its child and confirmed no owned descendants
+remained. Private evidence is under `datasets/context-foundry-native-2026-11-10/out`
+and this checkout's `runs/native-macos-2026-11-10/`.
+
+The compiler error is a concrete AST-type mismatch: `bindgen 0.73.2` resolved
+`syn 2.0.119`, while `prettyplease 0.3.0` uses `syn 3.0.6`. The `8600fc0` lock update
+had changed that bindgen edge from syn 3 to syn 2. `cargo update --offline -p bindgen
+--precise 0.73.2` restores the previous syn 3 edge; no package version, source,
+license, application code or default-build dependency changes. A fresh native run
+will decide acceptance of that repair and the remaining selected checks; the failed
+attempt is retained, not relabeled as passed.
+
 ## Semantic scale replay and changed-input acceptance — 2026-11-10
 
 **PASS for 009 T006–T009 scale under decision 11.** The owner's M5 Max ran the

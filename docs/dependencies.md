@@ -176,6 +176,12 @@ The optional `embed-worker` feature (default off) builds `foundry-embed` on llam
 of its own at that commit). `build.rs` builds it from the pinned commit's tree with
 CMake and links it statically, with Apple's Metal, Accelerate and Foundation
 frameworks; packaging takes the license from the worker (`foundry-embed --notices`).
+The native worker build exposed a lockfile mismatch on 2026-11-10: bindgen selected
+syn 2 while prettyplease selected syn 3. The lock now restores bindgen's previous
+syn 3.0.6 edge, matching prettyplease 0.3.0; package versions and the default CLI/MCP
+graph are unchanged. See the [native receipt](validation.md#native-macos-acceptance--2026-11-10)
+for the failed build and subsequent verification.
+
 The feature adds one optional build dependency, `bindgen` 0.73 (BSD-3-Clause), for the
 C bindings; default and Rust 1.90 builds do not compile it. PyO3 and the MLX runtime
 closure are no longer product dependencies.
