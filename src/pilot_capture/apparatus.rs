@@ -2194,13 +2194,12 @@ mod tests {
     struct CheckerOwnedGroupGuard(PathBuf);
     impl Drop for CheckerOwnedGroupGuard {
         fn drop(&mut self) {
-            if let Ok(text) = fs::read_to_string(self.0.join("leader.pid")) {
-                if let Ok(pid) = text.trim().parse::<i32>() {
-                    if pid > 1 {
-                        unsafe {
-                            libc::kill(-pid, libc::SIGKILL);
-                        }
-                    }
+            if let Ok(text) = fs::read_to_string(self.0.join("leader.pid"))
+                && let Ok(pid) = text.trim().parse::<i32>()
+                && pid > 1
+            {
+                unsafe {
+                    libc::kill(-pid, libc::SIGKILL);
                 }
             }
         }
