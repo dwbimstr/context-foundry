@@ -6,7 +6,12 @@ use context_foundry::fault::{self, Action, names};
 use context_foundry::{Control, Engine, FoundryError};
 use std::cell::RefCell;
 use std::path::Path;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
+
+// fork inherits descriptors from every test thread. Keep each store lifetime
+// outside the other fixture's fork and child lifetime.
+static FORK_FIXTURE: Mutex<()> = Mutex::new(());
 
 struct ForkHold {
     pid: libc::pid_t,
@@ -86,6 +91,7 @@ fn seed(root: &Path) -> Engine {
 
 #[test]
 fn inherited_search_lock_does_not_request_repair_after_owner_closes() {
+    let _guard = FORK_FIXTURE.lock().unwrap();
     let dir = tempfile::tempdir().unwrap();
     let engine = seed(dir.path());
     let held = RefCell::new(Some(ForkHold::new()));
@@ -111,6 +117,7 @@ fn inherited_search_lock_does_not_request_repair_after_owner_closes() {
 
 #[test]
 fn persistent_search_writer_contention_is_bounded_and_never_repair_required() {
+    let _guard = FORK_FIXTURE.lock().unwrap();
     let dir = tempfile::tempdir().unwrap();
     drop(seed(dir.path()));
     let store = dir.path().join("store");
