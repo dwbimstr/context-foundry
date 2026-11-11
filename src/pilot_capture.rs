@@ -1337,6 +1337,12 @@ pub struct SlotCapture {
     pub prompt_status: Option<String>,
 }
 
+/// SHA256 of the pinned oracle's complete successful stdout (106 bytes),
+/// recovered from its source and accepted positive evidence. This capture
+/// guard does not alter the frozen v1 policy or authorize pilot-v2 execution.
+pub const ORACLE_COMPLETION_STDOUT_SHA256: &str =
+    "aac03c0ded8403eb8bd3ca53e9880313cde11fa658db4fc7444d737eef33127d";
+
 /// One step of an independently executed check.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1348,6 +1354,8 @@ pub struct CheckStep {
     pub timed_out: bool,
     pub stdout_sha256: String,
     pub stderr_sha256: String,
+    /// Successful compile outputs, or the actual checker hash observed
+    /// immediately before oracle_run. Relative names follow CHECK_RECIPE.
     pub artifacts: Vec<(String, String)>,
     pub wall_ms: u64,
 }
@@ -3782,6 +3790,7 @@ impl Inner {
             }
             let mut wall: u64 = 0;
             let mut pass = receipt.steps.len() == policy::CHECK_RECIPE.len();
+            let mut compiled_checker_sha256: Option<&str> = None;
             for (i, step) in receipt.steps.iter().enumerate() {
                 let (name, template) = policy::CHECK_RECIPE[i];
                 let expected: Vec<String> =
@@ -3803,6 +3812,33 @@ impl Inner {
                 }
                 wall = wall.saturating_add(step.wall_ms);
                 let ok = step.exit == Some(0) && step.signal.is_none() && !step.timed_out;
+                // A zero exit must have produced its declared output. The
+                // oracle execution must bind the binary even when it fails.
+                if ok || name == "oracle_run" {
+                    let expected_artifact = match name {
+                        "noalloc_compile" => "out/librecords-noalloc.rlib",
+                        "alloc_compile" => "out/librecords-alloc.rlib",
+                        "oracle_compile" | "oracle_run" => "out/check",
+                        _ => return Err(prov("check_recipe_mismatch")),
+                    };
+                    let [(path, digest)] = step.artifacts.as_slice() else {
+                        return Err(prov("check_artifact_unbound"));
+                    };
+                    if path != expected_artifact {
+                        return Err(prov("check_artifact_unbound"));
+                    }
+                    if name == "oracle_compile" {
+                        compiled_checker_sha256 = Some(digest.as_str());
+                    }
+                    if name == "oracle_run" {
+                        if compiled_checker_sha256 != Some(digest.as_str()) {
+                            return Err(prov("check_oracle_executable_mismatch"));
+                        }
+                        if ok && step.stdout_sha256 != ORACLE_COMPLETION_STDOUT_SHA256 {
+                            return Err(prov("check_oracle_completion_mismatch"));
+                        }
+                    }
+                }
                 if !ok {
                     pass = false;
                     if i + 1 != receipt.steps.len() {

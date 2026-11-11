@@ -963,6 +963,26 @@ fn check_policy(root: &Path, real_home: &Path) -> Result<String, CaptureFault> {
     ))
 }
 
+/// Hash only a completely observed checker stream. A read failure must
+/// never turn its observed prefix into an apparently complete output hash.
+fn check_output_sha256(mut pipe: impl Read) -> Result<String, CaptureFault> {
+    let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
+    let mut buf = [0u8; 16 * 1024];
+    loop {
+        let n = pipe
+            .read(&mut buf)
+            .map_err(|_| fault(FaultClass::CheckerProvenance, "check_output_unbound"))?;
+        if n == 0 {
+            break;
+        }
+        sha2::Digest::update(&mut hasher, &buf[..n]);
+    }
+    Ok(sha2::Digest::finalize(hasher)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect())
+}
+
 /// Copy the stopped host's candidate and the private oracle into a new
 /// checker root outside agent access, then run the accepted four-step recipe
 /// under containment with a minimal no-credential environment and the 60 s
@@ -1000,6 +1020,10 @@ pub fn run_independent_check(
         candidate.push((rel.clone(), sha256_hex(&bytes)));
     }
     let oracle_bytes = fs::read(oracle).map_err(|_| prov("check_oracle_changed"))?;
+    let oracle_sha256 = sha256_hex(&oracle_bytes);
+    if oracle_sha256 != policy::ORACLE_SHA256 {
+        return Err(prov("check_oracle_changed"));
+    }
     write_private_new(&root.join("check.rs"), &oracle_bytes)?;
     let home = fs::canonicalize(std::env::var("HOME").unwrap_or_else(|_| "/".into()))
         .unwrap_or_else(|_| PathBuf::from("/"));
@@ -1044,6 +1068,11 @@ pub fn run_independent_check(
             .collect();
         let left = deadline.saturating_duration_since(Instant::now());
         let started = Instant::now();
+        let executed_checker_sha256 = if name == "oracle_run" {
+            Some(file_sha256(&root.join("out/check")).map_err(|_| prov("check_artifact_unbound"))?)
+        } else {
+            None
+        };
         let mut cmd = Command::new("/usr/bin/sandbox-exec");
         cmd.arg("-p")
             .arg(&sandbox)
@@ -1056,22 +1085,8 @@ pub fn run_independent_check(
             .stderr(Stdio::piped())
             .process_group(0);
         let mut child = cmd.spawn().map_err(|_| prov("check_spawn_failed"))?;
-        let capture = |mut pipe: Box<dyn Read + Send>| {
-            std::thread::spawn(move || {
-                let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
-                let mut buf = [0u8; 16 * 1024];
-                while let Ok(n) = pipe.read(&mut buf) {
-                    if n == 0 {
-                        break;
-                    }
-                    sha2::Digest::update(&mut hasher, &buf[..n]);
-                }
-                sha2::Digest::finalize(hasher)
-                    .iter()
-                    .map(|b| format!("{b:02x}"))
-                    .collect::<String>()
-            })
-        };
+        let capture =
+            |pipe: Box<dyn Read + Send>| std::thread::spawn(move || check_output_sha256(pipe));
         let out_t = capture(Box::new(
             child.stdout.take().ok_or(prov("check_spawn_failed"))?,
         ));
@@ -1094,21 +1109,29 @@ pub fn run_independent_check(
             }
             std::thread::sleep(Duration::from_millis(10));
         };
-        let stdout_sha256 = out_t.join().map_err(|_| prov("check_output_unbound"))?;
-        let stderr_sha256 = err_t.join().map_err(|_| prov("check_output_unbound"))?;
-        let artifact = |rel: &str| -> Vec<(String, String)> {
-            fs::read(root.join(rel))
-                .ok()
-                .map(|b| vec![(rel.to_string(), sha256_hex(&b))])
-                .unwrap_or_default()
+        // Reap both owned readers even when either output is incomplete.
+        let stdout = out_t.join();
+        let stderr = err_t.join();
+        let stdout_sha256 = stdout.map_err(|_| prov("check_output_unbound"))??;
+        let stderr_sha256 = stderr.map_err(|_| prov("check_output_unbound"))??;
+        let ok = status.code() == Some(0) && status.signal().is_none() && !timed_out;
+        let artifact = |rel: &str| -> Result<Vec<(String, String)>, CaptureFault> {
+            match fs::read(root.join(rel)) {
+                Ok(bytes) => Ok(vec![(rel.to_string(), sha256_hex(&bytes))]),
+                Err(_) if ok => Err(prov("check_artifact_unbound")),
+                Err(_) => Ok(Vec::new()),
+            }
         };
         let artifacts = match name {
-            "noalloc_compile" => artifact("out/librecords-noalloc.rlib"),
-            "alloc_compile" => artifact("out/librecords-alloc.rlib"),
-            "oracle_compile" => artifact("out/check"),
+            "noalloc_compile" => artifact("out/librecords-noalloc.rlib")?,
+            "alloc_compile" => artifact("out/librecords-alloc.rlib")?,
+            "oracle_compile" => artifact("out/check")?,
+            "oracle_run" => vec![(
+                "out/check".into(),
+                executed_checker_sha256.ok_or(prov("check_artifact_unbound"))?,
+            )],
             _ => Vec::new(),
         };
-        let ok = status.code() == Some(0) && status.signal().is_none() && !timed_out;
         steps.push(CheckStep {
             step: name.to_string(),
             argv,
@@ -1128,7 +1151,7 @@ pub fn run_independent_check(
         slot_id: slot_id.to_string(),
         checker_root: root,
         candidate,
-        oracle_sha256: policy::ORACLE_SHA256.into(),
+        oracle_sha256,
         compiler: PathBuf::from(policy::RUSTC),
         compiler_sha256: policy::RUSTC_SHA256.into(),
         compiler_version,
@@ -1395,6 +1418,29 @@ pub fn run_probe(
     Ok((capture, seal))
 }
 
+/// Retain the independent result and apply it to the captured slot. Any
+/// capture, receipt-write or sealing error uses the session's existing halt.
+fn finish_candidate_check(
+    session: &mut super::CaptureSession,
+    root: &PilotRoot,
+    capture: &super::SlotCapture,
+    checked: Result<IndependentCheckReceipt, CaptureFault>,
+) -> Result<super::SealedSlot, CaptureFault> {
+    checked
+        .and_then(|receipt| {
+            write_private_new(
+                &root.root.join("checks").join(format!(
+                    "{}-{}.receipt.json",
+                    capture.slot_id, capture.host_id
+                )),
+                &serde_json::to_vec_pretty(&receipt)
+                    .map_err(|_| fault(FaultClass::Persistence, "receipt_encode_failed"))?,
+            )?;
+            session.seal_slot(capture, &receipt)
+        })
+        .inspect_err(|fault| session.halt(*fault))
+}
+
 /// Run the eight frozen coding slots in order: restore each pair's canonical
 /// workspace from the seed (archiving the previous arm), run the slot,
 /// independently check the stopped candidate under containment and seal it.
@@ -1444,7 +1490,7 @@ pub fn run_coding(
             .iter()
             .map(|(r, _)| r.clone())
             .collect();
-        let sealed = run_independent_check(
+        let checked = run_independent_check(
             slot_id,
             &workspace,
             &order,
@@ -1453,18 +1499,8 @@ pub fn run_coding(
                 .root
                 .join("checks")
                 .join(format!("{slot_id}-{}", capture.host_id)),
-        )
-        .and_then(|receipt| {
-            write_private_new(
-                &root
-                    .root
-                    .join("checks")
-                    .join(format!("{slot_id}-{}.receipt.json", capture.host_id)),
-                &serde_json::to_vec_pretty(&receipt)
-                    .map_err(|_| fault(FaultClass::Persistence, "receipt_encode_failed"))?,
-            )?;
-            session.seal_slot(&capture, &receipt)
-        });
+        );
+        let sealed = finish_candidate_check(&mut session, root, &capture, checked);
         rows.push(slot_row(slot_id, Some(&capture), Some(&sealed)));
     }
     let receipt = session.finish()?;
@@ -1521,5 +1557,214 @@ mod tests {
         );
         assert!(!p.contains("network-outbound"));
         assert!(check_policy(Path::new("rel"), Path::new("/Users/u")).is_err());
+    }
+
+    // These exercise the actual private helpers, not a new fake-checker API.
+    struct OraclePrefixThenError {
+        prefix: std::io::Cursor<Vec<u8>>,
+    }
+
+    impl std::io::Read for OraclePrefixThenError {
+        fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+            if out.is_empty() {
+                return Ok(0);
+            }
+            let n = std::io::Read::read(&mut self.prefix, out)?;
+            if n != 0 {
+                Ok(n)
+            } else {
+                Err(std::io::Error::other(
+                    "owned synthetic pipe read failure after prefix",
+                ))
+            }
+        }
+    }
+
+    #[test]
+    fn oracle_pipe_prefix_then_read_error_is_not_successful_eof() {
+        // Public, owned bytes only; this is not the private oracle's success line.
+        let prefix = b"owned completion-looking prefix\n";
+        let error = check_output_sha256(OraclePrefixThenError {
+            prefix: std::io::Cursor::new(prefix.to_vec()),
+        })
+        .unwrap_err();
+        assert_eq!(error.class, FaultClass::CheckerProvenance);
+        assert_eq!(error.code, "check_output_unbound");
+        assert_eq!(
+            check_output_sha256(std::io::Cursor::new(prefix)).unwrap(),
+            sha256_hex(prefix)
+        );
+        assert_eq!(
+            check_output_sha256(std::io::Cursor::new(b"")).unwrap(),
+            sha256_hex(b"")
+        );
+    }
+
+    #[test]
+    fn oracle_checker_chain_error_halts_before_any_later_slot() {
+        use crate::pilot_capture::{
+            CaptureSession, Counters, Disposition, Inner, Journal, Mode, Scope, SlotCapture,
+            planned_slots, runtime,
+        };
+        for producer_failure in [true, false] {
+            let temp = tempfile::tempdir().unwrap();
+            let root = PilotRoot::create(&temp.path().join("pilot")).unwrap();
+            let run_dir = root.root.join("runs/owned-check-chain");
+            create_private_dir(&run_dir).unwrap();
+            let hosts_dir = run_dir.join("hosts");
+            create_private_dir(&hosts_dir).unwrap();
+            let journal_path = run_dir.join("journal.jsonl");
+            let mut journal = Journal::create(&journal_path, None).unwrap();
+            journal
+                .append(
+                    "admitted",
+                    serde_json::json!({"synthetic_owner_fixture":true}),
+                )
+                .unwrap();
+            // No transport, credential or runnable host. This isolates the same
+            // checker-result -> terminal-halt -> remaining-slot guard used by run_coding.
+            let mut session = CaptureSession {
+                rt: runtime().unwrap(),
+                inner: Inner {
+                    mode: Mode::Verification,
+                    scope: Scope::Coding,
+                    run_dir: run_dir.clone(),
+                    hosts_dir: hosts_dir.clone(),
+                    omp: root.root.join("unused-omp"),
+                    real_home: root.root.clone(),
+                    deny_literals: Vec::new(),
+                    journal,
+                    transport: None,
+                    manifest: None,
+                    session_id: "owned-check-chain".into(),
+                    host_seq: 0,
+                    attempt_seq: 0,
+                    counters: Counters::default(),
+                    paid_started_ns: None,
+                    paid_deadline_ns: None,
+                    boot_identity: String::new(),
+                    halt: None,
+                    halt_record_error: None,
+                    slot_index: 0,
+                    awaiting_seal: None,
+                    summaries: planned_slots(Scope::Coding),
+                    probe_sealed: false,
+                },
+            };
+            let capture = SlotCapture {
+                slot_id: "1B".into(),
+                host_id: "owned-capture".into(),
+                disposition: Disposition::Completed {
+                    terminal_status: "synthetic-only".into(),
+                },
+                render: None,
+                generations: Vec::new(),
+                tools: Vec::new(),
+                candidate_inventory: Vec::new(),
+                native: None,
+                host_exit: None,
+                host_wall_ms: 0,
+                prompt_status: None,
+            };
+            let receipt_path = root.root.join("checks/1B-owned-capture.receipt.json");
+            let (input, expected_class, expected_code) = if producer_failure {
+                let error = check_output_sha256(OraclePrefixThenError {
+                    prefix: std::io::Cursor::new(b"owned prefix before error".to_vec()),
+                })
+                .unwrap_err();
+                (
+                    Err(error),
+                    FaultClass::CheckerProvenance,
+                    "check_output_unbound",
+                )
+            } else {
+                // Exclusive receipt creation must fail without replacing this
+                // owned sentinel. The real helper must halt on this path too.
+                create_private_dir(&receipt_path).unwrap();
+                (
+                    Ok(IndependentCheckReceipt {
+                        slot_id: capture.slot_id.clone(),
+                        checker_root: root.root.join("checks/unused-checker"),
+                        candidate: Vec::new(),
+                        oracle_sha256: policy::ORACLE_SHA256.into(),
+                        compiler: PathBuf::from(policy::RUSTC),
+                        compiler_sha256: policy::RUSTC_SHA256.into(),
+                        compiler_version: "rustc 1.97.1 (owned fixture; not executed)".into(),
+                        env_names: Vec::new(),
+                        steps: Vec::new(),
+                        fixture: true,
+                    }),
+                    FaultClass::Persistence,
+                    "private_file_create_failed",
+                )
+            };
+            let fault = finish_candidate_check(&mut session, &root, &capture, input).unwrap_err();
+            assert_eq!((fault.class, fault.code), (expected_class, expected_code));
+            assert_eq!(session.halted(), Some(fault));
+            if producer_failure {
+                assert!(!receipt_path.exists());
+            } else {
+                assert!(receipt_path.is_dir());
+                assert_eq!(fs::read_dir(&receipt_path).unwrap().count(), 0);
+            }
+            let verified = Verified {
+                inputs: EvidenceInputs {
+                    paired_root: root.root.join("unused-paired"),
+                    freeze_root: root.root.join("unused-freeze"),
+                    foundry: root.root.join("unused-foundry"),
+                    profile: root.root.join("unused-profile"),
+                    omp: root.root.join("unused-omp"),
+                },
+                pins: Vec::new(),
+                task: String::new(),
+                arm_a_prompt: String::new(),
+                oracle: root.root.join("unused-oracle"),
+                seed: Vec::new(),
+            };
+            // A missing seed/host would fail if run_coding tried even one slot.
+            // Its halted branch must leave all workspace/host paths untouched.
+            let report = run_coding(session, &root, &verified).unwrap();
+            assert_eq!(
+                report.receipt.halt,
+                Some((expected_class.as_str().into(), expected_code.into()))
+            );
+            assert_eq!(report.receipt.counters, Counters::default());
+            assert_eq!(report.slots.len(), policy::SLOT_ORDER.len());
+            assert!(report.slots.iter().all(|slot| slot.state == "not_started"));
+            assert!(
+                report
+                    .receipt
+                    .slots
+                    .iter()
+                    .all(|slot| slot.state == "not_started")
+            );
+            assert!(
+                report
+                    .arms
+                    .iter()
+                    .all(|arm| arm.checked == 0 && arm.passed == 0)
+            );
+            assert_eq!(fs::read_dir(&hosts_dir).unwrap().count(), 0);
+            for pair in pins::PAIRS {
+                assert!(!root.workspace(&format!("pair-{pair}")).exists());
+            }
+            let rows: Vec<Value> = fs::read_to_string(&journal_path)
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+            assert_eq!(
+                rows.iter()
+                    .map(|row| row["kind"].as_str().unwrap())
+                    .collect::<Vec<_>>(),
+                ["admitted", "halt", "finished"]
+            );
+            assert_eq!(rows[1]["class"], expected_class.as_str());
+            assert_eq!(rows[1]["code"], expected_code);
+            assert_eq!(
+                report.receipt.journal_sha256,
+                sha256_hex(&fs::read(&journal_path).unwrap())
+            );
+        }
     }
 }

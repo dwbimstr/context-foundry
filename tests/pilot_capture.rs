@@ -156,9 +156,29 @@ fn fixture_receipt(capture: &pilot_capture::SlotCapture, root: &Path) -> Indepen
             exit: Some(0),
             signal: None,
             timed_out: false,
-            stdout_sha256: pilot_capture::sha256_hex(name.as_bytes()),
+            // Synthetic consumer receipt: expected metadata, not an observed
+            // execution of the private oracle. Root verified this fixed digest.
+            stdout_sha256: if *name == "oracle_run" {
+                "aac03c0ded8403eb8bd3ca53e9880313cde11fa658db4fc7444d737eef33127d".into()
+            } else {
+                pilot_capture::sha256_hex(name.as_bytes())
+            },
             stderr_sha256: pilot_capture::sha256_hex(b""),
-            artifacts: vec![],
+            artifacts: match *name {
+                "noalloc_compile" => vec![(
+                    "out/librecords-noalloc.rlib".into(),
+                    pilot_capture::sha256_hex(b"owned synthetic noalloc object"),
+                )],
+                "alloc_compile" => vec![(
+                    "out/librecords-alloc.rlib".into(),
+                    pilot_capture::sha256_hex(b"owned synthetic alloc object"),
+                )],
+                "oracle_compile" | "oracle_run" => vec![(
+                    "out/check".into(),
+                    pilot_capture::sha256_hex(b"owned synthetic checker image; never executed"),
+                )],
+                _ => unreachable!("frozen checker step"),
+            },
             wall_ms: 100,
         })
         .collect();
@@ -2049,4 +2069,443 @@ fn authority_manifests_cli_requires_explicit_run_dir_before_inputs() {
     );
     assert!(output.stdout.is_empty());
     assert!(!root.exists() && !inputs.exists());
+}
+
+// Independent expected metadata recovered and verified by the owner from the
+// pinned oracle's existing successful evidence. No private output bytes are here.
+const FIXTURE_ORACLE_COMPLETION_SHA256: &str =
+    "aac03c0ded8403eb8bd3ca53e9880313cde11fa658db4fc7444d737eef33127d";
+
+/// Synthetic receipt only: these inert byte identities are not compiler output
+/// or proof of running the private oracle. Keep every other new binding valid
+/// when mutating one assertion's field, so the refusal reaches its intended gate.
+fn oracle_bound_fixture_receipt(
+    capture: &pilot_capture::SlotCapture,
+    root: &Path,
+) -> IndependentCheckReceipt {
+    let mut receipt = fixture_receipt(capture, root);
+    receipt.steps[0].artifacts = vec![(
+        "out/librecords-noalloc.rlib".into(),
+        pilot_capture::sha256_hex(b"owned synthetic noalloc object"),
+    )];
+    receipt.steps[1].artifacts = vec![(
+        "out/librecords-alloc.rlib".into(),
+        pilot_capture::sha256_hex(b"owned synthetic alloc object"),
+    )];
+    let checker = pilot_capture::sha256_hex(b"owned synthetic checker image; never executed");
+    receipt.steps[2].artifacts = vec![("out/check".into(), checker.clone())];
+    receipt.steps[3].artifacts = vec![("out/check".into(), checker)];
+    receipt.steps[3].stdout_sha256 = FIXTURE_ORACLE_COMPLETION_SHA256.into();
+    receipt
+}
+
+/// The existing partial-slot pattern reaches the real seal_slot consumer using
+/// exactly one owned CountTokens fixture response, without a Messages request.
+fn oracle_awaiting_capture(e: &Env, fx: &Fixture) -> (CaptureSession, pilot_capture::SlotCapture) {
+    let mut session =
+        CaptureSession::open(verification(e, fx, Scope::Coding, Default::default())).unwrap();
+    let capture = session.run_slot(slot(e, "1B", TASK)).unwrap();
+    assert!(matches!(capture.disposition, Disposition::Partial { .. }));
+    assert_eq!(fx.paths(), vec!["/v1/messages/count_tokens"]);
+    assert!(session.halted().is_none());
+    (session, capture)
+}
+
+fn oracle_assert_terminal_refusal(
+    mut session: CaptureSession,
+    capture: &pilot_capture::SlotCapture,
+    receipt: &IndependentCheckReceipt,
+    e: &Env,
+    fx: &Fixture,
+    code: &str,
+) {
+    let request_count = fx.seen().len();
+    let fault = session.seal_slot(capture, receipt).unwrap_err();
+    assert_eq!(fault.class, FaultClass::CheckerProvenance);
+    assert_eq!(fault.code, code);
+    assert_eq!(session.halted(), Some(fault));
+    assert_eq!(
+        session.run_slot(slot(e, "1A", TASK)).unwrap_err().code,
+        "session_halted"
+    );
+    assert_eq!(fx.seen().len(), request_count);
+    let report = session.finish().unwrap();
+    assert_eq!(
+        report.halt,
+        Some((FaultClass::CheckerProvenance.as_str().into(), code.into()))
+    );
+    assert!(report.slots[1..].iter().all(|s| s.state == "not_started"));
+    let rows = journal(&e.run_dir);
+    assert_eq!(rows.iter().filter(|r| r["kind"] == "halt").count(), 1);
+    assert!(!rows.iter().any(|r| r["kind"] == "slot_sealed"));
+    let refused = rows.iter().find(|r| r["kind"] == "check_refused").unwrap();
+    assert_eq!(
+        refused["receipt_sha256"],
+        pilot_capture::sha256_hex(&serde_json::to_vec(receipt).unwrap())
+    );
+    assert_eq!(rows.last().unwrap()["kind"], "finished");
+    assert_eq!(fx.seen().len(), request_count);
+}
+
+#[test]
+fn oracle_zero_exit_without_exact_completion_is_a_terminal_provenance_fault() {
+    require_host();
+    for stdout in [b"".as_slice(), b"owned wrong completion\n".as_slice()] {
+        let e = env();
+        let fx = Fixture::start(vec![Reply::Count(30_721)]);
+        let (session, capture) = oracle_awaiting_capture(&e, &fx);
+        let checker = tempfile::tempdir().unwrap();
+        let mut receipt =
+            oracle_bound_fixture_receipt(&capture, &std::fs::canonicalize(checker.path()).unwrap());
+        receipt.steps[3].stdout_sha256 = pilot_capture::sha256_hex(stdout);
+        assert!(receipt.steps.iter().all(|step| step.exit == Some(0)));
+        oracle_assert_terminal_refusal(
+            session,
+            &capture,
+            &receipt,
+            &e,
+            &fx,
+            "check_oracle_completion_mismatch",
+        );
+    }
+}
+
+#[test]
+fn oracle_successful_steps_require_the_exact_named_artifact() {
+    require_host();
+    for (index, wrong_name) in [(0, false), (1, false), (2, false), (3, false), (2, true)] {
+        let e = env();
+        let fx = Fixture::start(vec![Reply::Count(30_721)]);
+        let (session, capture) = oracle_awaiting_capture(&e, &fx);
+        let checker = tempfile::tempdir().unwrap();
+        let mut receipt =
+            oracle_bound_fixture_receipt(&capture, &std::fs::canonicalize(checker.path()).unwrap());
+        if wrong_name {
+            receipt.steps[index].artifacts[0].0 = "out/not-the-executed-checker".into();
+        } else {
+            receipt.steps[index].artifacts.clear();
+        }
+        oracle_assert_terminal_refusal(
+            session,
+            &capture,
+            &receipt,
+            &e,
+            &fx,
+            "check_artifact_unbound",
+        );
+    }
+}
+
+#[test]
+fn oracle_executed_checker_must_match_the_compiled_checker() {
+    require_host();
+    let e = env();
+    let fx = Fixture::start(vec![Reply::Count(30_721)]);
+    let (session, capture) = oracle_awaiting_capture(&e, &fx);
+    let checker = tempfile::tempdir().unwrap();
+    let mut receipt =
+        oracle_bound_fixture_receipt(&capture, &std::fs::canonicalize(checker.path()).unwrap());
+    receipt.steps[3].artifacts[0].1 =
+        pilot_capture::sha256_hex(b"different owned synthetic executable");
+    oracle_assert_terminal_refusal(
+        session,
+        &capture,
+        &receipt,
+        &e,
+        &fx,
+        "check_oracle_executable_mismatch",
+    );
+}
+
+#[test]
+fn oracle_bound_success_and_observed_nonzero_keep_distinct_outcomes() {
+    require_host();
+    for nonzero in [false, true] {
+        let e = env();
+        let fx = Fixture::start(vec![Reply::Count(30_721)]);
+        let (mut session, capture) = oracle_awaiting_capture(&e, &fx);
+        let checker = tempfile::tempdir().unwrap();
+        let mut receipt =
+            oracle_bound_fixture_receipt(&capture, &std::fs::canonicalize(checker.path()).unwrap());
+        if nonzero {
+            receipt.steps[3].exit = Some(101);
+            receipt.steps[3].stdout_sha256 =
+                pilot_capture::sha256_hex(b"owned failing-program output");
+        }
+        let expected = if nonzero {
+            pilot_capture::CheckOutcome::Fail
+        } else {
+            pilot_capture::CheckOutcome::Pass
+        };
+        assert_eq!(
+            session.seal_slot(&capture, &receipt).unwrap().outcome,
+            expected
+        );
+        assert!(session.halted().is_none());
+        let report = session.finish().unwrap();
+        assert_eq!(report.halt, None);
+        assert_eq!(report.slots[0].check, Some(expected));
+        assert_eq!(report.slots[0].state, "sealed");
+        assert!(report.slots[1..].iter().all(|s| s.state == "not_started"));
+        assert_eq!(fx.paths(), vec!["/v1/messages/count_tokens"]);
+        let rows = journal(&e.run_dir);
+        let sealed = rows.iter().find(|r| r["kind"] == "slot_sealed").unwrap();
+        assert_eq!(sealed["outcome"], json!(expected));
+        assert_eq!(
+            sealed["receipt_sha256"],
+            pilot_capture::sha256_hex(&serde_json::to_vec(&receipt).unwrap())
+        );
+        assert!(!rows.iter().any(|r| r["kind"] == "halt"));
+    }
+}
+
+/// Actual changed checker producer only: no CaptureSession, host, model, view
+/// materialization or provider. Explicit private paths are supplied by the owner;
+/// missing inputs fail rather than skipping or weakening the frozen oracle pin.
+#[test]
+#[ignore = "needs explicit CF_PILOT_ORACLE_SOURCE and CF_PILOT_POSITIVE_CANDIDATE; actual fixed compiler/oracle on fresh owned copies"]
+fn oracle_actual_producer_binds_completion_binary_and_owned_sources() {
+    use context_foundry::pilot_capture::apparatus::run_independent_check;
+    use std::os::unix::fs::DirBuilderExt;
+
+    const EXPECTED_ORACLE: &str =
+        "f5ac14d370d852090c49ead61e23f4d9185eed491b33b123ba6e6ff2dec09bb9";
+    // Independently recovered historical success identity, not derived from
+    // this execution or read from the new production completion constant.
+    const EXPECTED_COMPLETION: &str =
+        "aac03c0ded8403eb8bd3ca53e9880313cde11fa658db4fc7444d737eef33127d";
+    let oracle = PathBuf::from(
+        std::env::var_os("CF_PILOT_ORACLE_SOURCE")
+            .expect("CF_PILOT_ORACLE_SOURCE must name the owner-verified pinned oracle"),
+    );
+    let source =
+        PathBuf::from(std::env::var_os("CF_PILOT_POSITIVE_CANDIDATE").expect(
+            "CF_PILOT_POSITIVE_CANDIDATE must name a newly owned copied positive candidate",
+        ));
+    assert!(
+        oracle.is_absolute() && source.is_absolute(),
+        "explicit absolute inputs required"
+    );
+    assert!(
+        std::fs::symlink_metadata(&oracle).unwrap().is_file(),
+        "oracle must be a regular file"
+    );
+    assert!(
+        std::fs::symlink_metadata(&source).unwrap().is_dir(),
+        "candidate must be a real directory"
+    );
+    assert!(
+        std::fs::symlink_metadata(source.join("src"))
+            .unwrap()
+            .is_dir(),
+        "candidate src must be a real directory"
+    );
+    let oracle = std::fs::canonicalize(oracle).unwrap();
+    let source = std::fs::canonicalize(source).unwrap();
+    let oracle_before = std::fs::read(&oracle).unwrap();
+    assert_eq!(pilot_capture::sha256_hex(&oracle_before), EXPECTED_ORACLE);
+    assert_eq!(policy::ORACLE_SHA256, EXPECTED_ORACLE);
+    let source_before: Vec<(String, Vec<u8>)> = policy::READ_SET
+        .iter()
+        .map(|rel| {
+            let path = source.join(rel);
+            assert!(
+                std::fs::symlink_metadata(&path).unwrap().is_file(),
+                "nonregular candidate source: {rel}"
+            );
+            ((*rel).to_string(), std::fs::read(path).unwrap())
+        })
+        .collect();
+    let source_identity: Vec<(String, String)> = source_before
+        .iter()
+        .map(|(rel, bytes)| (rel.clone(), pilot_capture::sha256_hex(bytes)))
+        .collect();
+
+    // Retain this new private root on red, green or panic, so the owner can
+    // inspect complete producer outputs. Only this owned root is written.
+    let owned_temp = tempfile::Builder::new()
+        .prefix("cf-oracle-producer-")
+        .tempdir()
+        .unwrap();
+    let owned = std::fs::canonicalize(owned_temp.path()).unwrap();
+    std::mem::forget(owned_temp);
+    eprintln!("owned oracle producer evidence: {}", owned.display());
+    private_fixture_file(&owned.join("input-identities.json"), &serde_json::to_vec_pretty(&json!({
+        "oracle_sha256":EXPECTED_ORACLE, "positive_candidate":source_identity,
+        "completion_stdout_sha256":EXPECTED_COMPLETION,
+        "completion_bytes":106, "completion_bytes_source":"historical owner-verified pin, not an observed receipt field"
+    })).unwrap());
+    let copy_candidate = |name: &str, fail_compile: bool| {
+        let target = owned.join(name);
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&target)
+            .unwrap();
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(target.join("src"))
+            .unwrap();
+        for (rel, bytes) in &source_before {
+            let mut bytes = bytes.clone();
+            if fail_compile && rel == "src/lib.rs" {
+                bytes.extend_from_slice(
+                    b"\ncompile_error!(\"owned checker-producer regression\");\n",
+                );
+            }
+            private_fixture_file(&target.join(rel), &bytes);
+        }
+        target
+    };
+    let inventory = |workspace: &Path| -> Vec<(String, String)> {
+        policy::READ_SET
+            .iter()
+            .map(|rel| {
+                (
+                    (*rel).to_string(),
+                    pilot_capture::sha256_hex(&std::fs::read(workspace.join(rel)).unwrap()),
+                )
+            })
+            .collect()
+    };
+    let unchanged_inputs = || {
+        assert_eq!(
+            std::fs::read(&oracle).unwrap(),
+            oracle_before,
+            "original oracle bytes changed"
+        );
+        for (rel, bytes) in &source_before {
+            assert_eq!(
+                &std::fs::read(source.join(rel)).unwrap(),
+                bytes,
+                "input candidate changed: {rel}"
+            );
+        }
+    };
+    let order: Vec<String> = policy::READ_SET
+        .iter()
+        .map(|rel| (*rel).to_string())
+        .collect();
+    let positive = copy_candidate("positive-candidate", false);
+    let positive_before = inventory(&positive);
+    assert_eq!(positive_before, source_identity);
+    let positive_checker = owned.join("positive-checker");
+    assert!(!positive_checker.exists());
+    let positive_receipt =
+        run_independent_check("1B", &positive, &order, &oracle, &positive_checker).unwrap();
+    private_fixture_file(
+        &owned.join("positive-receipt.json"),
+        &serde_json::to_vec_pretty(&positive_receipt).unwrap(),
+    );
+    // Check input identity before the new artifact assertion, including on a
+    // baseline red where oracle_run has no pre-execution artifact observation.
+    unchanged_inputs();
+    assert_eq!(inventory(&positive), positive_before);
+    assert_eq!(inventory(&positive_checker), positive_before);
+    assert_eq!(positive_receipt.candidate, positive_before);
+    assert_eq!(
+        positive_receipt.checker_root,
+        std::fs::canonicalize(&positive_checker).unwrap()
+    );
+    assert_eq!(positive_receipt.oracle_sha256, EXPECTED_ORACLE);
+    assert_eq!(
+        pilot_capture::sha256_hex(&std::fs::read(positive_checker.join("check.rs")).unwrap()),
+        EXPECTED_ORACLE
+    );
+    assert_eq!(positive_receipt.compiler, Path::new(policy::RUSTC));
+    assert_eq!(positive_receipt.compiler_sha256, policy::RUSTC_SHA256);
+    assert_eq!(
+        pilot_capture::sha256_hex(&std::fs::read(policy::RUSTC).unwrap()),
+        policy::RUSTC_SHA256
+    );
+    assert!(!positive_receipt.fixture);
+    assert_eq!(positive_receipt.steps.len(), 4);
+    let checker_text = positive_checker.to_str().unwrap();
+    for (step, (name, argv)) in positive_receipt.steps.iter().zip(policy::CHECK_RECIPE) {
+        assert_eq!(step.step, name);
+        assert_eq!(
+            step.argv,
+            argv.iter()
+                .map(|arg| arg.replace("<ROOT>", checker_text))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            step.exit,
+            Some(0),
+            "actual checker step failed: {}",
+            step.step
+        );
+        assert_eq!(step.signal, None);
+        assert!(!step.timed_out);
+    }
+    assert_eq!(positive_receipt.steps[3].stdout_sha256, EXPECTED_COMPLETION);
+    // Require an actual observation of the executed image, not just the
+    // compile artifact. This is the intended baseline producer-red boundary.
+    let executed = &positive_receipt.steps[3].artifacts;
+    assert_eq!(
+        executed.len(),
+        1,
+        "oracle_run must bind its actual pre-execution out/check image"
+    );
+    assert_eq!(executed[0].0, "out/check");
+    let expected_artifacts = [
+        "out/librecords-noalloc.rlib",
+        "out/librecords-alloc.rlib",
+        "out/check",
+        "out/check",
+    ];
+    for (step, name) in positive_receipt.steps.iter().zip(expected_artifacts) {
+        let actual_digest =
+            pilot_capture::sha256_hex(&std::fs::read(positive_checker.join(name)).unwrap());
+        assert_eq!(
+            step.artifacts,
+            vec![(name.to_string(), actual_digest)],
+            "{} artifact differs",
+            step.step
+        );
+    }
+    assert_eq!(
+        positive_receipt.steps[2].artifacts,
+        positive_receipt.steps[3].artifacts
+    );
+
+    // A distinct new owned candidate fails during compilation, without
+    // executing the oracle or rerunning the historical seeded-negative control.
+    let negative = copy_candidate("compile-error-candidate", true);
+    let negative_before = inventory(&negative);
+    assert_ne!(negative_before, positive_before);
+    let negative_checker = owned.join("compile-error-checker");
+    assert!(!negative_checker.exists());
+    let negative_receipt =
+        run_independent_check("1B", &negative, &order, &oracle, &negative_checker).unwrap();
+    private_fixture_file(
+        &owned.join("compile-error-receipt.json"),
+        &serde_json::to_vec_pretty(&negative_receipt).unwrap(),
+    );
+    assert_eq!(negative_receipt.candidate, negative_before);
+    assert_eq!(inventory(&negative), negative_before);
+    assert_eq!(inventory(&negative_checker), negative_before);
+    assert_eq!(negative_receipt.oracle_sha256, EXPECTED_ORACLE);
+    assert_eq!(
+        pilot_capture::sha256_hex(&std::fs::read(negative_checker.join("check.rs")).unwrap()),
+        EXPECTED_ORACLE
+    );
+    assert!(!negative_receipt.fixture);
+    assert_eq!(negative_receipt.steps.len(), 1);
+    let failed = &negative_receipt.steps[0];
+    assert_eq!(failed.step, "noalloc_compile");
+    assert!(failed.exit.is_some_and(|code| code != 0));
+    assert_eq!(failed.signal, None);
+    assert!(!failed.timed_out);
+    assert!(!negative_checker.join("out/check").exists());
+    // Ok(receipt) with this observed nonzero exit remains an ordinary producer
+    // result. The separate seal_slot tests cover its consumer Fail disposition.
+    unchanged_inputs();
+    private_fixture_file(
+        &owned.join("input-readback.json"),
+        &serde_json::to_vec_pretty(&json!({
+            "unchanged_input_bytes":true, "positive_candidate":inventory(&source),
+            "oracle_sha256":pilot_capture::sha256_hex(&std::fs::read(&oracle).unwrap())
+        }))
+        .unwrap(),
+    );
 }

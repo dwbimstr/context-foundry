@@ -162,6 +162,20 @@ The current source pointers establish ownership, not completed qualification.
 | Workspace restore failure exits without halt record | Journal a terminal halt, stop owned processes and prohibit the next slot. The selected local fixtures pass: healthy journal finalization retains the halt and unstarted rows, the post-admission CLI returns failure, and failed halt persistence prevents a later success receipt ([record](../../../docs/validation.md#pilot-workspace-restoration-and-halt-persistence--2026-11-11)). This does not establish live-front-door admission, current installed-host/provider compatibility, private-oracle outcomes or power-loss durability; v2 still requires its declared host/arm qualification. |
 | `seal_slot` relies only on exit status | Bind actual expected oracle-completion evidence to the checked candidate and receipt; zero exit without the required completion evidence cannot pass. |
 
+**Selected checker-completion repair, 2026-11-11 — not yet qualified.**
+The existing receipt owner must require the pinned oracle's complete successful
+stdout digest (`aac03c0ded8403eb8bd3ca53e9880313cde11fa658db4fc7444d737eef33127d`),
+recovered from hash-verified historical evidence, for an all-zero-exit pass.
+Require each successful compile's exact artifact and bind the actual pre-execution
+`out/check` hash to the compile result. A complete observed nonzero check remains
+an ordinary failure; missing completion or provenance is a terminal refusal.
+Stream read errors cannot certify a prefix as complete output. Hash the same oracle
+bytes copied into the new checker root. Capture, receipt-write and sealing errors
+use the existing session halt and leave later slots unstarted. This reuses current
+receipt fields and preserves frozen v1 policy/history. Qualification separates
+synthetic consumer tests from the real fixed compiler/oracle on new owned copies;
+it does not rerun the original calibration harness or accept pilot v2/T006.
+
 Preserve v1's original failures and interpretation. Its two blocked `read .` calls
 remain constraint violations with the owner's accepted oracle outcomes. V2's task
 manifest must distinguish blocked out-of-scope reads, forbidden tools and actual
