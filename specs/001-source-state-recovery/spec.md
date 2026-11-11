@@ -555,36 +555,36 @@ on it ([measurement handoff](../../docs/measurement-handoff.md)).
 
 ### T010 — Retrieve behavioral evidence for a named symbol
 
-**Status:** authorized 2026-10-09 (owner: “go for 1 then 2 and onwards”); in progress, not accepted.
+**Status:** retrieval qualification passed 2026-11-11; the lexical default candidate awaits the final implementation gates.
 Owner decision, 2026-11-06 ("Lexical-only, drop T006 gate";
 [decision record](../../docs/validation.md#owner-decisions--2026-11-06)): T010's own
 local gates below and the 2026-10-19 G2 enable rule ([AGENTS.md](../../AGENTS.md))
 decide the flag; the 003 T006 agent-task gate no longer applies to it, and no
 real-agent benefit is claimed. G2 found that the flag helps lexical-only stores and
 costs the default hierarchy recipe ([validation](../../docs/validation.md)), so its
-effects on semantic stores are removed by the candidate below and, once the gates
-pass, it is to default on only where lexical results are served. Default promotion
-still waits for qualification.
+effects on semantic results are removed. The qualified algorithm now defaults on
+where lexical results are served; final implementation checks remain before
+acceptance. See the [receipt](../../docs/validation.md#t010-lexical-default--2026-11-11).
 
-Implementation continuation, 2026-11-11: qualify one fixed candidate, without ranking
-tuning. Semantic model admission keeps the ordinary anchor rule regardless of this
+Implementation continuation, 2026-11-11: one fixed candidate, without ranking
+tuning, passed the full G1 and frozen G2 comparison against `a456c53` (K = 1). Semantic model admission keeps the ordinary anchor rule regardless of this
 option. A supplied dense window (including partial or empty-hit windows) disables
 both prose selection and owned-method support at the shared engine boundary. Off
 and named-fallback plans are lexical and retain the option. Preserve the explicit
-library boolean and existing flag; default promotion is conditional on the local
-guards, full G1 and a fresh 388-question G2 comparison against `a456c53` (K = 1).
+library boolean and existing bare flag. Library defaults, CLI context and MCP owner
+startup enable the same lexical policy; `--experimental-behavior-context=false`
+(and the library's explicit `false`) restores the former lexical behavior.
 The scope is retrieval only; no provider spend or real-agent benefit is authorized.
 
-The first candidate is implemented behind `--experimental-behavior-context` (CLI
-context / MCP owner), default off. It changes packing of existing, fresh candidates,
-not their recall or the embedding model. The
+The initial 2026-10-09 candidate changed packing of existing, fresh candidates;
+subsequent lexical prose selection is defined in the same contract. The
 [experimental amendment](contracts/context-v2.md#experimental-behavioral-support--001-t010-2026-10-09)
 defines its exact supported intent and ownership/budget behavior. Local trace evidence
 found `QueryRuntime::dense_index` already selected at candidate rank 2 but omitted
 by anchored packing. On that frozen local query the candidate supplies the method
 and the owner's address at 357 delivered tokens versus 437 for the baseline's struct
 alone. This is one development example, not a G1/G2 or real-agent acceptance result.
-The full gates below remain pending; see [validation](../../docs/validation.md).
+Final implementation gates remain pending; see [validation](../../docs/validation.md).
 
 - **Problem:** T007 resolves identity well, but its anchored packing can deliver a
   type definition or directory without the implementation needed by a question about
@@ -643,8 +643,8 @@ The full gates below remain pending; see [validation](../../docs/validation.md).
   ambiguity, unavailable/stale graph, bounded packing and scope isolation, followed
   by the required implementation checks and the frozen measurements when this task
   is implemented. Local implementation evidence is recorded in validation; the full
-  benchmark gates are still open. The real-host agent-task gate was dropped for this
-  flag on 2026-11-06.
+  G1/G2 measurements passed on 2026-11-11. The real-host agent-task gate was dropped
+  for this flag on 2026-11-06.
 
 ### G1 — city-map measurement
 

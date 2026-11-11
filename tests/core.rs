@@ -29,14 +29,21 @@ fn retrieval_trace_distinguishes_selection_caps_from_anchored_packing_omissions(
     engine.replace_source("session.rs", &body).unwrap();
     drain(&mut engine);
     let query = "How does `Session` retry requests?";
+    // This diagnostic deliberately exercises the original anchored ladder.
+    let options = context_foundry::store::ContextOptions {
+        experimental_behavior: false,
+        ..Default::default()
+    };
     let baseline = engine
-        .context_candidates(query, Strategy::Auto, &Control::unbounded())
-        .unwrap();
+        .context_candidates_with(query, Strategy::Auto, &Control::unbounded(), &options)
+        .unwrap()
+        .batch;
     let trace = context_foundry::retrieval_trace::RetrievalTrace::default();
     let control = Control::unbounded().with_trace(Some(trace.clone()));
     let batch = engine
-        .context_candidates(query, Strategy::Auto, &control)
-        .unwrap();
+        .context_candidates_with(query, Strategy::Auto, &control, &options)
+        .unwrap()
+        .batch;
     let pack = |batch: &_| {
         response::pack_context(batch, Budget::request(2048), &response::stdout_bytes).unwrap()
     };
@@ -75,10 +82,11 @@ fn retrieval_trace_distinguishes_selection_caps_from_anchored_packing_omissions(
         .unwrap();
     let stale_trace = context_foundry::retrieval_trace::RetrievalTrace::default();
     engine
-        .context_candidates(
+        .context_candidates_with(
             query,
             Strategy::Auto,
             &Control::unbounded().with_trace(Some(stale_trace.clone())),
+            &options,
         )
         .unwrap();
     assert!(
@@ -145,8 +153,17 @@ fn prose_diversity_backfills_independent_same_file_evidence_without_hiding_neigh
             .unwrap();
     assert!(packed.text.contains("action_11"));
     let ordinary = engine
-        .context_candidates(query, Strategy::Search, &Control::unbounded())
-        .unwrap();
+        .context_candidates_with(
+            query,
+            Strategy::Search,
+            &Control::unbounded(),
+            &ContextOptions {
+                experimental_behavior: false,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .batch;
     assert_eq!(
         ordinary
             .items
@@ -453,8 +470,17 @@ fn prose_plural_acronyms_match_the_acronym_without_changing_symbol_requests() {
         "z.rs"
     );
     let ordinary = engine
-        .context_candidates(query, Strategy::Search, &Control::unbounded())
-        .unwrap();
+        .context_candidates_with(
+            query,
+            Strategy::Search,
+            &Control::unbounded(),
+            &ContextOptions {
+                experimental_behavior: false,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .batch;
     assert_eq!(ordinary.items[0].handle.as_ref().unwrap().path, "a.rs");
     engine.replace_source("named.rs", "fn APIs() {}\n").unwrap();
     drain(&mut engine);
@@ -977,6 +1003,10 @@ impl Other { pub fn retry(&self) { unrelated_retry(); } }
     assert!(!pack(&baseline, 2048).text.contains("exponential_delay"));
     let result = pack(&candidate, 2048);
     assert!(result.text.contains("exponential_delay"), "{}", result.text);
+    let library_default = engine
+        .context_candidates(query, Strategy::Auto, &Control::unbounded())
+        .unwrap();
+    assert_eq!(pack(&library_default, 2048).text, result.text);
     assert!(!result.text.contains("unrelated_retry"));
     assert!(!result.text.contains("close_connection"));
     assert!(parse_v2(&result.text).is_ok());

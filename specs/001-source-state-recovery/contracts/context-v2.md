@@ -1136,19 +1136,20 @@ by the resolver; `retrieve` is unchanged.
 
 #### Experimental behavioral support — 001 T010, 2026-10-09
 
-The owner authorized this candidate for implementation; it is **off by default**
-until T010 passes its own local gates and the 2026-10-19 G2 enable rule
-([AGENTS.md](../../../AGENTS.md)). Owner amendment, 2026-11-06 ("Lexical-only, drop
-T006 gate"): the 003 T006 agent-task gate no longer applies to this flag, and no
-real-agent benefit is claimed. The flag is to lose its effects on semantic stores,
-including the dense/lexical interleaving of
+The 2026-11-11 candidate defaults this policy **on for lexical results**, after
+passing full G1 and the 2026-10-19 G2 enable rule
+([receipt](../../../docs/validation.md#t010-lexical-default--2026-11-11)); final
+implementation gates remain before acceptance. Owner amendment, 2026-11-06
+("Lexical-only, drop T006 gate"): the 003 T006 agent-task gate does not apply, and
+no real-agent benefit is claimed. The flag's semantic effects, including the former
+dense/lexical interleaving in
 [§ Experimental anchorless prose selection](#experimental-anchorless-prose-selection--009-t005-2026-10-10),
-and once those gates pass it is to default on only where lexical results are served.
-The 2026-11-11 candidate removes those semantic effects; lexical default promotion
-is still conditional on qualification.
-Enable it explicitly with
-`context --experimental-behavior-context` or the same flag at MCP owner startup.
-The MCP tool schema and ordinary response wire do not change.
+are removed.
+Library `ContextOptions::default()`, CLI context and MCP owner startup share the
+same enabled default. The existing bare `--experimental-behavior-context` remains
+accepted; `--experimental-behavior-context=false` explicitly opts out. Library
+callers retain the explicit boolean override. The MCP tool schema and ordinary
+response wire do not change.
 
 The first candidate repairs packing only. It does not expand candidate windows,
 change the four-per-file cap, invoke an embedding model for anchors, or change
@@ -1178,9 +1179,9 @@ allowed only if the global anchor remains uniquely resolved to that same workspa
 and source identity. No unit of another root may attach to it merely by name.
 
 This candidate does not solve missing methods, prior cap losses, cross-file behavior,
-unrecognized intent, or the 249 anchorless G2 misses. Its default stays off until
-those explicitly scoped retrieval gates are evaluated; task outcomes no longer gate
-it (owner, 2026-11-06).
+unrecognized intent, or general anchorless retrieval. The lexical policy's measured
+scope and remaining misses are recorded in validation; task outcomes do not gate it
+(owner, 2026-11-06).
 
 ### Doors
 

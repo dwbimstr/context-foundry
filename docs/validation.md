@@ -1,5 +1,64 @@
 # Validation
 
+## T010 lexical default — 2026-11-11
+
+**Retrieval qualification passes; final implementation gates are pending.** One
+fixed candidate, `ceca2d8`, removes the behavioral flag's semantic effects and keeps
+the existing lexical algorithm. No ranking was tuned from these results. The
+comparison ran on the owner's M5 Max against `a456c53`, with no provider calls,
+training or corpus-code execution. The default-switch candidate now enables that
+same lexical policy through the library, CLI context and MCP owner; an explicit
+`false` retains the prior lexical behavior. A supplied dense window, including
+partial/empty windows, ignores the option. Ordinary semantic admission is unchanged
+by the flag; named fallback remains lexical.
+
+| Frozen measurement | Baseline | Candidate | Verdict |
+| --- | ---: | ---: | --- |
+| G2 located definitions, 388 questions | 0 | 13 | +13 / −0; exact one-sided McNemar p = 0.000122, K = 1 |
+| G2 verbatim definition bodies | 0 | 10 | +10 / −0 |
+| G2 mean delivered tokens | 2,023.2 | 2,023.7 | Reported only; every response within 2,048 |
+| G1 checker / qualified / bun tasks | 6,881 / 2,551 / 1,000 | Same | All existing guards pass in both arms |
+| G1 complete response records | 14,284 | 14,284 | Byte-identical, including arguments, evidence and order; no normalization |
+| Fresh mixed-intent fixtures, complete method support | 0/6 | 6/6 | All twelve locator/unknown-intent controls identical; all caps pass |
+
+The G2 corpus split is Rust 0 → 3 located / 0 → 3 bodies, bun 0 → 10 / 0 → 7.
+These are absolute lexical results on the frozen identifier-free set, not the
+hierarchy semantic scores or a general retrieval-success rate. The six new
+synthetic mixed-intent cases and exact required spans were frozen before their
+first run (`mixed-protocol.json`, SHA-256
+`e2f8da77eacc76666d5de98a1178c9312c1eade23cb5c49bdcef66bdceb0c7af`). They supplement
+the existing ambiguity, stale support, graph, scope and budget fixtures; they are
+not representative coding tasks or a separate statistical promotion test. No
+real-agent benefit or provider savings is claimed.
+
+The predeclared measurement bound was one hour including setup and diagnosis,
+20 GiB free disk and 8 GiB sampled owner RSS. G1/G2 completed at 1,778.82 s; the
+mixed-intent check took another 5.17 s. Maximum sampled owner RSS was 578,224,128
+bytes; minimum free disk was 306,294,603,776 bytes. No embedding worker was observed.
+Samples are lower bounds on true process peaks, not GPU/global memory measurements.
+Both original stores retained identical full file-hash manifests; only owned copies
+were opened. Corpus heads and frozen harness/question/counter pins were checked.
+
+**Retained failures and local checks.** A new semantic-admission regression failed
+before the repair and passed after it. The first neural suite had obsolete semantic
+experiment expectations and sandbox-denied HTTP/watch fixtures; the native rerun
+passed 96 tests, with one ignored. Existing source identity, freshness and resource
+checks remain. The process-observation race and its red/green tests are recorded
+below; the fresh qualified baseline reproduced all 2,779 responses from the failed
+apparatus attempt. Default promotion exposed two core fixtures implicitly relying
+on the former default; their baseline calls now explicitly set `false`, with their
+assertions unchanged. The fresh boundary suites passed all 88 core and 93 MCP tests,
+including library defaults, bare-flag compatibility, explicit opt-out and exact
+CLI/MCP parity. Final default-binary G2 identity and the eight implementation gates
+remain pending.
+
+Private protocols, binaries, complete outputs, failed receipts and resource samples
+are retained in `runs/t010-lexical-2026-11-11/` and
+`datasets/context-foundry-t010-2026-11-11.noindex`. The baseline binary SHA-256 is
+`c9e497a74e02fd8d12f2b16b6334fe5f442c40af511df81d8a0885b419806e94`; the qualified
+explicit-flag candidate is
+`1fd668cff5bc2c564e1e43c54967a0aae63eddd5d1da330ea4c2f1ff64db250a`.
+
 ## Wrap-up continuation — 2026-11-11
 
 The signed-package preflight found zero valid code-signing identities in the
@@ -12,9 +71,8 @@ Signing remains deferred until product readiness; no key was accessed, package
 installed, host setting changed or publication attempted. These are metadata and
 source findings, not signed-runtime acceptance.
 
-The next authorized slice is 001 T010's lexical-only behavior decision. Its fixed
-candidate and no-spend bounds are recorded before measurement in private
-`runs/t010-lexical-2026-11-11/protocol.json`; qualification is in progress.
+001 T010's fixed candidate and no-spend bounds were recorded before measurement in
+private `runs/t010-lexical-2026-11-11/protocol.json`; see the receipt above.
 
 The [pilot v2 draft](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md)
 records the selected comparison, task-context outcomes, capture/accounting boundary,
@@ -32,7 +90,7 @@ real-process regressions: a forced snapshot/exit race and a genuinely live orpha
 that must still fail and be cleaned up. The race test fails against the prior
 script. This changes observation ordering, not the lifecycle acceptance rule.
 The failed receipt is retained; a fresh qualified baseline and the remaining G1
-sets continue with the same binaries/scoring and the original one-hour wall bound.
+sets passed with the same binaries/scoring and the original one-hour wall bound.
 
 ## Native macOS acceptance — 2026-11-10
 
