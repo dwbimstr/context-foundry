@@ -33,7 +33,7 @@ use context_foundry::neural::query::{
     DENSE_WINDOW, DenseWindow, MakeProvider, QUERY_CEILING, QueryRuntime,
 };
 use context_foundry::response::{self, Budget, PackedText};
-use context_foundry::store::CandidateBatch;
+use context_foundry::store::{CandidateBatch, ContextOptions};
 use context_foundry::testkit::{self, V2Item, V2Response, parse_v2};
 use context_foundry::{Control, Engine, Strategy};
 use rmcp::{
@@ -1974,7 +1974,24 @@ fn neural_candidates_crowded_by_other_evidence_are_still_delivered_in_budget() {
     let corpus = Corpus::new(&[]);
     let slot = corpus.slot();
     let query = "twilight onset shift dock desk badge lot";
-    let baseline = corpus.baseline(query, BUDGET);
+    // Dense fusion retains ordinary lexical selection even when lexical-only
+    // prose is enabled by default. Compare the same selection mode here.
+    let baseline = Answer::of(
+        corpus
+            .engine()
+            .context_candidates_with(
+                query,
+                Strategy::Search,
+                &Control::unbounded(),
+                &ContextOptions {
+                    experimental_behavior: false,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .batch,
+        BUDGET,
+    );
     assert!(
         baseline.batch.items.len() >= 3,
         "{} lexical candidates crowd the response",
@@ -4801,7 +4818,7 @@ async fn owner_with(
             model_resources: None,
             knowledge: None,
             retrieval_trace_dir: None,
-            experimental_behavior_context: false,
+            experimental_behavior_context: ContextOptions::default().experimental_behavior,
             store: store.to_path_buf(),
             root: root.to_path_buf(),
             references,
