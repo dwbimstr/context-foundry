@@ -1329,6 +1329,9 @@ for this proof.
 selected Gemma profile and current implementation are the comparison baseline.
 The original G2 verdict remains valid for its original question: gain over no profile.
 This task asks which current losses can be repaired at the same delivery budget.
+The [resumable handoff](../../docs/resume-context-ecosystem.md#current-status--2026-11-06)
+owns the current baseline, case-review disposition and selected repair hypothesis;
+the candidate checkpoint below remains required before promotion.
 
 **Implementation in progress:** `src/retrieval_trace.rs` owns opt-in request-local
 diagnostics, shared through `Control` by the ordinary selection/final-read paths.

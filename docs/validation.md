@@ -1,5 +1,87 @@
 # Validation
 
+## T005 complete loss review and refined trace attribution — 2026-11-11
+
+**All 52 newly lost G1 tasks have been reviewed**, taking the union of first-call,
+four-call and verbatim-body losses: 50 checker tasks and 2 bun tasks. The unchanged
+qualified set has no losses. Full result and decompressed response hashes bind the
+review to the [current G1 comparison](#t005-current-semantic-g1-comparison--2026-11-11).
+Checker expectations are bound through the frozen occurrence metadata and task-ID
+rule. The two bun expectations are explicitly reconstructed from accepted baseline
+verbatim bytes, locators and the frozen generator's ID rule; they are not presented
+as separately serialized labels or a fresh source/compiler-graph export.
+
+The checker review observes 26 tasks with the expected file absent from delivered
+units, 8 with the file returned but the required definition line omitted, 13 with
+insufficient distinct usage files, 1 with the definition visible but its verbatim
+body lost, and 2 recovered only after the first call. Both bun losses omit the
+expected file from every returned unit. All reviewed outcomes agree with the
+retained scorer. The checker comparison's valid error replies are all
+`symbol_not_found`; among its reviewed loss cases, two new reference calls return
+that error. Neither that histogram nor a `semantic:ready` response header proves
+an earlier cause. G1 has no retrieval traces, so candidate generation, ordering,
+cap and packing explanations remain unobserved for these cases.
+
+**Offline G2 refinement accounts for all 388 retained cases using complete target
+name ranges and frozen/current source hashes.** It verifies 330 distinct target
+files and separates lexical document ranges from enclosing units, source inputs
+from whole-file outlines, and exact placement/materialization/packing paths.
+Twelve synthetic boundary tests pass. Missing joins remain unknown by contract;
+none is missing in this retained run. This reuses validated delivery scores and
+does not rescore, run retrieval, call a model or open a store.
+
+The 219 misses have these sets of observed loss paths:
+
+| Observed path set | Rust | bun | Total |
+| --- | --- | --- | --- |
+| Target file absent from the returned selection window | 24 | 9 | 33 |
+| File seen, no source document/unit covering the complete target name | 47 | 15 | 62 |
+| Global placement limit | 29 | 17 | 46 |
+| Per-file placement cap | 24 | 13 | 37 |
+| Both placement limits | 0 | 2 | 2 |
+| Token-budget packing drop | 12 | 12 | 24 |
+| Token-budget packing drop and global placement limit | 6 | 3 | 9 |
+| Token-budget packing drop and per-file placement cap | 2 | 3 | 5 |
+| Token-budget packing drop and both placement limits | 1 | 0 | 1 |
+
+These are sets of observations, not exclusive causes or predicted repair gains.
+Four cases move from the initial coarse placement category to noncovering lexical
+documents: their enclosing units covered the name, but the recorded documents did
+not. The original coarse records remain intact. Of 169 successful deliveries, 79
+also have a cut or drop on another candidate path; counting such events as failed
+queries would overstate loss. All 39 misses retaining a non-outline source range
+covering the full target name at packing input have an explicit token-budget drop;
+15 also have placement losses on other candidates. No name-losing materialization
+excerpt is observed among the 208 cases with materialized target ranges.
+
+Eight deterministic examples, the first two IDs from each original coarse miss
+group, were followed through their exact trace/output and target-source bytes.
+All eight are bun, so they are illustrations rather than a representative sample.
+Two show an available dense source range retained through materialization, followed
+by a token-budget drop of its signature form after earlier verbatim selections.
+The **selected hypothesis for the next bounded contract is packing allocation**:
+spending less of the allowance on early full bodies may leave room for existing
+compact forms of later already-placed definitions. Keep the model, recipe, ANN
+window, selection, placement, source checks, forms and caps fixed. No concrete
+variant is selected or evaluated here. Rejected-form costs and counterfactual
+allocations are unavailable; body regression remains a material risk. Absence from
+a bounded retrieval window does not establish missing behavioral meaning or justify
+an embedding/ranking replacement. Fresh held-out pre-registration and the existing
+G1/G2, body, cap and resource gates remain required before any promotion.
+
+The first offline analyzer produced complete results, but its outer process sampler
+was sandbox-denied after launch; direct child exit/reaping was not recorded. That
+failed supervision and the command-absence check remain preserved. A separately
+selected native recheck of the unchanged analyzer then exited naturally in
+**1.944 s**, with matching input pins, unchanged analyzer source, no observed
+remaining owned process or model worker, and exactly identical case bytes. Reports differ only in elapsed
+time and self-reported RSS. Bounds were 240 seconds including 120 for cleanup,
+1 GiB sampled RSS and USD 0 spend. This repeats only offline analysis, not the
+model/harness run, and does not retroactively repair the first lifecycle receipt.
+The private review and both analysis attempts are retained in
+`runs/t005-diagnostic-review-2026-11-11/`. T005 remains unaccepted; no product code,
+ranking policy or profile enablement changed.
+
 ## T005 current semantic G1 comparison — 2026-11-11
 
 **All three frozen G1 aggregate guards pass; the current semantic profile still
@@ -31,8 +113,9 @@ these are not provider input, host consumption or cost savings.
 The unchanged `g1score.py` supplies paired outcomes. Separate unmasked
 `g1compare.py` calls use its fixed historical Foundry/grep references and all exit 0.
 Those aggregate passes do not erase the newly lost current-comparison cases or
-create a zero-individual-loss rule. Full loss review is being completed before a
-repair is selected. This is a baseline diagnostic, not a new quality promotion.
+create a zero-individual-loss rule. The
+[complete loss review](#t005-complete-loss-review-and-refined-trace-attribution--2026-11-11)
+retains all of them. This is a baseline diagnostic, not a new quality promotion.
 
 The new owner wrapper preserves bytes and records actual owner exit, complete
 request/response IDs, tool arguments, text and error bits. Its checks account for
@@ -102,10 +185,11 @@ The current 219 misses partition by first observed stage as follows:
 | Target-covering unit reaches packing input, but the frozen scorer does not verify the definition in the delivered response | 39 |
 | Unknown | 0 |
 
-These are observed boundaries, not established causes. The private per-query
-records retain exact placement outcomes and ranks. Examples, current-baseline G1
-wins/losses and a selected repair hypothesis remain before the diagnostic checkpoint
-is complete; these counts alone select no representation or ranking replacement.
+These are initial observed boundaries, not established causes. The private
+per-query records retain exact placement outcomes and ranks. The subsequent
+[refinement and case review](#t005-complete-loss-review-and-refined-trace-attribution--2026-11-11)
+distinguishes enclosing units from source documents and retains overlapping paths;
+these initial counts alone select no representation or ranking replacement.
 
 The untraced script phase took **37.651 s** and the traced phase **38.607 s**, a
 0.956-second difference in this one sequential pair. Those phase times include

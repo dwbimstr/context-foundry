@@ -50,7 +50,11 @@ and dated paragraphs below are history.
   The current semantic G1 comparison also passes all frozen aggregate guards;
   individual losses against the retained current no-profile arm remain explicit
   ([G1 receipt](validation.md#t005-current-semantic-g1-comparison--2026-11-11)).
-  Loss review and refined example attribution remain before selecting a repair.
+  All newly lost G1 cases are reviewed, and offline G2 refinement now distinguishes
+  exact source ranges, outlines and overlapping loss paths
+  ([diagnostic review](validation.md#t005-complete-loss-review-and-refined-trace-attribution--2026-11-11)).
+  Packing allocation is the selected hypothesis for a bounded candidate contract;
+  no concrete variant or fresh held-out evaluation has been selected or run.
   No ranking variant or quality promotion is established; T005 remains unaccepted.
 - **Scale.** Publication streams cached vectors (no 2 GiB vector bound) and
   generation v6 interns label-map paths and hashes (rust map 191 → 69 MB). At rust's
