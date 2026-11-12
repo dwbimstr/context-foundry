@@ -1434,6 +1434,22 @@ labelled; they do not assign causes to the 249 historical G2 misses.
     replaces in this spec and the shared context contract; no parallel undocumented
     ranking path. Every newly lost current-baseline G1 case is reviewed and counted;
     passing historical guards alone does not erase those losses.
+- **Fresh holdout authoring selected, 2026-11-11.** Before tuning the single
+  packing-allocation candidate family, prepare 400 new questions (200 per corpus)
+  at the existing Rust/bun source pins. Exclude every G2 and F4 answer identity
+  and duplicate question text. Fresh-context authors receive disjoint whole modules,
+  walk the frozen SHA-256 candidate order, and retain every skip reason; keep the
+  original three-per-file and six-per-module limits. A separate label-side checker
+  checks every accepted answer against its source and plausible alternatives.
+  This is an in-session quality check, not independent review. Run the unchanged
+  builder and full verifier, including its self-tests, then seal hashes, counts,
+  tool/source pins and check summaries. Implementation receives no labels, questions,
+  responses or per-case outcomes. The private authoring selection and bounded
+  no-spend protocol are recorded in
+  [validation](../../docs/validation.md#t005-fresh-holdout-authoring-selection--2026-11-11).
+  The exact candidate algorithm, sample-size/power rationale, paired confidence
+  statistic and resource/latency supplement must be frozen before tuning/evaluation.
+  No new question set or candidate is accepted by this selection.
 - **Verification:** fixtures establish trace attribution for absent candidates,
   stale units, rank/cap exclusion and packing omission; invalid traces cannot certify
   coverage. Test the selected repair's relevant source/budget/cache invariants and run

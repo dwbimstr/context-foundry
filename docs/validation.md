@@ -1,5 +1,41 @@
 # Validation
 
+## T005 fresh holdout authoring selection — 2026-11-11
+
+The completed diagnostic review is published as `cf2923c`; its private evidence
+snapshot passed full readback (39 files, 3,343,063 bytes; manifest SHA-256
+`5b52e78a41a2488733709464bc7635e4ef1ebda23105269215bd5632ab658036`).
+No usable unused holdout is designated by the checked records. The old 48-question
+archive was declared lost; F4's 300 questions were already evaluated. Neither is a
+fresh T005 holdout.
+
+Before any fresh question drafting, the new authoring protocol selects **400
+questions, 200 per corpus**, at the existing source pins. This exceeds the unchanged
+verifier's 180-per-corpus/360-total floors; it is not yet a power claim. One candidate
+family may change packing allocation over already placed units, holding Gemma,
+representation, selection, ordering, placement and delivery limits fixed. The exact
+algorithm, sample-size/power rationale, paired confidence statistic, multiplicity,
+per-corpus and latency/resource guards must be frozen before tuning/evaluation.
+
+Authors work in fresh contexts without retrieval outputs, traces or candidate
+design, using disjoint modules and deterministic candidate order. Historical G2/F4
+answers and duplicate question text are excluded. Every visited candidate and skip
+reason is retained; the original limits of three questions per file and six per
+module remain. A separate label-side checker inspects every accepted answer and
+plausible alternatives. The unchanged builder and full verifier, including all
+self-tests, remain mandatory. This is an in-session source quality check, not an
+independent review gate. Only metadata reaches implementation; questions, labels,
+source excerpts, responses and case outcomes stay private.
+
+The selected authoring/checking bound is three hours, followed by at most ten
+minutes for mechanical validation and two minutes for cleanup. There are no paid
+provider calls, retrieval calls or store opens, and at most one heavy job. Failure
+to reach the exact counts with valid identity, leakage and answer-quality checks
+retains the partial evidence and stops tuning/evaluation; no floor is silently
+lowered. The private selection is in
+`runs/t005-holdout-preparation-2026-11-11/authoring-selection.json`. No set is sealed,
+candidate implemented, improvement measured or T005 acceptance claimed here.
+
 ## T005 complete loss review and refined trace attribution — 2026-11-11
 
 **All 52 newly lost G1 tasks have been reviewed**, taking the union of first-call,
