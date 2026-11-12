@@ -496,6 +496,7 @@ impl FoundryMcp {
         let semantic = self.state.semantic.clone();
         let policy = Arc::clone(&self.state.policy);
         let experimental_behavior = self.state.experimental_behavior_context;
+        let experimental_compact_context = self.state.experimental_compact_context;
         Ok(self
             .deliver(
                 &ctx,
@@ -543,10 +544,16 @@ impl FoundryMcp {
                     )?;
                     Ok(combined)
                 },
-                |outcome: &memory::MemoryContext,
-                 budget: response::Budget,
-                 boundary: response::ByteMeasure| {
-                    response::pack_enriched_context(outcome, None, budget, boundary)
+                move |outcome: &memory::MemoryContext,
+                      budget: response::Budget,
+                      boundary: response::ByteMeasure| {
+                    response::pack_enriched_context_with_compact_preference(
+                        outcome,
+                        None,
+                        budget,
+                        boundary,
+                        experimental_compact_context,
+                    )
                 },
             )
             .await)
@@ -1946,6 +1953,7 @@ impl FoundryMcp {
         let semantic = self.state.semantic.clone();
         let policy = Arc::clone(&self.state.policy);
         let experimental_behavior = self.state.experimental_behavior_context;
+        let experimental_compact_context = self.state.experimental_compact_context;
         self.deliver(
             ctx,
             tokens,
@@ -2081,7 +2089,13 @@ impl FoundryMcp {
                   budget: response::Budget,
                   boundary: response::ByteMeasure| {
                 let headers = root_headers(&pack_meta, &listed, &outcome.root_facts);
-                response::pack_enriched_context(&outcome.served, Some(&headers), budget, boundary)
+                response::pack_enriched_context_with_compact_preference(
+                    &outcome.served,
+                    Some(&headers),
+                    budget,
+                    boundary,
+                    experimental_compact_context,
+                )
             },
         )
         .await

@@ -2423,6 +2423,7 @@ async fn serve(
             knowledge: None,
             retrieval_trace_dir: None,
             experimental_behavior_context: false,
+            experimental_compact_context: false,
             store: corpus.store.clone(),
             root: corpus.root.clone(),
             references: Vec::new(),
@@ -3218,6 +3219,7 @@ impl Corpus {
                 knowledge: None,
                 retrieval_trace_dir: None,
                 experimental_behavior_context: false,
+                experimental_compact_context: false,
                 store: self.store.clone(),
                 root: self.root.clone(),
                 references: Vec::new(),
@@ -4811,6 +4813,17 @@ async fn owner_with(
     semantic: Option<SemanticServing>,
     budget: BudgetConfig,
 ) -> Served {
+    owner_with_compact(store, root, references, semantic, budget, false).await
+}
+
+async fn owner_with_compact(
+    store: &Path,
+    root: &Path,
+    references: Vec<context_foundry::roots::ReferenceSpec>,
+    semantic: Option<SemanticServing>,
+    budget: BudgetConfig,
+    experimental_compact_context: bool,
+) -> Served {
     let (client_io, server_io) = tokio::io::duplex(1 << 21);
     let (input, output) = tokio::io::split(server_io);
     let server = tokio::spawn(mcp::serve_streams(
@@ -4819,6 +4832,7 @@ async fn owner_with(
             knowledge: None,
             retrieval_trace_dir: None,
             experimental_behavior_context: ContextOptions::default().experimental_behavior,
+            experimental_compact_context,
             store: store.to_path_buf(),
             root: root.to_path_buf(),
             references,
@@ -4836,6 +4850,147 @@ async fn owner_with(
     Served {
         client,
         server: Some(server),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn compact_preference_reaches_single_and_multi_root_semantic_owners() {
+    let extra: Vec<_> = (0..2).map(|i| {
+        let statements = (0..60).map(|n| format!("    let value_{n} = calculate({n}, input);\n")).collect::<String>();
+        (format!("src/allocation_{i}.rs"), format!("// refund reimbursement credit\npub fn allocation_{i}(input: usize) {{\n{statements}}}\n"))
+    }).collect();
+    let mut primary = Corpus::new(&extra);
+    let mut secondary = Corpus::new(&[]);
+    let slot = primary.slot();
+    let combined = mcp::context_primary_with_options(
+        &slot,
+        primary.engine(),
+        LEDGER_QUERY,
+        Strategy::Auto,
+        &Corpus::control(),
+        ContextOptions::default(),
+    )
+    .unwrap();
+    assert!(combined.batch.anchors.is_empty());
+    assert!(
+        combined
+            .batch
+            .items
+            .iter()
+            .any(|item| item.semantic.is_some())
+    );
+    let ordinary =
+        response::pack_enriched_context(&combined, None, Budget::request(BUDGET), &emitted_len)
+            .unwrap();
+    let compact = response::pack_enriched_context_with_compact_preference(
+        &combined,
+        None,
+        Budget::request(BUDGET),
+        &emitted_len,
+        true,
+    )
+    .unwrap();
+    assert_ne!(
+        ordinary.text, compact.text,
+        "fixture must exercise allocation"
+    );
+    let admitted =
+        context_foundry::roots::validate_admission(&primary.root, &[secondary.reference()])
+            .unwrap();
+    let alias = admitted[1].alias.clone();
+    let (primary_ws, secondary_ws) = (primary.ws16(), secondary.ws16());
+    primary.engine = None;
+    secondary.engine = None;
+    for multi in [false, true] {
+        let mut responses = Vec::new();
+        let mut secondary_baseline = None;
+        for enabled in [false, true] {
+            let references = if multi {
+                vec![secondary.reference()]
+            } else {
+                Vec::new()
+            };
+            let served = owner_with_compact(
+                &primary.store,
+                &primary.root,
+                references,
+                Some(primary.serving()),
+                BudgetConfig::default(),
+                enabled,
+            )
+            .await;
+            let before = primary.probe.query_calls();
+            let text = served
+                .ok(
+                    "context",
+                    serde_json::json!({
+                        "query": LEDGER_QUERY, "tokens": BUDGET,
+                    }),
+                )
+                .await;
+            assert_eq!(primary.probe.query_calls(), before + 1);
+            assert!(response::count_tokens(&text) <= BUDGET);
+            assert!(emitted_len(&text) <= mcp::OUTPUT_BYTE_CAP);
+            let parsed = parse_v2(&text).unwrap();
+            assert!(parsed.items.iter().any(|item| item.semantic));
+            for item in &parsed.items {
+                if item.form.is_none() {
+                    let (path, start, end) = span_of(&item.handle);
+                    let corpus = if ws16_of(&item.handle) == primary_ws {
+                        &primary
+                    } else {
+                        assert_eq!(ws16_of(&item.handle), secondary_ws);
+                        &secondary
+                    };
+                    assert_eq!(
+                        item.body.as_bytes(),
+                        &corpus.source(&path).as_bytes()[start as usize..end as usize]
+                    );
+                }
+            }
+            if !multi {
+                assert_eq!(
+                    text,
+                    if enabled {
+                        &compact.text
+                    } else {
+                        &ordinary.text
+                    }
+                    .as_str()
+                );
+            } else {
+                let before = primary.probe.query_calls();
+                let secondary_text = served
+                    .ok(
+                        "context",
+                        serde_json::json!({
+                            "query": LEDGER_QUERY, "tokens": BUDGET, "roots": [&alias],
+                        }),
+                    )
+                    .await;
+                assert_eq!(
+                    primary.probe.query_calls(),
+                    before,
+                    "secondary-only is lexical"
+                );
+                if let Some(previous) = &secondary_baseline {
+                    assert_eq!(&secondary_text, previous);
+                } else {
+                    secondary_baseline = Some(secondary_text);
+                }
+            }
+            responses.push(parsed);
+            served.close().await;
+        }
+        assert!(
+            responses[0].items.iter().any(|before| before.form.is_none()
+                && responses[1]
+                    .items
+                    .iter()
+                    .any(|after| after.handle == before.handle
+                        && after.form.as_deref() == Some("signature"))),
+            "owner must replace an existing full body with its compact signature"
+        );
     }
 }
 

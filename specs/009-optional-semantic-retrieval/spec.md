@@ -1343,10 +1343,11 @@ outcomes, packing inputs, and the final packing decisions themselves: one `stage
 event per settled candidate or tail line with its chosen form (a candidate delivered at
 its first form — including one that arrived as an excerpt — is `selected`, never
 re-labeled shortening; a chosen excerpt's `unit` is its delivered `start..end`, with the
-refused parent named beside it) and, for a shortening or drop, the exact reason —
+parent named beside it) and, for a shortening or drop, the exact reason —
 `budget` with the refusing bound (`token` budget or serialized-`byte` cap) when the
 failed trial reported it, `duplicate` coverage, `anchored_selection` exclusion, or
-`unsupported_citation` for a brief or proof whose citation no delivered source covers,
+`allocation` with `allocation_tokens` and no refusal limiter for the default-off
+compact preference, or `unsupported_citation` for a brief or proof whose citation no delivered source covers,
 including a composed brief excluded before the tail. A task proof carries exactly one
 settled verdict, emitted after its final tail retry, under an individual key over its
 already-built proof record together with the citations it requires. Task composition
@@ -1465,8 +1466,10 @@ labelled; they do not assign causes to the 249 historical G2 misses.
   fixed before candidate code or measurements. The selected trace outcome is
   `shortened` / `allocation`, with `allocation_tokens` and no invented refusal;
   an excerpt's parent identifies its wider source unit, not necessarily a failed trial.
-  All quality, body, validity and runtime gates above remain conjunctive. Selection
-  is not implementation, measurement, promotion or acceptance; the
+  All quality, body, validity and runtime gates above remain conjunctive. The local
+  implementation and focused fixtures are recorded in
+  [validation](../../docs/validation.md#t005-default-off-compact-preference-implementation--2026-11-11);
+  they establish no quality promotion or acceptance. The
   [handoff](../../docs/resume-context-ecosystem.md#current-status--2026-11-06) owns status.
 - **Verification:** fixtures establish trace attribution for absent candidates,
   stale units, rank/cap exclusion and packing omission; invalid traces cannot certify

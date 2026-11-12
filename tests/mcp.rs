@@ -308,6 +308,63 @@ async fn lexical_behavior_defaults_on_with_an_explicit_cli_and_mcp_opt_out() {
     }
 }
 
+#[tokio::test]
+async fn compact_context_cli_and_mcp_flags_preserve_lexical_delivery() {
+    let fixture = tempfile::tempdir().unwrap();
+    let root = fixture.path().join("workspace");
+    let store = fixture.path().join("store");
+    write_fixture(&root, 1);
+    bootstrap_apply(&store, &root);
+    let query = "parse record";
+    let mut baseline = None;
+    for flag in [
+        None,
+        Some("--experimental-compact-context"),
+        Some("--experimental-compact-context=false"),
+    ] {
+        let extra: Vec<String> = flag.into_iter().map(str::to_owned).collect();
+        let cli = std::process::Command::new(BIN)
+            .arg("--store")
+            .arg(&store)
+            .arg("context")
+            .args(&extra)
+            .args([query, "--tokens", "512"])
+            .output()
+            .unwrap();
+        assert!(
+            cli.status.success(),
+            "{}",
+            String::from_utf8_lossy(&cli.stderr)
+        );
+        let cli_text = String::from_utf8(cli.stdout).unwrap();
+        let client = stdio_client_with(&store, &root, &extra).await;
+        let result = client
+            .call_tool(
+                CallToolRequestParams::new("context").with_arguments(
+                    serde_json::json!({"query": query, "tokens": 512})
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                ),
+            )
+            .await
+            .unwrap();
+        let text = assert_single_text_success(&result);
+        assert_eq!(text, cli_text);
+        assert!(count_tokens(&text) <= 512);
+        assert!(!v2(&text).items.is_empty(), "fixture must deliver evidence");
+        if let Some(previous) = &baseline {
+            assert_eq!(
+                &text, previous,
+                "the flag cannot activate lexical-only packing"
+            );
+        } else {
+            baseline = Some(text);
+        }
+        client.cancel().await.unwrap();
+    }
+}
+
 fn text_of(result: &rmcp::model::CallToolResult) -> String {
     let rmcp::model::ContentBlock::Text(text) = &result.content[0] else {
         panic!("expected one text block");
@@ -1375,6 +1432,7 @@ async fn start_http(store: &Path, root: &Path) -> HttpServer {
             knowledge: None,
             retrieval_trace_dir: None,
             experimental_behavior_context: false,
+            experimental_compact_context: false,
             store: store.to_path_buf(),
             root: root.to_path_buf(),
             references: Vec::new(),
@@ -1628,6 +1686,7 @@ async fn session_allowance_exhaustion_refuses_before_dispatch() {
             knowledge: None,
             retrieval_trace_dir: None,
             experimental_behavior_context: false,
+            experimental_compact_context: false,
             store: store.to_path_buf(),
             root: root.to_path_buf(),
             references: Vec::new(),
@@ -3117,6 +3176,7 @@ async fn assert_http_refused(token_env: &str, store: &Path, root: &Path) {
             knowledge: None,
             retrieval_trace_dir: None,
             experimental_behavior_context: false,
+            experimental_compact_context: false,
             store: store.to_path_buf(),
             root: root.to_path_buf(),
             references: Vec::new(),
@@ -3342,6 +3402,7 @@ async fn http_sessions_expire_and_admit_again_after_keep_alive() {
             knowledge: None,
             retrieval_trace_dir: None,
             experimental_behavior_context: false,
+            experimental_compact_context: false,
             store: store.clone(),
             root: root.clone(),
             references: Vec::new(),
@@ -5247,6 +5308,7 @@ async fn http_sessions_have_independent_allowances_and_a_lost_delivery_stays_cha
             knowledge: None,
             retrieval_trace_dir: None,
             experimental_behavior_context: false,
+            experimental_compact_context: false,
             store: store.clone(),
             root: root.clone(),
             references: Vec::new(),

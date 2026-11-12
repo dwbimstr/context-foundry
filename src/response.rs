@@ -807,14 +807,13 @@ fn form_kind(form: Option<&RenderedForm>) -> &'static str {
 /// event's `unit` is the chosen form's DELIVERED identity — an excerpt
 /// renders `start..start + len`, not its parent unit's range — with the
 /// parent named beside it when the two differ.
-fn record_unit(
-    trace: &crate::retrieval_trace::RetrievalTrace,
+fn unit_event(
     outcome: &'static str,
     reason: Option<&'static str>,
     refusal: Option<bool>,
     item: &RankedItem,
     form: usize,
-) {
+) -> Value {
     let (unit, parent) = match (item.handle.as_ref(), item.forms.get(form)) {
         (Some(handle), Some(RenderedForm::Excerpt { start, body, .. })) => {
             let delivered = SourceHandle {
@@ -841,7 +840,18 @@ fn record_unit(
     if let Some(byte) = refusal {
         event["limiter"] = Value::String(if byte { "byte" } else { "token" }.into());
     }
-    trace.record(event);
+    event
+}
+
+fn record_unit(
+    trace: &crate::retrieval_trace::RetrievalTrace,
+    outcome: &'static str,
+    reason: Option<&'static str>,
+    refusal: Option<bool>,
+    item: &RankedItem,
+    form: usize,
+) {
+    trace.record(unit_event(outcome, reason, refusal, item, form));
 }
 
 /// One settled packing decision over a tail line (009 T005): the memory
@@ -876,6 +886,25 @@ fn record_tail(
     trace.record(event);
 }
 
+fn form_is_covered(
+    source_items: &[RankedItem],
+    included: &[(usize, usize)],
+    index: usize,
+    form: usize,
+) -> bool {
+    source_items
+        .get(index)
+        .and_then(|item| form_source(item, form))
+        .is_some_and(|source| {
+            included.iter().any(|&(i, f)| {
+                source_items
+                    .get(i)
+                    .and_then(|item| form_source(item, f))
+                    .is_some_and(|delivered| source_covers(&delivered, &source))
+            })
+        })
+}
+
 /// Ladder packing (context-v2 § Ladder packing) over an already ordered list
 /// of candidates, each given as its rendered forms in ladder order: include
 /// the first form whose complete response (header updated for that
@@ -891,6 +920,9 @@ fn record_tail(
 /// Under a request trace each settled decision — selection, shortening,
 /// duplicate coverage, budget drop, unsupported citation — is recorded once
 /// from the measurements the loop already made.
+/// The opt-in compact preference tries one existing rung before this ladder;
+/// a failed or covered trial leaves the ordinary traversal unchanged.
+#[allow(clippy::too_many_arguments)]
 fn pack(
     items: &[Vec<String>],
     source_items: &[RankedItem],
@@ -899,6 +931,7 @@ fn pack(
     budget: Budget,
     boundary: ByteMeasure,
     trace: Option<&crate::retrieval_trace::RetrievalTrace>,
+    compact_preference: bool,
 ) -> FResult<PackedText> {
     let (tail, required, ids) = (tail.lines, tail.required, tail.ids);
     let render = |included: &[(usize, usize)],
@@ -923,22 +956,50 @@ fn pack(
     let mut packed = BudgetedText::new(budget, boundary);
     let mut included: Vec<(usize, usize)> = Vec::new();
     'candidate: for (index, forms) in items.iter().enumerate() {
+        // 009 T005: this fragment allowance chooses one speculative form;
+        // only the ordinary whole-response measurement can accept it.
+        let share = budget.tokens / 8;
+        if compact_preference
+            && share > 0
+            && let Some(item) = source_items.get(index)
+            && item.handle.is_some()
+            && item.tier != crate::store::TIER_OUTLINE
+            && source_items[index + 1..].iter().any(|later| {
+                later.handle.is_some()
+                    && later.tier != crate::store::TIER_OUTLINE
+                    && !later.forms.is_empty()
+            })
+            && forms
+                .first()
+                .is_some_and(|first| count_tokens(first) > share)
+            && let Some((form, _)) = forms.iter().enumerate().skip(1).find(|(form, text)| {
+                matches!(
+                    item.forms.get(*form),
+                    Some(RenderedForm::Excerpt { .. } | RenderedForm::Signature(_))
+                ) && count_tokens(text) <= share
+            })
+            && !form_is_covered(source_items, &included, index, form)
+        {
+            let previous_refusal = packed.last_refusal;
+            included.push((index, form));
+            if packed.try_accept(render(&included, &[], budget.tokens, budget.limited_by)) {
+                if let Some(trace) = trace {
+                    let mut event = unit_event("shortened", Some("allocation"), None, item, form);
+                    event["allocation_tokens"] = share.into();
+                    trace.record(event);
+                }
+                continue 'candidate;
+            }
+            included.pop();
+            packed.last_refusal = previous_refusal;
+        }
         // The bound that refused the first rung, when the descent began
         // there (009 T005).
         let mut first_refusal = None;
         for form in 0..forms.len() {
             // Check the chosen rung's exact source range. A fitting fallback
             // may duplicate earlier evidence even when its parent does not.
-            if let Some(source) = source_items
-                .get(index)
-                .and_then(|item| form_source(item, form))
-                && included.iter().any(|&(i, f)| {
-                    source_items
-                        .get(i)
-                        .and_then(|item| form_source(item, f))
-                        .is_some_and(|delivered| source_covers(&delivered, &source))
-                })
-            {
+            if form_is_covered(source_items, &included, index, form) {
                 if let Some(trace) = trace
                     && let Some(item) = source_items.get(index)
                 {
@@ -1291,7 +1352,15 @@ pub fn pack_context(
     budget: Budget,
     boundary: ByteMeasure,
 ) -> FResult<PackedText> {
-    pack_context_guarded(batch, None, TailLines::none(), None, budget, boundary)
+    pack_context_guarded(
+        batch,
+        None,
+        TailLines::none(),
+        None,
+        budget,
+        boundary,
+        false,
+    )
 }
 
 /// [`pack_context`] with 008 memory included: after the ladder places the
@@ -1316,6 +1385,7 @@ pub fn pack_context_with_memory(
         None,
         budget,
         boundary,
+        false,
     )
 }
 
@@ -1336,6 +1406,7 @@ pub fn pack_context_roots(
         None,
         budget,
         boundary,
+        false,
     )
 }
 
@@ -1359,6 +1430,7 @@ pub fn pack_context_roots_with_memory(
         None,
         budget,
         boundary,
+        false,
     )
 }
 
@@ -1385,6 +1457,7 @@ pub fn pack_task_context(
         task_view,
         budget,
         boundary,
+        false,
     )
 }
 
@@ -1394,6 +1467,18 @@ pub fn pack_enriched_context(
     roots: Option<&[RootHeader]>,
     budget: Budget,
     boundary: ByteMeasure,
+) -> FResult<PackedText> {
+    pack_enriched_context_with_compact_preference(context, roots, budget, boundary, false)
+}
+
+/// The owner-selected 009 T005 packing experiment. It changes ordinary
+/// anchorless context only when real semantic candidates reached delivery.
+pub fn pack_enriched_context_with_compact_preference(
+    context: &crate::memory::MemoryContext,
+    roots: Option<&[RootHeader]>,
+    budget: Budget,
+    boundary: ByteMeasure,
+    compact_preference: bool,
 ) -> FResult<PackedText> {
     if context.evidence.is_some() {
         return pack_task_evidence(context, roots, budget, boundary);
@@ -1465,6 +1550,7 @@ pub fn pack_enriched_context(
         context.task_view.as_ref(),
         budget,
         boundary,
+        compact_preference,
     )
 }
 
@@ -1475,6 +1561,7 @@ fn pack_task_tail(
     task_view: Option<&crate::task_context::ContextView>,
     budget: Budget,
     boundary: ByteMeasure,
+    compact_preference: bool,
 ) -> FResult<PackedText> {
     if let Some(task) = task_view {
         // Even the view alone cannot fit; no larger token allowance can
@@ -1493,6 +1580,7 @@ fn pack_task_tail(
         task_view.map(|v| v.line.as_str()),
         budget,
         boundary,
+        compact_preference,
     )
 }
 
@@ -1557,6 +1645,7 @@ fn pack_context_guarded(
     task_view: Option<&str>,
     budget: Budget,
     boundary: ByteMeasure,
+    compact_preference: bool,
 ) -> FResult<PackedText> {
     let trace = batch.trace.as_ref();
     if batch.anchored() {
@@ -1565,7 +1654,19 @@ fn pack_context_guarded(
     let items: Vec<Vec<String>> = batch.items.iter().map(ranked_forms).collect();
     let mut header = context_header(batch, roots, None, false);
     header.task_view = task_view;
-    pack(&items, &batch.items, tail, &header, budget, boundary, trace)
+    let compact_preference = compact_preference
+        && batch.anchors.is_empty()
+        && batch.items.iter().any(|item| item.semantic.is_some());
+    pack(
+        &items,
+        &batch.items,
+        tail,
+        &header,
+        budget,
+        boundary,
+        trace,
+        compact_preference,
+    )
 }
 
 /// One entry of the anchored selection: its renderings in ladder order —
@@ -2240,6 +2341,7 @@ fn pack_search_impl(
         boundary,
         // A search outcome carries no batch, so no packing trace reaches it.
         None,
+        false,
     )
 }
 
@@ -2283,6 +2385,7 @@ pub fn pack_memory_search(
         budget,
         boundary,
         None,
+        false,
     )
 }
 

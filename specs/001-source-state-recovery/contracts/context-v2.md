@@ -838,9 +838,9 @@ the final read transaction.
 
 ### Experimental compact preference — 009 T005
 
-Selected for implementation on 2026-11-11; not implemented or enabled by this
-contract edit. One default-off `--experimental-compact-context` CLI/MCP-owner flag
-will select this variant for ordinary context only when the batch has no anchors
+Selected and implemented locally on 2026-11-11; quality promotion remains gated.
+One default-off `--experimental-compact-context` CLI/MCP-owner flag
+selects this variant for ordinary context only when the batch has no anchors
 and contains an actual semantic candidate. Composed task evidence keeps its separate
 dispatch. The flag belongs to delivery, not stores, profiles, model admission or
 candidate construction; multi-root context applies it after the ordinary merge.

@@ -1758,3 +1758,356 @@ fn a_full_trace_stays_bounded_and_changes_no_packing() {
     );
     assert_eq!(quiet.text, traced.text);
 }
+
+// 009 T005: synthetic packing contracts, not retrieval-quality evidence.
+// These candidates are already materialized source; no store or model is opened.
+mod compact_preference {
+    use super::*;
+    use context_foundry::memory::MemoryContext;
+    use context_foundry::response::{ByteMeasure, Freshness};
+    use context_foundry::retrieval_trace::RetrievalTrace;
+    use context_foundry::store::{
+        AnchorWindow, CandidateBatch, CandidateCounters, RankedItem, RenderedForm,
+        SemanticEvidence, TIER_OUTLINE,
+    };
+    use serde_json::Value;
+
+    fn source(name: &str, lines: usize) -> String {
+        let inner: String = (0..lines)
+            .map(|i| format!("    let v{i} = compute_{i}(\"東京\", value) + {i};\r\n"))
+            .collect();
+        format!("pub fn {name}() {{\r\n{inner}}}\r\n")
+    }
+
+    fn unit(path: &str, source: &str, from: usize, to: usize) -> RankedItem {
+        let mut handle = whole(&"a".repeat(64), path, source);
+        handle.start = from as u64;
+        handle.end = to as u64;
+        let start_line = 1 + source[..from].matches('\n').count() as u64;
+        let end_line = start_line + source[from..to - 1].matches('\n').count() as u64;
+        RankedItem {
+            tier: 2,
+            rank: 0,
+            score: 0.0,
+            handle: Some(handle),
+            start_line,
+            end_line,
+            line: start_line,
+            label: "fn evidence".into(),
+            lang: Some("rust".into()),
+            forms: vec![RenderedForm::Verbatim(source[from..to].into())],
+            semantic: Some(SemanticEvidence { dense_only: false }),
+            resolver: None,
+        }
+    }
+
+    fn context(mut items: Vec<RankedItem>) -> MemoryContext {
+        for (rank, item) in items.iter_mut().enumerate() {
+            item.rank = rank;
+        }
+        MemoryContext {
+            evidence: None,
+            task_view: None,
+            briefs: Vec::new(),
+            hits: Vec::new(),
+            batch: CandidateBatch {
+                freshness: Freshness {
+                    workspace_id: "a".repeat(64),
+                    source_revision: 7,
+                    scan_state: "complete".into(),
+                    pending_sources: 0,
+                    indexed_snapshot: "revision=7".into(),
+                },
+                items,
+                counters: CandidateCounters::default(),
+                semantic: Some("ready".into()),
+                route: None,
+                anchors: Vec::new(),
+                doors: None,
+                collected: None,
+                trace: None,
+            },
+        }
+    }
+
+    fn pair() -> (MemoryContext, String, String) {
+        let early = source("early", 80);
+        let later = source("later", 40);
+        let mut first = unit("early.rs", &early, 0, early.len());
+        first
+            .forms
+            .push(RenderedForm::Signature("pub fn early()".into()));
+        let second = unit("later.rs", &later, 0, later.len());
+        (context(vec![first, second]), early, later)
+    }
+
+    fn pack(input: &MemoryContext, budget: usize, enabled: bool) -> response::PackedText {
+        response::pack_enriched_context_with_compact_preference(
+            input,
+            None,
+            Budget::request(budget),
+            &mcp_bytes,
+            enabled,
+        )
+        .unwrap()
+    }
+
+    fn checked(packed: &response::PackedText, budget: usize, candidates: usize) -> V2Response {
+        let parsed = assert_v2_success(packed, budget, "context");
+        assert!(mcp_bytes(&packed.text) <= BYTE_CAP, "serialized MCP bytes");
+        assert_eq!(header_count(&parsed, "shown"), Some(parsed.items.len()));
+        assert_eq!(
+            header_count(&parsed, "omitted").unwrap_or(0),
+            packed.omitted
+        );
+        assert_eq!(parsed.items.len() + packed.omitted, candidates);
+        assert_eq!(packed.truncated, packed.omitted > 0);
+        parsed
+    }
+
+    fn traced(
+        batch: &CandidateBatch,
+        budget: usize,
+        enabled: bool,
+        boundary: ByteMeasure<'_>,
+    ) -> (response::PackedText, Vec<Value>) {
+        let trace = RetrievalTrace::default();
+        let mut input = context(Vec::new());
+        input.batch = batch.clone();
+        input.batch.trace = Some(trace.clone());
+        let out = response::pack_enriched_context_with_compact_preference(
+            &input,
+            None,
+            Budget::request(budget),
+            boundary,
+            enabled,
+        )
+        .unwrap();
+        let events = trace.snapshot()["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|event| event["stage"] == "packing")
+            .cloned()
+            .collect();
+        (out, events)
+    }
+
+    #[test]
+    fn compact_allocation_delivers_a_later_exact_body_and_keeps_default_bytes() {
+        let (input, early, later) = pair();
+        // Reuse the existing boundary finder: one token below complete ordinary
+        // delivery, the early full body remains and the later body is omitted.
+        let (budget, ordinary) = first_partial(&|tokens| {
+            response::pack_enriched_context(&input, None, Budget::request(tokens), &mcp_bytes)
+        });
+        let baseline = checked(&ordinary, budget, 2);
+        assert_eq!(baseline.items.len(), 1);
+        assert_eq!(baseline.items[0].body, early);
+        assert_eq!(pack(&input, budget, false).text, ordinary.text);
+        assert_eq!(
+            response::pack_context(&input.batch, Budget::request(budget), &mcp_bytes)
+                .unwrap()
+                .text,
+            ordinary.text,
+            "empty enrichment and the existing wrapper preserve ordinary bytes",
+        );
+
+        let quiet = pack(&input, budget, true);
+        let result = checked(&quiet, budget, 2);
+        assert_eq!(result.items.len(), 2);
+        assert_eq!(result.items[0].form.as_deref(), Some("signature"));
+        assert_eq!(result.items[1].body.as_bytes(), later.as_bytes());
+        assert_eq!(
+            result.items[1].handle,
+            input.batch.items[1].handle.as_ref().unwrap().to_v2()
+        );
+        assert_eq!(result.items[1].lines, touched(&later, 0, later.len()));
+        assert!(result.items[1].form.is_none());
+
+        let (with_trace, events) = traced(&input.batch, budget, true, &mcp_bytes);
+        assert_eq!(
+            with_trace.text, quiet.text,
+            "trace changes no delivered byte"
+        );
+        assert_eq!(with_trace.tokens, quiet.tokens);
+        assert_eq!(
+            events.len(),
+            2,
+            "one settled decision per candidate: {events:?}"
+        );
+        let allocation = &events[0];
+        assert_eq!(allocation["rank"], 0);
+        assert_eq!(allocation["outcome"], "shortened");
+        assert_eq!(allocation["reason"], "allocation");
+        assert_eq!(allocation["form"], "signature");
+        assert_eq!(allocation["allocation_tokens"], budget / 8);
+        assert!(
+            allocation.get("limiter").is_none(),
+            "no bound refused this choice"
+        );
+        assert_eq!(events[1]["outcome"], "selected");
+        assert_eq!(events[1]["form"], "verbatim");
+    }
+
+    #[test]
+    fn compact_preference_leaves_ineligible_contexts_unchanged() {
+        let (input, _, _) = pair();
+        let (budget, _) = first_partial(&|tokens| {
+            response::pack_enriched_context(&input, None, Budget::request(tokens), &mcp_bytes)
+        });
+        let same = |input: &MemoryContext, budget: usize| {
+            let baseline = pack(input, budget, false);
+            let enabled = pack(input, budget, true);
+            assert_eq!(enabled.text, baseline.text);
+            assert_eq!(enabled.tokens, baseline.tokens);
+        };
+
+        let (mut lexical, _, _) = pair();
+        // A semantic header alone cannot opt lexical candidates into allocation.
+        for item in &mut lexical.batch.items {
+            item.semantic = None;
+        }
+        same(&lexical, budget);
+
+        let (mut anchored, _, _) = pair();
+        // An unresolved anchor keeps the ordinary unanchored packer, but must
+        // still suppress this explicitly anchorless experiment.
+        anchored.batch.anchors.push(AnchorWindow {
+            anchor: "missing".into(),
+            order: (1, 0),
+            definitions: 0,
+            entries: Vec::new(),
+        });
+        same(&anchored, budget);
+
+        let (mut single, _, _) = pair();
+        single.batch.items.truncate(1);
+        same(&single, budget);
+        let mut outline = unit("outline.rs", "pub fn directory() {}\n", 0, 22);
+        outline.tier = TIER_OUTLINE;
+        outline.rank = 1;
+        outline.forms = vec![RenderedForm::Outline("fn directory".into())];
+        single.batch.items.push(outline);
+        same(&single, budget);
+
+        let signature = format!(
+            "pub fn wide({})",
+            (0..160)
+                .map(|i| format!("argument_{i}: i32"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        let body = format!("{signature} {{\n{}\n}}\n", source("nested", 80));
+        let mut wide = unit("wide.rs", &body, 0, body.len());
+        wide.forms.push(RenderedForm::Signature(signature.clone()));
+        assert!(
+            count_tokens(&signature) > 4096 / 8,
+            "no compact form fits the soft share"
+        );
+        let last = "pub fn last() {}\n";
+        same(
+            &context(vec![wide, unit("last.rs", last, 0, last.len())]),
+            4096,
+        );
+        same(&input, 32768);
+    }
+
+    #[test]
+    fn duplicate_compact_excerpt_falls_back_to_the_full_parent() {
+        let body = source("parent", 80);
+        let from = body.find("    let v0").unwrap();
+        let to = from + body[from..].find('\n').unwrap() + 1;
+        let first = unit("parent.rs", &body, from, to);
+        let mut parent = unit("parent.rs", &body, 0, body.len());
+        parent.forms.push(RenderedForm::Excerpt {
+            start: from as u64,
+            start_line: first.start_line,
+            body: body[from..to].into(),
+        });
+        let last = "pub fn last() {}\n";
+        // A third source makes the parent eligible for speculative compaction.
+        let input = context(vec![first, parent, unit("last.rs", last, 0, last.len())]);
+        let (baseline, baseline_events) = traced(&input.batch, 4096, false, &mcp_bytes);
+        let (enabled, events) = traced(&input.batch, 4096, true, &mcp_bytes);
+        assert_eq!(enabled.text, baseline.text);
+        assert_eq!(
+            events, baseline_events,
+            "speculation creates no settled event"
+        );
+        let parsed = checked(&enabled, 4096, 3);
+        assert_eq!(parsed.items.len(), 3);
+        assert_eq!(parsed.items[0].body, body[from..to]);
+        assert_eq!(parsed.items[1].body, body);
+        assert_eq!(
+            parsed.items[1].handle,
+            input.batch.items[1].handle.as_ref().unwrap().to_v2()
+        );
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[1]["outcome"], "selected");
+        assert_eq!(events[1]["form"], "verbatim");
+        assert!(events[1].get("reason").is_none());
+    }
+
+    #[test]
+    fn failed_compact_trials_preserve_ordinary_refusal_and_response_accounting() {
+        let reserve = source("reserve", 120);
+        let first = unit("reserve.rs", &reserve, 0, reserve.len());
+        let (mut token, _, _) = pair();
+        let pressure = token.batch.items.remove(0);
+        let last = "pub fn last() {}\n";
+        let alone = context(vec![first.clone()]);
+        let budget = pack(&alone, 32768, false).tokens + 16;
+        let input = context(vec![first, pressure, unit("last.rs", last, 0, last.len())]);
+        let (baseline, baseline_events) = traced(&input.batch, budget, false, &mcp_bytes);
+        let (enabled, events) = traced(&input.batch, budget, true, &mcp_bytes);
+        assert_eq!(enabled.text, baseline.text);
+        assert_eq!(events, baseline_events);
+        assert_eq!(checked(&enabled, budget, 3).items.len(), 1);
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[1]["outcome"], "dropped");
+        assert_eq!(events[1]["reason"], "budget");
+        assert_eq!(events[1]["limiter"], "token");
+
+        // Whitespace is cheap in tokens but occupies real serialized bytes.
+        // The first compact form also exceeds the remaining byte capacity;
+        // only the ordinary ladder's later exact excerpt can fit.
+        let reserve = format!("pub fn reserve() {{\n//{}\n}}\n", " ".repeat(235_000));
+        let signature = format!("pub fn pressure({})", " ".repeat(30_000));
+        let body = format!("{signature} {{\n{}\n}}\n", " ".repeat(80_000));
+        let mut pressure = unit("pressure.rs", &body, 0, body.len());
+        pressure.forms.push(RenderedForm::Signature(signature));
+        let excerpt = "pub fn pressure";
+        pressure.forms.push(RenderedForm::Excerpt {
+            start: 0,
+            start_line: 1,
+            body: excerpt.into(),
+        });
+        let input = context(vec![
+            unit("reserve.rs", &reserve, 0, reserve.len()),
+            pressure,
+            unit("last.rs", last, 0, last.len()),
+        ]);
+        let (baseline, baseline_events) = traced(&input.batch, 4096, false, &mcp_bytes);
+        let (enabled, events) = traced(&input.batch, 4096, true, &mcp_bytes);
+        assert_eq!(enabled.text, baseline.text);
+        assert_eq!(events, baseline_events);
+        let parsed = checked(&enabled, 4096, 3);
+        assert_eq!(parsed.items.len(), 3);
+        assert_eq!(parsed.items[1].body, excerpt);
+        assert_eq!(
+            HandleRef::parse(&parsed.items[1].handle).unwrap().end,
+            excerpt.len() as u64
+        );
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[1]["outcome"], "shortened");
+        assert_eq!(events[1]["reason"], "budget");
+        assert_eq!(events[1]["limiter"], "byte");
+        assert_eq!(events[1]["form"], "excerpt");
+        assert!(
+            events
+                .iter()
+                .all(|event| event.get("allocation_tokens").is_none())
+        );
+    }
+}

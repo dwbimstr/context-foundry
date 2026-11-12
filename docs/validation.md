@@ -1,5 +1,36 @@
 # Validation
 
+## T005 default-off compact preference implementation — 2026-11-11
+
+The single variant selected in `7c5776d` is implemented behind the default-off
+`--experimental-compact-context` flag on CLI context and the MCP owner. The shared
+response packer owns the preference after normal candidate selection/root merging;
+there is no store, recipe, model, schema, candidate-order or cap change. The selected
+[contract](../specs/001-source-state-recovery/contracts/context-v2.md#experimental-compact-preference--009-t005)
+keeps the one-eighth soft share and ordinary-ladder fallback fixed.
+
+Six focused tests pass: four renderer fixtures, a real CLI/stdio-MCP flag matrix on
+lexical input, and single/multi-root MCP owners using the existing concept embedding
+fixture. They check actual semantic eligibility, default-byte parity, exact delivered
+source, allocation reasons, later-body delivery, duplicate compact-form fallback,
+token and serialized-byte refusal accounting, and lexical-only secondary-root parity.
+The fixture provider establishes delivery plumbing, not Gemma quality. Positive
+production CLI semantic delivery still requires the native runtime comparison.
+
+Two mutation controls fail at their intended assertions: disabling the preference
+loses the later body; disabling speculative source coverage duplicates an excerpt
+and suppresses its richer parent. Both are restored before the fresh six-test pass.
+An earlier control attempt hit an SDK linker error before tests; those logs remain
+unqualified and preserved. The corrected checks explicitly use macOS SDK 26.5 and
+verify the assertion failure, not merely exit 101.
+
+`cargo check --offline`, formatting and diff checks pass. The focused command is
+`cargo test --offline --test response --test mcp --test neural_retrieval compact_`.
+Private logs, control patches and the frozen selection are retained in
+`runs/t005-packing-candidate-2026-11-11/`. Full local gates and the unchanged G1/G2
+comparisons remain to run. The fresh held-out set is still sealed; no candidate
+quality result, default enablement, promotion or T005 acceptance is claimed.
+
 ## T005 fresh holdout seal and evaluation guards — 2026-11-11
 
 **The fresh holdout is sealed before candidate implementation or tuning:** exactly

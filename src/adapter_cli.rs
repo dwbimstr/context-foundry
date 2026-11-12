@@ -27,6 +27,10 @@ pub enum AdapterCommand {
               require_equals = true, default_missing_value = "true",
               default_value_t = crate::store::DEFAULT_BEHAVIOR_CONTEXT)]
         experimental_behavior_context: bool,
+        /// Prefer existing compact forms for eligible semantic context (009 T005).
+        #[arg(long, action = clap::ArgAction::Set, num_args = 0..=1,
+              require_equals = true, default_missing_value = "true", default_value_t = false)]
+        experimental_compact_context: bool,
         /// Enable explicit experimental task state and reversible views.
         #[arg(long)]
         experimental_task_context: bool,
@@ -346,6 +350,7 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
         AdapterCommand::Mcp {
             retrieval_trace_dir,
             experimental_behavior_context,
+            experimental_compact_context,
             experimental_task_context,
             watch,
             root,
@@ -394,6 +399,7 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
                     .map(|config| crate::policy::PolicyServing::new(config, development_isolation)),
                 retrieval_trace_dir,
                 experimental_behavior_context,
+                experimental_compact_context,
                 experimental_task_context,
                 watch,
             };

@@ -62,8 +62,11 @@ and dated paragraphs below are history.
   variant is a default-off compact-form preference at one-eighth of the effective
   token budget, with ordinary-ladder fallback
   ([contract](../specs/001-source-state-recovery/contracts/context-v2.md#experimental-compact-preference--009-t005)).
-  Implementation and executable run manifests are next; no candidate is implemented
-  or evaluated yet, and implementation has not seen fresh labels or case outcomes.
+  The candidate is implemented locally and six focused tests pass, including actual
+  single/multi-root MCP owners with a fixture embedding provider and CLI flag checks
+  ([implementation receipt](validation.md#t005-default-off-compact-preference-implementation--2026-11-11)).
+  Full local gates and executable measurement manifests are next. No candidate
+  quality evaluation has run, and implementation has not seen fresh labels or case outcomes.
   No ranking variant or quality promotion is established; T005 remains unaccepted.
 - **Scale.** Publication streams cached vectors (no 2 GiB vector bound) and
   generation v6 interns label-map paths and hashes (rust map 191 → 69 MB). At rust's

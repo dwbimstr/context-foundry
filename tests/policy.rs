@@ -2275,6 +2275,7 @@ async fn a_policy_chosen_graph_reaches_the_reference_root_holding_the_definition
             knowledge: None,
             retrieval_trace_dir: None,
             experimental_behavior_context: false,
+            experimental_compact_context: false,
             store: env.store.clone(),
             root: env.ws.clone(),
             references: vec![context_foundry::roots::ReferenceSpec {

@@ -33,6 +33,7 @@ async fn shared_http_watches_only_primary_and_failed_bind_releases_store() {
         knowledge: None,
         retrieval_trace_dir: None,
         experimental_behavior_context: false,
+        experimental_compact_context: false,
         store: store.clone(),
         root: root.clone(),
         references: vec![context_foundry::roots::ReferenceSpec {
