@@ -61,6 +61,15 @@ query was tried. The sealed 400-question set stays unused and private. This clos
 the selected one-variant evaluation with no promotion; it does not accept the broader
 T005 quality goal. A new repair requires a new bounded selection.
 
+Retirement commit `d9e0f04` rebuilt offline in 58.098 seconds. Its release binary
+is byte-for-byte identical to the retained baseline (SHA-256
+`60aff1025ba6515caa70b0854f233a1d2e2b4f8f83cfed290f143626e8c14011`).
+Both `context --help` and `mcp --help` exit zero without the compact flag. The
+build exited zero and was reaped; tracked inputs and the retained candidate binary
+are unchanged. This restores the measured baseline executable; it is not another
+G1/G2 or native acceptance run. The build and readback receipt is retained in
+`runs/t005-restored-baseline-2026-11-11/`.
+
 Private receipts: `runs/t005-packing-candidate-2026-11-11/`,
 `runs/t005-compact-g2-2026-11-11/`, `runs/t005-compact-g1-2026-11-11/` and
 `runs/t005-compact-cli-2026-11-11/`. G2 runtime receipt SHA-256:
