@@ -1455,6 +1455,19 @@ labelled; they do not assign causes to the 249 historical G2 misses.
   [dated seal receipt](../../docs/validation.md#t005-fresh-holdout-seal-and-evaluation-guards--2026-11-11)
   and [current status owner](../../docs/resume-context-ecosystem.md#current-status--2026-11-06).
   This does not accept a retrieval candidate.
+- **One packing variant selected, 2026-11-11.** After the fresh holdout was sealed
+  and its durable copy verified, select the default-off
+  [compact preference](../001-source-state-recovery/contracts/context-v2.md#experimental-compact-preference--009-t005):
+  one speculative existing compact rung for a large source unit when another unit
+  still waits, using one-eighth of the effective token allowance as a soft preference.
+  A failed or covered trial restores ordinary ladder behavior. This avoids a second
+  admission/upgrade pass and its additional coverage state. K = 1; the fraction is
+  fixed before candidate code or measurements. The selected trace outcome is
+  `shortened` / `allocation`, with `allocation_tokens` and no invented refusal;
+  an excerpt's parent identifies its wider source unit, not necessarily a failed trial.
+  All quality, body, validity and runtime gates above remain conjunctive. Selection
+  is not implementation, measurement, promotion or acceptance; the
+  [handoff](../../docs/resume-context-ecosystem.md#current-status--2026-11-06) owns status.
 - **Verification:** fixtures establish trace attribution for absent candidates,
   stale units, rank/cap exclusion and packing omission; invalid traces cannot certify
   coverage. Test the selected repair's relevant source/budget/cache invariants and run
