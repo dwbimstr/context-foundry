@@ -1,5 +1,80 @@
 # Validation
 
+## T005 current G2 baseline and trace parity — 2026-11-11
+
+**The single traced/untraced baseline pair is valid.** On `28567ed`, the unchanged
+`scripts/g2.sh run` executed the frozen 388 questions once with tracing off and
+once with tracing on. Both arms used the archived normal `f19d353` binary
+(SHA-256 `60aff1025ba6515caa70b0854f233a1d2e2b4f8f83cfed290f143626e8c14011`),
+the accepted Gemma hierarchy profile and fresh query copies of the
+[prepared units7 masters](#t005-units7-baseline-preparation--2026-11-11).
+The [fresh corpus capture](#t005-corpus-identity-and-diagnostic-helper-checks--2026-11-11)
+is separately pinned. No ranking variant or retrieval-code change was selected.
+
+All **388 traced decisions are dense at the pinned source revisions**, with zero
+off, fallback, missing or malformed decisions. Both arms have exactly the expected
+197 Rust and 191 bun IDs, with no missing/duplicate/retried/refused/error rows and
+every response within 2,048 tokens. Complete raw protocol stdout, parsed envelopes,
+delivered text and frozen result rows match exactly between arms. The offline
+validator accounts for every trace and reports no unknown rows or global errors.
+
+| Corpus | Queries | Located definitions | Verbatim bodies | Mean delivered tokens |
+| --- | --- | --- | --- | --- |
+| Rust | 197 | 52 | 47 | 2,020.924 |
+| bun | 191 | 117 | 107 | 2,024.990 |
+| Total | 388 | 169 | 154 | 2,022.925 |
+
+Both arms have these same scores. They are a fresh baseline measurement, not an
+improvement over a candidate or retroactive evidence for the historical 249 misses.
+The current 219 misses partition by first observed stage as follows:
+
+| Recorded boundary | Queries |
+| --- | --- |
+| Expected file absent from selection events | 33 |
+| Expected file present, target-covering unit absent from selection events | 58 |
+| Target-covering placement events all rejected, with duplicate/limit/per-file-cap outcomes | 89 |
+| Target-covering unit reaches packing input, but the frozen scorer does not verify the definition in the delivered response | 39 |
+| Unknown | 0 |
+
+These are observed boundaries, not established causes. The private per-query
+records retain exact placement outcomes and ranks. Examples, current-baseline G1
+wins/losses and a selected repair hypothesis remain before the diagnostic checkpoint
+is complete; these counts alone select no representation or ranking replacement.
+
+The untraced script phase took **37.651 s** and the traced phase **38.607 s**, a
+0.956-second difference in this one sequential pair. Those phase times include
+store-copy, wrapper and harness work; they do not establish a latency distribution
+or isolate tracing as the cause of the difference. The whole bounded stage took
+**103.950 s**. All 19 native commands exited naturally, with no forced cleanup or
+observed owned processes remaining. Two embedding workers were independently
+observed in each arm, with native memory samples. Query embedding-call and input-token
+scalars are not exposed by this apparatus; 776 validated context responses and the
+frozen delivered-token counts do not establish provider or host consumption.
+
+Original and retained master byte/metadata manifests match before and after.
+Binary, model, tokenizer, worker, helper, instrument and profile pins match on
+readback; strict worker signature verification passes. The copied profile changes
+only its private scratch child, which finishes empty; existing scratch sibling
+metadata is unchanged. The selected HEAD and tracked files remain unchanged.
+The qualified wrapper/validator sources were unchanged; 13 additional pure synthetic
+checks passed for the separate full-dense readiness expectation. An observed off
+decision would require review under existing anchor admission, not establish a
+product defect by itself.
+
+Selected bounds: 3,600 seconds total, 120 reserved for cleanup, 240 for offline
+validation, 1,300 per script phase, 600 per owner plus its 30-second cleanup grace,
+one heavy job and USD 0 spend. Resource bounds were 20 GiB free space, 40 GiB
+observed apparent growth and 8 GiB sampled individual RSS. Observed peaks:
+3,087,745,024 B owned-process RSS, 210,780,160 B driver RSS and 12,562,913,761 B
+apparent growth; minimum free space 261,389,533,184 B; 30 missed process samples.
+These observations do not establish true transient/GPU peaks or an atomic source
+snapshot. Private evidence is in `runs/t005-baseline-pair-2026-11-11/` and
+`datasets/context-foundry-t005-baseline-2026-11-11-9ptm180p.noindex`.
+The runtime receipt SHA-256 is
+`d7e5afb1e46f065d91facec98b1c9da6e0b9e919152789239f1a15c970956b26`.
+T005 remains unaccepted; no quality promotion, installed-package acceptance or
+paid-provider result is claimed.
+
 ## T005 corpus identity and diagnostic helper checks — 2026-11-11
 
 **The current admitted corpora match the frozen parser manifests.** A separate

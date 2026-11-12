@@ -44,8 +44,11 @@ and dated paragraphs below are history.
   Fresh admitted-source captures match both frozen corpus manifests, and the
   diagnostic helper passes its synthetic checks
   ([receipt](validation.md#t005-corpus-identity-and-diagnostic-helper-checks--2026-11-11)).
-  Actual traced/untraced query parity and complete diagnostic accounting remain.
-  No ranking variant or new G2 quality result is established; T005 remains unaccepted.
+  The fresh G2 off/on pair now passes complete accounting and exact response-byte
+  parity, with all 388 traced decisions dense at the pinned revisions
+  ([baseline receipt](validation.md#t005-current-g2-baseline-and-trace-parity--2026-11-11)).
+  Current-baseline G1 wins/losses, examples and a selected repair hypothesis remain.
+  No ranking variant or quality promotion is established; T005 remains unaccepted.
 - **Scale.** Publication streams cached vectors (no 2 GiB vector bound) and
   generation v6 interns label-map paths and hashes (rust map 191 → 69 MB). At rust's
   density the next bounds are the mapping-view estimate near 120k files, then the label
