@@ -1,5 +1,71 @@
 # Validation
 
+## T005 current semantic G1 comparison — 2026-11-11
+
+**All three frozen G1 aggregate guards pass; the current semantic profile still
+loses cases against the current no-profile implementation.** On `e5e0516`, one full
+semantic run per set used the archived `f19d353` normal binary and current units7
+masters. The no-profile side reuses the accepted T010 **candidate** runs, whose
+result bytes and decompressed response hashes match before and after pairing.
+Their starting whole-store manifests match the lineage of the prepared masters.
+Compiler preservation through semantic-only preparation is a source-boundary
+inference over that verified lineage, not a fresh compiler-table equality export.
+
+| Set | Scored tasks | Pass on first call, no-profile → semantic | Pass within four calls, no-profile → semantic | Verbatim bodies, no-profile → semantic |
+| --- | --- | --- | --- | --- |
+| bun | 999 | 971 → 969 (+0/−2) | 976 → 974 (+0/−2) | 572 → 570 (+0/−2) |
+| checker | 6,881 | 3,741 → 3,706 (+6/−41) | 3,868 → 3,831 (+10/−47) | 2,526 → 2,495 (+4/−35) |
+| qualified | 2,551 | 2,315 → 2,315 (+0/−0) | 2,334 → 2,334 (+0/−0) | 1,750 → 1,750 (+0/−0) |
+| Total | 10,431 | 7,027 → 6,990 (+6/−43) | 7,178 → 7,139 (+10/−49) | 4,848 → 4,815 (+4/−37) |
+
+Body accounting applies to the 6,881 definition tasks. The frozen scorer's one
+external-only bun usage exclusion is unchanged: 10,432 raw tasks become 10,431
+scored tasks. No task is otherwise missing, duplicated, retried or excluded as an
+apparatus error. The new runs contain 14,056 terminal tool calls, against 14,284 in
+the retained no-profile runs. Their 950 valid tool-error replies (928 checker,
+22 qualified) remain in scoring, against 999 in the reference; they are not silently
+dropped or treated as measurement failures. Every recorded reply stays within its
+frozen tool allowance. Scored tool-text tokens total 13,206,239 against 13,309,894;
+these are not provider input, host consumption or cost savings.
+
+The unchanged `g1score.py` supplies paired outcomes. Separate unmasked
+`g1compare.py` calls use its fixed historical Foundry/grep references and all exit 0.
+Those aggregate passes do not erase the newly lost current-comparison cases or
+create a zero-individual-loss rule. Full loss review is being completed before a
+repair is selected. This is a baseline diagnostic, not a new quality promotion.
+
+The new owner wrapper preserves bytes and records actual owner exit, complete
+request/response IDs, tool arguments, text and error bits. Its checks account for
+each new run's complete transport against its frozen harness records. Historical
+no-profile artifacts do not acquire retroactive full-wire proof. G1 tracing stays
+off, so per-query semantic decisions and complete provider-call counters are not
+available; an observed worker alone does not prove which requests called it.
+Twelve synthetic transport/accounting tests pass. The separately pinned
+[G2 pair](#t005-current-g2-baseline-and-trace-parity--2026-11-11) supplies the live
+dense-serving and trace-parity evidence.
+
+The stage completed in **677.230 s**, with semantic group phases of 74.907 s for
+bun, 389.097 s for checker and 149.290 s for qualified. These are current instrumented
+run times, not a timing comparison with the retained reference. All 30 native
+commands exited naturally, with no forced cleanup or observed owned descendants
+remaining. One embedding worker was observed in each group. Original and immutable
+master manifests, retained results and selected artifact/helper/input hashes match
+on readback. Root's final checks confirm unchanged repository/corpus HEADs and
+tracked files, unchanged existing scratch sibling metadata and an empty new scratch
+child. No original store was opened through Foundry.
+
+The preselected envelope was 3,600 seconds, with 120 each for final readback and
+cleanup; group ceilings were 360/1,200/600 seconds, one heavy job and USD 0 spend.
+Bounds: 20 GiB free space, 40 GiB apparent growth and 8 GiB sampled individual RSS.
+Observed owned-process RSS peak: 3,167,977,472 B; driver: 215,302,144 B;
+apparent growth: 19,669,063,201 B; minimum free space: 259,895,570,432 B;
+35 missed process samples. Sampling does not establish transient/GPU peaks.
+Private evidence remains in `runs/t005-g1-baseline-2026-11-11/` and
+`datasets/context-foundry-t005-g1-z1wa3aqv.noindex`; runtime receipt SHA-256
+`a0a3f10a1930e1b6d72b62d87fcc1694d79f0ccfb710d43ff75f690da12a85dd`.
+No ranking variant, installed-package acceptance, paid trial or T005 acceptance is
+established by this run.
+
 ## T005 current G2 baseline and trace parity — 2026-11-11
 
 **The single traced/untraced baseline pair is valid.** On `28567ed`, the unchanged

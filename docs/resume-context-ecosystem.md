@@ -47,7 +47,10 @@ and dated paragraphs below are history.
   The fresh G2 off/on pair now passes complete accounting and exact response-byte
   parity, with all 388 traced decisions dense at the pinned revisions
   ([baseline receipt](validation.md#t005-current-g2-baseline-and-trace-parity--2026-11-11)).
-  Current-baseline G1 wins/losses, examples and a selected repair hypothesis remain.
+  The current semantic G1 comparison also passes all frozen aggregate guards;
+  individual losses against the retained current no-profile arm remain explicit
+  ([G1 receipt](validation.md#t005-current-semantic-g1-comparison--2026-11-11)).
+  Loss review and refined example attribution remain before selecting a repair.
   No ranking variant or quality promotion is established; T005 remains unaccepted.
 - **Scale.** Publication streams cached vectors (no 2 GiB vector bound) and
   generation v6 interns label-map paths and hashes (rust map 191 → 69 MB). At rust's
