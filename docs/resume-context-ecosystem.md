@@ -53,12 +53,14 @@ and dated paragraphs below are history.
   All newly lost G1 cases are reviewed, and offline G2 refinement now distinguishes
   exact source ranges, outlines and overlapping loss paths
   ([diagnostic review](validation.md#t005-complete-loss-review-and-refined-trace-attribution--2026-11-11)).
-  One packing-allocation candidate family is selected. Fresh isolated holdout
-  authoring is selected for 400 questions, excluding G2/F4 answers and preserving
-  the original leakage and answer-quality checks
-  ([authoring selection](validation.md#t005-fresh-holdout-authoring-selection--2026-11-11)).
-  The exact algorithm and statistical/resource supplement remain to be frozen;
-  no fresh set is sealed and no candidate is implemented or evaluated yet.
+  One packing-allocation candidate family is selected. The fresh 400-question
+  holdout is now source-checked, sealed and retained with complete opaque-copy
+  readback; the original verifier and its self-tests pass. The initial receipt
+  wrapper's count error and both mechanical attempts remain recorded
+  ([seal and guards](validation.md#t005-fresh-holdout-seal-and-evaluation-guards--2026-11-11)).
+  Statistics and outer resource/latency guards are selected. The exact algorithm
+  and executable manifests remain to be frozen; no candidate is implemented or
+  evaluated yet, and implementation has not seen the fresh labels or case outcomes.
   No ranking variant or quality promotion is established; T005 remains unaccepted.
 - **Scale.** Publication streams cached vectors (no 2 GiB vector bound) and
   generation v6 interns label-map paths and hashes (rust map 191 → 69 MB). At rust's

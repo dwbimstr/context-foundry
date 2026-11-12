@@ -1,5 +1,89 @@
 # Validation
 
+## T005 fresh holdout seal and evaluation guards — 2026-11-11
+
+**The fresh holdout is sealed before candidate implementation or tuning:** exactly
+400 questions, 200 each over the pinned Rust and bun corpora. Four isolated authors
+used the frozen module partitions and candidate order. Four separate in-session
+checkers reviewed every answer against source and plausible alternatives, retaining
+1,176 source-inspection records and 95 same-identity wording repairs. All 400 pass;
+no answer identity was replaced. This is not an independent or cross-lab review.
+The author ledgers retain 257 ordered skips, 408 wording attempts (8 failed), and
+7 inspection-only quota stops, with no inspected candidate left without a disposition.
+
+The final set has no duplicate normalized question text or overlap with the selected
+historical exclusions: G2/F4 answers, one recorded retired answer, and retained old
+wordings. The original three-per-file/six-per-module limits hold. The unchanged
+`build.py -o` and full `verify.py`, without `--partial`, both pass. All original
+verifier rules run, including six literal-bearing-unit mutations.
+
+**A receipt-wrapper failure is retained.** The first wrapper expected the historical
+G2 set's 46 self-tests, although its original builder and verifier both exited zero.
+The unchanged verifier runs 37 fixed checks plus a data-dependent five-gram sample:
+388 questions exercise nine samples; 400 exercise eight. The correct receipt is
+therefore **45/45**, not 46/46. The corrected wrapper had already repeated the
+mechanical check before the instruction to reuse its outputs arrived. Both actual
+attempts exited naturally and were reaped, with identical engine logs and question
+bytes. The original failure, script and logs remain intact. An offline receipt-parser
+qualification passes 12 cases, including 11 rejection controls. Final qualification
+took 260.565 seconds from the original 600-second mechanical-stage start; no question
+or original-harness change, coverage waiver or retrieval rerun occurred.
+
+Question SHA-256: `78b46d7cc8ba50282728419246043a0626db545ba9b3e56ae71473ad1d44e5bd`
+(137,837 bytes). Metadata-only qualified seal SHA-256:
+`71ee60e304938d1d0534151a30d6a508154ee3b94db2149cee42124ea5f2ae0c`.
+After all eight author/checker children and the custodian were interrupted, an opaque
+copy to a new private datasets directory passed complete byte/mode readback:
+79 files, 45,344,937 bytes, source unchanged, process exit zero and reaped.
+Transport-manifest SHA-256:
+`48614417bd96c64cfd36494f24b9f6c15c82cfe5dd392604c4c790bda796f841`.
+Implementation received only metadata; questions, labels, source rationales and
+per-case outcomes remain private. The copy is local retention, not an authenticated
+encrypted restore or off-machine backup.
+
+**Evaluation statistics and outer guards are selected before evaluation.** K = 1,
+with the fixed 200/200 sample. The lower bound averages the two corpus-specific
+differences between an exact binomial lower bound for gains and upper bound for
+losses. Four one-sided tails at 0.0125 give a conservative 95% model-based bound by
+Bonferroni; this is a derivation from the
+[NIST binomial limits](https://itl.nist.gov/div898/software/dataplot/refman2/auxillar/exacbino.htm)
+and [Bonferroni inequality](https://www.itl.nist.gov/div898/handbook/prc/section4/prc473.htm),
+not a claim that NIST endorses this experiment. Within-corpus binomial/independence
+assumptions are not established by authoring: source clustering and curation limit
+population inference. The dyadic arithmetic rounds outward and decides positivity
+before display rounding; ten synthetic tests pass. The strict count adapter passes
+five additional synthetic tests, including invalid token types/ranges, duplicate or
+missing IDs, inconsistent body scores and invalid receipt bindings. These fixtures
+do not qualify actual wire, source, runtime or promotion evidence.
+
+The fixed sample gives 0.25 percentage-point overall resolution. Numerical planning
+under gain/loss probabilities 0.15/0.05 in both corpora gives a 54.20% chance of
+clearing the gain-bound and observed located guards; 0.25/0.10 gives 82.60%. These
+are imposed-model calculations, exclude the other gates, and are not actual
+candidate power or a justification to increase the sample after results.
+
+The selected final pair keeps tracing off and runs baseline then candidate, Rust
+then bun within each arm, once. Promotion still requires a positive lower bound,
+exact one-sided McNemar p < 0.05, observed located and verbatim-body nonregression
+in **each** corpus, valid complete accounting, the same 2,048-token/byte caps, all
+unchanged G1/G2 gates, and review of new G1 losses. Mean tokens remain reported only.
+For each corpus, complete MCP-owner elapsed time must be at most
+1.25 × paired baseline + 2 seconds; sampled peak individual RSS at most
+1.20 × baseline + 256 MiB and at most 8 GiB absolutely. The existing development
+worker limit remains 4 GiB. This does not accept the installed 3 GiB profile.
+There must be at least 20 GiB free, at most 40 GiB allocated growth, and one heavy
+job. The whole pair is bounded at 3,600 seconds, reserving 240 seconds for final
+readback and 120 for cleanup; each owner has a 600-second cap and 30-second cleanup.
+Natural reaping and verifiable required measurements remain mandatory. Raced RSS
+samples are reported; sampled peaks are not continuous maxima. These are observed
+one-pair operating limits, not causal overhead or per-request cold/warm latency.
+
+Private receipts, selected guards and synthetic helper qualifications are retained
+in `runs/t005-holdout-preparation-2026-11-11/`. No retrieval/model-worker/provider
+experiment or store API was invoked for authoring, checking or sealing. The exact
+candidate algorithm and its executable manifests still need to be frozen. No
+candidate, held-out retrieval result, quality promotion or T005 acceptance is claimed.
+
 ## T005 fresh holdout authoring selection — 2026-11-11
 
 The completed diagnostic review is published as `cf2923c`; its private evidence

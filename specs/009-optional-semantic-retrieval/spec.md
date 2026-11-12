@@ -1450,6 +1450,11 @@ labelled; they do not assign causes to the 249 historical G2 misses.
   The exact candidate algorithm, sample-size/power rationale, paired confidence
   statistic and resource/latency supplement must be frozen before tuning/evaluation.
   No new question set or candidate is accepted by this selection.
+  The authoring/checking/sealing checkpoint subsequently completed, and the
+  statistical and outer runtime guards are selected; see the
+  [dated seal receipt](../../docs/validation.md#t005-fresh-holdout-seal-and-evaluation-guards--2026-11-11)
+  and [current status owner](../../docs/resume-context-ecosystem.md#current-status--2026-11-06).
+  This does not accept a retrieval candidate.
 - **Verification:** fixtures establish trace attribution for absent candidates,
   stale units, rank/cap exclusion and packing omission; invalid traces cannot certify
   coverage. Test the selected repair's relevant source/budget/cache invariants and run
