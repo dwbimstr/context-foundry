@@ -171,7 +171,6 @@ struct Refusal {
 pub(crate) struct Shared {
     trace_sink: Option<Arc<crate::retrieval_trace::TraceSink>>,
     experimental_behavior_context: bool,
-    experimental_compact_context: bool,
     /// One engine per admitted root behind ONE mutex: the single engine slot
     /// spans every root, so admission stays one-active/zero-queued across
     /// the whole owner. `None` where a reference could not be opened.
@@ -444,7 +443,6 @@ impl Shared {
         Self {
             trace_sink: None,
             experimental_behavior_context: crate::store::DEFAULT_BEHAVIOR_CONTEXT,
-            experimental_compact_context: false,
             engines: Arc::new(Mutex::new(vec![Some(engine)])),
             meta: Arc::new(vec![RootMeta {
                 alias: "primary".to_owned(),
@@ -1138,8 +1136,6 @@ pub struct ServerOptions {
     pub retrieval_trace_dir: Option<PathBuf>,
     /// Lexical behavioral selection; the owner forwards its default or explicit opt-out.
     pub experimental_behavior_context: bool,
-    /// Default-off semantic packing preference; never changes model admission.
-    pub experimental_compact_context: bool,
     pub store: PathBuf,
     pub root: PathBuf,
     /// `--reference ROOT=STORE` admissions (007), at most 8, validated and
@@ -2652,7 +2648,6 @@ mod tests {
                     knowledge: None,
                     retrieval_trace_dir: None,
                     experimental_behavior_context: false,
-                    experimental_compact_context: false,
                     store,
                     root,
                     references: Vec::new(),

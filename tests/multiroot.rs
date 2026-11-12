@@ -346,7 +346,6 @@ async fn a_ws16_collision_is_refused_through_the_test_seam() {
         knowledge: None,
         retrieval_trace_dir: None,
         experimental_behavior_context: false,
-        experimental_compact_context: false,
         store: primary.store.clone(),
         root: primary.root.clone(),
         references: vec![

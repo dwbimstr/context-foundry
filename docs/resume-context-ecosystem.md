@@ -53,21 +53,21 @@ and dated paragraphs below are history.
   All newly lost G1 cases are reviewed, and offline G2 refinement now distinguishes
   exact source ranges, outlines and overlapping loss paths
   ([diagnostic review](validation.md#t005-complete-loss-review-and-refined-trace-attribution--2026-11-11)).
-  One packing-allocation candidate family is selected. The fresh 400-question
+  One packing-allocation candidate family was selected. The fresh 400-question
   holdout is now source-checked, sealed and retained with complete opaque-copy
   readback; the original verifier and its self-tests pass. The initial receipt
   wrapper's count error and both mechanical attempts remain recorded
   ([seal and guards](validation.md#t005-fresh-holdout-seal-and-evaluation-guards--2026-11-11)).
-  Statistics and outer resource/latency guards are selected. The one selected
-  variant is a default-off compact-form preference at one-eighth of the effective
-  token budget, with ordinary-ladder fallback
-  ([contract](../specs/001-source-state-recovery/contracts/context-v2.md#experimental-compact-preference--009-t005)).
-  The candidate is implemented locally and six focused tests pass, including actual
-  single/multi-root MCP owners with a fixture embedding provider and CLI flag checks
-  ([implementation receipt](validation.md#t005-default-off-compact-preference-implementation--2026-11-11)).
-  Full local gates and executable measurement manifests are next. No candidate
-  quality evaluation has run, and implementation has not seen fresh labels or case outcomes.
-  No ranking variant or quality promotion is established; T005 remains unaccepted.
+  The one-eighth compact preference passed all eight local gates but failed the
+  unchanged G2 body-preservation gate: five more located definitions came with
+  42 fewer verbatim bodies. G1 has no gained or lost cases, and the native CLI/MCP
+  parity check passes. The candidate is rejected and removed from active code;
+  its commit, binary and private evidence remain reproducible
+  ([no-promotion receipt](validation.md#t005-compact-candidate-no-promotion--2026-11-11)).
+  This one-variant evaluation is closed. The fresh holdout was not queried or exposed
+  to implementation and now also has a verified local encrypted backup. No quality
+  promotion or broader anchorless improvement is established; T005 remains unaccepted.
+  Another repair would need a new bounded selection, not adaptive reuse of this run.
 - **Scale.** Publication streams cached vectors (no 2 GiB vector bound) and
   generation v6 interns label-map paths and hashes (rust map 191 → 69 MB). At rust's
   density the next bounds are the mapping-view estimate near 120k files, then the label
@@ -233,7 +233,10 @@ and dated paragraphs below are history.
     sandbox and its archive are declared lost; F2, F6, F8, F10 and F11 retire.
     Five encrypted backups are built and checksum-verified in
     `~/VSC_DEV/backups/foundry-20261111-retry1`
-    ([receipt](validation.md#encrypted-evidence-backups--2026-11-11)). The owner
+    ([receipt](validation.md#encrypted-evidence-backups--2026-11-11)). The new sealed
+    T005 holdout also has a verified encrypted archive in
+    `~/VSC_DEV/backups/foundry-t005-heldout-20261111`
+    ([receipt](validation.md#t005-sealed-holdout-encrypted-retention--2026-11-11)). The owner
     retains the recovery private key and handles off-machine copying and authenticated
     restoration; neither is claimed done. The pilot key file is deleted; the owner
     revokes the key.

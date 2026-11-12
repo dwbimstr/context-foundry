@@ -838,35 +838,14 @@ the final read transaction.
 
 ### Experimental compact preference — 009 T005
 
-Selected and implemented locally on 2026-11-11; quality promotion remains gated.
-One default-off `--experimental-compact-context` CLI/MCP-owner flag
-selects this variant for ordinary context only when the batch has no anchors
-and contains an actual semantic candidate. Composed task evidence keeps its separate
-dispatch. The flag belongs to delivery, not stores, profiles, model admission or
-candidate construction; multi-root context applies it after the ordinary merge.
-
-Keep the existing candidate order and rendered forms. For a non-outline source unit
-with another non-outline source candidate still to visit, let the soft share be
-floor(effective token allowance / 8). If the first rendered form exceeds that share,
-try the first existing excerpt/signature rung whose rendered fragment is within it.
-There is no preference when the share is zero or no such rung exists. The fragment
-count only chooses a trial; every acceptance still measures the **complete response**,
-including its current header, against both authoritative limits.
-
-A successful speculative trial settles the candidate and continues in ordinary
-order. A covered compact form or failed trial emits no event and falls back to the
-ordinary richest-first ladder, restoring both accepted state and refusal bookkeeping.
-A compact excerpt covered by earlier evidence must therefore not suppress a richer
-form that adds source. This is a soft preference, not a new hard cap or clipping rule.
-Exact source coverage, final citation support, omitted counts and source-first tails
-keep their existing owners. The existing first-form excerpt rule remains intact.
-
-The settled successful preference is traced once as `shortened`, reason
-`allocation`, with `allocation_tokens` naming the soft share and no false budget
-`limiter`. Ordinary fallback retains its actual budget/duplicate verdict. The
-candidate may lose useful verbatim bodies; the frozen G1/G2/held-out gates, including
-body preservation, decide promotion. See the
-[owning candidate checkpoint](../../009-optional-semantic-retrieval/spec.md#t005--diagnose-and-improve-anchorless-evidence-retrieval).
+Historical rejected variant, 2026-11-11. Commit `0de75ff` implemented a default-off
+one-eighth compact-form preference for ordinary anchorless semantic context. It
+kept existing forms/order and whole-response bounds, with ordinary-ladder fallback
+and an explicit `allocation` trace reason. It passed local correctness gates but
+failed G2 verbatim-body preservation, so its flag and runtime path were removed.
+The original richest-first ladder below remains authoritative. The retained commit,
+binary and [no-promotion receipt](../../../docs/validation.md#t005-compact-candidate-no-promotion--2026-11-11)
+preserve the experiment without adding an operator option to current delivery.
 
 ### Ladder packing
 

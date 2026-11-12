@@ -1289,7 +1289,6 @@ async fn shared_http_delivers_primary_derived_context_across_roots_and_stops_cle
         ServerOptions {
             retrieval_trace_dir: None,
             experimental_behavior_context: false,
-            experimental_compact_context: false,
             store: env.store.clone(),
             root: env.dir.path().join("root"),
             references: vec![context_foundry::roots::ReferenceSpec {

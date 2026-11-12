@@ -100,7 +100,6 @@ pub(super) fn open_owner(
     ));
     let state = Arc::new(Shared {
         experimental_behavior_context: options.experimental_behavior_context,
-        experimental_compact_context: options.experimental_compact_context,
         trace_sink: options
             .retrieval_trace_dir
             .as_deref()

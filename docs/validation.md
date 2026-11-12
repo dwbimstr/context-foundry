@@ -1,6 +1,97 @@
 # Validation
 
+## T005 compact candidate: no promotion — 2026-11-11
+
+**Reject the selected K=1 compact preference and preserve the current baseline.**
+Candidate `0de75ff` (binary SHA-256
+`67b8d6426acc9dfcd7e37445230c69d71a24e3faaa23dc3e78d62cacefee8f5e`)
+passed all eight local gates in 772.810 seconds: 1,317 default-suite tests passed,
+0 failed, 34 ignored; the separate pilot unit suite passed 97 tests. Both toolchains
+and the opt-in pilot checks exited zero on the unchanged committed source. The
+release build passed. This establishes implementation correctness, not quality.
+
+The unchanged `scripts/g2.sh` ran one baseline/candidate pair against the pinned
+current Gemma profile and fresh copies of the prepared units7 masters. Both arms
+captured diagnostics; the previously qualified off/on baseline establishes trace
+parity separately. All 388 questions per arm have valid wire, score, source-identity
+and dense-readiness accounting, with the original 2,048-token cap.
+
+| G2 corpus | Located baseline → candidate | Located gains / losses | Verbatim bodies baseline → candidate | Body gains / losses |
+|---|---:|---:|---:|---:|
+| Rust (197) | 52 → 53 | +1 / −0 | 47 → 33 | +1 / −15 |
+| bun (191) | 117 → 121 | +4 / −0 | 107 → 79 | +2 / −30 |
+| Total (388) | 169 → 174 | +5 / −0 | 154 → 112 | +3 / −45 |
+
+Exact one-sided McNemar p = 0.03125, but **42 fewer verbatim bodies fail the
+conjunctive enable rule**. The unchanged comparator exits 1, `KEEP OFF`, agreeing
+with the stricter validator. Mean delivered tokens are 2,022.925 → 2,022.461 and are
+reported only. The pair completed in 114.376 seconds; all 21 native commands exited
+naturally and were reaped. Original/prepared-master/input readbacks and corpus/repo
+identity checks pass. Sampled peak individual RSS was 3,049,750,528 bytes; 34 raced
+samples were missed. This is neither a latency distribution nor a true continuous
+memory peak or provider/host cost measurement.
+
+The required current-semantic G1 comparison then completed in 677.573 seconds.
+All three unchanged frozen guards exit zero over 10,432 raw tasks, 10,431 scored
+after the existing one-task exclusion. First-call success, success within four calls
+and verbatim-body success are identical in each group: **zero gains and zero losses**,
+so there are no newly lost cases to review. Twenty-seven task records differ in
+usage fields, including one fewer checker call: total calls are 14,056 → 14,055,
+and delivered tokens are 13,206,239 → 13,205,241.
+All 31 native commands exit naturally, with complete retained-reference/source/store
+readbacks and an empty owned scratch directory. No per-query embedding count or
+host-consumption claim follows from those token records.
+
+A separate fixed-row CLI check passes in 16.984 seconds. It selected physical row
+zero of the frozen G2 file before launch, used two fresh store copies, and required
+literal same-arm CLI/MCP response-byte equality. Both outputs have 1,991 tokens;
+the candidate trace records one actual allocation preference, versus zero in the
+baseline. Both owners and workers were observed and naturally reaped; all eight
+native commands and final input/master/scratch checks pass. This proves the launch
+path, not another quality result.
+
+The runtime flag and packing preference were removed after these observations;
+the candidate commit, binary, control failures and private evidence are retained.
+Source, tests, Cargo inputs and build scripts return exactly to the previously
+gated `c399c1e` state; a fresh run of all 22 ordinary response tests also passes.
+Formatting and link checks pass. The earlier full gates remain applicable to the
+identical restored runtime/test/build inputs; they are not represented as a second
+fresh eight-gate run. No alternative fraction, additional candidate or final held-out
+query was tried. The sealed 400-question set stays unused and private. This closes
+the selected one-variant evaluation with no promotion; it does not accept the broader
+T005 quality goal. A new repair requires a new bounded selection.
+
+Private receipts: `runs/t005-packing-candidate-2026-11-11/`,
+`runs/t005-compact-g2-2026-11-11/`, `runs/t005-compact-g1-2026-11-11/` and
+`runs/t005-compact-cli-2026-11-11/`. G2 runtime receipt SHA-256:
+`bbb06ebf5bc27ed250a4605bc5de6fbf08013ca0be1091fd1ef1605deef52451`;
+G1 runtime receipt SHA-256:
+`f9ff337583e4f54efa22e211f7408a4a646ca69667bc9ef1211ba349199669aa`.
+These were local, no-spend measurements; signed-package and task/economic acceptance
+remain separate. The [handoff](resume-context-ecosystem.md#current-status--2026-11-06)
+owns current status.
+
+## T005 sealed holdout encrypted retention — 2026-11-11
+
+The new sealed holdout has a local encrypted archive in
+`~/VSC_DEV/backups/foundry-t005-heldout-20261111/`, using the owner's selected
+`~/.ssh/id_ed25519.pub`. All three tar/zstd/age pipeline exits are zero. Complete
+source/clone byte-and-mode manifests match before and after, the private staging
+copy is removed, and all five ciphertext/recovery-file checksum entries pass a fresh
+readback. Archive size: 10,216,691 bytes; SHA-256:
+`9b8e900bf01169d171476c8d06de9934e4106ea22b1ffe8029af3f1745a0b6de`.
+
+The job was bounded at 300 seconds with a 20 GiB free-space floor and no network
+or model/provider calls. It read only the selected public recovery key. The packet
+was handled as opaque bytes; no fresh questions, labels or rationale were exposed
+to implementation. Header syntax and ciphertext integrity are verified;
+authenticated decryption/restoration and off-machine copying remain owner tasks.
+Private receipts are in `runs/t005-holdout-backup-2026-11-11/`.
+
 ## T005 default-off compact preference implementation — 2026-11-11
+
+Historical candidate `0de75ff`; the subsequent
+[no-promotion result](#t005-compact-candidate-no-promotion--2026-11-11) records its removal.
 
 The single variant selected in `7c5776d` is implemented behind the default-off
 `--experimental-compact-context` flag on CLI context and the MCP owner. The shared

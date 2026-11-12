@@ -92,10 +92,6 @@ enum Command {
               require_equals = true, default_missing_value = "true",
               default_value_t = crate::store::DEFAULT_BEHAVIOR_CONTEXT)]
         experimental_behavior_context: bool,
-        /// Prefer existing compact forms for eligible semantic context (009 T005).
-        #[arg(long, action = clap::ArgAction::Set, num_args = 0..=1,
-              require_equals = true, default_missing_value = "true", default_value_t = false)]
-        experimental_compact_context: bool,
         #[arg(long, default_value = "auto")]
         strategy: String,
         /// Include this experimental task's complete selected view.
@@ -900,7 +896,6 @@ fn run() -> AResult<()> {
             tokens,
             retrieval_trace_dir,
             experimental_behavior_context,
-            experimental_compact_context,
             strategy,
             include_memory,
             include_briefs,
@@ -991,12 +986,11 @@ fn run() -> AResult<()> {
                         ..crate::store::ContextOptions::default()
                     },
                 )?;
-                let packed = response::pack_enriched_context_with_compact_preference(
+                let packed = response::pack_enriched_context(
                     &combined,
                     None,
                     Budget::request(tokens),
                     &response::stdout_bytes,
-                    experimental_compact_context,
                 )?;
                 Ok((packed, combined.batch.doors.is_some()))
             })();

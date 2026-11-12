@@ -1327,6 +1327,11 @@ for this proof.
 
 **Status:** authorized 2026-10-09 (owner: “go for 1 then 2 and onwards”); in progress, not accepted. T004's
 selected Gemma profile and current implementation are the comparison baseline.
+The selected K=1 packing experiment completed on 2026-11-11 with **no promotion**:
+it failed G2 body preservation and was removed from active code. Its G1 comparison
+has no gained or lost cases. The fresh holdout remains unused; the broader quality
+goal is retained, with any new candidate requiring a new bounded selection. See the
+[dated result](../../docs/validation.md#t005-compact-candidate-no-promotion--2026-11-11).
 The original G2 verdict remains valid for its original question: gain over no profile.
 This task asks which current losses can be repaired at the same delivery budget.
 The [resumable handoff](../../docs/resume-context-ecosystem.md#current-status--2026-11-06)
@@ -1343,11 +1348,10 @@ outcomes, packing inputs, and the final packing decisions themselves: one `stage
 event per settled candidate or tail line with its chosen form (a candidate delivered at
 its first form — including one that arrived as an excerpt — is `selected`, never
 re-labeled shortening; a chosen excerpt's `unit` is its delivered `start..end`, with the
-parent named beside it) and, for a shortening or drop, the exact reason —
+refused parent named beside it) and, for a shortening or drop, the exact reason —
 `budget` with the refusing bound (`token` budget or serialized-`byte` cap) when the
 failed trial reported it, `duplicate` coverage, `anchored_selection` exclusion, or
-`allocation` with `allocation_tokens` and no refusal limiter for the default-off
-compact preference, or `unsupported_citation` for a brief or proof whose citation no delivered source covers,
+`unsupported_citation` for a brief or proof whose citation no delivered source covers,
 including a composed brief excluded before the tail. A task proof carries exactly one
 settled verdict, emitted after its final tail retry, under an individual key over its
 already-built proof record together with the citations it requires. Task composition
@@ -1469,7 +1473,10 @@ labelled; they do not assign causes to the 249 historical G2 misses.
   All quality, body, validity and runtime gates above remain conjunctive. The local
   implementation and focused fixtures are recorded in
   [validation](../../docs/validation.md#t005-default-off-compact-preference-implementation--2026-11-11);
-  they establish no quality promotion or acceptance. The
+  they establish no quality promotion or acceptance. Subsequent G2 evaluation
+  rejected this variant for body loss; the flag and implementation were removed,
+  while the candidate commit and binary remain retained. The final held-out set
+  was not queried because this prerequisite promotion gate already failed. The
   [handoff](../../docs/resume-context-ecosystem.md#current-status--2026-11-06) owns status.
 - **Verification:** fixtures establish trace attribution for absent candidates,
   stale units, rank/cap exclusion and packing omission; invalid traces cannot certify
