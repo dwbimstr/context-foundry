@@ -437,7 +437,8 @@ fn process_exists(pid: libc::pid_t) -> bool {
 }
 
 /// The child's pre-exec setup: own process group, soft and hard
-/// `RLIMIT_NPROC=0`, the liveness read end inheritable and every other
+/// `RLIMIT_NPROC=0`, owner-only default file creation (umask 0077), the
+/// liveness read end inheritable and every other
 /// inheritable descriptor beyond stdio closed. Descriptors with
 /// `FD_CLOEXEC` close at exec by themselves and are left alone, so the
 /// standard library's own exec-error pipe keeps reporting failures. Only
@@ -468,6 +469,9 @@ fn child_setup_with_fds(
         if unsafe { libc::setpgid(0, 0) } != 0 {
             return Err(std::io::Error::last_os_error());
         }
+        // Only the forked child changes its mask. Libraries that create scratch
+        // files with ordinary defaults must not inherit a permissive caller mask.
+        unsafe { libc::umask(0o077) };
         for &(resource, value) in &limits {
             let limit = libc::rlimit {
                 rlim_cur: value,

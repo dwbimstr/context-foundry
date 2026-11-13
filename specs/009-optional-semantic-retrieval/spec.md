@@ -1155,6 +1155,14 @@ T003's, each passing only with that task's verification.
     someone else put there, so nothing removes it automatically; the owner of the
     scratch root removes it by hand. That trades a leak for never removing a
     directory that was not validated.
+    *Default creation modes (2026-11-13):* the shared 009/013 pre-exec setup
+    sets umask 0077 in the forked child before exec. Direct launches cannot inherit
+    a permissive caller mask for ordinary scratch-file creation; the parent mask
+    and existing objects are unchanged. This adds no launcher or cleanup owner.
+    The live fake-worker phase/request writers and the real native worker's phase
+    writer are the selected acceptance boundaries under caller masks 0000/0022.
+    A creation mask does not prevent an explicit later chmod or establish the modes
+    of every transient library file; closed producer-tree validation remains separate.
   - *Foreground requests during store steps (D7).* Measured: on a 60,739-file store
     every context query during the first ~12 minutes of cold partitioning failed
     `busy`, because back-to-back partition steps and whole-generation rebuilds held
