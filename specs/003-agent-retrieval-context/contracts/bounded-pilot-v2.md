@@ -273,6 +273,19 @@ mismatches the frozen hash, so that preflight does not admit a run. These checks
 neither authorize a paid request nor freeze or accept pilot v2/T006;
 startup-network observation remains separate.
 
+**Preview archival repair selected, 2026-11-13 — qualification pending.** The
+first fresh full-pipeline regression reaches capture admission after four real
+views and nine previews, then correctly refuses the render hosts' retained 0700
+native modules outside the declared capture-run exception. A successful preview
+must confirm that its host group is gone, validate its newly owned tree under the
+existing live-run rules, and archive only its exact native-module copies as 0600
+data. Preserve bytes; use checked descriptors, sync file and parent, validate the
+closed tree with ordinary data rules and append `preview_archived` before returning
+the binding. Wrong-mode inputs, unknown executables, unresolved cleanup or failed
+persistence refuse. Active capture exceptions and frozen pins/fields stay unchanged;
+historical artifacts are not normalized. The retained original failure and fresh
+consumer/gate checks determine qualification; no paid execution is authorized.
+
 Preserve v1's original failures and interpretation. Its two blocked `read .` calls
 remain constraint violations with the owner's accepted oracle outcomes. V2's task
 manifest must distinguish blocked out-of-scope reads, forbidden tools and actual

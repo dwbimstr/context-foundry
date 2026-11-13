@@ -2442,10 +2442,52 @@ pub fn render_binding(
         .journal
         .append("preview_admitted", json!({"slot": slot.slot_id}))?;
     let capture = rt.block_on(inner.run_slot(slot.clone(), Purpose::Preview))?;
-    capture.render.ok_or(CaptureFault::new(
+    let binding = capture.render.ok_or(CaptureFault::new(
         FaultClass::Bootstrap,
         "preview_not_rendered",
-    ))
+    ))?;
+    let archived = archive_preview_run(&inner.run_dir, capture.host_exit.as_ref())?;
+    inner.journal.append(
+        "preview_archived",
+        json!({"slot": slot.slot_id, "native_modules": archived, "mode": "0600"}),
+    )?;
+    Ok(binding)
+}
+
+/// A stopped preview is retained as data, including its former native module.
+/// This narrows only valid, newly produced executable copies; it never repairs
+/// unsuitable inputs or grants the manifest a wider executable exception.
+fn archive_preview_run(root: &Path, exit: Option<&HostExitRecord>) -> Result<usize, CaptureFault> {
+    use std::os::unix::fs::PermissionsExt;
+    if !exit.is_some_and(|exit| exit.group_gone) {
+        return Err(CaptureFault::new(
+            FaultClass::Cleanup,
+            "preview_host_cleanup_unresolved",
+        ));
+    }
+    let mut budget = PrivateTreeBudget::new(None);
+    verify_private_run_root(root, &mut budget)?;
+    let files = collect_private_tree(root, false, &[], &mut budget)?;
+    let mut archived = 0;
+    for relative in files.iter().filter(|path| host::is_run_native_module(path)) {
+        let path = root.join(relative);
+        let (parent, _) = private_parent(&path)?;
+        let file = open_private_file(&path, PrivateArtifact::Executable)?;
+        file.set_permissions(fs::Permissions::from_mode(0o600))
+            .map_err(|_| persistence("preview_archive_mode_failed"))?;
+        require_private_metadata(
+            &file
+                .metadata()
+                .map_err(|_| persistence("preview_archive_mode_failed"))?,
+            PrivateArtifact::File,
+        )?;
+        file.sync_all()
+            .and_then(|()| parent.sync_all())
+            .map_err(|_| persistence("preview_archive_sync_failed"))?;
+        archived += 1;
+    }
+    verify_private_tree(root, &[], &mut budget)?;
+    Ok(archived)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -4697,6 +4739,95 @@ mod tests {
     }
 
     use super::*;
+
+    fn preview_archive_fixture(root: &Path) -> (PathBuf, HostExitRecord) {
+        use std::os::unix::fs::PermissionsExt;
+        let mut parent = root.to_path_buf();
+        for component in ["hosts", "h1", "home", ".omp", "natives", "18.13.2"] {
+            parent.push(component);
+            create_private_dir(&parent).unwrap();
+        }
+        let native = parent.join("pi_natives.darwin-arm64.node");
+        write_private_new(&native, b"owned native-module fixture").unwrap();
+        fs::set_permissions(&native, fs::Permissions::from_mode(0o700)).unwrap();
+        let exit = HostExitRecord {
+            normal: true,
+            code: Some(0),
+            signal: None,
+            forced: false,
+            group_gone: true,
+            stderr_bytes: 0,
+            stderr_sha256: sha256_hex(b""),
+        };
+        (native, exit)
+    }
+
+    #[test]
+    fn preview_archive_preserves_bytes_and_admits_only_closed_data() {
+        use std::os::unix::fs::MetadataExt;
+        let base = privacy_owned_root("preview-archive");
+        create_private_dir(&base.join("renders")).unwrap();
+        let preview = base.join("renders/render-probe");
+        create_private_dir(&preview).unwrap();
+        let (native, exit) = preview_archive_fixture(&preview);
+        write_private_new(&preview.join("evidence"), b"unchanged evidence").unwrap();
+        let before = fs::read(&native).unwrap();
+        let actual = base.join("capture");
+        assert!(verify_private_isolation_root(&base, &actual).is_err());
+        assert_eq!(archive_preview_run(&preview, Some(&exit)).unwrap(), 1);
+        assert_eq!(fs::read(&native).unwrap(), before);
+        assert_eq!(fs::metadata(&native).unwrap().mode() & 0o7777, 0o600);
+        assert_eq!(
+            fs::read(preview.join("evidence")).unwrap(),
+            b"unchanged evidence"
+        );
+        verify_private_isolation_root(&base, &actual).unwrap();
+        create_private_dir(&actual).unwrap();
+        let (live_native, _) = preview_archive_fixture(&actual);
+        verify_private_isolation_root(&base, &actual).unwrap();
+        assert_eq!(fs::metadata(live_native).unwrap().mode() & 0o7777, 0o700);
+    }
+
+    #[test]
+    fn preview_archive_requires_confirmed_host_shutdown_before_any_change() {
+        use std::os::unix::fs::MetadataExt;
+        let root = privacy_owned_root("preview-live");
+        let (native, mut exit) = preview_archive_fixture(&root);
+        exit.group_gone = false;
+        for observed in [None, Some(&exit)] {
+            let fault = archive_preview_run(&root, observed).unwrap_err();
+            assert_eq!(
+                (fault.class, fault.code),
+                (FaultClass::Cleanup, "preview_host_cleanup_unresolved")
+            );
+            assert_eq!(fs::metadata(&native).unwrap().mode() & 0o7777, 0o700);
+        }
+    }
+
+    #[test]
+    fn preview_archive_refuses_wrong_modes_and_undeclared_executables() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        for mode in [0o600, 0o640, 0o755] {
+            let root = privacy_owned_root("preview-wrong-mode");
+            let (native, exit) = preview_archive_fixture(&root);
+            fs::set_permissions(&native, fs::Permissions::from_mode(mode)).unwrap();
+            assert_eq!(
+                archive_preview_run(&root, Some(&exit)).unwrap_err().class,
+                FaultClass::Privacy
+            );
+            assert_eq!(fs::metadata(&native).unwrap().mode() & 0o7777, mode);
+        }
+        let root = privacy_owned_root("preview-undeclared-executable");
+        let (native, exit) = preview_archive_fixture(&root);
+        let unknown = root.join("unknown-executable");
+        write_private_new(&unknown, b"not a native module").unwrap();
+        fs::set_permissions(&unknown, fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(
+            archive_preview_run(&root, Some(&exit)).unwrap_err().class,
+            FaultClass::Privacy
+        );
+        assert_eq!(fs::metadata(native).unwrap().mode() & 0o7777, 0o700);
+    }
 
     #[test]
     fn frozen_reservation_arithmetic() {
