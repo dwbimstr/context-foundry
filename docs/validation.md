@@ -1,5 +1,62 @@
 # Validation
 
+## T005 retained cap-decision census — 2026-11-13
+
+**PASS for the read-only diagnostic, with one correction to earlier attribution.**
+All 149,178 placement verdicts in the retained 388-query baseline replay exactly:
+deduplication, four-per-file accounting and the global 32-unit cut have zero
+mismatches. The census verifies 126,614,198 trace bytes and freshly checks all
+330 target source files (8,748,136 bytes) against the frozen source identities.
+It reuses the prior verified outcomes; it runs no model, retrieval, scorer or store
+API and establishes no new retrieval score. The recorded 169 located definitions
+and 154 verbatim bodies are unchanged. Placement source bytes through `7f93fa1`
+match the published restored baseline.
+
+No eligible target-name-covering tier-1 lexical document appears in these traces.
+A tier-1-first candidate therefore has no demonstrated route to recover these
+G2 misses. Tier-2 candidates and dense ranges remain separate observations.
+
+The per-file counter advances even for units refused by an already-full global
+window. A later `per_file_cap` flag does not establish that four admitted units
+from that file displaced the target. For the 219 baseline misses, the observed
+target-range refusal sets are:
+
+| Corpus | Per-file refusal before global full | After global full | Both sets | Union |
+|---|---:|---:|---:|---:|
+| Rust | 12 | 19 | 4 | 27 |
+| Bun | 9 | 9 | 1 | 17 |
+| Total | 21 | 28 | 5 | 44 |
+
+These are overlapping paths, not exclusive causes or predicted recoveries.
+Across all questions the corresponding counts are 47 before, 51 after, eight in
+both and 90 in the union. Global-limit attribution matches all 388 prior cases.
+
+One Bun miss corrects the earlier per-file classification: an eligible lexical
+document did not cover the target name; a later covering document of that same
+large unit had already been discarded as a duplicate. The older refiner joined
+the discarded document to the eligible unit's later cap refusal. Requiring the
+actual eligible document removes that flag, changing the earlier per-file totals
+from 91 to 90 questions and from 45 to 44 misses. Original reports and the failed
+cross-check assumption are retained. A synthetic reproducer demonstrates the
+older attribution and its exclusion by the new census. No response, outcome,
+source, runtime cap or prior receipt is rewritten.
+
+Eight boundary/refusal checks pass in 0.248 seconds; the separately qualified
+duplicate-document reproducer passes in 0.246 seconds. The complete census exits
+naturally in 1.976 seconds; all three processes are reaped, no workers are observed
+and selected inputs are unchanged. The stage retains a 900-second total bound,
+120 seconds per process and a 60-second cleanup reserve, with a 1 GiB sampled
+process RSS ceiling. Samples do not establish the true peak.
+
+No new candidate is selected. Before an ordering family, inspect the actual earlier
+same-file admitted units for refusals before global saturation, with successful
+controls; cap histograms alone do not justify a repair. The fresh sealed holdout
+remains unused. No spend, model search, provider access, source-program execution
+or production change occurs. Private evidence is in
+`runs/t005-cap-census-2026-11-13/`. Only records change, so link/diff checks apply;
+the previous Rust gates are not presented as a new run. The
+[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+
 ## Worker scratch creation defaults — 2026-11-13
 
 **PASS for the selected direct-launch creation defaults.** The

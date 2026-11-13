@@ -68,6 +68,12 @@ and dated paragraphs below are history.
   to implementation and now also has a verified local encrypted backup. No quality
   promotion or broader anchorless improvement is established; T005 remains unaccepted.
   Another repair would need a new bounded selection, not adaptive reuse of this run.
+  A later read-only cap-decision census distinguishes per-file refusals before
+  global saturation from later bookkeeping flags and corrects one discarded-document
+  attribution. It finds no eligible target-covering tier-1 document in the retained
+  baseline, so no tier-1-priority candidate is selected. Actual earlier admitted
+  same-file evidence still needs inspection before selecting an ordering family
+  ([diagnostic receipt](validation.md#t005-retained-cap-decision-census--2026-11-13)).
 - **Scale.** Publication streams cached vectors (no 2 GiB vector bound) and
   generation v6 interns label-map paths and hashes (rust map 191 → 69 MB). At rust's
   density the next bounds are the mapping-view estimate near 120k files, then the label

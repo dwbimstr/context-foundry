@@ -1424,6 +1424,12 @@ labelled; they do not assign causes to the 249 historical G2 misses.
   - Deliver stage counts, examples, current-baseline G1 wins/losses and one selected
     repair hypothesis. If dominant losses remain unexplained, improve diagnostics
     before selecting an embedding or ranking replacement.
+  - The 2026-11-13 retained-event census replays the current cap rules, separates
+    per-file refusals before global saturation from later flags, and requires the
+    eligible lexical document rather than a discarded duplicate to witness a target.
+    It selects no new ranking candidate or score; inspect actual earlier admitted
+    same-file evidence before proposing an ordering repair. See the
+    [dated diagnostic](../../docs/validation.md#t005-retained-cap-decision-census--2026-11-13).
 - **Candidate checkpoint:**
   - Hold Gemma fixed and predeclare at most three variants targeting the demonstrated
     loss: representation, candidate coverage, ordering or packing. Keep other stages
