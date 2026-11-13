@@ -1858,6 +1858,164 @@ mod tests {
 
     use super::*;
 
+    /// Real local semantic producers through the production child launcher.
+    /// Explicit test-only inputs avoid replacing the frozen v1 executable pin.
+    #[test]
+    #[ignore = "needs CF_PILOT_SEMANTIC_FOUNDRY, CF_PILOT_SEMANTIC_FOUNDRY_SHA256, CF_PILOT_SEMANTIC_PROFILE and CF_PILOT_SEMANTIC_EVIDENCE_ROOT; actual local Gemma, no provider"]
+    fn privacy_real_semantic_outputs_from_the_bounded_launcher() {
+        let path = |key| PathBuf::from(std::env::var_os(key).expect(key));
+        let foundry = path("CF_PILOT_SEMANTIC_FOUNDRY");
+        let profile = path("CF_PILOT_SEMANTIC_PROFILE");
+        let evidence = path("CF_PILOT_SEMANTIC_EVIDENCE_ROOT");
+        let expected_foundry = std::env::var("CF_PILOT_SEMANTIC_FOUNDRY_SHA256").unwrap();
+        assert_eq!(file_sha256(&foundry).unwrap(), expected_foundry);
+        assert_eq!(file_sha256(&profile).unwrap(), pins::PROFILE_SHA256);
+        require_private_directory(&evidence).unwrap();
+        let root = PilotRoot::create(&evidence.join("producer")).unwrap();
+        eprintln!(
+            "retained semantic permission evidence: {}",
+            root.root.display()
+        );
+        // The outer test process must start with umask 0022. Public marker
+        // bytes outside the producer root witness the unchanged parent mask.
+        let before = evidence.join("ambient-before");
+        fs::write(&before, b"public test marker").unwrap();
+        assert_eq!(fs::metadata(&before).unwrap().mode() & 0o7777, 0o644);
+        let workspace = root.workspace("semantic-fixture");
+        create_private_dir(&workspace).unwrap();
+        create_private_dir(&workspace.join("src")).unwrap();
+        write_private_new(
+            &workspace.join("src/lib.rs"),
+            b"/// Preserve every input byte while decoding escaped sequences.\n\
+              pub fn preserve_bytes(input: &[u8]) -> Vec<u8> { input.to_vec() }\n\
+              /// Keep incomplete escape sequences unchanged.\n\
+              pub fn incomplete_escape(input: &[u8]) -> &[u8] { input }\n",
+        )
+        .unwrap();
+        write_private_new(
+            &workspace.join("README.md"),
+            b"# Byte preservation\nEscaped input must retain malformed and incomplete sequences.\n",
+        )
+        .unwrap();
+        let source_files = list_files(&workspace).unwrap();
+        let source_hashes = || {
+            source_files
+                .iter()
+                .map(|relative| file_sha256(&workspace.join(relative)).unwrap())
+                .collect::<Vec<_>>()
+        };
+        let source_before = source_hashes();
+        let store = root.store(1);
+        let environment = foundry_env(&root);
+        let deadline = Instant::now() + Duration::from_secs(600);
+        let execute = |name: &str, args: Vec<std::ffi::OsString>, limit: u64| {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(!remaining.is_zero());
+            let argv: Vec<_> = args.iter().map(|value| value.as_os_str()).collect();
+            let result = run_bounded(
+                &foundry,
+                &argv,
+                &root.root,
+                &environment,
+                Duration::from_secs(limit).min(remaining),
+            )
+            .unwrap();
+            write_private_new(
+                &root.root.join("renders").join(format!("{name}.stdout")),
+                &result.stdout,
+            )
+            .unwrap();
+            assert_eq!(result.status, Some(0), "semantic producer {name}");
+            assert!(!result.timed_out, "semantic producer {name} timed out");
+            PilotRoot::open(&root.root)
+                .unwrap_or_else(|fault| panic!("semantic producer {name} mode check: {fault:?}"));
+            result.stdout
+        };
+        let index: Value = serde_json::from_slice(&execute(
+            "index",
+            vec![
+                "index".into(),
+                "--store".into(),
+                store.clone().into(),
+                workspace.clone().into(),
+            ],
+            60,
+        ))
+        .unwrap();
+        assert_eq!(index["scan_complete"], true);
+        assert_eq!(index["failures"], 0);
+        let preparation: Value = serde_json::from_slice(&execute(
+            "prepare",
+            vec![
+                "semantic".into(),
+                "prepare".into(),
+                "--store".into(),
+                store.clone().into(),
+                "--profile".into(),
+                profile.clone().into(),
+                "--budget-seconds".into(),
+                "180".into(),
+                "--development-isolation".into(),
+            ],
+            180,
+        ))
+        .unwrap();
+        assert_eq!(preparation["partial"], false);
+        assert_eq!(preparation["provider_state"], "ready");
+        let eligible = preparation["coverage"]["eligible_units"].as_u64().unwrap();
+        assert!(eligible > 0);
+        assert_eq!(
+            preparation["coverage"]["searchable_current_units"],
+            eligible
+        );
+        assert!(preparation["embedded_units"].as_u64().unwrap() > 0);
+        let context = execute(
+            "context",
+            vec![
+                "context".into(),
+                "--store".into(),
+                store.into(),
+                "--tokens".into(),
+                "512".into(),
+                "--semantic-profile".into(),
+                profile.clone().into(),
+                "--development-isolation".into(),
+                "preserve escaped byte sequences without dropping input".into(),
+            ],
+            90,
+        );
+        let text = std::str::from_utf8(&context).unwrap();
+        assert!(
+            text.lines()
+                .next()
+                .unwrap()
+                .split(" · ")
+                .any(|s| s == "semantic:ready")
+        );
+        assert!(crate::response::count_tokens(text) <= 512);
+        assert_eq!(list_files(&workspace).unwrap(), source_files);
+        assert_eq!(source_hashes(), source_before);
+        assert_eq!(file_sha256(&foundry).unwrap(), expected_foundry);
+        assert_eq!(file_sha256(&profile).unwrap(), pins::PROFILE_SHA256);
+        let after = evidence.join("ambient-after");
+        fs::write(&after, b"public test marker").unwrap();
+        assert_eq!(fs::metadata(after).unwrap().mode() & 0o7777, 0o644);
+        write_private_new(
+            &root.root.join("renders/semantic-producer.json"),
+            &serde_json::to_vec_pretty(&serde_json::json!({
+                "status": "passed", "eligible_units": eligible,
+                "embedded_units": preparation["embedded_units"],
+                "foundry_sha256": expected_foundry, "profile_sha256": pins::PROFILE_SHA256,
+                "checked_after": ["index", "prepare", "context"],
+                "parent_mask_before_after": "0022", "provider_calls": 0,
+                "source_unchanged": true,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        PilotRoot::open(&root.root).unwrap();
+    }
+
     #[test]
     fn slot_ids_map_to_pairs_and_arms() {
         assert_eq!(slot_arm("1B"), Some((1, Arm::B)));
