@@ -9250,3 +9250,69 @@ async fn fragment_order_mcp_owner_forwards_the_opt_in_without_changing_search() 
     assert_eq!(search, expected_search);
     served.close().await;
 }
+
+#[test]
+fn fragment_order_option_does_not_enter_composed_task_evidence() {
+    let corpus = fragment_order_corpus();
+    let engine = corpus.engine();
+    let workspace = engine.workspace_id().unwrap();
+    let create = context_foundry::task_context::parse(serde_json::json!({
+        "workspace_id":workspace,"task_id":"fragment-composition",
+        "command":{"op":"create","title":"Keep composed evidence unchanged"}
+    }))
+    .unwrap();
+    let revision = engine.task_context(&create, &Corpus::control()).unwrap()["revision"]
+        .as_u64()
+        .unwrap();
+    let runtime = corpus.runtime();
+    let window = runtime
+        .window(
+            engine,
+            FRAGMENT_ORDER_QUERY,
+            Instant::now() + Duration::from_secs(30),
+            &Corpus::control(),
+        )
+        .unwrap();
+    let mut texts = Vec::new();
+    for enabled in [false, true] {
+        let trace = context_foundry::retrieval_trace::RetrievalTrace::default();
+        let context = engine
+            .context_candidates_with(
+                FRAGMENT_ORDER_QUERY,
+                Strategy::Search,
+                &Corpus::control().with_trace(Some(trace.clone())),
+                &ContextOptions {
+                    compose_evidence: true,
+                    experimental_defer_fragments: enabled,
+                    dense: Some(&window),
+                    task: Some(context_foundry::task_context::Scope {
+                        workspace_id: &workspace,
+                        task_id: "fragment-composition",
+                        expected_revision: revision,
+                    }),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let snapshot = trace.snapshot();
+        assert!(
+            snapshot["events"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|e| e["stage"] != "placement_policy"),
+            "composed task evidence must exclude fragment ordering"
+        );
+        texts.push(
+            response::pack_enriched_context(
+                &context,
+                None,
+                Budget::request(BUDGET),
+                &response::stdout_bytes,
+            )
+            .unwrap()
+            .text,
+        );
+    }
+    assert_eq!(texts[0], texts[1]);
+}
