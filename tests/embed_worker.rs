@@ -2267,6 +2267,150 @@ fn mode_of(path: &Path) -> u32 {
         & 0o7777
 }
 
+/// Change the caller's mask only in an isolated copy of this test process.
+/// Other libtest threads must never see a process-wide mask change.
+fn with_caller_masks(test: &str, child_key: &str, check: impl FnOnce(u32)) {
+    if let Ok(mask) = std::env::var(child_key) {
+        check(u32::from_str_radix(&mask, 8).expect("caller mask"));
+        return;
+    }
+    let mut passed = true;
+    for mask in [0, 0o022] {
+        let mut child = Command::new(std::env::current_exe().expect("test executable"));
+        child
+            .args(["--exact", test, "--include-ignored", "--nocapture"])
+            .env(child_key, format!("{mask:o}"));
+        // SAFETY: only this forked child changes its mask, before exec;
+        // umask is async-signal-safe and does not allocate or take a lock.
+        unsafe {
+            child.pre_exec(move || {
+                libc::umask(mask);
+                Ok(())
+            });
+        }
+        let status = child.status().expect("isolated mask test");
+        passed &= status.success();
+    }
+    assert!(passed, "worker creation checks under both caller masks");
+}
+
+/// Inspect files while their actual producer is alive, then require the
+/// supervisor to reap it and remove only its run. This observes the named
+/// writes; it does not enumerate every transient library output.
+fn check_worker_created_files(
+    profile: &SemanticProfile,
+    mut provider: WorkerProvider,
+    input: TokenizedInput,
+    mask: u32,
+    caller: &Path,
+    files: &[&str],
+) {
+    let vectors = provider
+        .embed_documents(&[input], &context_foundry::Control::unbounded())
+        .expect("worker completes an embedding");
+    assert_eq!(vectors.len(), 1);
+    assert_eq!(vectors[0].len(), profile.descriptor.dims());
+    assert!(vectors[0].iter().all(|value| value.is_finite()));
+    let prefix = format!("w-{}-", std::process::id());
+    let runs: Vec<PathBuf> = std::fs::read_dir(&profile.worker.scratch_root)
+        .expect("scratch root")
+        .map(|entry| entry.expect("scratch entry").path())
+        .filter(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with(&prefix)
+        })
+        .collect();
+    assert_eq!(runs.len(), 1, "only this supervisor's live run");
+    let run = &runs[0];
+    let observed: Vec<_> = files
+        .iter()
+        .map(|name| {
+            let path = run.join(name);
+            let bytes = std::fs::read(&path).expect("worker-created bytes");
+            assert!(!bytes.is_empty(), "actual worker write: {name}");
+            (name, mode_of(&path), bytes.len())
+        })
+        .collect();
+    assert!(provider.worker_pid().is_some(), "producer still owned/live");
+    std::fs::write(caller.join("after"), b"caller mask witness").expect("caller after");
+    let before = mode_of(&caller.join("before"));
+    let after = mode_of(&caller.join("after"));
+    eprintln!(
+        "worker scratch creation: mask={mask:o} caller_before={before:o} caller_after={after:o} files={observed:?}"
+    );
+    provider.shutdown();
+    assert!(provider.stopped());
+    assert_eq!(provider.worker_pid(), None);
+    assert!(!run.exists(), "reaped worker's scratch removed");
+    assert_eq!(before, 0o666 & !mask);
+    assert_eq!(after, before, "launch must preserve its caller's mask");
+    for (name, mode, _) in observed {
+        assert_eq!(mode, 0o600, "worker-created private file: {name}");
+    }
+}
+
+#[test]
+fn worker_created_scratch_files_are_private_without_changing_the_caller_mask() {
+    with_caller_masks(
+        "worker_created_scratch_files_are_private_without_changing_the_caller_mask",
+        "CF_FAKE_WORKER_SCRATCH_MASK_CHILD",
+        |mask| {
+            let caller = tempfile::tempdir().expect("caller root");
+            let (bundle, sha) = fake_bundle(caller.path());
+            let profile = fake_profile(caller.path(), &bundle, &sha, 3 << 30, 60);
+            std::fs::write(caller.path().join("before"), b"caller mask witness")
+                .expect("caller before");
+            let provider = launch(
+                &profile,
+                &[
+                    "--phase-file",
+                    "tmp/phase.log",
+                    "--request-log",
+                    "tmp/requests.log",
+                ],
+            )
+            .expect("launch actual fake worker process");
+            check_worker_created_files(
+                &profile,
+                provider,
+                input(&[1]),
+                mask,
+                caller.path(),
+                &["tmp/phase.log", "tmp/requests.log"],
+            );
+        },
+    );
+}
+
+#[cfg(feature = "semantic")]
+#[test]
+#[ignore = "development run: pinned real model and sandbox bundle with phase-file hook required"]
+fn dev_real_worker_created_scratch_files_are_private_without_changing_the_caller_mask() {
+    with_caller_masks(
+        "dev_real_worker_created_scratch_files_are_private_without_changing_the_caller_mask",
+        "CF_REAL_WORKER_SCRATCH_MASK_CHILD",
+        |mask| {
+            let caller = tempfile::tempdir().expect("caller root");
+            std::fs::write(caller.path().join("before"), b"caller mask witness")
+                .expect("caller before");
+            let profile = dev_profile();
+            let provider = launch(&profile, &["--phase-file", "tmp/phase.log"])
+                .expect("launch pinned real worker");
+            let input = dev_ids(&profile, "Where does the parser load its configuration?");
+            check_worker_created_files(
+                &profile,
+                provider,
+                input,
+                mask,
+                caller.path(),
+                &["tmp/phase.log"],
+            );
+        },
+    );
+}
+
 #[test]
 fn the_scratch_root_and_run_directories_are_owner_private_whatever_the_umask() {
     let dir = tempfile::tempdir().expect("tempdir");
