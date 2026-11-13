@@ -1159,8 +1159,9 @@ T003's, each passing only with that task's verification.
     sets umask 0077 in the forked child before exec. Direct launches cannot inherit
     a permissive caller mask for ordinary scratch-file creation; the parent mask
     and existing objects are unchanged. This adds no launcher or cleanup owner.
-    The live fake-worker phase/request writers and the real native worker's phase
-    writer are the selected acceptance boundaries under caller masks 0000/0022.
+    The live fake-worker phase/request writers and the pinned native worker's
+    existing write probe are the selected creation boundaries under caller masks
+    0000/0022; a normal native model call is checked separately in the same test.
     A creation mask does not prevent an explicit later chmod or establish the modes
     of every transient library file; closed producer-tree validation remains separate.
   - *Foreground requests during store steps (D7).* Measured: on a 60,739-file store

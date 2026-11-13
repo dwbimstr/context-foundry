@@ -2294,6 +2294,22 @@ fn with_caller_masks(test: &str, child_key: &str, check: impl FnOnce(u32)) {
     assert!(passed, "worker creation checks under both caller masks");
 }
 
+fn owned_worker_run(profile: &SemanticProfile) -> PathBuf {
+    let prefix = format!("w-{}-", std::process::id());
+    let runs: Vec<PathBuf> = std::fs::read_dir(&profile.worker.scratch_root)
+        .expect("scratch root")
+        .map(|entry| entry.expect("scratch entry").path())
+        .filter(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with(&prefix)
+        })
+        .collect();
+    assert_eq!(runs.len(), 1, "only this supervisor's live run");
+    runs.into_iter().next().unwrap()
+}
+
 /// Inspect files while their actual producer is alive, then require the
 /// supervisor to reap it and remove only its run. This observes the named
 /// writes; it does not enumerate every transient library output.
@@ -2311,19 +2327,7 @@ fn check_worker_created_files(
     assert_eq!(vectors.len(), 1);
     assert_eq!(vectors[0].len(), profile.descriptor.dims());
     assert!(vectors[0].iter().all(|value| value.is_finite()));
-    let prefix = format!("w-{}-", std::process::id());
-    let runs: Vec<PathBuf> = std::fs::read_dir(&profile.worker.scratch_root)
-        .expect("scratch root")
-        .map(|entry| entry.expect("scratch entry").path())
-        .filter(|path| {
-            path.file_name()
-                .unwrap()
-                .to_string_lossy()
-                .starts_with(&prefix)
-        })
-        .collect();
-    assert_eq!(runs.len(), 1, "only this supervisor's live run");
-    let run = &runs[0];
+    let run = owned_worker_run(profile);
     let observed: Vec<_> = files
         .iter()
         .map(|name| {
@@ -2386,7 +2390,7 @@ fn worker_created_scratch_files_are_private_without_changing_the_caller_mask() {
 
 #[cfg(feature = "semantic")]
 #[test]
-#[ignore = "development run: pinned real model and sandbox bundle with phase-file hook required"]
+#[ignore = "development run: pinned real model and sandbox bundle required"]
 fn dev_real_worker_created_scratch_files_are_private_without_changing_the_caller_mask() {
     with_caller_masks(
         "dev_real_worker_created_scratch_files_are_private_without_changing_the_caller_mask",
@@ -2396,8 +2400,31 @@ fn dev_real_worker_created_scratch_files_are_private_without_changing_the_caller
             std::fs::write(caller.path().join("before"), b"caller mask witness")
                 .expect("caller before");
             let profile = dev_profile();
-            let provider = launch(&profile, &["--phase-file", "tmp/phase.log"])
-                .expect("launch pinned real worker");
+            let provider = launch(&profile, &[]).expect("launch pinned real worker");
+            let run = owned_worker_run(&profile);
+            let probe_path = run.join("tmp/probe.log");
+            assert!(!probe_path.exists(), "probe creates a new file");
+            let (reader, read_fd, _owner) = liveness_pipe();
+            let mut probe = Command::new(profile.worker.executable());
+            probe
+                .args(["--probe", "write"])
+                .arg(&probe_path)
+                .current_dir(&run)
+                .env_clear()
+                .env("PATH", "/usr/bin:/bin")
+                .env("HOME", &run)
+                .env("TMPDIR", run.join("tmp"));
+            // The existing native write probe runs under the same production
+            // setup, without rebuilding the pinned worker for test-only hooks.
+            // SAFETY: child_setup uses only async-signal-safe operations.
+            unsafe { probe.pre_exec(supervisor::child_setup(read_fd)) };
+            let output = probe.output().expect("native write probe");
+            drop(reader);
+            assert!(output.status.success());
+            let verdict: serde_json::Value =
+                serde_json::from_slice(&output.stdout).expect("native probe verdict");
+            assert_eq!(verdict["allowed"], true, "native probe: {verdict}");
+            assert_eq!(std::fs::read(&probe_path).expect("probe bytes"), b"x");
             let input = dev_ids(&profile, "Where does the parser load its configuration?");
             check_worker_created_files(
                 &profile,
@@ -2405,7 +2432,7 @@ fn dev_real_worker_created_scratch_files_are_private_without_changing_the_caller
                 input,
                 mask,
                 caller.path(),
-                &["tmp/phase.log"],
+                &["tmp/probe.log"],
             );
         },
     );
