@@ -227,10 +227,15 @@ and dated paragraphs below are history.
     semantic output trees through the real bounded launcher, current release CLI
     and local Gemma
     ([receipt](validation.md#pilot-semantic-producer-permissions--2026-11-13)).
-    Transient worker scratch-file modes, the original private full pipeline and
-    current installed-host compatibility remain unqualified. The supplied full-pipeline
-    executable now mismatches its frozen hash; its preflight is recorded without
-    relaxing the pin. Pilot v2/T006 remain open.
+    The frozen-host private no-provider pipeline regression now also passes,
+    including actual checker controls, after an explicit closed-preview archival
+    repair ([receipt](validation.md#private-full-pipeline-and-preview-archival--2026-11-13)).
+    Its exact frozen executable was recovered from Cargo artifacts and copied to
+    stable private storage, resolving the earlier supplied-path mismatch for this
+    run without relaxing a pin. The original failure and inputs are preserved.
+    Transient worker scratch-file modes, current installed-host compatibility and
+    v2's declared task/arm/host qualification remain open. The installed host now
+    differs from the archived pin used by the regression. Pilot v2/T006 remain open.
     Startup-network observation remains open: matching-release source exposes
     partial diagnostics but no established complete early observation/barrier
     ([source finding](validation.md#pilot-startup-network-source-feasibility--2026-11-11)).

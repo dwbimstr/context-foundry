@@ -1,5 +1,76 @@
 # Validation
 
+## Private full pipeline and preview archival — 2026-11-13
+
+**PASS for the frozen-host, no-provider apparatus regression.** The full private
+pipeline now passes on repair `b959b707eb0c498b67f34356538ac79211af782d`, with the
+existing task, outcome, counter and request assertions intact. This exercises
+actual local Gemma preparation, the pinned host, capture/journal handoff and the
+contained compiler/oracle. Model replies are scripted through an owned loopback
+TLS fixture with a synthetic credential. This is neither another paid coding trial
+nor evidence of retrieval benefit; the original paid-v1 results and dispositions
+are unchanged. Pilot v2/T006 and release remain unaccepted.
+
+The earlier supplied-path mismatch is resolved for this run by finding the exact
+frozen Foundry executable in retained Cargo release artifacts. A new private copy
+matches SHA-256 `9dcbec8fdfff79d491410c82ab6e3ea922d3c19d5c9397f9d231fc08713c8614`
+(100,278,224 bytes). A new input manifest points to that copy; the original file,
+artifact and frozen pins are preserved. The host remains the exact archived
+`38c36452…` artifact. The currently installed host hashes to `ce80099f…`, so current
+installed-host compatibility is still unqualified.
+
+**A real consumer failure is retained.** The first fresh regression on `d6bce4c`
+exited 101 after 100.920 seconds: all four real view materializations and nine
+previews completed, but capture admission refused `private_artifact_not_private`.
+The previews retained valid 0700 native modules outside the active capture-run
+exception. Ordinary isolation-root admission correctly requires those closed trees
+to be data. No input pin, mode check, expected result or request assertion was
+weakened to obtain a pass.
+
+`render_binding` now confirms the host group is gone, validates its newly owned
+preview tree, and archives only its exact native-module copies as 0600 data via
+checked descriptors. Shared inodes, wrong modes and unknown executables refuse.
+Bytes are preserved; file and parent are synced; the closed tree passes ordinary
+data validation, and `preview_archived` is appended before returning the binding.
+Active capture and checker exceptions are unchanged. Partial or failed archival
+does not produce a successful binding. Historical artifacts are not normalized.
+
+Four focused checks pass for bytes/modes, shutdown-before-change, hard-link refusal
+and wrong-mode/unknown-executable refusal. The fresh full regression passes in
+142.119 seconds: the probe seals, its journal prefix survives the checked handoff,
+and all eight coding slots seal. The actual checker produces the expected
+**scripted controls A 0/4, B 4/4**. There are 13 fixture generations, 13 Count calls
+and 13 Messages attempts (26 fixture HTTP attempts), with no outstanding
+reservations. Fixture ledger values are not provider charges. Eight embedding
+workers are observed and absent after natural completion; no owned processes remain.
+All selected input bytes/modes and the prior scratch inventory/sibling metadata
+match their readbacks.
+
+All nine archived native copies match the bytes from the retained failed run;
+their modes change from 0700 to 0600. Each preview journal ends with
+`preview_archived`; the capture journal ends with `finished` and eight slot seals.
+A double readback verifies 493 directories at 0700 and 710 files, 1,984,937,844
+bytes: 693 data files at 0600, nine capture-native and eight checker executables
+at their declared 0700 paths. The report is archived by the test, not the
+production CLI writer. This is no power-loss or transient-scratch-mode claim.
+
+All eight gates pass on committed `b959b70` in 759.343 seconds: **1,311 passed,
+0 failed, 34 ignored** in the default suite; **101 passed, 0 failed, 1 ignored**
+in the pilot outer suite; 21 recovery checks separately. Nested child summaries
+are not added to the outer count. Four archival unit tests and the ignored full
+pipeline also passed separately. The v1 contract/policy/pins, Cargo inputs, host
+bridge and request-content construction are unchanged.
+
+The stage retained its original 3,600-second total, 120-second cleanup reserve,
+20 GiB disk floor and 8 GiB sampled owned-process RSS ceiling. Each full/gate phase
+had at most 1,800 seconds within the shared deadline; no extension was used. No
+paid request, provider credential, training, download, host installation or new
+model search occurred. Current installed-host compatibility, complete startup
+observation, transient worker scratch-file modes and v2's declared task/arm/host
+qualification remain open. Private receipts and the original failure are retained
+in `runs/pilot-full-pipeline-2026-11-13/`; the
+[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+
 ## Pilot semantic-producer permissions — 2026-11-13
 
 **PASS at the closed semantic-output boundary.** The existing bounded launcher
@@ -44,7 +115,10 @@ and 1,800 seconds for the gates within that stage. No paid request, provider
 credential, training or download is involved. Local call/token economics do not
 follow from the positive embedded-unit count.
 
-**The unchanged private full pipeline remains unqualified.** Its supplied
+Historical preflight; the later [full-pipeline regression](#private-full-pipeline-and-preview-archival--2026-11-13)
+uses a recovered exact artifact without changing the original input file or pins.
+
+**The unchanged private full pipeline was not admitted in this slice.** Its supplied
 evidence-input file names mutable `target/release/foundry`: those bytes are now
 `60aff102…`, while the frozen v1 apparatus requires `9dcbec8f…`. The preflight
 mismatch is retained; the pipeline was not launched and no pin was relaxed.

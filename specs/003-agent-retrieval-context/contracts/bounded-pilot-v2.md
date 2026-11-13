@@ -157,7 +157,7 @@ The current source pointers establish ownership, not completed qualification.
 | Checker binds environment names only | Bind exact sanitized environment values, sandbox profile bytes and freshly hashed oracle/compiler bytes to each checker receipt. Credentials are absent from the checker environment. The selected local checks pass ([record](../../../docs/validation.md#pilot-checker-provenance-and-retained-diagnostics--2026-11-11)); the limits in the selected repair below and broader v2 qualification remain. |
 | Compile stderr only hashed | Retain bounded private stderr bytes and their digest, with explicit overflow/failure behavior. Inspect errors; a matching binary hash cannot explain omitted diagnostics. The selected local checks pass ([record](../../../docs/validation.md#pilot-checker-provenance-and-retained-diagnostics--2026-11-11)); the limits in the selected repair below and broader v2 qualification remain. |
 | Coding authority outside chain; declared/actual paths differ | Append the authorization digest to the durable chain before a paid attempt and require the canonical actual run root to equal the authorized root. The selected metadata/path and chained-authority fixtures pass ([record](../../../docs/validation.md#pilot-authority-and-run-path-binding--2026-11-11)); historical v1 evidence is unchanged. Current installed-host compatibility and actual Live-compatible probe history remain unproved. |
-| Some private artifacts have wider permissions | Enforce and verify 0700 directories/0600 private files, including host/store outputs; fail before transmission if this cannot be established. Executables need explicitly declared private executable modes. The selected local metadata, child-launcher, lexical-store, pinned-host and actual-checker checks pass ([record](../../../docs/validation.md#pilot-private-output-permissions-and-terminal-publication--2026-11-11)); the later real semantic-producer check also qualifies its closed stores and outputs ([record](../../../docs/validation.md#pilot-semantic-producer-permissions--2026-11-13)). Transient worker scratch-file modes, the original private full pipeline, current installed-host compatibility and complete startup-network observation remain unqualified. |
+| Some private artifacts have wider permissions | Enforce and verify 0700 directories/0600 private files, including host/store outputs; fail before transmission if this cannot be established. Executables need explicitly declared private executable modes. The selected local metadata, child-launcher, lexical-store, pinned-host and actual-checker checks pass ([record](../../../docs/validation.md#pilot-private-output-permissions-and-terminal-publication--2026-11-11)); the real semantic-producer check qualifies its closed outputs ([record](../../../docs/validation.md#pilot-semantic-producer-permissions--2026-11-13)); the frozen-host private pipeline also passes after closed-preview archival ([record](../../../docs/validation.md#private-full-pipeline-and-preview-archival--2026-11-13)). Transient worker scratch-file modes, current installed-host compatibility, v2's declared task/arm/host qualification and complete startup-network observation remain unqualified. |
 | Rejected credential after claim has no terminal journal outcome | Preserve consumed claim and append a terminal refusal without printing the credential; prove no provider transmission. The selected local repair passes the pinned-artifact fixture checks, including synthetic Live admission ordering ([record](../../../docs/validation.md#pilot-credential-refusal-durability--2026-11-11)). Current installed-host compatibility and actual Live-compatible probe history remain unproved; v2 still requires its declared host/arm qualification. |
 | Workspace restore failure exits without halt record | Journal a terminal halt, stop owned processes and prohibit the next slot. The selected local fixtures pass: healthy journal finalization retains the halt and unstarted rows, the post-admission CLI returns failure, and failed halt persistence prevents a later success receipt ([record](../../../docs/validation.md#pilot-workspace-restoration-and-halt-persistence--2026-11-11)). This does not establish live-front-door admission, current installed-host/provider compatibility, private-oracle outcomes or power-loss durability; v2 still requires its declared host/arm qualification. |
 | `seal_slot` relies only on exit status | Bind actual expected oracle-completion evidence to the checked candidate and receipt; zero exit without the required completion evidence cannot pass. The selected completion/artifact consumer and actual owned-copy producer checks pass ([record](../../../docs/validation.md#pilot-checker-completion-and-artifact-binding--2026-11-11)). Complete stream capture and terminal check-chain errors are enforced; this does not qualify the private full pipeline, remaining capture gaps or pilot v2/T006. |
@@ -267,13 +267,15 @@ The later real semantic-producer check qualifies closed store/output modes after
 indexing, preparation and context through the production bounded launcher; its
 ignored test uses explicit local inputs without replacing v1's executable pin
 ([receipt](../../../docs/validation.md#pilot-semantic-producer-permissions--2026-11-13)).
-Transient scratch-file modes, the original private full pipeline and current
-installed-host boundaries remain unqualified. The supplied full-pipeline executable
-mismatches the frozen hash, so that preflight does not admit a run. These checks
-neither authorize a paid request nor freeze or accept pilot v2/T006;
-startup-network observation remains separate.
+The later frozen-host full-pipeline regression also passes with the exact recovered
+executable and explicit closed-preview archival
+([receipt](../../../docs/validation.md#private-full-pipeline-and-preview-archival--2026-11-13)).
+The initial supplied-path mismatch and first consumer failure remain history.
+Transient scratch-file modes, current installed-host compatibility and v2's declared
+task/arm/host qualification stay open. These checks neither authorize a paid request
+nor freeze or accept pilot v2/T006; startup-network observation remains separate.
 
-**Preview archival repair selected, 2026-11-13 — qualification pending.** The
+**Preview archival repair, 2026-11-13 — qualified on the frozen-host no-provider pipeline.** The
 first fresh full-pipeline regression reaches capture admission after four real
 views and nine previews, then correctly refuses the render hosts' retained 0700
 native modules outside the declared capture-run exception. A successful preview
@@ -284,8 +286,10 @@ closed tree with ordinary data rules and append `preview_archived` before return
 the binding. Wrong-mode inputs, shared native-file inodes, unknown executables,
 unresolved cleanup or failed
 persistence refuse. Active capture exceptions and frozen pins/fields stay unchanged;
-historical artifacts are not normalized. The retained original failure and fresh
-consumer/gate checks determine qualification; no paid execution is authorized.
+historical artifacts are not normalized. The retained original failure, four focused
+checks, fresh full consumer run and eight gates establish this selected boundary
+([receipt](../../../docs/validation.md#private-full-pipeline-and-preview-archival--2026-11-13));
+no paid execution is authorized.
 
 Preserve v1's original failures and interpretation. Its two blocked `read .` calls
 remain constraint violations with the owner's accepted oracle outcomes. V2's task
