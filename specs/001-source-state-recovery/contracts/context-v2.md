@@ -847,6 +847,29 @@ The original richest-first ladder below remains authoritative. The retained comm
 binary and [no-promotion receipt](../../../docs/validation.md#t005-compact-candidate-no-promotion--2026-11-11)
 preserve the experiment without adding an operator option to current delivery.
 
+### Experimental fragment deferral — 009 T005
+
+Selected 2026-11-13; default off and not quality accepted. The explicit
+`context`/`mcp --experimental-defer-fragments` option applies only to ordinary
+unanchored context with an actual dense window. After bounded provenance and
+current source/range validation restore the dense locations' similarity order,
+stably place `ContainerFragment` locations after every other dense location.
+Preserve relative order inside both groups, append lexical candidates unchanged,
+then use ordinary exact-unit deduplication, per-file/global cuts, forms and packing.
+No candidate, model input, score, recipe, request budget or source range is added.
+
+The semantic-placement owner sorts its existing bounded vector. A request option
+through the existing CLI/MCP owner selects it; no persistent setting or control
+side channel is added. Emit one explicit ordering trace with the selected policy
+and entry counts; placement ranks and verdicts describe the actual new order.
+Default-off, search, lexical/no-profile/fallback, anchored and composed-task
+behavior remain unchanged. This is one fixed K=1 variant, separate from the
+closed compact-preference experiment. Structural fragments can still locate a
+declaration, so body/quality losses remain a real rejection risk. All existing
+G1/G2, cap, source, validity and sealed-holdout guards remain conjunctive; no tuning
+or promotion follows a failed prerequisite. See the
+[selection](../../../docs/validation.md#t005-fragment-ordering-selection--2026-11-13).
+
 ### Ladder packing
 
 For each candidate in order, include the first form whose complete rendering — the

@@ -76,9 +76,12 @@ and dated paragraphs below are history.
   ([diagnostic receipt](validation.md#t005-retained-cap-decision-census--2026-11-13)).
   The actual same-file occupant inspection now separates structural-fragment
   pressure from broad body/parent/file ordering, with successful controls and exact
-  occurrence joins. It supports investigating fragment ordering, without selecting
-  a candidate or predicting a gain
+  occurrence joins. It supports investigating fragment ordering without predicting a gain
   ([inspection](validation.md#t005-actual-same-file-admission-pressure--2026-11-13)).
+  One fixed default-off dense-fragment ordering candidate is now selected before
+  implementation/evaluation. It is not implemented or accepted by that selection;
+  existing G1/G2, body, validity and unused sealed-holdout guards remain required
+  ([selection](validation.md#t005-fragment-ordering-selection--2026-11-13)).
 - **Scale.** Publication streams cached vectors (no 2 GiB vector bound) and
   generation v6 interns label-map paths and hashes (rust map 191 → 69 MB). At rust's
   density the next bounds are the mapping-view estimate near 120k files, then the label

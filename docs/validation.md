@@ -1,5 +1,41 @@
 # Validation
 
+## T005 fragment ordering selection — 2026-11-13
+
+**Selected before candidate code/evaluation; not implemented or accepted by this
+record.** One default-off K=1 variant stably defers only validated dense
+`ContainerFragment` locations behind other dense locations for ordinary unanchored
+context. This amends the opted-in dense order, preserving both groups' internal
+order, every candidate, the lexical lane, exact deduplication, freshness, caps,
+forms and whole-response packing. It uses the existing placement vector and
+explicit request forwarding, with no new runtime owner or model/recipe change.
+The [shared contract](../specs/001-source-state-recovery/contracts/context-v2.md#experimental-fragment-deferral--009-t005)
+owns the exact rule. The closed one-eighth compact experiment remains rejected.
+
+The [actual-occupant inspection](#t005-actual-same-file-admission-pressure--2026-11-13)
+provides a concrete structural-fragment pressure witness and successful controls;
+it predicts no gain. Structural headers can still locate declarations, so moving
+them can lose current definition/body evidence. Implementation, focused consumer
+checks, all eight local gates, unchanged G1/G2 and CLI/MCP parity are required.
+Any quality failure keeps the baseline and prevents opening the fresh holdout.
+
+Before tuning, retain the unused 400-question seal, K=1 and the previously selected
+confidence, paired statistic, per-corpus/body, cap, validity, latency and resource
+guards. No final label/question/response is exposed to implementation. A final
+pair is conditional on every prerequisite and gets its own exact executable/store
+manifest and existing one-hour pair bound. This selection changes no threshold,
+sample, label or score and authorizes no paid request.
+
+The initial implementation/local-qualification stage has a 7,200-second shared
+bound, a 120-second cleanup reserve, one heavy job, 20 GiB free-disk floor and
+8 GiB sampled individual owned-process RSS ceiling. Phase maxima are 300 seconds
+for focused/parity checks, 600 for build, 1,800 for gates, 3,600 for the G2 pair and
+2,400 for G1, each within the remaining shared deadline. No automatic measurement
+retry or algorithm/threshold/variant tuning follows results. Exact source/binary
+and apparatus pins are frozen before each phase. The private selection is retained
+in `runs/t005-fragment-candidate-2026-11-13/selection.json`; the
+[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+
 ## T005 actual same-file admission pressure — 2026-11-13
 
 **PASS for the retained-event inspection.** All 388 cap-census results are

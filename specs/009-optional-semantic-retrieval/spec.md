@@ -1497,6 +1497,18 @@ labelled; they do not assign causes to the 249 historical G2 misses.
   while the candidate commit and binary remain retained. The final held-out set
   was not queried because this prerequisite promotion gate already failed. The
   [handoff](../../docs/resume-context-ecosystem.md#current-status--2026-11-06) owns status.
+- **One ordering variant selected, 2026-11-13.** The actual-occupant diagnostic
+  supports one default-off [fragment-deferral variant](../001-source-state-recovery/contracts/context-v2.md#experimental-fragment-deferral--009-t005),
+  K=1, frozen before candidate code or evaluation. It amends T004's ordinary
+  similarity-order rule only within the dense lane of explicitly opted-in
+  unanchored context: validated structural fragments follow other dense entries,
+  stably, before the unchanged lexical lane and normal cut/packing. Models,
+  representations, candidate membership, scores, forms and budgets stay fixed.
+  This is not an adjustment to the closed allocation candidate. The unused sealed
+  400-question set and its preselected confidence/per-corpus/body/latency/resource
+  guards remain fixed; it is not opened unless the implementation, G1/G2 and other
+  prerequisites pass. No threshold/algorithm/variant tuning follows evaluation.
+  [Selection and bounds](../../docs/validation.md#t005-fragment-ordering-selection--2026-11-13).
 - **Verification:** fixtures establish trace attribution for absent candidates,
   stale units, rank/cap exclusion and packing omission; invalid traces cannot certify
   coverage. Test the selected repair's relevant source/budget/cache invariants and run
