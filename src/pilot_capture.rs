@@ -2473,6 +2473,14 @@ fn archive_preview_run(root: &Path, exit: Option<&HostExitRecord>) -> Result<usi
         let path = root.join(relative);
         let (parent, _) = private_parent(&path)?;
         let file = open_private_file(&path, PrivateArtifact::Executable)?;
+        if file
+            .metadata()
+            .map_err(|_| privacy("private_tree_unreadable"))?
+            .nlink()
+            != 1
+        {
+            return Err(privacy("preview_archive_shared_file"));
+        }
         file.set_permissions(fs::Permissions::from_mode(0o600))
             .map_err(|_| persistence("preview_archive_mode_failed"))?;
         require_private_metadata(
@@ -4801,6 +4809,26 @@ mod tests {
                 (FaultClass::Cleanup, "preview_host_cleanup_unresolved")
             );
             assert_eq!(fs::metadata(&native).unwrap().mode() & 0o7777, 0o700);
+        }
+    }
+
+    #[test]
+    fn preview_archive_refuses_a_shared_inode_without_changing_either_name() {
+        use std::os::unix::fs::MetadataExt;
+        let base = privacy_owned_root("preview-shared-inode");
+        let preview = base.join("preview");
+        create_private_dir(&preview).unwrap();
+        let (native, exit) = preview_archive_fixture(&preview);
+        let other = base.join("other-name");
+        fs::hard_link(&native, &other).unwrap();
+        let before = fs::read(&native).unwrap();
+        assert_eq!(
+            archive_preview_run(&preview, Some(&exit)).unwrap_err().code,
+            "preview_archive_shared_file"
+        );
+        for path in [&native, &other] {
+            assert_eq!(fs::metadata(path).unwrap().mode() & 0o7777, 0o700);
+            assert_eq!(fs::read(path).unwrap(), before);
         }
     }
 

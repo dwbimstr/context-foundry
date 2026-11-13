@@ -281,7 +281,8 @@ must confirm that its host group is gone, validate its newly owned tree under th
 existing live-run rules, and archive only its exact native-module copies as 0600
 data. Preserve bytes; use checked descriptors, sync file and parent, validate the
 closed tree with ordinary data rules and append `preview_archived` before returning
-the binding. Wrong-mode inputs, unknown executables, unresolved cleanup or failed
+the binding. Wrong-mode inputs, shared native-file inodes, unknown executables,
+unresolved cleanup or failed
 persistence refuse. Active capture exceptions and frozen pins/fields stay unchanged;
 historical artifacts are not normalized. The retained original failure and fresh
 consumer/gate checks determine qualification; no paid execution is authorized.
