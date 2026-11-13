@@ -2007,7 +2007,8 @@ mod tests {
                 "embedded_units": preparation["embedded_units"],
                 "foundry_sha256": expected_foundry, "profile_sha256": pins::PROFILE_SHA256,
                 "checked_after": ["index", "prepare", "context"],
-                "parent_mask_before_after": "0022", "provider_calls": 0,
+                "parent_mask_before_after": "0022", "paid_provider_calls": 0,
+                "backend": "local_gemma_worker",
                 "source_unchanged": true,
             }))
             .unwrap(),
