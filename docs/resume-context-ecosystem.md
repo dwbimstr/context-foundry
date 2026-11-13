@@ -2,7 +2,7 @@
 
 ## Current status — 2026-11-06
 
-Updated 2026-11-11. This section owns current status; other documents link here,
+Updated 2026-11-13. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
 - **Measurement.** G2 (388 questions over rust-lang/rust and oh-my-pi, run with
@@ -223,9 +223,14 @@ and dated paragraphs below are history.
     ([record](validation.md#pilot-private-output-permissions-and-terminal-publication--2026-11-11)).
     The receipt separates the originally unqualified stage from its completed
     gate-only continuation, and distinguishes current lexical stores, pinned-host
-    fixtures and actual checker outputs. These permission checks do not qualify
-    semantic-worker output modes, the original private full pipeline or current
-    installed-host compatibility; pilot v2/T006 remain open.
+    fixtures and actual checker outputs. A later native check now qualifies closed
+    semantic output trees through the real bounded launcher, current release CLI
+    and local Gemma
+    ([receipt](validation.md#pilot-semantic-producer-permissions--2026-11-13)).
+    Transient worker scratch-file modes, the original private full pipeline and
+    current installed-host compatibility remain unqualified. The supplied full-pipeline
+    executable now mismatches its frozen hash; its preflight is recorded without
+    relaxing the pin. Pilot v2/T006 remain open.
     Startup-network observation remains open: matching-release source exposes
     partial diagnostics but no established complete early observation/barrier
     ([source finding](validation.md#pilot-startup-network-source-feasibility--2026-11-11)).

@@ -1,5 +1,59 @@
 # Validation
 
+## Pilot semantic-producer permissions — 2026-11-13
+
+**PASS at the closed semantic-output boundary.** The existing bounded launcher
+passes a real local-Gemma producer check on the owner's Mac. Test addition
+`00b2806` and receipt-label clarification `e08aaf5` add one ignored test in the
+existing apparatus module; every non-test byte of that module matches `d4109c4`.
+The capture owner, Cargo inputs, frozen v1 policy/pins and production paths are
+unchanged. No retrieval-quality change or new public interface is claimed.
+
+The test invokes production `run_bounded` with the retained current release
+Foundry (`60aff102…`), the frozen default profile (`cd3a5326…`), existing Gemma
+worker (`b0f7e020…`), BF16 model and tokenizer. A fresh PilotRoot holds public
+synthetic Rust/Markdown sources. Real indexing, semantic preparation and context
+delivery complete: all five eligible units are embedded and searchable, and the
+context stays within 512 tokens. `PilotRoot::open` validates produced trees after
+each command. The parent starts and finishes with umask 0022; children receive
+0077 through the actual launcher.
+
+The negative control disables that child-mask operation and exits 101 at the
+intended post-index privacy assertion, before any embedding worker runs. Source
+is restored. The fresh green exits zero in 40.030 seconds including compilation;
+two real workers are observed and absent after natural exit. All selected input
+hashes and synthetic source bytes match their readbacks. The scratch entry
+inventory and prior-sibling metadata match before and after. A separate double
+readback verifies **16 directories at 0700 and 23 regular files at 0600**,
+1,081,444 bytes total. These are closed output trees; transient worker scratch
+file modes are not qualified. Sampled worker RSS peaks at 757,989,376 bytes;
+this is not a continuous peak, GPU measurement or wider-workload limit.
+
+All eight gates pass on committed `e08aaf549253e7a0bca94cba5086ec1e22f60bd7`
+in 765.327 seconds: default suite **1,311 passed, 0 failed, 34 ignored**;
+pilot unit suite **97 passed, 0 failed, 1 ignored**; 21 recovery checks pass
+separately. The new ignored test passes separately with explicit local inputs.
+Default and actual Rust 1.90 checks both pass with SDK 26.5. The supervisor exits
+naturally without owned processes left; input and scratch-inventory readbacks
+also pass after the gates.
+
+Bounds were selected before implementation/execution: 3,600 seconds total with
+a 120-second cleanup reserve, 20 GiB disk floor and 8 GiB sampled owned-process
+RSS ceiling; 600 seconds for the producer, with 60/180/90-second command limits,
+and 1,800 seconds for the gates within that stage. No paid request, provider
+credential, training or download is involved. Local call/token economics do not
+follow from the positive embedded-unit count.
+
+**The unchanged private full pipeline remains unqualified.** Its supplied
+evidence-input file names mutable `target/release/foundry`: those bytes are now
+`60aff102…`, while the frozen v1 apparatus requires `9dcbec8f…`. The preflight
+mismatch is retained; the pipeline was not launched and no pin was relaxed.
+This is not a global artifact-absence claim. Current installed-host compatibility,
+complete startup-network observation, the broader private pipeline, pilot v2/T006
+and release remain open. Private protocol, control, producer, gate and readback
+receipts are in `runs/pilot-semantic-permissions-2026-11-13/`; the
+[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+
 ## T005 compact candidate: no promotion — 2026-11-11
 
 **Reject the selected K=1 compact preference and preserve the current baseline.**
