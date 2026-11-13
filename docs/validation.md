@@ -1,5 +1,43 @@
 # Validation
 
+## T005 actual same-file admission pressure — 2026-11-13
+
+**PASS for the retained-event inspection.** All 388 cap-census results are
+unchanged, and every one of the 149,178 placement occurrences pairs exactly with
+its actual eligible dense-then-lexical occurrence. Duplicate ranges with different
+representation tags are kept distinct at that join. The record retains the four
+actual same-file occupants beside every target-covering per-file refusal before
+global saturation: 21 misses and 26 successful controls.
+
+Four body units already occupy the slots in 14 of those misses. A refused body
+has a parent/file occupant in only one miss, versus six successful controls;
+broadly demoting parents or files is therefore not selected from this evidence.
+Container-fragment occupants appear in six misses and four controls; five misses
+and one control additionally have an actual body refusal. Two misses have four
+fragment occupants. Fresh source/span readbacks show closing delimiters and
+container-opening headers in those eight spans. Role classification is retained
+metadata, not a newly executed parser or a claim about embedding meaning.
+
+These observations support investigating structural-fragment ordering separately
+from broad body priority. They predict neither recovered definitions nor preserved
+bodies, and do not select or evaluate a candidate. The prior 169 located and 154
+verbatim-body outcomes remain earlier evidence, not a new retrieval score. The
+sealed holdout is unused.
+
+The first synthetic duplicate fixture used a different range and correctly hit
+the occurrence-identity guard before trace analysis. That failed attempt and its
+inputs are retained. Correcting only the fixture yields **14 passing checks** in
+0.260 seconds; the analyzer then exits naturally in 2.487 seconds. All selected
+inputs and source bytes are unchanged, all processes are reaped, and no workers
+are observed. The original 900-second stage, 120 seconds per process, 60-second
+cleanup reserve and 1 GiB sampled RSS ceiling remain; no extension is used.
+
+Only dated records and links change. No model, retrieval/scorer, store API,
+source-program execution, provider access or spend occurs. No new Rust gate run
+is claimed. Private receipts, exact occupant identities and the failed fixture
+are retained in `runs/t005-file-pressure-2026-11-13/`; the
+[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+
 ## T005 retained cap-decision census — 2026-11-13
 
 **PASS for the read-only diagnostic, with one correction to earlier attribution.**

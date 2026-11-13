@@ -1430,6 +1430,9 @@ labelled; they do not assign causes to the 249 historical G2 misses.
     It selects no new ranking candidate or score; inspect actual earlier admitted
     same-file evidence before proposing an ordering repair. See the
     [dated diagnostic](../../docs/validation.md#t005-retained-cap-decision-census--2026-11-13).
+    The subsequent [same-file inspection](../../docs/validation.md#t005-actual-same-file-admission-pressure--2026-11-13)
+    joins actual occurrences and four earlier occupants, including successful
+    controls; representation labels alone remain insufficient to claim a repair.
 - **Candidate checkpoint:**
   - Hold Gemma fixed and predeclare at most three variants targeting the demonstrated
     loss: representation, candidate coverage, ordering or packing. Keep other stages
