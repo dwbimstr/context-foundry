@@ -1,5 +1,57 @@
 # Validation
 
+## Worker scratch creation defaults — 2026-11-13
+
+**PASS for the selected direct-launch creation defaults.** The
+shared 009/013 pre-exec setup now sets umask 0077 only in the forked worker child.
+Ordinary scratch writers cannot inherit a permissive caller mask. The existing
+launcher, descriptor handling, resource limits and cleanup owners remain; no
+parent mask or preexisting object is changed.
+
+The retained red on `a1a2d9d` completes an actual fake-worker embedding and observes
+its phase/request files while the producer is live. Under caller masks 0000 and
+0022, the files are 0666 and 0644; both children are reaped and the caller witnesses
+retain their original modes. The command naturally exits 101 in 25.094 seconds.
+The private wrapper then references a nonexistent receipt field; its original
+failure is preserved. A separate readback validates the expected red and existing
+cleanup fields, and the wrapper is corrected without rewriting that receipt.
+The repaired focused test on `4f28854` passes in 18.171 seconds with both files
+0600 under both masks and unchanged caller witnesses.
+
+The first native attempt fails in 9.535 seconds because the pinned production
+worker rejects the test-only phase-file hook before inference. It is retained as
+a failed prerequisite attempt, with all selected inputs and scratch unchanged.
+The next test uses the same pinned worker's existing native write probe under
+`supervisor::child_setup`, while a normally launched model worker owns its run.
+The probe creates one byte in a fresh scratch file; a normal real embedding call
+also completes. Probe coverage is separate from inference-internal phase writes.
+On committed candidate `dd4d34b33b4275bec9edc03a880114ca9c76b3d3`, both caller-mask
+cases pass in 16.695 seconds: the named probe files are 0600, caller witnesses stay
+0666/0644, both model workers are reaped, and two observed native worker identities
+are absent. The owned scratch runs are removed. Worker/profile/model pins are
+unchanged. Sampled worker
+RSS peaks at 768,589,824 bytes; samples do not establish the true peak.
+
+All eight gates pass on committed `dd4d34b` in 771.404 seconds: **1,312 passed,
+0 failed, 35 ignored** in the default suite; **101 passed, 0 failed, 1 ignored**
+in the pilot outer suite; 21 recovery checks separately. Nested child summaries
+are excluded. The final fake-worker regression runs again in those gates; the
+ignored native check passes separately. Cargo inputs, model/worker artifacts,
+profile identities, pilot request construction and frozen v1 pins are unchanged.
+All observed processes are gone; selected input bytes/modes and the prior scratch
+inventory/sibling metadata match their before/after readbacks.
+
+The stage uses a 3,600-second shared bound, a 120-second cleanup reserve, a 20 GiB
+disk floor and an 8 GiB sampled RSS ceiling per observed process, with one heavy
+job at a time. No paid request, provider credential, training, download, worker rebuild,
+host change or holdout query occurs. A mask constrains default creation; explicit
+creation modes, later chmod and every transient library output are not qualified
+by these named writes. Closed producer-tree checks remain separate. Pilot v2/T006,
+current installed-host compatibility, complete startup observation and signed
+package acceptance remain open. Private receipts and failed attempts are retained
+in `runs/worker-scratch-permissions-2026-11-13/`; the
+[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+
 ## Private full pipeline and preview archival — 2026-11-13
 
 **PASS for the frozen-host, no-provider apparatus regression.** The full private

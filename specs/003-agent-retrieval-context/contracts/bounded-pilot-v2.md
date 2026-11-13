@@ -271,8 +271,14 @@ The later frozen-host full-pipeline regression also passes with the exact recove
 executable and explicit closed-preview archival
 ([receipt](../../../docs/validation.md#private-full-pipeline-and-preview-archival--2026-11-13)).
 The initial supplied-path mismatch and first consumer failure remain history.
-Transient scratch-file modes, current installed-host compatibility and v2's declared
-task/arm/host qualification stay open. These checks neither authorize a paid request
+The shared worker pre-exec setup also enforces umask 0077 in the child; selected
+direct fake-worker writes, the pinned native write probe and normal local model
+calls pass under caller masks 0000/0022, without changing the caller mask
+([receipt](../../../docs/validation.md#worker-scratch-creation-defaults--2026-11-13)).
+That checks default creation and named writes, without enumerating or normalizing
+every transient library file. Complete transient-file modes, current installed-host
+compatibility and v2's declared task/arm/host qualification stay open. These checks
+neither authorize a paid request
 nor freeze or accept pilot v2/T006; startup-network observation remains separate.
 
 **Preview archival repair, 2026-11-13 — qualified on the frozen-host no-provider pipeline.** The

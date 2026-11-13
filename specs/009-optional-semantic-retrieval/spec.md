@@ -1163,7 +1163,8 @@ T003's, each passing only with that task's verification.
     existing write probe are the selected creation boundaries under caller masks
     0000/0022; a normal native model call is checked separately in the same test.
     A creation mask does not prevent an explicit later chmod or establish the modes
-    of every transient library file; closed producer-tree validation remains separate.
+    of every transient library file; closed producer-tree validation remains separate. See the
+    [qualification](../../docs/validation.md#worker-scratch-creation-defaults--2026-11-13).
   - *Foreground requests during store steps (D7).* Measured: on a 60,739-file store
     every context query during the first ~12 minutes of cold partitioning failed
     `busy`, because back-to-back partition steps and whole-generation rebuilds held

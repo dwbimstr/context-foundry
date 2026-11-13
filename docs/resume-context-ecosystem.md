@@ -233,7 +233,11 @@ and dated paragraphs below are history.
     Its exact frozen executable was recovered from Cargo artifacts and copied to
     stable private storage, resolving the earlier supplied-path mismatch for this
     run without relaxing a pin. The original failure and inputs are preserved.
-    Transient worker scratch-file modes, current installed-host compatibility and
+    The shared worker pre-exec setup now enforces owner-only default creation
+    without changing the caller mask. Direct fake-worker writes and the pinned
+    native write probe plus normal model calls pass under permissive caller masks
+    ([receipt](validation.md#worker-scratch-creation-defaults--2026-11-13)).
+    Complete coverage of transient library file modes, current installed-host compatibility and
     v2's declared task/arm/host qualification remain open. The installed host now
     differs from the archived pin used by the regression. Pilot v2/T006 remain open.
     Startup-network observation remains open: matching-release source exposes
