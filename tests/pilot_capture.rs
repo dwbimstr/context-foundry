@@ -1304,9 +1304,18 @@ fn full_pilot_pipeline_qualifies_without_provider() {
     let inputs: EvidenceInputs =
         serde_json::from_slice(&std::fs::read(&inputs_path).unwrap()).unwrap();
     let verified = inputs.verify().unwrap();
-    let tmp = fixture_private_tempdir().unwrap();
-    let root =
-        PilotRoot::create(&std::fs::canonicalize(tmp.path()).unwrap().join("pilot")).unwrap();
+    // Retain this private run on success or failure. An explicit fresh parent
+    // lets the owner keep the full proof outside temporary-directory cleanup.
+    let evidence = std::env::var_os("CF_PILOT_PIPELINE_EVIDENCE_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| fixture_private_tempdir().unwrap().keep());
+    use std::os::unix::fs::MetadataExt;
+    let metadata = std::fs::symlink_metadata(&evidence).unwrap();
+    assert!(metadata.is_dir() && !metadata.file_type().is_symlink());
+    assert_eq!(metadata.uid(), unsafe { libc::getuid() });
+    assert_eq!(metadata.mode() & 0o7777, 0o700);
+    let root = PilotRoot::create(&std::fs::canonicalize(evidence).unwrap().join("pilot")).unwrap();
+    eprintln!("retained full-pipeline evidence: {}", root.root.display());
     apparatus::install_seed(&root, &verified).unwrap();
     let views = apparatus::materialize_views(&root, &verified).unwrap();
     assert_eq!(views.len(), 4);
@@ -1315,6 +1324,7 @@ fn full_pilot_pipeline_qualifies_without_provider() {
             .iter()
             .all(|v| v.header.contains("semantic:ready") && v.delivered_o200k_tokens <= 2048)
     );
+    PilotRoot::open(&root.root).unwrap();
     let capture_run = root.root.join("runs/pilot");
     let (probe_manifest, coding_manifest) =
         apparatus::build_manifests(&root, &verified, &capture_run).unwrap();
@@ -1380,6 +1390,8 @@ fn full_pilot_pipeline_qualifies_without_provider() {
     let seal =
         seal.unwrap_or_else(|f| panic!("probe not sealed: {f:?} {:?}", probe_capture.disposition));
     probe.finish().unwrap();
+    assert_owned_private_run_tree(&capture_run);
+    PilotRoot::open(&root.root).unwrap();
     let sealed_bytes = std::fs::read(capture_run.join("journal.jsonl")).unwrap();
     let request_count = fx.seen().len();
     assert_eq!(
@@ -1403,6 +1415,12 @@ fn full_pilot_pipeline_qualifies_without_provider() {
             .unwrap();
     assert_eq!(coding.counters(), seal.counters);
     let report = apparatus::run_coding(coding, &root, &verified).unwrap();
+    // Test-owned archival output, not a claim about the production CLI writer.
+    fixture_private_write(
+        root.root.join("renders/full-pipeline-report.json"),
+        serde_json::to_vec_pretty(&report).unwrap(),
+    )
+    .unwrap();
 
     assert_eq!(report.receipt.halt, None, "{:?}", report.slots);
     assert!(
@@ -1436,6 +1454,11 @@ fn full_pilot_pipeline_qualifies_without_provider() {
     assert_absent_under(&root.root, CANARY);
     // Every planned arm left its archived workspace or its live one.
     assert!(root.root.join("archive/after-1B").is_dir());
+    assert_owned_private_run_tree(&capture_run);
+    PilotRoot::open(&root.root).unwrap();
+    inputs
+        .verify()
+        .expect("frozen input hashes must remain unchanged");
 }
 
 /// Every live gate refuses by name, in order, before any credential is
