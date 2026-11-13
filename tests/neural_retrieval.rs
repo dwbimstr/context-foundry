@@ -2423,6 +2423,7 @@ async fn serve(
             knowledge: None,
             retrieval_trace_dir: None,
             experimental_behavior_context: false,
+            experimental_defer_fragments: false,
             store: corpus.store.clone(),
             root: corpus.root.clone(),
             references: Vec::new(),
@@ -3218,6 +3219,7 @@ impl Corpus {
                 knowledge: None,
                 retrieval_trace_dir: None,
                 experimental_behavior_context: false,
+                experimental_defer_fragments: false,
                 store: self.store.clone(),
                 root: self.root.clone(),
                 references: Vec::new(),
@@ -4819,6 +4821,7 @@ async fn owner_with(
             knowledge: None,
             retrieval_trace_dir: None,
             experimental_behavior_context: ContextOptions::default().experimental_behavior,
+            experimental_defer_fragments: false,
             store: store.to_path_buf(),
             root: root.to_path_buf(),
             references,
@@ -8825,4 +8828,425 @@ fn offline_cli_source_commit_preserves_incremental_publication_obligations() {
         status.unpartitioned_sources > 0,
         "offline source requires new partition work"
     );
+}
+
+// Fixed placement scores over genuinely parsed, prepared and published units.
+// These tests prove ordering/ownership/bounds, not embedding relevance.
+const FRAGMENT_ORDER_PATH: &str = "src/fragment_slots.rs";
+const FRAGMENT_ORDER_QUERY: &str = "quasar zephyr lantern";
+
+fn fragment_order_corpus() -> Corpus {
+    use context_foundry::neural::cache::CardKind;
+    let source = format!(
+        "struct FragmentSlots;\n{}",
+        (0..6)
+            .map(|n| format!(
+                "impl FragmentSlots {{\n    fn retained_body_{n}() {{ record_serial({n}); }}\n}}\n"
+            ))
+            .collect::<String>()
+    );
+    let mut corpus = Corpus::unprepared(&[(FRAGMENT_ORDER_PATH.into(), source)]);
+    select_body_recipe(&mut corpus, 512, 0, None);
+    assert!(!corpus.prepare().partial);
+    let digest = corpus.digest();
+    let mapping = corpus
+        .engine()
+        .semantic_current_mapping(&Corpus::control(), &digest, &corpus.profile.recipe_id())
+        .unwrap();
+    let query = concept_vector(&provider::render(
+        &corpus.profile.query_template,
+        FRAGMENT_ORDER_QUERY,
+    ));
+    assert_eq!(query[0], 0.0, "the fixture has no twilight concept");
+    let mut body: Vec<_> = query.iter().map(|value| value * 0.8).collect();
+    body[0] = 0.6;
+    let opposite: Vec<_> = query.iter().map(|value| -*value).collect();
+    let mut fragments = 0;
+    let entries: Vec<_> = mapping
+        .units
+        .iter()
+        .map(|(key, locations)| {
+            let target: Vec<_> = locations
+                .iter()
+                .filter(|unit| &*unit.path == FRAGMENT_ORDER_PATH)
+                .collect();
+            let fragment = target
+                .iter()
+                .any(|unit| unit.kind == CardKind::ContainerFragment);
+            let evidence = target.iter().any(|unit| unit.kind == CardKind::Body);
+            assert!(
+                !(fragment && evidence),
+                "one fixture key cannot mix the scored roles"
+            );
+            fragments += target
+                .iter()
+                .filter(|unit| unit.kind == CardKind::ContainerFragment)
+                .count();
+            (
+                key.clone(),
+                if fragment {
+                    query.clone()
+                } else if evidence {
+                    body.clone()
+                } else {
+                    opposite.clone()
+                },
+            )
+        })
+        .collect();
+    assert!(
+        fragments >= 4,
+        "four real structural fragments must occupy the default file slots"
+    );
+    corpus
+        .engine()
+        .semantic_cache_commit(&entries, &digest, DIMENSIONS, DEFAULT_CACHE_CAP_BYTES)
+        .unwrap();
+    assert!(
+        corpus
+            .engine()
+            .semantic_rebuild_index(&Corpus::control())
+            .unwrap()
+            .rebuilt
+    );
+    corpus
+}
+
+#[test]
+fn fragment_order_preserves_stable_dense_groups_lexical_tail_caps_and_final_body() {
+    use context_foundry::neural::cache::CardKind;
+    for partial in [false, true] {
+        let mut corpus = fragment_order_corpus();
+        if partial {
+            corpus
+                .engine()
+                .replace_source(
+                    "notes/fragment_order.txt",
+                    "quasar zephyr lantern: the lexical-only follow-up.\n",
+                )
+                .unwrap();
+            corpus.engine_mut().refresh(&Corpus::control()).unwrap();
+        }
+        let runtime = corpus.runtime();
+        let window = runtime
+            .window(
+                corpus.engine(),
+                FRAGMENT_ORDER_QUERY,
+                Instant::now() + Duration::from_secs(30),
+                &Corpus::control(),
+            )
+            .unwrap();
+        let offered: Vec<_> = window
+            .hits
+            .iter()
+            .flat_map(|hit| window.units(hit))
+            .collect();
+        let identity = |unit: &context_foundry::neural::index::UnitLocation| {
+            (unit.path.to_string(), unit.start, unit.end)
+        };
+        let lexical = corpus
+            .engine()
+            .search_candidates(FRAGMENT_ORDER_QUERY, None, 64, &Corpus::control())
+            .unwrap();
+        let lexical_units: Vec<_> = lexical
+            .items
+            .iter()
+            .map(|item| {
+                let h = item.handle.as_ref().unwrap();
+                (h.path.clone(), h.start, h.end)
+            })
+            .collect();
+        let baseline: Vec<_> = offered.iter().map(|unit| identity(unit)).collect();
+        let deferred: Vec<_> = offered
+            .iter()
+            .filter(|unit| unit.kind != CardKind::ContainerFragment)
+            .chain(
+                offered
+                    .iter()
+                    .filter(|unit| unit.kind == CardKind::ContainerFragment),
+            )
+            .map(|unit| identity(unit))
+            .collect();
+        let calls = corpus.probe.document_calls();
+        for enabled in [false, true] {
+            let trace = context_foundry::retrieval_trace::RetrievalTrace::default();
+            let context = corpus
+                .engine()
+                .context_candidates_with(
+                    FRAGMENT_ORDER_QUERY,
+                    Strategy::Search,
+                    &Corpus::control().with_trace(Some(trace.clone())),
+                    &ContextOptions {
+                        dense: Some(&window),
+                        experimental_defer_fragments: enabled,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            let expected = expected_placement(
+                if enabled { &deferred } else { &baseline },
+                &lexical_units,
+                32,
+            )
+            .0;
+            let snapshot = trace.snapshot();
+            let events = snapshot["events"].as_array().unwrap();
+            let kept: Vec<_> = events
+                .iter()
+                .filter(|e| e["stage"] == "placement" && e["outcome"] == "kept")
+                .map(|e| {
+                    (
+                        e["unit"]["path"].as_str().unwrap().to_owned(),
+                        e["unit"]["start"].as_u64().unwrap(),
+                        e["unit"]["end"].as_u64().unwrap(),
+                    )
+                })
+                .collect();
+            assert_eq!(kept, expected, "partial={partial} enabled={enabled}");
+            let policies: Vec<_> = events
+                .iter()
+                .filter(|e| e["stage"] == "placement_policy")
+                .collect();
+            assert_eq!(policies.len(), usize::from(enabled));
+            if enabled {
+                assert_eq!(policies[0]["policy"], "dense_container_fragments_last_v1");
+            }
+            assert!(kept.len() <= 32);
+            assert_eq!(
+                kept.iter().filter(|u| u.0 == FRAGMENT_ORDER_PATH).count(),
+                4
+            );
+            let target_units: Vec<_> = kept.iter().filter(|u| u.0 == FRAGMENT_ORDER_PATH).collect();
+            assert!(target_units.iter().all(|unit| {
+                offered.iter().any(|location| {
+                    identity(location) == **unit
+                        && (location.kind == CardKind::ContainerFragment) != enabled
+                })
+            }));
+            let packed = response::pack_enriched_context(
+                &context,
+                None,
+                Budget::request(BUDGET),
+                &response::stdout_bytes,
+            )
+            .unwrap();
+            assert!(packed.tokens <= BUDGET);
+            parse_v2(&packed.text).unwrap();
+            if enabled {
+                assert!(packed.text.contains("record_serial("), "{}", packed.text);
+            } else {
+                assert!(!context.batch.items.iter().any(|item| {
+                    item.handle
+                        .as_ref()
+                        .is_some_and(|h| h.path == FRAGMENT_ORDER_PATH)
+                        && item.forms.iter().any(|form| matches!(form, context_foundry::store::RenderedForm::Verbatim(body) if body.contains("record_serial(")))
+                }));
+            }
+            assert_eq!(
+                context.batch.semantic.as_deref(),
+                Some(if partial { "partial" } else { "ready" })
+            );
+        }
+        assert_eq!(
+            corpus.probe.document_calls(),
+            calls,
+            "ordering never prepares inputs"
+        );
+        let search = mcp::search_primary(
+            &Some(Ok(Arc::new(runtime))),
+            corpus.engine(),
+            FRAGMENT_ORDER_QUERY,
+            None,
+            32,
+            &Corpus::control(),
+            None,
+        )
+        .unwrap();
+        let search_target: Vec<_> = search
+            .items
+            .iter()
+            .filter(|i| {
+                i.handle
+                    .as_ref()
+                    .is_some_and(|h| h.path == FRAGMENT_ORDER_PATH)
+            })
+            .collect();
+        assert_eq!(search_target.len(), 4);
+        assert!(
+            search_target
+                .iter()
+                .all(|item| !item.forms.iter().any(|form| matches!(form, context_foundry::store::RenderedForm::Verbatim(body) if body.contains("record_serial(")))),
+            "search retains default fragment placement"
+        );
+    }
+}
+
+#[test]
+fn fragment_order_never_revives_stale_dense_units() {
+    let mut corpus = fragment_order_corpus();
+    let runtime = corpus.runtime();
+    let window = runtime
+        .window(
+            corpus.engine(),
+            FRAGMENT_ORDER_QUERY,
+            Instant::now() + Duration::from_secs(30),
+            &Corpus::control(),
+        )
+        .unwrap();
+    let replacement = "fn renamed_after_window() { record_serial(999); }\n";
+    corpus
+        .engine()
+        .replace_source(FRAGMENT_ORDER_PATH, replacement)
+        .unwrap();
+    corpus.engine_mut().refresh(&Corpus::control()).unwrap();
+    let trace = context_foundry::retrieval_trace::RetrievalTrace::default();
+    let result = corpus
+        .engine()
+        .context_candidates_with(
+            FRAGMENT_ORDER_QUERY,
+            Strategy::Search,
+            &Corpus::control().with_trace(Some(trace.clone())),
+            &ContextOptions {
+                dense: Some(&window),
+                experimental_defer_fragments: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert!(result.batch.counters.stale > 0);
+    assert!(!result.batch.items.iter().any(|item| {
+        item.handle
+            .as_ref()
+            .is_some_and(|h| h.path == FRAGMENT_ORDER_PATH)
+    }));
+    let snapshot = trace.snapshot();
+    assert!(
+        snapshot["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|e| e["stage"] != "placement" || e["unit"]["path"] != FRAGMENT_ORDER_PATH)
+    );
+}
+
+#[test]
+fn fragment_order_option_preserves_no_profile_anchors_and_named_fallback_admission() {
+    let corpus = fragment_order_corpus();
+    let slot = corpus.slot();
+    for query in [FRAGMENT_ORDER_QUERY, "retained_body_0"] {
+        for semantic in [&None, &slot, &Some(Err("profile_mismatch: fixture".into()))] {
+            let mut texts = Vec::new();
+            let before = corpus.probe.query_calls();
+            for enabled in [false, true] {
+                let result = mcp::context_primary_with_options(
+                    semantic,
+                    corpus.engine(),
+                    query,
+                    Strategy::Search,
+                    &Corpus::control(),
+                    ContextOptions {
+                        experimental_defer_fragments: enabled,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+                let packed = response::pack_enriched_context(
+                    &result,
+                    None,
+                    Budget::request(BUDGET),
+                    &response::stdout_bytes,
+                )
+                .unwrap();
+                assert!(packed.tokens <= BUDGET);
+                texts.push(packed.text);
+            }
+            if query == "retained_body_0" || !matches!(semantic, Some(Ok(_))) {
+                assert_eq!(texts[0], texts[1]);
+                assert_eq!(
+                    corpus.probe.query_calls(),
+                    before,
+                    "no new inference admission"
+                );
+            } else {
+                assert_eq!(
+                    corpus.probe.query_calls(),
+                    before + 2,
+                    "one query per explicit dense request"
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fragment_order_mcp_owner_forwards_the_opt_in_without_changing_search() {
+    let mut corpus = fragment_order_corpus();
+    let slot = corpus.slot();
+    let result = mcp::context_primary_with_options(
+        &slot,
+        corpus.engine(),
+        FRAGMENT_ORDER_QUERY,
+        Strategy::Search,
+        &Corpus::control(),
+        ContextOptions {
+            experimental_defer_fragments: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let expected = response::pack_enriched_context(
+        &result,
+        None,
+        Budget::request(BUDGET),
+        &response::stdout_bytes,
+    )
+    .unwrap()
+    .text;
+    let expected_search = corpus.search(&slot, FRAGMENT_ORDER_QUERY, 10).packed.text;
+    drop(slot);
+    let semantic = corpus.serving();
+    corpus.engine = None;
+    let (client_io, server_io) = tokio::io::duplex(1 << 21);
+    let (input, output) = tokio::io::split(server_io);
+    let server = tokio::spawn(mcp::serve_streams(
+        ServerOptions {
+            model_resources: None,
+            knowledge: None,
+            retrieval_trace_dir: None,
+            experimental_behavior_context: ContextOptions::default().experimental_behavior,
+            experimental_defer_fragments: true,
+            store: corpus.store.clone(),
+            root: corpus.root.clone(),
+            references: Vec::new(),
+            no_memory: false,
+            experimental_task_context: false,
+            watch: false,
+            semantic: Some(semantic),
+            policy: None,
+            budget: BudgetConfig::default(),
+        },
+        input,
+        output,
+    ));
+    let client = ().serve(client_io).await.unwrap();
+    let served = Served {
+        client,
+        server: Some(server),
+    };
+    let actual = served
+        .ok(
+            "context",
+            serde_json::json!({"query":FRAGMENT_ORDER_QUERY,"strategy":"search","tokens":BUDGET}),
+        )
+        .await;
+    assert_eq!(actual, expected);
+    assert!(actual.contains("record_serial("));
+    let search = served
+        .ok(
+            "search",
+            serde_json::json!({"query":FRAGMENT_ORDER_QUERY,"limit":10,"tokens":BUDGET}),
+        )
+        .await;
+    assert_eq!(search, expected_search);
+    served.close().await;
 }

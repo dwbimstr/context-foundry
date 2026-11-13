@@ -134,6 +134,7 @@ pub fn context_primary_with_options(
         memory: requested.memory,
         briefs: requested.briefs,
         experimental_behavior: requested.experimental_behavior,
+        experimental_defer_fragments: requested.experimental_defer_fragments,
         #[cfg(feature = "semantic")]
         dense: match &plan {
             SemanticPlan::Dense(window) => Some(window),

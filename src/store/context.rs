@@ -192,8 +192,8 @@ impl Engine {
                 "query must contain 1..4096 nonblank bytes".into(),
             ));
         }
-        // T010 belongs to lexical delivery. A dense window, even partial or
-        // empty, keeps ordinary semantic selection and packing unchanged.
+        // T010 belongs to lexical delivery. Its bit cannot change semantic
+        // placement or packing when a dense window is supplied.
         let lexical_behavior = options.experimental_behavior;
         #[cfg(feature = "semantic")]
         let lexical_behavior = lexical_behavior && options.dense.is_none();
@@ -203,13 +203,16 @@ impl Engine {
         };
         #[cfg(feature = "semantic")]
         let search = match options.dense {
-            Some(dense) => self.search_candidates_semantic(
+            Some(dense) => self.search_candidates_semantic_selected(
                 query,
                 None,
                 CONTEXT_UNITS,
                 control,
                 dense,
-                anchors,
+                super::semantic_search::SemanticSelection {
+                    anchors,
+                    defer_fragments: options.experimental_defer_fragments,
+                },
             )?,
             None => {
                 self.search_candidates_selected(query, None, CONTEXT_UNITS, control, selection)?

@@ -1651,6 +1651,8 @@ pub struct ContextOptions<'a> {
     pub memory: bool,
     pub briefs: bool,
     pub experimental_behavior: bool,
+    /// Default-off T005 ordering of validated dense structural fragments.
+    pub experimental_defer_fragments: bool,
     #[cfg(feature = "semantic")]
     pub dense: Option<&'a crate::neural::query::DenseWindow>,
     pub policy: Option<&'a crate::policy::Policy>,
@@ -1670,6 +1672,7 @@ impl Default for ContextOptions<'_> {
             memory: false,
             briefs: false,
             experimental_behavior: DEFAULT_BEHAVIOR_CONTEXT,
+            experimental_defer_fragments: false,
             #[cfg(feature = "semantic")]
             dense: None,
             policy: None,

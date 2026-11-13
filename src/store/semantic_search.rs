@@ -4,6 +4,12 @@
 use super::placement::{Cut, Placed, UnitRef};
 use super::*;
 
+#[cfg(feature = "semantic")]
+pub(super) struct SemanticSelection<'a> {
+    pub(super) anchors: Option<&'a [AnchorCandidate]>,
+    pub(super) defer_fragments: bool,
+}
+
 /// Whether `path` lies under a normalized [`path_filter`]: the file itself
 /// or a component-boundary subtree (`src/a` admits `src/a/x.rs`, never
 /// `src/ab.rs`) — the predicate the lexical tiers apply through `dir` terms.
@@ -42,6 +48,29 @@ impl Engine {
         dense: &crate::neural::query::DenseWindow,
         anchors: Option<&[AnchorCandidate]>,
     ) -> FResult<CandidateBatch> {
+        self.search_candidates_semantic_selected(
+            query,
+            path,
+            limit,
+            control,
+            dense,
+            SemanticSelection {
+                anchors,
+                defer_fragments: false,
+            },
+        )
+    }
+
+    #[cfg(feature = "semantic")]
+    pub(super) fn search_candidates_semantic_selected(
+        &self,
+        query: &str,
+        path: Option<&str>,
+        limit: usize,
+        control: &crate::Control,
+        dense: &crate::neural::query::DenseWindow,
+        selection: SemanticSelection<'_>,
+    ) -> FResult<CandidateBatch> {
         let filter = check_search(query, path, limit)?;
         let workspace_id = self.require_workspace_id()?;
         let TwoTier {
@@ -55,7 +84,7 @@ impl Engine {
             path,
             control,
             SearchSelection {
-                anchors,
+                anchors: selection.anchors,
                 prose: false,
             },
         )?;
@@ -110,6 +139,25 @@ impl Engine {
             &workspace_id,
         )?;
         counters.stale += stale;
+        if selection.defer_fragments && anchors.is_empty() {
+            control.check()?;
+            let fragments = placed
+                .iter()
+                .filter(|item| item.kind == Some(crate::neural::cache::CardKind::ContainerFragment))
+                .count();
+            // Stable, bounded placement only: retain every validated location,
+            // its score/provenance and the relative order inside both classes.
+            placed.sort_by_key(|item| {
+                item.kind == Some(crate::neural::cache::CardKind::ContainerFragment)
+            });
+            control.check()?;
+            if let Some(trace) = control.trace() {
+                trace.record(serde_json::json!({
+                    "stage":"placement_policy", "policy":"dense_container_fragments_last_v1",
+                    "candidates":placed.len(), "fragments":fragments,
+                }));
+            }
+        }
         let freshness = self.freshness_in(&tx)?;
         let word = dense.coverage_at(freshness.source_revision);
         placed.extend(lexical.iter().map(|candidate| Placed {

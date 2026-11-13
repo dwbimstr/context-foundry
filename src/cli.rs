@@ -92,6 +92,9 @@ enum Command {
               require_equals = true, default_missing_value = "true",
               default_value_t = crate::store::DEFAULT_BEHAVIOR_CONTEXT)]
         experimental_behavior_context: bool,
+        /// Defer structural fragments within dense context (experimental, default off).
+        #[arg(long)]
+        experimental_defer_fragments: bool,
         #[arg(long, default_value = "auto")]
         strategy: String,
         /// Include this experimental task's complete selected view.
@@ -896,6 +899,7 @@ fn run() -> AResult<()> {
             tokens,
             retrieval_trace_dir,
             experimental_behavior_context,
+            experimental_defer_fragments,
             strategy,
             include_memory,
             include_briefs,
@@ -983,6 +987,7 @@ fn run() -> AResult<()> {
                         briefs: include_briefs,
                         policy: routed,
                         experimental_behavior: experimental_behavior_context,
+                        experimental_defer_fragments,
                         ..crate::store::ContextOptions::default()
                     },
                 )?;

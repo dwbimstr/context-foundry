@@ -496,6 +496,7 @@ impl FoundryMcp {
         let semantic = self.state.semantic.clone();
         let policy = Arc::clone(&self.state.policy);
         let experimental_behavior = self.state.experimental_behavior_context;
+        let experimental_defer_fragments = self.state.experimental_defer_fragments;
         Ok(self
             .deliver(
                 &ctx,
@@ -538,6 +539,7 @@ impl FoundryMcp {
                             briefs: include_briefs,
                             policy: routed,
                             experimental_behavior,
+                            experimental_defer_fragments,
                             ..crate::store::ContextOptions::default()
                         },
                     )?;
@@ -1946,6 +1948,7 @@ impl FoundryMcp {
         let semantic = self.state.semantic.clone();
         let policy = Arc::clone(&self.state.policy);
         let experimental_behavior = self.state.experimental_behavior_context;
+        let experimental_defer_fragments = self.state.experimental_defer_fragments;
         self.deliver(
             ctx,
             tokens,
@@ -2026,6 +2029,7 @@ impl FoundryMcp {
                             policy: routed.filter(|_| is_primary),
                             anchors: Some(anchors),
                             experimental_behavior,
+                            experimental_defer_fragments,
                             #[cfg(feature = "semantic")]
                             dense: None,
                         };
