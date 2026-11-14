@@ -1433,6 +1433,12 @@ labelled; they do not assign causes to the 249 historical G2 misses.
     The subsequent [same-file inspection](../../docs/validation.md#t005-actual-same-file-admission-pressure--2026-11-13)
     joins actual occurrences and four earlier occupants, including successful
     controls; representation labels alone remain insufficient to claim a repair.
+    A later fixed K = 1 stable dense-fragment ordering variant was selected before
+    implementation and evaluated once at the unchanged guards. It passes local
+    behavior/gates, G1 and CLI/MCP parity but fails G2's significance prerequisite.
+    The experiment is closed without promotion, source integration or fresh-holdout
+    access; see the [dated disposition](../../docs/validation.md#t005-fragment-order-candidate-no-promotion--2026-11-13).
+    Broader T005 acceptance and all frozen quality requirements remain unchanged.
 - **Candidate checkpoint:**
   - Hold Gemma fixed and predeclare at most three variants targeting the demonstrated
     loss: representation, candidate coverage, ordering or packing. Keep other stages

@@ -71,14 +71,18 @@ and dated paragraphs below are history.
   A later read-only cap-decision census distinguishes per-file refusals before
   global saturation from later bookkeeping flags and corrects one discarded-document
   attribution. It finds no eligible target-covering tier-1 document in the retained
-  baseline, so no tier-1-priority candidate is selected. Actual earlier admitted
-  same-file evidence still needs inspection before selecting an ordering family
+  baseline, so no tier-1-priority candidate is selected
   ([diagnostic receipt](validation.md#t005-retained-cap-decision-census--2026-11-13)).
   The actual same-file occupant inspection now separates structural-fragment
   pressure from broad body/parent/file ordering, with successful controls and exact
   occurrence joins. It supports investigating fragment ordering, without selecting
   a candidate or predicting a gain
   ([inspection](validation.md#t005-actual-same-file-admission-pressure--2026-11-13)).
+  A subsequent fixed K = 1 fragment-order candidate passes its focused checks,
+  eight local gates, G1 guards and native CLI/MCP parity, but fails the unchanged
+  G2 significance rule. It is rejected and remains outside active source; this
+  experiment is closed without tuning or querying the fresh holdout
+  ([no-promotion receipt](validation.md#t005-fragment-order-candidate-no-promotion--2026-11-13)).
 - **Scale.** Publication streams cached vectors (no 2 GiB vector bound) and
   generation v6 interns label-map paths and hashes (rust map 191 → 69 MB). At rust's
   density the next bounds are the mapping-view estimate near 120k files, then the label
@@ -248,6 +252,13 @@ and dated paragraphs below are history.
     without changing the caller mask. Direct fake-worker writes and the pinned
     native write probe plus normal model calls pass under permissive caller masks
     ([receipt](validation.md#worker-scratch-creation-defaults--2026-11-13)).
+    The exact seven-commit snapshot through `69ce9f8` is now published and verified
+    by full fresh-clone readback; both older private bundles are finalized locally
+    ([publication receipt](validation.md#approved-experimental-publication-and-evidence-closure--2026-11-13)).
+    Newer local work is outside that approval. The remaining 008 T004 semantic
+    trigger input contract still needs the owner's choice between explicit structured
+    assertions under the no-model rule and revising the contract for natural-language
+    interpretation. No trigger implementation or outcome acceptance is claimed.
     Complete coverage of transient library file modes, current installed-host compatibility and
     v2's declared task/arm/host qualification remain open. The installed host now
     differs from the archived pin used by the regression. Pilot v2/T006 remain open.

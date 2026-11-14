@@ -1,5 +1,100 @@
 # Validation
 
+## T005 fragment-order candidate no promotion — 2026-11-13
+
+**Valid negative; keep the baseline.** A separate K = 1 ordering family was
+selected in writing before code or measurement. The default-off candidate stably
+moves only validated dense `ContainerFragment` locations behind other dense
+locations for ordinary unanchored context. It retains every candidate and both
+within-group orders, then uses unchanged lexical append, exact deduplication,
+four-per-file/32-unit cuts, materialization and 2,048-token packing. Search,
+lexical/no-profile/fallback, anchored and composed-task behavior are excluded;
+composition's recursive preliminary context explicitly opts out too. No model,
+representation recipe, similarity score, source identity or cap changes.
+
+The frozen 388-question G2 pair ran once on the owner's Mac with the fixed local
+Gemma/function/units7 profile, baseline `60aff102…` and candidate `d91619c6…`
+from clean local source `ac81777`. Both arms use fresh owned store copies; original
+masters are only read as raw bytes for full manifests. All 776 traces are valid
+and dense at the selected revisions; candidate traces carry exactly one bounded
+ordering-policy event. Complete wire, source, score, cap and input readbacks pass.
+The unchanged `scripts/g2.sh compare` returns the expected **keep-off exit 1**,
+matching the strict validator. This is a quality failure, not invalid evidence.
+
+| G2 set | Questions | Located, baseline → candidate | Verbatim bodies | Located gains / losses | One-sided p |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Rust | 197 | 52 → 54 | 47 → 49 | 2 / 0 | 0.25 |
+| Bun | 191 | 117 → 118 | 107 → 107 | 1 / 0 | 0.5 |
+| Total | 388 | 169 → 172 | 154 → 156 | 3 / 0 | 0.125 |
+
+Mean delivered tokens are 2,022.925 → 2,022.072, reported rather than gated.
+The three definition gains do not meet the frozen p < 0.05/K rule, despite no
+located/body losses. No threshold, variant or retry is selected from these results.
+The fresh sealed 400-question holdout remains unqueried and unexposed.
+
+The required G1 comparison against the retained current semantic arm completes
+all 10,432 raw cases (10,431 scored under the existing single Bun exclusion).
+All three frozen aggregate guards pass. Bun and qualified have no correctness/body
+gains or losses; checker gains three pass-at-one, two pass-within-four and two body
+cases, with no losses. The complete per-case review census finds **zero newly lost
+cases**; changed response/token observations remain recorded separately. This is
+not contemporaneous paired latency or provider-cost evidence. Native first-frozen-
+G2-query CLI checks match each arm's saved MCP text exactly; both deliver 1,991
+tokens, and only the candidate emits its policy event, with one fragment observed.
+This two-call parity check does not establish broader task benefit.
+
+Five focused consumer tests pass on isolated, package-cleaned Cargo targets:
+stable grouping and unchanged tails/caps/forms, stale-source refusal, excluded
+admission paths, real stdio MCP forwarding, and composed-task exclusion. The
+ordering-disabled mutant and the version without composition opt-out each fail
+their intended assertion. A shared-target attempt produced the wrong failure and
+is unqualified; a later wrapper expected four tests after the fifth was added. Both attempts are
+retained, and acceptance uses fresh isolated receipts. Synthetic helper checks
+pass: G2 61, G1 18 and CLI 15. One initial G2 fixture failure is retained separately.
+
+All eight local gates pass on candidate `ac81777` in 788.442 seconds: default
+**1,317 passed, 0 failed, 35 ignored**; pilot **101 passed, 0 failed, 1 ignored**.
+Nested child-test summaries are excluded from totals. The isolated release build
+passes in 61.492 seconds; G2 completes in 138.446 seconds, G1 in 740.599 seconds,
+and native CLI parity in 18.342 seconds. The original shared 7,200-second stage,
+120-second cleanup reserve, one-heavy-job rule, 20 GiB free-space floor and 8 GiB
+sampled per-process RSS ceiling are unchanged; phase maxima are build 600, gates
+1,800, G2 3,600, G1 2,400 and parity 300 seconds. All observed owners/workers exit
+naturally and are absent after cleanup; selected inputs and originals remain unchanged, and external-provider spend is zero.
+Sampled RSS does not establish true-peak, GPU or global-pressure bounds.
+
+The candidate stayed in its isolated local worktree and is **not integrated or
+published**; the active checkout has no fragment-deferral flag or ranking change.
+Its source commits, binary, source bundle, native receipts, failed attempts and
+private raw evidence are retained in `runs/t005-fragment-candidate-2026-11-13/`
+and its named owned dataset directories. This K = 1 experiment is closed without
+promotion. T005 remains unaccepted at its broader retrieval goal; the
+[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+
+## Approved experimental publication and evidence closure — 2026-11-13
+
+The owner explicitly approved the seven reviewed commits through `69ce9f8`.
+That exact snapshot is pushed to `experimental/context-ecosystem`; the native
+publisher's remote checks and fresh-clone readback pass for all **400 tracked
+files / 11,626,239 bytes**, including file kinds and executable bits. Main remains
+`d94b013` during the operation. Later local worker/census/ordering work is excluded,
+no release or hosted workflow is dispatched, and no private evidence, model,
+holdout, credential or backup is published. The publisher exits naturally in
+65.917 seconds and reaps all 22 Git commands. Receipt:
+`runs/pilot-full-pipeline-2026-11-13/publication-publish-_70t2603/result.json`.
+
+Both older private evidence bundles then pass final full snapshot readback:
+semantic permissions, **98 files / 3,468,151 bytes**, manifest
+`1412820004e3af8df53be02f279815cba6cf79d7db25d7f3f51fffe5e1d9b8e7`;
+full pipeline, **1,201 files / 3,079,437,587 bytes**, manifest
+`b0de1d700be98607e21a5443f3fe0f678de73cf7e5d53fa3e47a97a8fb9a1aea`.
+These totals cover the complete retained bundles, including publication evidence,
+not just their earlier runtime outputs. Their `evidence-readback.json` receipts
+are finalized; neither authenticated encrypted restoration nor off-machine
+retention is newly established. Newer local commits need their own publication
+intent; this receipt does not authorize a larger payload. Current status remains
+with the [handoff](resume-context-ecosystem.md#current-status--2026-11-06).
+
 ## T005 actual same-file admission pressure — 2026-11-13
 
 **PASS for the retained-event inspection.** All 388 cap-census results are

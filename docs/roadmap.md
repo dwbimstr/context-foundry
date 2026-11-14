@@ -35,10 +35,9 @@ classified their remaining unknowns as settled decisions, owned decisions (both 
 been frozen off (2026-10-07); 005 T005 is accepted at its written scope
 ([receipt](validation.md#boundary-scope-acceptance-005-t005--2026-11-10)), and 009 remains open
 ([owner decisions, 2026-11-06](validation.md#owner-decisions--2026-11-06)). 003
-T006–T009, 008 T003–T005 and 001 T010 also remain open. The selected native device
-checks passed; the signed-package release checks remain open. See the
-[resumable handoff](resume-context-ecosystem.md) for current status. 001 D001 stays
-resolved: redb/Tantivy. Optional model choices do not reopen that decision by default.
+T006–T009 and 008 T003–T005 retain their task-outcome requirements. See the
+[resumable handoff](resume-context-ecosystem.md) for current acceptance and remaining
+release checks. 001 D001 stays resolved: redb/Tantivy. Optional model choices do not reopen that decision by default.
 
 Plan 009's cache/profile/chunk lifecycle alongside 001. EmbeddingGemma 2 on the pinned
 llama.cpp worker is the only selected profile (G2, G1 and vector parity, 2026-10-08).
