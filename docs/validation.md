@@ -1,5 +1,56 @@
 # Validation
 
+## T005 retained candidate-coverage census — 2026-11-13
+
+**PASS for the read-only diagnostic.** All 388 retained baseline outcomes and
+complete response hashes match the latest baseline pair exactly. The census reads
+126,614,198 trace bytes and freshly verifies all 330 target source files
+(8,748,136 bytes). It reuses the existing 169 located / 154 complete-body results;
+no new retrieval, model, store query or source-program execution occurs.
+
+Every trace exposes all 64 dense hits. The maximum expanded provenance is only
+215 locations, versus the 4,096-location bound; no request truncates provenance.
+There is no observed provenance-cap loss to repair by increasing that bound.
+Of the 58 primary `file_only_unit_absent` misses, **27** have eligible dense
+locations elsewhere in the target file and **31** reach it only through lexical
+candidates. Neither group offers a source unit/document containing the target
+name. All 33 primary file-absent cases remain absent from both offered lanes.
+
+Across all 219 misses, the strict eligible-document/unit census finds 95 without
+a target-name-covering candidate. Four already had `lexical_parent_only` paths in
+the earlier refinement, while the coarse histogram classified their later parent
+cap/cut event. Their delivered outcomes and the frozen scorer are unchanged.
+Coarse categories and overlapping observed paths remain separate evidence.
+All 169 successful controls have a current dense span covering the target name.
+
+Among the 27 primary misses with same-file dense locations, six nearest spans
+are within five source lines; 21 are farther away. Five of the nearby spans begin
+after the target. Readback of all five shows three inside the target/its child
+declaration and two in distinct neighboring declarations. Proximity alone does
+not establish ownership or justify a neighbor-expansion candidate. These are
+source observations, not demonstrated recoveries.
+
+The existing [body renderer](../src/neural/partition/body.rs) prepends bounded
+parent/own-header context to the embedding input, while
+[dense-only delivery](../src/store/semantic_search.rs) renders the scored span.
+This code relationship motivates checking exact rendered inputs against retained
+input keys before any new coverage proposal. The traces contain neither those
+input bytes nor their context coordinates, so they do not establish that a
+particular omitted declaration was represented. No candidate, recipe change,
+filtered ANN lane or neighborhood policy is selected here. The closed compact
+and fragment-order families remain closed, and the fresh holdout stays untouched.
+
+Eleven synthetic boundary checks pass, including eligible versus discarded
+lexical documents, source identity, stale locations, half-open name ranges,
+provenance counts, rank bounds and nonfinite distances. Native supervision records
+0.260 seconds for checks and 1.599 seconds for analysis, natural exits, no observed
+workers, and unchanged selected inputs/source. The selected stage is 900 seconds,
+120 per process, 60 for cleanup, one job, a 20 GiB disk floor and 1 GiB sampled
+per-process RSS ceiling. No paid request or new Rust gate run is claimed.
+Private cases, source excerpts, pins and receipts remain in
+`runs/t005-coverage-diagnostic-2026-11-13/`; the
+[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+
 ## T005 fragment-order candidate no promotion — 2026-11-13
 
 **Valid negative; keep the baseline.** A separate K = 1 ordering family was

@@ -83,6 +83,11 @@ and dated paragraphs below are history.
   G2 significance rule. It is rejected and remains outside active source; this
   experiment is closed without tuning or querying the fresh holdout
   ([no-promotion receipt](validation.md#t005-fragment-order-candidate-no-promotion--2026-11-13)).
+  A retained coverage census now separates dense same-file misses from lexical-only
+  discovery and rules out observed provenance truncation. Source proximity is
+  insufficient to select a neighbor policy; exact rendered-input/header provenance
+  needs checking before another coverage proposal
+  ([diagnostic](validation.md#t005-retained-candidate-coverage-census--2026-11-13)).
 - **Scale.** Publication streams cached vectors (no 2 GiB vector bound) and
   generation v6 interns label-map paths and hashes (rust map 191 → 69 MB). At rust's
   density the next bounds are the mapping-view estimate near 120k files, then the label

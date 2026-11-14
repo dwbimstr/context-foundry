@@ -1439,6 +1439,10 @@ labelled; they do not assign causes to the 249 historical G2 misses.
     The experiment is closed without promotion, source integration or fresh-holdout
     access; see the [dated disposition](../../docs/validation.md#t005-fragment-order-candidate-no-promotion--2026-11-13).
     Broader T005 acceptance and all frozen quality requirements remain unchanged.
+    The subsequent [coverage census](../../docs/validation.md#t005-retained-candidate-coverage-census--2026-11-13)
+    separates eligible dense/lexical discovery from outlines and parent-only paths.
+    It selects no repair; represented-input and provenance evidence is still needed
+    before proposing a contextual-coverage change.
 - **Candidate checkpoint:**
   - Hold Gemma fixed and predeclare at most three variants targeting the demonstrated
     loss: representation, candidate coverage, ordering or packing. Keep other stages
