@@ -33,6 +33,221 @@ const OMP: &str = match option_env!("CF_PILOT_TEST_OMP") {
 const CANARY: &str = "sk-ant-verify-canary-7f3c1e9a5b2d4c6e8f0a1b3c5d7e9f11";
 const TASK: &str = "Repair malformed percent escapes in src/lib.rs so no bytes are dropped.";
 
+/// A separately pinned diagnostic consumer; this never changes v1 admission.
+/// Run explicitly with CF_PILOT_CURRENT_OMP pointing at the owned 18.18.1 copy.
+#[tokio::test]
+#[ignore = "needs explicit CF_PILOT_CURRENT_OMP; no-provider current-host diagnostic"]
+async fn current_host_first_request_preserves_full_history() {
+    use pilot_capture::host::{Host, HostEvent, HostSpec, RpcEvent};
+    use pilot_capture::protocol::{ChannelIdentity, ChildMessage, CloseReason, ParentMessage};
+    use std::collections::BTreeSet;
+    use std::time::Duration;
+
+    const SHA: &str = "ce80099f10c5ea4367523767230cb5b920f30cc139b9cf8758c1cc4b2f1f9409";
+    const PROMPT: &str = "Say only: local qualification. Do not use tools.";
+    let omp = PathBuf::from(std::env::var_os("CF_PILOT_CURRENT_OMP").expect("explicit owned host"));
+    assert_eq!(
+        pilot_capture::sha256_hex(&std::fs::read(&omp).unwrap()),
+        SHA
+    );
+    let e = env();
+    let root = std::fs::canonicalize(e._root.path()).unwrap();
+    let spec = HostSpec {
+        omp: omp.clone(),
+        root: e.run_dir.clone(),
+        workspace: e.workspace.clone(),
+        real_home: std::env::var_os("HOME").expect("real home path").into(),
+        deny: vec![root],
+        deny_literals: Vec::new(),
+        identity: ChannelIdentity::new("current-qualification".into(), "current-host".into())
+            .unwrap(),
+    };
+    let (host, mut events) = Host::launch(&spec).unwrap();
+    let bridge_sha = host.launch.bridge_sha256.clone();
+    let host_root = host.paths.root.clone();
+    let collect = async {
+        let (mut rpc, mut bridge, mut setup, mut sent) = (false, false, false, false);
+        let mut pending = BTreeSet::<String>::new();
+        loop {
+            let event = events.recv().await.ok_or("host channels closed")?;
+            match event {
+                HostEvent::Rpc(RpcEvent::Ready) => rpc = true,
+                HostEvent::Bridge(inbound) => match inbound.msg {
+                    ChildMessage::Ready {
+                        api,
+                        delegate,
+                        model,
+                        thinking_level,
+                        mut active_tools,
+                    } => {
+                        active_tools.sort();
+                        if bridge
+                            || api != policy::BRIDGE_API
+                            || delegate != "function"
+                            || model.provider != policy::PROVIDER
+                            || model.id != policy::MODEL
+                            || model.api != policy::BRIDGE_API
+                            || model.max_tokens != policy::MAX_OUTPUT_TOKENS
+                            || thinking_level != policy::THINKING_LEVEL
+                            || active_tools != ["edit", "read"]
+                        {
+                            return Err("bridge settings differ");
+                        }
+                        bridge = true;
+                    }
+                    ChildMessage::FetchBegin {
+                        invocation,
+                        fetch,
+                        method,
+                        url,
+                        headers,
+                    } => {
+                        host.send_bridge(
+                            ParentMessage::ResponseError {
+                                fetch,
+                                class: FaultClass::Authority,
+                            },
+                            Vec::new(),
+                        )
+                        .await
+                        .map_err(|_| "local refusal failed")?;
+                        if !sent || invocation != 1 {
+                            return Err("unexpected request ordering");
+                        }
+                        return Ok((
+                            json!({"method": method, "url": url, "headers": headers}),
+                            inbound.payload,
+                        ));
+                    }
+                    _ => return Err("unexpected bridge event"),
+                },
+                HostEvent::Rpc(RpcEvent::Response {
+                    id,
+                    command,
+                    success,
+                    state,
+                }) => {
+                    let id = id.unwrap_or_default();
+                    if id == "p1" && command == "prompt" && success && sent {
+                        continue;
+                    }
+                    if !success || !pending.remove(&id) {
+                        return Err("setup RPC refused or unexpected");
+                    }
+                    if id == "c4" {
+                        let s = state.ok_or("settings missing")?;
+                        if s.provider.as_deref() != Some(policy::PROVIDER)
+                            || s.model.as_deref() != Some(policy::MODEL)
+                            || s.api.as_deref() != Some(policy::BRIDGE_API)
+                            || s.max_tokens != Some(policy::MAX_OUTPUT_TOKENS)
+                            || s.thinking_level.as_deref() != Some(policy::THINKING_LEVEL)
+                            || s.auto_compaction != Some(false)
+                        {
+                            return Err("settings readback differs");
+                        }
+                    }
+                    if pending.is_empty() && !sent {
+                        host.send_rpc(&json!({"id":"p1", "type":"prompt", "message":PROMPT}))
+                            .await
+                            .map_err(|_| "prompt send failed")?;
+                        sent = true;
+                    }
+                }
+                HostEvent::Rpc(RpcEvent::Other | RpcEvent::SessionSettled | RpcEvent::AgentEnd) => {
+                }
+                _ => return Err("unexpected host event"),
+            }
+            if rpc && bridge && !setup {
+                setup = true;
+                for (id, command) in [
+                    (
+                        "c1",
+                        json!({"id":"c1", "type":"set_auto_retry", "enabled":false}),
+                    ),
+                    (
+                        "c2",
+                        json!({"id":"c2", "type":"set_auto_compaction", "enabled":false}),
+                    ),
+                    (
+                        "c3",
+                        json!({"id":"c3", "type":"set_cache_warming", "mode":"off"}),
+                    ),
+                    ("c4", json!({"id":"c4", "type":"get_state"})),
+                ] {
+                    pending.insert(id.into());
+                    host.send_rpc(&command)
+                        .await
+                        .map_err(|_| "setup send failed")?;
+                }
+            }
+        }
+    };
+    let captured = tokio::time::timeout(Duration::from_secs(120), collect).await;
+    let _ = host
+        .send_bridge(
+            ParentMessage::Close {
+                reason: CloseReason::Halted,
+            },
+            Vec::new(),
+        )
+        .await;
+    let _ = host.send_rpc(&json!({"id":"a1", "type":"abort"})).await;
+    let (_, exit) = host.finish(events, Duration::from_secs(30)).await;
+    let (metadata, body) = captured
+        .expect("capture deadline")
+        .expect("actual host request");
+    let headers: Vec<(String, String)> =
+        serde_json::from_value(metadata["headers"].clone()).unwrap();
+    let admitted = wire::validate_request(
+        metadata["method"].as_str().unwrap(),
+        metadata["url"].as_str().unwrap(),
+        &headers,
+        &body,
+        &wire::RequestExpectation {
+            initial_user_text: PROMPT.into(),
+            workspace: pilot_capture::host_display_path(&e.workspace),
+        },
+        None,
+    );
+    let document: Value = serde_json::from_slice(&body).unwrap();
+    let no_thread = document.get("thread").is_none();
+    let report = json!({"host_sha256": SHA, "bridge_sha256": bridge_sha,
+        "body_sha256": pilot_capture::sha256_hex(&body), "body_bytes":body.len(),
+        "no_thread_field":no_thread, "validator_passed":admitted.is_ok(),
+        "validator_fault":admitted.as_ref().err().map(ToString::to_string),
+        "normal_exit":exit.normal, "forced":exit.forced, "group_gone":exit.group_gone,
+        "stderr_bytes":exit.stderr_bytes, "provider_calls":0, "v1_host_admission":false});
+    if let Some(path) = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT") {
+        let out = PathBuf::from(path);
+        fixture_private_dir(&out).unwrap();
+        fixture_private_write(out.join("request-body.json"), &body).unwrap();
+        fixture_private_write(
+            out.join("request-metadata.json"),
+            serde_json::to_vec_pretty(&metadata).unwrap(),
+        )
+        .unwrap();
+        fixture_private_write(
+            out.join("result.json"),
+            serde_json::to_vec_pretty(&report).unwrap(),
+        )
+        .unwrap();
+    }
+    assert_owned_private_tree(
+        &host_root,
+        Some(Path::new(
+            "home/.omp/natives/18.18.1/pi_natives.darwin-arm64.node",
+        )),
+    );
+    assert_eq!(
+        pilot_capture::sha256_hex(&std::fs::read(&omp).unwrap()),
+        SHA
+    );
+    assert!(
+        no_thread && admitted.is_ok() && exit.normal && !exit.forced && exit.group_gone,
+        "{report}"
+    );
+}
+
 fn require_host() {
     let bytes = std::fs::read(OMP).expect("pinned OMP host is required for this qualification");
     assert_eq!(

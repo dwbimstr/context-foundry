@@ -217,6 +217,35 @@ Before freezing the apparatus, demonstrate these with the actual installed host
 and local no-provider fixtures. These remain freeze requirements; completed narrow
 repairs are identified in the relevant row:
 
+**Selected full-history delegate repair, 2026-11-14 — qualification pending.**
+The retained current-host request contains both `thread: {type: "create"}` and the
+new message-threads beta. Its associated upstream
+[`wantsAnthropicThreads`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/ai/src/providers/anthropic-threads.ts#L140)
+honors an explicit `statefulResponses` value before environment/model defaults;
+[`streamAnthropic`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/ai/src/providers/anthropic.ts#L2262)
+uses that choice. Set `statefulResponses: false` in the existing embedded bridge's
+delegate options so the native serializer retains complete request history. Do not
+strip actual request fields/headers, widen beta/body admission, add server-history
+state or change the v1 host pin. This reduces state/accounting responsibilities
+instead of introducing a second history owner. V2 drafting is already authorized;
+the optional next-direction question does not gate this repair under the existing
+full-request invariant.
+
+First commit the actual-host regression with this contract and confirm red on the
+unchanged bridge. The ignored `current_host_first_request_preserves_full_history`
+test requires an explicit owned OMP 18.18.1 artifact with the recorded SHA; it uses
+`Host::launch`, actual setup/readback and the unchanged final-request validator,
+refuses the request locally, and reaps the host before asserting. Optional private
+evidence preserves exact request bytes and failure/pass metadata. No provider
+transport is constructed. After the bridge change, require this test green, the
+complete nonignored frozen-host suite and all eight local gates. The ordinary
+suite does not require an installed newer host; explicit current-host diagnostics
+do not grant CaptureSession/Live admission. Preserve the original failed request,
+all red/gate failures and frozen policy. The shared one-hour qualification includes
+builds, with a 120-second cleanup reserve, offline dependencies, one heavy job,
+20 GiB disk floor and 8 GiB sampled individual RSS ceiling. Complete startup
+observation and transient-mode coverage remain separate requirements.
+
 The existing owners are [`CaptureSession` and `IndependentCheckReceipt`](../../../src/pilot_capture.rs),
 [`Host::launch` and `HostEvent`](../../../src/pilot_capture/host.rs), and
 [`run_independent_check`, `restore_workspace` and `run_coding`](../../../src/pilot_capture/apparatus.rs).
