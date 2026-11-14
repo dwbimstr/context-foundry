@@ -82,6 +82,12 @@ closed development bundle, final private artifacts and correction receipts are
 retained under `runs/t005-header-candidate-2026-11-13/`,
 `runs/t005-heldout-final-2026-11-13/` and their named owned dataset roots. The
 [handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+The complete final bundle then passes two full snapshot readbacks: **807 files /
+7,112,164,903 bytes** across two roots, manifest
+`f11ec99734cb5167346f8e1cd627310e592c609a29334fea66c8b30678ad7969`.
+Its `evidence-readback.json` is final; the local bundle is immutable and remains
+private. This establishes local integrity, not encrypted restoration or off-machine
+retention.
 
 ## T005 kept-body prefix development qualification — 2026-11-13
 
