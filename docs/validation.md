@@ -22,7 +22,7 @@ is preserved. The owner then prioritized publication and storage cleanup before
 either planned native qualification test started. Inputs and the owned host copy
 remain available for that continuation; no provider call or signing occurred.
 
-## Storage cleanup selection — 2026-11-14
+## Storage cleanup — 2026-11-14
 
 The owner explicitly selected cleanup of Foundry `target`, `runs` and
 `~/VSC_DEV/datasets`, with source/record publication first. Initial allocated sizes
@@ -34,8 +34,54 @@ those files and the helpers. Completed dataset/run copies may be removed only
 after verifying their retained canonical duplicate or archive. Preserve canonical
 profiles/model bundles/weights, current prepared masters, task/oracle originals,
 private question sets, raw outcome evidence and recovery material. Cleanup does
-not authorize publishing private data or paid/signing work. Results follow after
-the deletion/readback boundary is executed.
+not authorize publishing private data or paid/signing work.
+
+**PASS at the selected cleanup/readback boundary.** Source and records were pushed
+first as `35ee382`; a fresh clone verified all 400 tracked paths, bytes, file types
+and executable bits. Main remained `d94b013`. Local publication receipt:
+`runs/storage-cleanup-2026-11-14/publication-before-cleanup.json`.
+
+| Allocated directory size (`du`, GiB) | Before | After cleanup |
+| --- | ---: | ---: |
+| `target` | 179.3 | 0.086 |
+| `runs` | 15.3 | 6.7 |
+| Foundry datasets | 265.6 | 33.7 |
+
+The filesystem reported **352,534,458,368 bytes free (328.3 GiB)** at final
+readback. APFS shared blocks and deferred freeing mean directory reductions are
+not additive physical reclamation. The remaining target files were mapped by two
+live IDE helpers; neither helper was stopped. Needed standalone Foundry executables
+were retained and hash-checked outside the build cache, without inferring their
+source commit from their former paths.
+
+Read-only redb inspection checked 81 completed experiment stores. Derived payloads
+in 73 stores were removed only after exact source identity and retained
+compiler/knowledge/boundary row comparisons, with empty user-record tables and no
+unknown nonempty tables. Five older unique stores were copied before modification
+and compacted with standard redb into private offline source/fact snapshots.
+Exactly seven named derived semantic tables were discarded; every other table's
+keys, values, types and row counts passed logical readback. These snapshots are
+not serving stores. Real redb controls preserve live memory, task, feedback and
+multimap rows and reject mutation of original paths. Current prepared Rust/Bun
+masters and the remaining canonical pipeline store stay available.
+
+Cleanup also removed **124** inactive `search.quarantine-*` directories and **27**
+closed-run copies of the same extracted native library, retaining one exact
+hash-verified library copy. Current model/tokenizer/worker pins, both selected host
+artifacts, frozen Foundry and retained continuation binaries pass hash readback.
+T004's closed packet remains exact. Surviving full-pipeline manifest files also
+pass byte readback; every missing file is accounted for as an intentionally retired
+cache or deduplicated library. Raw questions, requests, responses, traces, original
+task/oracle inputs, recovery material and user records were preserved.
+
+Private receipts and the eight-family retention map are in
+`runs/storage-cleanup-2026-11-14/{result,protected-readback,retention-index}.json`.
+Older complete-bundle manifests are **historical pre-cleanup snapshots**, not claims
+that retired working caches remain present or were archived byte-for-byte. No
+provider call, signing, training, model download or private-data publication occurred.
+Product source/Cargo inputs are unchanged; documentation links are the applicable
+public check. The next host qualification uses a newly stated deadline, not the
+expired preparation window.
 
 ## Structured task assertions 008 T004 — 2026-11-13
 

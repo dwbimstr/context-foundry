@@ -291,10 +291,15 @@ and dated paragraphs below are history.
     Real-host no-provider qualification resumed on 2026-11-14. The installed copy
     identifies as OMP 18.18.1; its sandboxed version check passed. Before bridge or
     integration tests started, the owner prioritized remote publication and storage
-    cleanup of `target`, `runs` and Foundry datasets. Preserve pinned models, canonical
-    inputs, private evidence and the copied host; archive/verify completed working
-    data before removing it. Paid runs and signing remain gated. Storage receipts
-    and the qualification continuation will be recorded below as they complete.
+    cleanup of `target`, `runs` and Foundry datasets. Cleanup and protected-input
+    readback now pass; current models, prepared masters, private outcome evidence,
+    task/oracle originals and selected binaries remain available. Older unique
+    source/fact stores are compact offline snapshots; retired working caches make
+    previous complete-bundle manifests historical. The private retention index is
+    `runs/storage-cleanup-2026-11-14/retention-index.json`
+    ([cleanup receipt](validation.md#storage-cleanup--2026-11-14)). Resume the
+    selected native qualification with a fresh deadline. Paid runs and signing
+    remain gated.
     Complete coverage of transient library file modes, current installed-host compatibility and
     v2's declared task/arm/host qualification remain open. The installed host now
     differs from the archived pin used by the regression. Pilot v2/T006 remain open.
