@@ -8843,7 +8843,20 @@ fn semantic_headers_corpus() -> (Corpus, (u64, u64)) {
     let source = format!("export class Ledger {{\n    apply() {{\n{body}    }}\n}}\n");
     let needle = source.find("const datum_40").unwrap() as u64;
     let mut files = vec![(SEMANTIC_HEADERS_PATH.to_owned(), source)];
-    files.extend((0..45).map(|n| {
+    // Keep every prepared key inside the actual ANN window: this fixture owns
+    // placement, rather than requiring an approximate search to find one island.
+    files.extend(
+        [
+            "docs/dusk.md",
+            "docs/faq.md",
+            "docs/schedule.md",
+            "docs/ledger.md",
+            "src/records.rs",
+            "src/widgets.rs",
+        ]
+        .map(|path| (path.to_owned(), String::new())),
+    );
+    files.extend((0..35).map(|n| {
         (
             format!("src/auxiliary_{n}.rs"),
             format!("fn auxiliary_{n}() {{ record_serial({n}); }}\n"),
@@ -8857,6 +8870,11 @@ fn semantic_headers_corpus() -> (Corpus, (u64, u64)) {
         .engine()
         .semantic_current_mapping(&Corpus::control(), &digest, &corpus.profile.recipe_id())
         .unwrap();
+    assert!(
+        mapping.units.len() <= DENSE_WINDOW,
+        "all fixture keys must fit in the actual window: {}",
+        mapping.units.len()
+    );
     let (key, span) = mapping
         .units
         .iter()
@@ -9134,7 +9152,7 @@ fn semantic_headers_exclude_no_profile_anchors_and_composed_recursion() {
             )
             .unwrap();
         let query = if dense {
-            "Ledger"
+            "`Ledger`"
         } else {
             SEMANTIC_HEADERS_QUERY
         };
