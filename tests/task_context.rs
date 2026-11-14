@@ -1128,7 +1128,7 @@ fn structured_review_checks_freshness_and_returns_one_complete_bounded_original_
     let cut = call(&engine, assertion_review(revision, assertions.clone(), 512)).unwrap();
     assert_eq!(cut["silence"], true);
     assert_eq!(cut["omitted"], 9);
-    assert!(serde_json::to_vec(&cut).unwrap().len() + 1 <= 512);
+    assert!(serde_json::to_vec(&cut).unwrap().len() < 512);
     engine
         .replace_source("retry.rs", "pub fn retry() -> u8 { 4 }\n")
         .unwrap();

@@ -30,7 +30,13 @@ also passes (34.813 seconds); the final run includes the later parity/role check
 Logs and native resource/lifecycle receipts are local under
 `runs/t004-structured-2026-11-13/`. No provider or model call ran.
 
-Full eight-gate qualification is next on the committed implementation. Real-host
+The first full-gate attempt on `a795512` passed formatting but Clippy refused a
+test-only `length + 1 <= 512` expression. It was stopped with all observed owned
+processes reaped; the original partial run remains in `gates/`. The equivalent
+`length < 512` correction precedes a fresh complete gate run; no production rule
+or acceptance bound changes.
+
+Full eight-gate qualification is next on the corrected committed implementation. Real-host
 intervention quality, task benefit and pilot v2/T006 remain unfunded and unaccepted;
 this does not establish source-retrieval improvement or release acceptance.
 
