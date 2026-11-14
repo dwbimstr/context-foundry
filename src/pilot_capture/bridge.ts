@@ -573,6 +573,8 @@ function streamSimple(model: unknown, context: unknown, options?: unknown): unkn
 		thinkingEnabled: true,
 		effort: EFFORT,
 		cacheRetention: "short",
+		// Counting and request binding require the complete history on every turn.
+		statefulResponses: false,
 		anthropicPrefixMismatchBehavior: "error",
 		sessionId: opts.sessionId,
 		providerSessionState: opts.providerSessionState,

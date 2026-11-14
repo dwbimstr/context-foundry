@@ -217,7 +217,7 @@ Before freezing the apparatus, demonstrate these with the actual installed host
 and local no-provider fixtures. These remain freeze requirements; completed narrow
 repairs are identified in the relevant row:
 
-**Selected full-history delegate repair, 2026-11-14 — qualification pending.**
+**Selected full-history delegate repair, 2026-11-14 — green qualification pending.**
 The retained current-host request contains both `thread: {type: "create"}` and the
 new message-threads beta. Its associated upstream
 [`wantsAnthropicThreads`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/ai/src/providers/anthropic-threads.ts#L140)
@@ -245,6 +245,13 @@ all red/gate failures and frozen policy. The shared one-hour qualification inclu
 builds, with a 120-second cleanup reserve, offline dependencies, one heavy job,
 20 GiB disk floor and 8 GiB sampled individual RSS ceiling. Complete startup
 observation and transient-mode coverage remain separate requirements.
+
+Contract/test commit `50c571c` precedes the bridge edit. The regression is red on
+that commit: the actual request contains `thread`, fails unchanged beta admission,
+and the host exits normally with its group gone. The 92.031-second receipt includes
+offline compilation. The original current-host failure is preserved separately.
+Private evidence: `runs/pilot-stateless-host-2026-11-14/red-result.json` and
+`red-evidence/`; no provider request or policy change was involved.
 
 The existing owners are [`CaptureSession` and `IndependentCheckReceipt`](../../../src/pilot_capture.rs),
 [`Host::launch` and `HostEvent`](../../../src/pilot_capture/host.rs), and
