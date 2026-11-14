@@ -1,5 +1,88 @@
 # Validation
 
+## T005 sealed final pair no promotion — 2026-11-13
+
+**Final guard failed; retain the baseline.** The sole eligible fixed candidate
+`74b0b26` / `279b8873…` completed its one final trace-off pair on all 400 sealed
+questions (200 Rust, 200 Bun) on the owner's Mac. The original one-candidate
+confidence, per-corpus quality, latency, RSS, validity and cap guards are unchanged.
+No sample increase, threshold relaxation, new variant or query retry occurred.
+Implementation received aggregate reports only; questions, labels, responses and
+per-case final outcomes remain private to the mechanical custodian. The set is
+now consumed and cannot be reused as fresh tuning/selection evidence.
+
+| Final set | Questions | Located, baseline → candidate | Located gains / losses | Verbatim bodies | Body gains / losses |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Rust | 200 | 60 → 63 | 3 / 0 | 55 → 59 | 4 / 0 |
+| Bun | 200 | 102 → 103 | 3 / 2 | 98 → 98 | 3 / 3 |
+| Total | 400 | 162 → 166 | 6 / 2 | 153 → 157 | 7 / 3 |
+
+The observed located gain is one percentage point, but the original equal-weight
+per-corpus confidence lower bound is **−2.8454 percentage points**, rather than
+strictly positive. The exact one-sided McNemar p-value is **37/256 = 0.14453125**,
+so that prerequisite also fails. Both per-corpus located/body nonloss guards pass.
+The unchanged hash-pinned statistical implementation uses the original four
+one-sided 1/80 tails and strict dyadic decision before display rounding; its
+binomial/cluster assumptions retain their original model-based limits. Mean
+delivered tokens are 2,023.59 → 2,024.24, reported, not gated. All 800 response,
+source and wire observations validate; every response meets the 2,048-token and
+existing serialized MCP byte caps. There are no missing, duplicate, retried,
+refused or error cases and no selective exclusions.
+
+| Corpus owner wall boundary | Baseline seconds | Candidate seconds | Allowed candidate seconds | Result |
+| --- | ---: | ---: | ---: | --- |
+| Rust | 18.222 | 22.595 | 24.777 | pass |
+| Bun | 22.488 | 31.145 | 30.110 | **fail** |
+
+These are the selected full-owner launch/pin/load/query/shutdown/reap intervals,
+not per-request latency or a causal overhead estimate. Execution order remains
+baseline Rust/Bun, then candidate Rust/Bun; cache/order/thermal effects are not
+controlled. The complete native pair finishes naturally in 123.261 seconds under
+the original 3,600-second outer bound, 240-second final identity/validation reserve,
+120-second cleanup reserve, one-heavy-job rule, 20 GiB free-space floor and 8 GiB
+sampled individual RSS ceiling. Original/master/profile/source/input pins and the
+complete 79-file sealed packet pass unchanged readbacks. Four actual owners and
+their workers are observed reaped. No external-provider spend occurred; worker
+presence does not establish query-model call/input-token counts or host billing.
+
+**RSS postprocessing correction, original report preserved.** The first final
+report incorrectly took its per-corpus maximum from one-second JSONL point logs,
+although the native supervisor updates complete identity-bound per-PID maxima at
+every polling iteration. That understated baseline Rust memory and produced an
+unqualified RSS failure. An offline audit of the already-recorded complete native
+summaries makes no new inference/query and changes no threshold. Actual owner
+windows are naturally reaped and disjoint; every other observed phase process's
+maximum is below both corpus owners' complete maxima. Thus those owner maxima are
+the exact per-corpus all-owned **observed** maxima, without estimating missing data.
+Both original relative RSS guards pass: Rust **2,228.53 → 2,705.41 MiB**, Bun
+**1,213.88 → 1,204.42 MiB**. One raced cleanup-`rm` lookup remains explicitly
+unknown, not zero RSS; required actual owner/worker samples are positive. Six
+synthetic audit tests check sparse/full maxima, domination, overlap and missing
+measurements. The authoritative correction is
+`runs/t005-heldout-final-2026-11-13/resource-audit.json`; the original report and
+all native logs remain retained. Sampled maxima establish neither continuous
+peaks nor GPU/machine-wide memory bounds. Confidence and Bun latency independently
+fail, so the RSS correction cannot change the no-promotion decision.
+
+The final apparatus passed 35 native synthetic source/wire/resource/transport
+checks before packet payload access. Read-only replay of all 776 retained
+development replies verifies 11,820 source frames and every positive located/body
+claim. An initial diagnostic parser error used Python's Unicode line splitting
+instead of Foundry's LF coordinates; it is preserved and corrected before final
+execution, without changing the frozen evidence scorer. Full final source hashes,
+literal target witnesses, exact response/wire bytes and complete400 row identities
+are checked before the unchanged arithmetic adapter receives qualified rows.
+
+This closes the third/final development variant and sole final pair without
+promotion. The candidate remains outside active source and publication; no retrieval
+rule is enabled from it. T005's broader quality goal remains unaccepted. No fourth
+variant, consumed-set tuning or second final pair is selected; any later work needs
+a new bounded selection and unexposed acceptance evidence. Source, executable,
+closed development bundle, final private artifacts and correction receipts are
+retained under `runs/t005-header-candidate-2026-11-13/`,
+`runs/t005-heldout-final-2026-11-13/` and their named owned dataset roots. The
+[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+
 ## T005 kept-body prefix development qualification — 2026-11-13
 
 **Positive development result; final acceptance remains open.** One fixed third

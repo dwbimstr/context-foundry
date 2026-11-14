@@ -64,8 +64,8 @@ and dated paragraphs below are history.
   parity check passes. The candidate is rejected and removed from active code;
   its commit, binary and private evidence remain reproducible
   ([no-promotion receipt](validation.md#t005-compact-candidate-no-promotion--2026-11-11)).
-  This one-variant evaluation is closed. The fresh holdout was not queried or exposed
-  to implementation and now also has a verified local encrypted backup. No quality
+  This first one-variant evaluation is closed. At that checkpoint the fresh holdout
+  was not queried or exposed; its local encrypted backup remains verified. No quality
   promotion or broader anchorless improvement is established; T005 remains unaccepted.
   Another repair would need a new bounded selection, not adaptive reuse of this run.
   A later read-only cap-decision census distinguishes per-file refusals before
@@ -83,12 +83,6 @@ and dated paragraphs below are history.
   G2 significance rule. It is rejected and remains outside active source; this
   experiment is closed without tuning or querying the fresh holdout
   ([no-promotion receipt](validation.md#t005-fragment-order-candidate-no-promotion--2026-11-13)).
-  A fixed third/final kept-body declaration-prefix candidate now passes development
-  G2 at K = 3, all G1 aggregate guards with both newly lost cases reviewed, the
-  local gates and native CLI/MCP parity. It stays isolated and disabled in active
-  source while the sole final trace-off evaluation harness is qualified; the fresh
-  400-case set remains unqueried/unexposed. This is not T005 acceptance
-  ([development receipt](validation.md#t005-kept-body-prefix-development-qualification--2026-11-13)).
   A retained coverage census now separates dense same-file misses from lexical-only
   discovery and rules out observed provenance truncation. Source proximity is
   insufficient to select a neighbor policy; exact rendered-input/header provenance
@@ -97,8 +91,18 @@ and dated paragraphs below are history.
   Exact no-inference input reconstruction now matches the retained body keys/spans
   and verifies contextual-header evidence outside some cited body spans, including
   successful controls. A concrete delivery rule that preserves independent body
-  evidence is still to be designed and qualified; no candidate is selected
-  ([input receipt](validation.md#t005-exact-body-input-reconstruction--2026-11-13)).
+  evidence was subsequently selected as the fixed third/final kept-body declaration-
+  prefix variant. It passes development G2 at K = 3, local gates, G1 aggregate guards
+  with both newly lost cases reviewed, and native CLI/MCP parity
+  ([development receipt](validation.md#t005-kept-body-prefix-development-qualification--2026-11-13)).
+  Its sole final trace-off400 pair fails the original confidence, paired significance
+  and Bun latency guards. The complete-native-summary RSS audit passes the original
+  RSS guards and preserves the initially incorrect sparse-log verdict. The experiment
+  is closed without promotion: active source retains the baseline, T005 remains
+  unaccepted, and the400 set is consumed once but still unexposed to implementation.
+  No fourth variant, tuning on this set or second final pair is selected. Further
+  work needs a new bounded selection and unexposed acceptance evidence
+  ([final no-promotion receipt](validation.md#t005-sealed-final-pair-no-promotion--2026-11-13)).
 - **Scale.** Publication streams cached vectors (no 2 GiB vector bound) and
   generation v6 interns label-map paths and hashes (rust map 191 → 69 MB). At rust's
   density the next bounds are the mapping-view estimate near 120k files, then the label
