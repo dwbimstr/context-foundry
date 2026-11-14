@@ -1511,6 +1511,16 @@ labelled; they do not assign causes to the 249 historical G2 misses.
   while the candidate commit and binary remain retained. The final held-out set
   was not queried because this prerequisite promotion gate already failed. The
   [handoff](../../docs/resume-context-ecosystem.md#current-status--2026-11-06) owns status.
+- **Third/final development variant selected, 2026-11-13.** Exact input reconstruction
+  supports one default-off [kept-body declaration-prefix variant](../001-source-state-recovery/contracts/context-v2.md#experimental-kept-body-declaration-prefixes--009-t005).
+  It adds current source facts after admitted Body spans through the same cap/cut,
+  preserving independently scored body evidence. No owner-range substitution,
+  representation change, model search or new response format is selected. K = 3
+  for development G2 accounts for the two closed variants; the existing final
+  one-pair 400-case guard stays unchanged. This is selected work, not implementation,
+  a measured gain or promotion. The fixed 512-byte prefix bound and own/ancestor
+  order cannot be tuned against results, and no fourth variant belongs to this
+  checkpoint. [Selection and bounds](../../docs/validation.md#t005-kept-body-prefix-selection--2026-11-13).
 - **Verification:** fixtures establish trace attribution for absent candidates,
   stale units, rank/cap exclusion and packing omission; invalid traces cannot certify
   coverage. Test the selected repair's relevant source/budget/cache invariants and run

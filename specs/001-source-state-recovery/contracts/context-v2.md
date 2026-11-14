@@ -294,6 +294,39 @@ label, so a source-derived label ending in `[semantic]` stays label text.
 - Only placed dense candidates carry the tag; exact-definition, lexical and graph items
   render as above. There is no semantic preview, lexical-span form or continuation line.
 
+### Experimental kept-body declaration prefixes — 009 T005
+
+Selected 2026-11-13, default off (`--experimental-semantic-headers`); this is
+one fixed third/final development variant, not accepted or enabled. Ordinary
+unanchored context with an actual dense window may offer a source prefix only
+after a current Body location is kept. Original Body spans, input ranks and
+independent materialization stay unchanged. Search, lexical/no-profile/fallback,
+anchors and composed-task recursion exclude it.
+
+Using the current verified source's syntax forest, find a unique smallest named
+unit containing that Body span, then its nearest named ancestor. Own prefix first,
+then ancestor: each is `head..end_of_name_line`, clamped to its unit, with the
+parsed name inside it. Retain complete UTF-8 bytes only, at most 512 per prefix;
+omit unknown, ambiguous, already covered or oversized prefixes. No neighbor
+substitution. Parent indices must decrease; request cancellation is checked around
+parsing/walking. One source forest per file is sufficient, behind the existing
+semantic owner, without a new durable state or worker.
+
+Offer these ordinary source spans inline through the existing exact deduplication,
+four-per-file and 32-unit cut. They consume the same limits, may displace later
+candidates, and use existing exact source handles and packing. They are source
+context derived from a Body hit, not independently embedded, lexical matches or
+replacements for that Body. Trace origin, parent Body/rank/key, own/ancestor role
+and real outcomes separately. Revalidation still drops a changed source before
+publication; no store/recipe or public response format changes.
+
+The fixed local Gemma/profile/recipe and frozen G1/G2 instruments stay. Development
+G2 uses K = 3 for all three variants in this checkpoint; body, validity and cap
+guards stay conjunctive. The existing fresh 400-case one-pair guards are unchanged and
+remain conditional on all prerequisites. No fourth variant or tuning against
+observed results is authorized by this selection. See the
+[selection record](../../../docs/validation.md#t005-kept-body-prefix-selection--2026-11-13).
+
 Parsers dispatch by operation:
 - a context has no `next:` line;
 - retrieve keeps its single final `next: <handle>`;

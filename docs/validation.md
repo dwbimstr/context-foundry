@@ -1,5 +1,44 @@
 # Validation
 
+## T005 kept-body prefix selection — 2026-11-13
+
+**Selected before implementation; no quality result.** The third and final development
+variant is default-off `--experimental-semantic-headers`: after a current Body
+location is admitted, offer its unique named owner's and nearest named ancestor's
+declaration prefix, own first, through the same exact dedup/four-per-file/32-unit
+cut. Each prefix ends at the parsed name's source-line end, stays inside its unit,
+is complete UTF-8 and at most 512 bytes; unknown/ambiguous/already-covered/oversized
+prefixes are omitted. Original independently scored Body spans are retained, with
+no owner-range replacement or coalescing. Source facts are revalidated and rendered
+using ordinary source handles/forms. Prefixes can displace later candidates and
+consume tokens, so the existing complete-body gate remains mandatory.
+
+One existing semantic owner and request flag suffice; no schema, model, service,
+worker or public wire change is selected. Search, anchors, lexical/no-profile/
+fallback and task-composition recursion exclude it. The code boundary and data
+flow are in the [shared contract](../specs/001-source-state-recovery/contracts/context-v2.md#experimental-kept-body-declaration-prefixes--009-t005).
+Fixtures must cover exact parent/source ownership, UTF-8/512-byte bounds, ambiguity,
+independent body preservation, ordinary cap/cut/dedup, stale-source recheck,
+cancellation, partial windows, excluded paths and real CLI/MCP forwarding.
+
+Gemma/function/units7/master stores and the frozen 388-question G2 and 10,432-case raw G1
+sets remain fixed. G2 uses K = 3, accounting conservatively for all three development
+variants. The original negative K1 receipts stay historical. There is no fourth
+variant, size/order adjustment or measurement retry in this checkpoint. Only a
+candidate passing every prerequisite may enter the existing one-pair 400-case final
+stage with its original statistics, body, per-corpus, validity, latency and resource
+guards; this selection changes none of those parameters or reads its labels.
+
+The selected stage is 7,200 seconds with 120 for cleanup, one heavy job, 20 GiB free disk
+and 8 GiB sampled RSS per owned process. Phase maxima: focus/parity 300, build 600,
+eight gates 1,800, G2 pair 3,600 and G1 2,400, all within the shared deadline. Candidate
+source and apparatus must be committed/pinned before measurement. The baseline
+is the retained `60aff102…` executable. Only owned fresh store/target copies may
+change; no paid provider, training, model search, host mutation, signing or upload.
+On any quality failure keep baseline, finish G1/parity disposition and leave the
+fresh holdout sealed. Private written-first selection:
+`runs/t005-header-candidate-2026-11-13/selection.json`.
+
 ## T005 exact body-input reconstruction — 2026-11-13
 
 **PASS for input/provenance reconstruction.** The private probe uses the existing
