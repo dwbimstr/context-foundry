@@ -70,7 +70,7 @@ development replies verifies 11,820 source frames and every positive located/bod
 claim. An initial diagnostic parser error used Python's Unicode line splitting
 instead of Foundry's LF coordinates; it is preserved and corrected before final
 execution, without changing the frozen evidence scorer. Full final source hashes,
-literal target witnesses, exact response/wire bytes and complete400 row identities
+literal target witnesses, exact response/wire bytes and all 400 row identities
 are checked before the unchanged arithmetic adapter receives qualified rows.
 
 This closes the third/final development variant and sole final pair without

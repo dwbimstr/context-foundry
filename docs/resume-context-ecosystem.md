@@ -95,11 +95,11 @@ and dated paragraphs below are history.
   prefix variant. It passes development G2 at K = 3, local gates, G1 aggregate guards
   with both newly lost cases reviewed, and native CLI/MCP parity
   ([development receipt](validation.md#t005-kept-body-prefix-development-qualification--2026-11-13)).
-  Its sole final trace-off400 pair fails the original confidence, paired significance
-  and Bun latency guards. The complete-native-summary RSS audit passes the original
+  Its sole final trace-off 400-case pair fails the original confidence, paired significance
+  and Bun latency guards. The RSS audit using complete native summaries passes the original
   RSS guards and preserves the initially incorrect sparse-log verdict. The experiment
   is closed without promotion: active source retains the baseline, T005 remains
-  unaccepted, and the400 set is consumed once but still unexposed to implementation.
+  unaccepted, and the 400-case set is consumed once but still unexposed to implementation.
   No fourth variant, tuning on this set or second final pair is selected. Further
   work needs a new bounded selection and unexposed acceptance evidence
   ([final no-promotion receipt](validation.md#t005-sealed-final-pair-no-promotion--2026-11-13)).

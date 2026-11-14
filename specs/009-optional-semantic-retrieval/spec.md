@@ -1340,7 +1340,7 @@ selected Gemma profile and current implementation are the comparison baseline.
 The selected K=1 packing experiment completed on 2026-11-11 with **no promotion**:
 it failed G2 body preservation and was removed from active code. Its G1 comparison
 has no gained or lost cases. The fresh holdout was unused at that checkpoint. A later
-fixed third/final variant completed the sole400-case final pair without promotion;
+fixed third/final variant completed the sole 400-case final pair without promotion;
 the current checkpoint is closed and the broader quality goal is retained. Further
 work needs a new bounded selection and unexposed acceptance evidence. See the
 [dated result](../../docs/validation.md#t005-compact-candidate-no-promotion--2026-11-11).
@@ -1461,7 +1461,7 @@ labelled; they do not assign causes to the 249 historical G2 misses.
     significance and Bun latency prerequisites; full native maxima pass the unchanged
     RSS guards after a preserved offline postprocessing correction. No candidate is
     promoted or integrated. This third/final variant and current checkpoint are closed;
-    the400 set is consumed once but remains unexposed to implementation. No fourth
+    the 400-case set is consumed once but remains unexposed to implementation. No fourth
     variant, tuning on this set or second final pair is selected. See the
     [final disposition](../../docs/validation.md#t005-sealed-final-pair-no-promotion--2026-11-13).
 - **Candidate checkpoint:**
