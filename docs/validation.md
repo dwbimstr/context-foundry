@@ -1,5 +1,57 @@
 # Validation
 
+## T005 exact body-input reconstruction — 2026-11-13
+
+**PASS for input/provenance reconstruction.** The private probe uses the existing
+Rust body fitter and verified production tokenizer, with the unchanged units7
+hierarchy recipe, 512-token card cap, 64-token context and function digest. A
+transparent `TokenCount` recorder preserves the tokenizer's fitting reuse; it
+records only selected input keys. No embedding, ANN or store API is invoked.
+
+The selection includes all 30 same-file/no-covering-candidate misses from the
+preceding census and all 169 successful controls: 199 cases across 188 frozen
+source files. The fitter emits 9,839 body-recipe cards. Every selected Body
+location matches its retained **input key and exact source span**, accounting for
+983 location occurrences across the cases. Sources are hash-checked before and
+after fitting; the tokenizer/profile and product-source readbacks are unchanged.
+This establishes actual rendered input bytes, rather than inferring them from a
+nearby span or decoding normalized token IDs.
+
+Six misses, three Rust and three Bun, have their complete target header in the
+matched input context and a scored body span inside the target's parsed unit,
+while the span excludes the target name. Two additionally retain the exact whole
+declaration line. Thirteen misses contain the name somewhere in context, but
+that weaker string observation does not establish declaration ownership. Two of
+the 30 have no selected Body location. Successful controls remain explicit:
+35 have some body hit whose own-context header is outside its scored span, so
+this property is not by itself a failure predictor.
+
+This supports investigating delivery of actual contextual headers while preserving
+independently scored body evidence. It does not select a materialization rule,
+prove that a header would survive the current caps/packer, establish a G2 gain,
+or alter a recipe, index, ranking, limit or default. Exact source coordinates,
+unchanged body/validity guards, real consumers and the frozen quality/runtime gates
+remain necessary before any candidate promotion. The fresh holdout is unqueried;
+the closed compact and fragment-order experiments remain closed.
+
+Four synthetic helper checks verify transparent token streams/fitting delegation,
+selective capture and strict template/source framing. The first private helper
+build fails on SHA-2 hex formatting and `ProviderError` conversion; its source,
+pins and native receipt are retained. The compile-only repair leaves fitting,
+data and guards unchanged. On the separately owned, package-cleaned target, build
+passes in 2.278 seconds, helper checks in 0.987 seconds and the sole reconstruction
+probe in 28.454 seconds. The original 1,800-second stage, 120-second cleanup
+reserve, one-heavy-job rule, four Cargo jobs, offline build, 20 GiB disk floor
+and 8 GiB sampled per-process RSS ceiling are retained. All observed processes
+exit naturally and are absent; no model worker is observed and spend is zero.
+
+The helper is an untracked example in an isolated source worktree. No product
+code changed, no new full Rust gate run or retrieval score is claimed, and no
+private source/context payload is added to Git. The helper source, original
+compile failure, fixed source, native receipts, exact contexts and aggregate
+remain private in `runs/t005-input-reconstruction-2026-11-13/`. The
+[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+
 ## T005 retained candidate-coverage census — 2026-11-13
 
 **PASS for the read-only diagnostic.** All 388 retained baseline outcomes and

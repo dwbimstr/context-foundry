@@ -88,6 +88,11 @@ and dated paragraphs below are history.
   insufficient to select a neighbor policy; exact rendered-input/header provenance
   needs checking before another coverage proposal
   ([diagnostic](validation.md#t005-retained-candidate-coverage-census--2026-11-13)).
+  Exact no-inference input reconstruction now matches the retained body keys/spans
+  and verifies contextual-header evidence outside some cited body spans, including
+  successful controls. A concrete delivery rule that preserves independent body
+  evidence is still to be designed and qualified; no candidate is selected
+  ([input receipt](validation.md#t005-exact-body-input-reconstruction--2026-11-13)).
 - **Scale.** Publication streams cached vectors (no 2 GiB vector bound) and
   generation v6 interns label-map paths and hashes (rust map 191 → 69 MB). At rust's
   density the next bounds are the mapping-view estimate near 120k files, then the label

@@ -1443,6 +1443,10 @@ labelled; they do not assign causes to the 249 historical G2 misses.
     separates eligible dense/lexical discovery from outlines and parent-only paths.
     It selects no repair; represented-input and provenance evidence is still needed
     before proposing a contextual-coverage change.
+    [Exact body-input reconstruction](../../docs/validation.md#t005-exact-body-input-reconstruction--2026-11-13)
+    subsequently verifies matched input context outside scored source spans. This
+    is diagnostic evidence, with no selected materialization rule or promotion;
+    independently scored body evidence and all existing guards remain required.
 - **Candidate checkpoint:**
   - Hold Gemma fixed and predeclare at most three variants targeting the demonstrated
     loss: representation, candidate coverage, ordering or packing. Keep other stages
