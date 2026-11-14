@@ -78,6 +78,13 @@ G2 and G1 qualify this sole fixed candidate for preparing the one final trace-of
 pair. That pair must retain every original confidence, per-corpus located/body,
 latency, resource, validity and cap guard; the original statistical supplement is
 unchanged. The final harness is being qualified without heldout payload access.
+The development evidence bundle then passes two complete snapshot readbacks:
+4,140 files / 37,924,367,103 bytes across four roots, manifest
+`aa37ef9236e20cccbf5b274606c0cb01276391d90e25a057e373e971f479a7df`.
+The unchanged development stage closes at 4,676.185 seconds, within its original
+bounds; the bundle is immutable after `evidence-readback.json`. Final-harness work
+has a separate private run and does not amend the closed development evidence.
+
 T005 is not accepted, the candidate is not enabled/integrated/published, and the
 [handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
 
