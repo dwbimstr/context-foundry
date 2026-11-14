@@ -178,7 +178,7 @@ impl Engine {
                 trace.record(event);
             }
         };
-        let headers = selection.headers && anchors.is_empty();
+        let headers = selection.headers && anchors.is_empty() && false;
         let mut forests = std::collections::BTreeMap::new();
         let (mut position, mut body_kept, mut context_offered, mut context_kept) =
             (0usize, 0usize, 0usize, 0usize);
