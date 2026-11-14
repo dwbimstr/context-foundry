@@ -203,6 +203,16 @@ contained version check above has executed. Preserve the selected artifact and
 inputs; resume qualification with a fresh stated deadline after storage cleanup.
 The preparation deadline is not evidence of a live or completed test.
 
+**Qualification outcome, 2026-11-14.** The selected continuation ran under a fresh
+shared deadline after cleanup. The complete nonignored frozen-host suite passes.
+The current artifact reaches the embedded bridge and settings boundary, but its
+actual serialized request adds `message-threads-2026-08-12`; the unchanged frozen
+validator refuses it as `beta_not_admitted`. Current-host acceptance remains
+**HOLD**. This is a locally refused request with normal cleanup, not a new v2 pin
+or CaptureSession/Live admission. Closed-file permissions pass at the declared
+current-native path; complete startup observation and transient modes remain open.
+See the [runtime receipt](../../../docs/validation.md#real-host-no-provider-qualification--2026-11-14).
+
 Before freezing the apparatus, demonstrate these with the actual installed host
 and local no-provider fixtures. These remain freeze requirements; completed narrow
 repairs are identified in the relevant row:

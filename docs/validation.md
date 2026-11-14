@@ -1,5 +1,52 @@
 # Validation
 
+## Real-host no-provider qualification — 2026-11-14
+
+**Frozen host PASS; current-host acceptance HOLD.** On `8d7012f` (product source,
+tests and Cargo inputs still equal `ea33a2e`), the complete existing nonignored
+`pilot_capture` integration suite passed against the archived exact OMP 18.13.2
+artifact: **33 passed, 0 failed, 2 ignored**, 291.12 seconds in the test harness,
+322.370 seconds including offline compilation. The two existing private-input
+pipeline/oracle tests remained ignored as selected; their earlier evidence is not
+a fresh rerun. The suite uses owned numeric-loopback TLS fixtures and synthetic
+credentials, not an external provider.
+
+The owned OMP 18.18.1 artifact reached the actual embedded bridge, loaded its
+delegate, advertised the expected model/tools and passed all four setup RPCs and
+settings readback. One synthetic prompt produced a **12,895-byte actual serialized
+request**, which the unchanged `wire::validate_request` rejected with
+`request_binding:beta_not_admitted`. Its observed beta list adds
+`message-threads-2026-08-12` beyond the frozen allowlist. This is the first observed
+validator refusal; later request properties are not qualified by a short-circuiting
+rejection. The request was refused locally, with no Count/Messages transport
+constructed, and retained privately. The host exited normally, code 0, with empty
+stderr, no forced termination and its process group gone. The selected artifact's
+hash is unchanged. A separate closed-file walk passed 28 regular files, allowing
+0700 only for the exact current-version native extraction and 0600 for other files,
+with 0700 directories. This does not establish transient-file mode coverage.
+
+The shared 3,600-second stage finished in **447.097 seconds**, including an initial
+private-helper compile failure, its retained source/stderr/receipt, correction and
+retry under the same deadline. No product code changed. The 120-second cleanup
+reserve, one-heavy-job rule, 20 GiB disk floor and 8 GiB sampled individual-process
+RSS ceiling were retained. Maximum observed individual RSS was **1,840.97 MiB**;
+minimum sampled free disk was **321.12 GiB**. All observed owned processes were
+absent after normal completion; supervisor attribution is by PID/start identity,
+not a Darwin subreaper guarantee.
+
+Private receipts: `runs/real-host-qualification-2026-11-14/`, especially
+`final-readback.json`, `current-probe/result.json`, `current-probe-readback.json`
+and `native/003-frozen-host-suite.receipt.json`. New build intermediates were
+removed after hash/dependency readback of retained runnable binaries. Documentation
+link checks pass; existing full-gate evidence on unchanged product inputs remains
+the applicable source validation.
+
+V1's exact host pin, beta allowlist and native-path exception remain unchanged.
+This diagnostic does not admit the current installed host to CaptureSession/Live
+or select a new v2 pin. Complete early startup observation/barrier, transient modes,
+v2 task/arm qualification and actual task benefit remain open. External-provider
+calls/spend are zero; paid runs, signing and release remain gated.
+
 ## T004 publication and current-host inventory — 2026-11-14
 
 The owner-approved four commits through `876a3a1` are published to
@@ -41,13 +88,13 @@ first as `35ee382`; a fresh clone verified all 400 tracked paths, bytes, file ty
 and executable bits. Main remained `d94b013`. Local publication receipt:
 `runs/storage-cleanup-2026-11-14/publication-before-cleanup.json`.
 
-| Allocated directory size (`du`, GiB) | Before | After cleanup |
+| Allocated directory size (`du`, GiB) | Before | After qualification cleanup |
 | --- | ---: | ---: |
 | `target` | 179.3 | 0.086 |
-| `runs` | 15.3 | 6.7 |
-| Foundry datasets | 265.6 | 33.7 |
+| `runs` | 15.3 | 7.3 |
+| Foundry datasets | 265.6 | 32.3 |
 
-The filesystem reported **352,534,458,368 bytes free (328.3 GiB)** at final
+The filesystem reported **349,170,487,296 bytes free (325.2 GiB)** at final
 readback. APFS shared blocks and deferred freeing mean directory reductions are
 not additive physical reclamation. The remaining target files were mapped by two
 live IDE helpers; neither helper was stopped. Needed standalone Foundry executables
@@ -76,12 +123,17 @@ task/oracle inputs, recovery material and user records were preserved.
 
 Private receipts and the eight-family retention map are in
 `runs/storage-cleanup-2026-11-14/{result,protected-readback,retention-index}.json`.
+The post-qualification sizes above are in `final-storage.json`. A further unused
+legacy dataset build cache was removed after retaining its standalone executable;
+native qualification and inspector build intermediates were also retired while
+keeping runnable binaries. Cleanup results through `8d7012f` are published with
+full fresh-clone readback (`publication-after-cleanup.json` in the same directory).
 Older complete-bundle manifests are **historical pre-cleanup snapshots**, not claims
 that retired working caches remain present or were archived byte-for-byte. No
 provider call, signing, training, model download or private-data publication occurred.
 Product source/Cargo inputs are unchanged; documentation links are the applicable
-public check. The next host qualification uses a newly stated deadline, not the
-expired preparation window.
+public check. The host qualification above used a fresh stated deadline after
+cleanup, not the expired preparation window.
 
 ## Structured task assertions 008 T004 — 2026-11-13
 

@@ -297,9 +297,14 @@ and dated paragraphs below are history.
     source/fact stores are compact offline snapshots; retired working caches make
     previous complete-bundle manifests historical. The private retention index is
     `runs/storage-cleanup-2026-11-14/retention-index.json`
-    ([cleanup receipt](validation.md#storage-cleanup--2026-11-14)). Resume the
-    selected native qualification with a fresh deadline. Paid runs and signing
-    remain gated.
+    ([cleanup receipt](validation.md#storage-cleanup--2026-11-14)). The selected
+    no-provider native continuation has now run: the complete nonignored frozen-host
+    suite passes, while the current host reaches the bridge/settings boundary but
+    its actual request is refused for an unadmitted beta token. Current-host
+    acceptance is **HOLD**; the frozen live pin and validator are unchanged
+    ([qualification](validation.md#real-host-no-provider-qualification--2026-11-14)).
+    New build intermediates were removed after retaining runnable artifacts.
+    Paid runs and signing remain gated.
     Complete coverage of transient library file modes, current installed-host compatibility and
     v2's declared task/arm/host qualification remain open. The installed host now
     differs from the archived pin used by the regression. Pilot v2/T006 remain open.
