@@ -1,5 +1,86 @@
 # Validation
 
+## T005 kept-body prefix development qualification — 2026-11-13
+
+**Positive development result; final acceptance remains open.** One fixed third
+and final development variant was selected in writing before implementation:
+after a current independently scored Body location survives the ordinary cut,
+offer its structural owner's declaration prefix and nearest named ancestor's
+prefix. Each quotes at most 512 exact UTF-8 source bytes through the name's line.
+Both use the existing exact deduplication, four-per-file and 32-unit cut, so they
+can displace later candidates. Original Body spans and input ranks stay intact.
+Prefixes are source-derived context, explicitly not independently embedded or
+lexical hits. Search, lexical/no-profile/fallback, anchors and composed-task recursion
+exclude the option. The source-local syntax forest is cached once per file in the
+existing semantic owner; no model, recipe, store, worker or public-format change.
+
+The candidate is clean isolated source `74b0b26`, executable `279b8873…`, selected
+with `--experimental-semantic-headers`. It remains outside the active checkout.
+The fixed local Gemma/units7/profile, baseline `60aff102…`, frozen 388-question G2,
+2,048-token and existing byte caps remain. Development multiplicity is K = 3
+across all three variants in this checkpoint; the earlier negative K = 1 records
+remain historical. No fourth variant or algorithm/size/ordering tuning is selected.
+
+| G2 set | Questions | Located, baseline → candidate | Verbatim bodies | Located gains / losses | Body gains / losses |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Rust | 197 | 52 → 60 | 47 → 56 | 8 / 0 | 10 / 1 |
+| Bun | 191 | 117 → 124 | 107 → 115 | 8 / 1 | 8 / 0 |
+| Total | 388 | 169 → 184 | 154 → 171 | 16 / 1 | 18 / 1 |
+
+The exact one-sided paired p-value is 18/131,072 = 0.000137329, below 0.05/3.
+The unchanged `scripts/g2.sh compare` exits 0 at K = 3 and agrees with the strict
+validator. Mean delivered tokens are 2,022.925 → 2,023.665, reported, not gated.
+All 776 responses/wires/traces are valid and dense at their pinned revisions.
+Context lineage is checked occurrence by occurrence against a kept original Body,
+with exact source identity, input key/rank, role, ordinary cut replay and an
+explicit `passage_independently_embedded:false` marker. Candidate policy markers are workspace-bound.
+They record 2,037 offered / 1,481 kept prefixes across the two corpora. Original
+stores, profile, binaries, source and selected helper/input pins pass full readback.
+
+All 10,432 G1 raw cases complete (10,431 scored under the original Bun exclusion),
+and all three frozen aggregate guards pass. Bun and qualified retain every
+correctness/body outcome. Checker loses two pass-at-one cases and one pass-within-
+four case; body has one gain and one loss. **Both newly lost cases are reviewed
+and counted.** One candidate first reply lacks the expected declaration but a
+third-call retrieve recovers it. The other lacks the expected source/body and
+retrieves a same-name declaration from a different file without recovery. Retained
+trace-off replies establish these outcomes, not a stage-specific causal diagnosis.
+No case, threshold or candidate change follows this review. The private review
+receipt is `runs/t005-header-candidate-2026-11-13/g1-loss-review-receipt.json`.
+
+The first physical frozen-G2-query native CLI call matches each arm's saved MCP
+text exactly: baseline 1,991 tokens and candidate 2,022. Only the candidate emits
+its policy marker, with three prefixes offered. This verifies the actual CLI/MCP boundary, not broader task benefit or host billing.
+Nine focused tests pass: five source-owner tests and four consumer tests for real
+parsed Body windows, freshness, caps, excluded routes and actual stdio MCP forwarding.
+Disabling expansion fails the intended consumer test on an isolated package-cleaned
+target. The first consumer failures are retained: the fixture's approximate window
+omitted its intended Body, and its bare-word query was not an admitted anchor.
+The corrected fixture includes all prepared keys in the actual window and explicitly
+resolves its named anchor; no algorithm was changed after first implementation.
+
+All eight local gates pass on `74b0b26` in 767.344 seconds: default **1,321 passed,
+0 failed, 35 ignored**; pilot **101 passed, 0 failed, 1 ignored** (nested child
+summaries excluded). The isolated release build takes 59.507 seconds. The fixed G2
+pair takes 133.213 seconds, G1 752.472 seconds, and CLI parity 18.229
+seconds. G2/G1/CLI helpers pass 70/18/15 synthetic checks; initial helper fixture
+failures and later explicit helper hash/CLI-head bindings are retained separately.
+
+The unchanged 7,200-second development stage has a 120-second cleanup reserve,
+one heavy job, 20 GiB free-space floor and 8 GiB sampled individual RSS ceiling.
+Native owners/workers finish naturally and are observed absent; spend is zero.
+Sampled memory does not establish true peaks, GPU/global pressure or provider usage.
+Private source bundle, executable, logs, failures and owned store copies remain in
+`runs/t005-header-candidate-2026-11-13/` and its named dataset roots.
+
+The fresh sealed 400-case set is still **unqueried and unexposed**. Development
+G2 and G1 qualify this sole fixed candidate for preparing the one final trace-off
+pair. That pair must retain every original confidence, per-corpus located/body,
+latency, resource, validity and cap guard; the original statistical supplement is
+unchanged. The final harness is being qualified without heldout payload access.
+T005 is not accepted, the candidate is not enabled/integrated/published, and the
+[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+
 ## T005 exact body-input reconstruction — 2026-11-13
 
 **PASS for input/provenance reconstruction.** The private probe uses the existing

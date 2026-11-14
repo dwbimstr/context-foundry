@@ -83,6 +83,12 @@ and dated paragraphs below are history.
   G2 significance rule. It is rejected and remains outside active source; this
   experiment is closed without tuning or querying the fresh holdout
   ([no-promotion receipt](validation.md#t005-fragment-order-candidate-no-promotion--2026-11-13)).
+  A fixed third/final kept-body declaration-prefix candidate now passes development
+  G2 at K = 3, all G1 aggregate guards with both newly lost cases reviewed, the
+  local gates and native CLI/MCP parity. It stays isolated and disabled in active
+  source while the sole final trace-off evaluation harness is qualified; the fresh
+  400-case set remains unqueried/unexposed. This is not T005 acceptance
+  ([development receipt](validation.md#t005-kept-body-prefix-development-qualification--2026-11-13)).
   A retained coverage census now separates dense same-file misses from lexical-only
   discovery and rules out observed provenance truncation. Source proximity is
   insufficient to select a neighbor policy; exact rendered-input/header provenance

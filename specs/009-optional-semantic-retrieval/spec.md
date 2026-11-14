@@ -1447,6 +1447,14 @@ labelled; they do not assign causes to the 249 historical G2 misses.
     subsequently verifies matched input context outside scored source spans. This
     is diagnostic evidence, with no selected materialization rule or promotion;
     independently scored body evidence and all existing guards remain required.
+    A subsequent fixed third/final kept-body declaration-prefix variant was selected
+    before implementation. It passes development G2 at K = 3, the existing G1 guards
+    with every newly lost case reviewed, focused tests, local gates and native CLI/MCP
+    parity. Source spans/input keys remain independent; optional structural prefixes
+    use ordinary caps and distinct source-context provenance. It remains isolated,
+    not promoted or integrated; the sole final evaluation retains the original sealed
+    set and all original statistical/runtime guards. See the
+    [dated qualification](../../docs/validation.md#t005-kept-body-prefix-development-qualification--2026-11-13).
 - **Candidate checkpoint:**
   - Hold Gemma fixed and predeclare at most three variants targeting the demonstrated
     loss: representation, candidate coverage, ordering or packing. Keep other stages
