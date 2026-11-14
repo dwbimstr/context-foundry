@@ -42,8 +42,10 @@ outcome. A bundled improvement cannot establish the effect of every component.
    dropped. Reuse one baseline where the configurations and tasks permit it.
 4. For task context, compare the ordinary control, passive retained context and
    selective intervention. A capability-to-contrast matrix must identify which
-   comparisons test each of the six tasks. The unimplemented 008 T004 semantic
-   triggers cannot be credited as path reminders or assumed available.
+   comparisons test each of the six tasks. 008 T004 now implements the owner's
+   explicit structured assertion triggers locally under the no-model rule. Those
+   comparisons need declared assertions and actual-host qualification; path
+   reminders alone cannot be credited as contradiction/constraint detection.
 5. Within a task block, keep source, instructions, catalog, model, settings,
    request/time limits and tool authority equal except for the named treatment.
    The control gets the same ordinary task instructions, without v1's asymmetric

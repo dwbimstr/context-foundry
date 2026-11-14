@@ -169,6 +169,46 @@ fn mandatory_task_view_and_source_share_exact_budget_under_each_context_strategy
         .text
     );
 }
+
+#[test]
+fn structured_assertions_remain_mandatory_and_hashed_inside_the_shared_delivery_budget() {
+    let mut e = env();
+    let engine = Engine::open_existing(&e.store).unwrap();
+    let mut entry = add(
+        "structured",
+        "constraint",
+        "Preserve the caller's explicit retry assertion.",
+    );
+    entry["entry"]["assertions"] =
+        json!([{"key":"caller-v1:retry.limit","relation":"equals","value":"3"}]);
+    e.revision = call(
+        &engine,
+        json!({"op":"apply","expected_revision":e.revision,"edits":[entry]}),
+    )
+    .unwrap()["revision"]
+        .as_u64()
+        .unwrap();
+    let out = context(&engine, &e, "retry_delay", Strategy::Search).unwrap();
+    let packed = pack(&out, 2048).unwrap();
+    assert_eq!(packed.tokens, response::count_tokens(&packed.text));
+    let data = view(&packed.text);
+    let assertion = &data["entries"][2];
+    assert_eq!(assertion["assertions"][0]["value"], "3");
+    assert_eq!(
+        assertion["assertions_sha256"],
+        context_foundry::digest(&serde_json::to_vec(&assertion["assertions"]).unwrap())
+    );
+    let Err(FoundryError::BudgetTooSmall { minimum_tokens }) = pack(&out, 1) else {
+        panic!("mandatory view must refuse an insufficient cap")
+    };
+    let exact = pack(&out, minimum_tokens).unwrap();
+    assert!(exact.tokens <= minimum_tokens);
+    assert_eq!(
+        view(&exact.text)["entries"][2]["assertions"],
+        assertion["assertions"]
+    );
+    assert!(exact.text.len() <= response::BYTE_CAP);
+}
 #[test]
 fn a_task_change_or_forget_before_the_final_source_read_refuses_the_entire_response() {
     for forget in [false, true] {

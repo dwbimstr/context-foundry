@@ -4,7 +4,8 @@ Status: T001 and T002 implemented locally 2026-10-04 and unreleased (see
 [validation](../../docs/validation.md)). T003–T005 are experimental and unaccepted.
 Owner decision, 2026-11-06, "Measure them in pilot v2": their acceptance bar stays,
 their outcome tasks join the [003 T006](../003-agent-retrieval-context/spec.md#t006--validate-retrieval-repairs-in-real-coding-tasks)
-task suite and pilot v2, and T004's semantic triggers are to be built. All three stay
+task suite and pilot v2. T004's owner-selected structured triggers are implemented
+locally under the no-model rule (2026-11-13); real-host outcomes remain open. All three stay
 open until an authorized run passes; pilot v2 is unfunded until the owner authorizes a
 key, rights and a budget ([record](../../docs/validation.md#owner-decisions--2026-11-06)).
 Depends: 001 authoritative ownership, repair and
@@ -297,9 +298,9 @@ the delivery boundary.
 
 Status: exact-action and grounded path/finishing reminders are implemented locally on
 the experimental branch. The owner selected explicit structured assertions under the
-existing no-model rule on 2026-11-13. The continuation below is selected for
-implementation; pilot v2 still owns measured agent outcomes. T004 stays open until
-the triggers exist and an authorized run passes.
+existing no-model rule on 2026-11-13. The continuation below is implemented with
+real-store/CLI/MCP focused checks; full local gates are in progress. Pilot v2 still
+owns measured agent outcomes, and T004 stays open until an authorized run passes.
 
 Build the next stages in the same task record, with no model or background loop.
 `advise {action_key,max_bytes}` returns only active rejected attempts whose optional
@@ -332,7 +333,7 @@ erase prior exports, backups or host/provider copies.
 Tests must exercise silence, exact-match advice, persistent dismissal, promotion and
 indexed retrieval, revision collision, stale source refusal, correction/forget
 conflicts, and abrupt exit before/after promotion commit. Broader contradiction or
-constraint-violation detection (the semantic triggers) is selected work to build, and
+constraint-violation detection uses the owner-selected structured contract below;
 pilot v2 is to measure real-host benefit (owner, 2026-11-06).
 
 

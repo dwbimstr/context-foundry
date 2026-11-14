@@ -279,8 +279,10 @@ and dated paragraphs below are history.
     `966cdf7`; it is published with full fresh-clone readback
     ([receipt](validation.md#approved-final-wrap-up-publication--2026-11-13)).
     The owner selected explicit structured assertions for 008 T004 under the current
-    no-model rule on 2026-11-13. The existing spec now owns that comparison contract;
-    implementation and real-host outcome acceptance are still to do.
+    no-model rule on 2026-11-13. The existing spec owns that comparison contract;
+    local implementation passes the real-store/CLI/MCP focused checks. Full gates
+    are in progress; real-host intervention/outcome acceptance stays open
+    ([record](validation.md#structured-task-assertions-008-t004--2026-11-13)).
     Complete coverage of transient library file modes, current installed-host compatibility and
     v2's declared task/arm/host qualification remain open. The installed host now
     differs from the archived pin used by the regression. Pilot v2/T006 remain open.

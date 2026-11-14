@@ -1,5 +1,39 @@
 # Validation
 
+## Structured task assertions 008 T004 — 2026-11-13
+
+**Focused local checks pass; full gates in progress.** The owner selected explicit
+structured assertions under the current no-model rule. Contract/test commit
+`969964c` precedes implementation. The retained test fails on the original parser
+because it rejects the new fields (7.677 seconds). Its initial receipt qualifier
+looked for a panic in stdout; offline readback qualified the existing stderr
+diagnostic without rerunning or discarding the first receipt.
+
+The existing task row now stores bounded exact single-valued assertions. Review
+compares explicit proposed facts, reports conflicting observation/hypothesis/decision
+values or violated requirement/constraint relations, and retains silence for
+unmatched or satisfying assertions. Keys carry caller scope/environment identity;
+there is no prose interpretation, model, new table/index or background loop.
+Text and assertion-array digests remain distinct. Assertions survive folded views,
+restart and export, appear within mandatory task-view budgets, and bind promotion
+attribution without becoming project-memory rules. Existing freshness, CAS,
+supersession, protected entries and complete-original review caps remain enforced.
+
+Final focused command: `cargo test --locked --offline --test task_context --test
+task_retrieval --test task_evidence -- --nocapture`, under the existing native
+supervisor on the owner's Mac: **63 passed / 0 failed / 1 ignored**, 18.858 seconds.
+This includes actual CLI/opt-in MCP catalog and complete response parity, atomic
+batch refusal without revision consumption, forced-exit commit/rollback recovery,
+corrupted-assertion digest refusal, stale-link silence, exact values/scopes,
+fold/select/supersede/restart and mandatory delivery caps. A preceding focused run
+also passes (34.813 seconds); the final run includes the later parity/role checks.
+Logs and native resource/lifecycle receipts are local under
+`runs/t004-structured-2026-11-13/`. No provider or model call ran.
+
+Full eight-gate qualification is next on the committed implementation. Real-host
+intervention quality, task benefit and pilot v2/T006 remain unfunded and unaccepted;
+this does not establish source-retrieval improvement or release acceptance.
+
 ## Approved final wrap-up publication — 2026-11-13
 
 The owner approved the exact fifteen-commit snapshot through `966cdf7`, replacing

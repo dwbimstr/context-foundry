@@ -431,7 +431,7 @@ fn task_fault_child() {
         let _ = apply(
             &engine,
             r,
-            json!([{"op":"fold","entry_id":"obs","summary":"folded"}]),
+            json!([{"op":"fold","entry_id":"obs","summary":"folded"}, asserted("atomic-fact","observation","scope:atomic","equals","committed")]),
         );
     }
     panic!("fault was not reached");
@@ -478,6 +478,23 @@ fn abrupt_exit_is_atomic_for_payload_view_and_forget() {
             record["revision"],
             if mode == "apply-after" { r + 1 } else { r }
         );
+        assert_eq!(
+            record["entries"].as_array().unwrap().len(),
+            if mode == "apply-after" { 2 } else { 1 }
+        );
+        if mode == "apply-after" {
+            assert_eq!(
+                record["entries"][1]["entry"]["assertions"][0]["value"],
+                "committed"
+            );
+            assert_eq!(
+                record["entries"][1]["assertions_sha256"]
+                    .as_str()
+                    .unwrap()
+                    .len(),
+                64
+            );
+        }
         assert_eq!(
             record["entries"][0]["view"]["summary"],
             if mode == "apply-after" {
@@ -553,6 +570,7 @@ fn corrupted_payload_and_exhausted_counter_fail_visibly() {
 async fn experimental_mcp_tool_is_opt_in_and_matches_cli_state() {
     use rmcp::{ServiceExt, model::CallToolRequestParams, transport::TokioChildProcess};
     let e = env();
+    let mut final_structured_review = None;
     for enabled in [false, true] {
         let mut command = tokio::process::Command::new(BIN);
         command.args([
@@ -572,11 +590,31 @@ async fn experimental_mcp_tool_is_opt_in_and_matches_cli_state() {
             enabled
         );
         if enabled {
+            let schema = &catalog
+                .tools
+                .iter()
+                .find(|t| t.name == "task_context")
+                .unwrap()
+                .input_schema;
+            assert_eq!(
+                schema["properties"]["command"]["properties"]["assertions"]["maxItems"],
+                16
+            );
+            assert_eq!(
+                schema["properties"]["command"]["properties"]["edits"]["items"]["properties"]["entry"]
+                    ["properties"]["assertions"]["items"]["properties"]["relation"]["enum"],
+                json!(["equals", "not_equals"])
+            );
             for command in [
                 json!({"op":"create","title":"MCP task"}),
-                json!({"op":"apply","expected_revision":1,"edits":[add("obs","observation","MCP recovery bytes")]}),
+                json!({"op":"apply","expected_revision":1,"edits":[{"op":"add","entry":{"id":"obs","kind":"observation","text":"MCP recovery bytes","author":"sandbox operator","provenance":"synthetic task interaction","source_links":[],"assertions":[{"key":"scope:mcp","relation":"equals","value":"3"}]}}]}),
                 json!({"op":"peek","entry_id":"obs","offset":0,"bytes":100}),
                 json!({"op":"review","expected_revision":2,"paths":[],"finishing":true,"max_bytes":4096}),
+                assertion_review(
+                    2,
+                    json!([{"key":"scope:mcp","relation":"equals","value":"4"}]),
+                    4096,
+                ),
             ] {
                 let result=client.call_tool(CallToolRequestParams::new("task_context").with_arguments(json!({"workspace_id":e.wid,"task_id":"investigation","command":command}).as_object().unwrap().clone())).await.unwrap();
                 assert_ne!(result.is_error, Some(true), "{result:?}");
@@ -594,8 +632,12 @@ async fn experimental_mcp_tool_is_opt_in_and_matches_cli_state() {
                         panic!()
                     };
                     let review: Value = serde_json::from_str(&text.text).unwrap();
-                    assert_eq!(review["silence"], true);
+                    assert_eq!(review["silence"], command.get("assertions").is_none());
                     assert_eq!(review["verified"], false);
+                    if command.get("assertions").is_some() {
+                        assert_eq!(review["advice"][0]["trigger"], "assertion_conflict");
+                        assert_eq!(review["advice"][0]["assertions"][0]["value"], "3");
+                    }
                 }
             }
         }
@@ -616,6 +658,27 @@ async fn experimental_mcp_tool_is_opt_in_and_matches_cli_state() {
                 results.iter().filter(|r| r.is_error == Some(true)).count(),
                 1
             );
+            let command = assertion_review(
+                3,
+                json!([{"key":"scope:mcp","relation":"equals","value":"4"}]),
+                4096,
+            );
+            let result = client
+                .call_tool(
+                    CallToolRequestParams::new("task_context").with_arguments(
+                        json!({"workspace_id":e.wid,"task_id":"investigation","command":command})
+                            .as_object()
+                            .unwrap()
+                            .clone(),
+                    ),
+                )
+                .await
+                .unwrap();
+            assert_ne!(result.is_error, Some(true));
+            let rmcp::model::ContentBlock::Text(text) = &result.content[0] else {
+                panic!()
+            };
+            final_structured_review = Some(serde_json::from_str::<Value>(&text.text).unwrap());
         }
         client.cancel().await.unwrap();
     }
@@ -625,6 +688,17 @@ async fn experimental_mcp_tool_is_opt_in_and_matches_cli_state() {
         json!({"op":"peek","entry_id":"obs","offset":0,"bytes":100}),
     );
     assert_eq!(peek["text"], "MCP recovery bytes");
+    assert_eq!(
+        final_structured_review.unwrap(),
+        cli(
+            &e,
+            assertion_review(
+                3,
+                json!([{"key":"scope:mcp","relation":"equals","value":"4"}]),
+                4096
+            )
+        )
+    );
 }
 
 #[test]
@@ -758,32 +832,396 @@ fn assertion_review(revision: u64, assertions: Value, max_bytes: usize) -> Value
 fn structured_assertions_detect_conflicts_and_constraint_violations_without_prose_inference() {
     let e = env();
     let engine = Engine::open_existing(&e.store).unwrap();
-    let revision = apply(&engine, create(&engine), json!([
-        asserted("observed", "observation", "server-v1:retry.limit", "equals", "3"),
-        asserted("required", "requirement", "server-v1:retry.limit", "equals", "3"),
-        asserted("forbidden", "constraint", "server-v1:retry.limit", "not_equals", "unlimited"),
-        add("prose", "observation", "The retry limit is unlimited.")
-    ])).unwrap()["revision"].as_u64().unwrap();
-    let result = call(&engine, assertion_review(revision, json!([
-        {"key":"server-v1:retry.limit","relation":"equals","value":"unlimited"}
-    ]), 8192)).unwrap();
+    let revision = apply(
+        &engine,
+        create(&engine),
+        json!([
+            asserted(
+                "observed",
+                "observation",
+                "server-v1:retry.limit",
+                "equals",
+                "3"
+            ),
+            asserted(
+                "required",
+                "requirement",
+                "server-v1:retry.limit",
+                "equals",
+                "3"
+            ),
+            asserted(
+                "forbidden",
+                "constraint",
+                "server-v1:retry.limit",
+                "not_equals",
+                "unlimited"
+            ),
+            asserted(
+                "hypothesis",
+                "hypothesis",
+                "server-v1:retry.limit",
+                "equals",
+                "3"
+            ),
+            asserted(
+                "decision",
+                "decision",
+                "server-v1:retry.limit",
+                "equals",
+                "3"
+            ),
+            add("prose", "observation", "The retry limit is unlimited.")
+        ]),
+    )
+    .unwrap()["revision"]
+        .as_u64()
+        .unwrap();
+    let result = call(
+        &engine,
+        assertion_review(
+            revision,
+            json!([
+                {"key":"server-v1:retry.limit","relation":"equals","value":"unlimited"}
+            ]),
+            8192,
+        ),
+    )
+    .unwrap();
     assert_eq!(result["silence"], false);
     assert_eq!(result["verified"], false);
     assert_eq!(result["host_application"], "unknown");
     let advice = result["advice"].as_array().unwrap();
-    assert_eq!(advice.len(), 3);
+    assert_eq!(advice.len(), 5);
     assert_eq!(advice[0]["trigger"], "assertion_conflict");
     assert_eq!(advice[1]["trigger"], "constraint_violation");
     assert_eq!(advice[2]["trigger"], "constraint_violation");
+    assert_eq!(advice[3]["trigger"], "assertion_conflict");
+    assert_eq!(advice[4]["trigger"], "assertion_conflict");
     for row in advice {
         assert_eq!(row["conflicts"][0]["proposed"]["value"], "unlimited");
         assert_eq!(row["assertions_sha256"].as_str().unwrap().len(), 64);
         assert_eq!(row["author"], "sandbox operator");
     }
-    for assertions in [json!([]), json!([{"key":"server-v1:retry.limit","relation":"equals","value":"3"}]), json!([{"key":"server-v2:retry.limit","relation":"equals","value":"unlimited"}])] {
-        assert_eq!(call(&engine, assertion_review(revision, assertions, 8192)).unwrap()["silence"], true);
+    for assertions in [
+        json!([]),
+        json!([{"key":"server-v1:retry.limit","relation":"equals","value":"3"}]),
+        json!([{"key":"server-v2:retry.limit","relation":"equals","value":"unlimited"}]),
+        json!([{"key":"Server-v1:retry.limit","relation":"equals","value":"unlimited"}]),
+    ] {
+        assert_eq!(
+            call(&engine, assertion_review(revision, assertions, 8192)).unwrap()["silence"],
+            true
+        );
     }
-    assert_eq!(call(&engine, json!({"op":"inspect"})).unwrap()["revision"], revision);
+    assert_eq!(
+        call(&engine, json!({"op":"inspect"})).unwrap()["revision"],
+        revision
+    );
+}
+
+#[test]
+fn malformed_structured_assertions_roll_back_the_entire_batch_without_consuming_revision() {
+    let e = env();
+    let engine = Engine::open_existing(&e.store).unwrap();
+    let revision = create(&engine);
+    let valid = json!({"key":"scope:key","relation":"equals","value":"3"});
+    let mut bad = vec![
+        Value::Null,
+        json!([{}]),
+        json!([{"key":"x","value":"3"}]),
+        json!([{"key":"x","relation":"less_than","value":"3"}]),
+        json!([{"key":"x","relation":"equals","value":"3","extra":true}]),
+        json!([valid.clone(), valid.clone()]),
+        json!(vec![valid.clone(); 17]),
+    ];
+    for (field, value) in [
+        ("key", json!("")),
+        ("key", json!(" scope")),
+        ("key", json!("key key")),
+        ("key", json!("é")),
+        ("key", json!("k".repeat(129))),
+        ("value", json!(" \n")),
+        ("value", json!("α".repeat(257))),
+        ("value", json!(3)),
+    ] {
+        let mut row = valid.clone();
+        row[field] = value;
+        bad.push(json!([row]));
+    }
+    for assertions in bad {
+        let mut edit = add(
+            "invalid",
+            "observation",
+            "Malformed assertion must not persist.",
+        );
+        edit["entry"]["assertions"] = assertions.clone();
+        let request = json!({"workspace_id":e.wid,"task_id":"investigation","command":{"op":"apply","expected_revision":revision,"edits":[add("first","work","Roll back this earlier edit too."),edit]}});
+        let result = task_context::parse(request)
+            .and_then(|request| engine.task_context(&request, &Control::unbounded()));
+        assert!(
+            matches!(result, Err(FoundryError::InvalidArgument(_))),
+            "{assertions}: {result:?}"
+        );
+        let inspect = call(&engine, json!({"op":"inspect"})).unwrap();
+        assert_eq!(inspect["revision"], revision);
+        assert_eq!(inspect["entries"], json!([]));
+    }
+    for (kind, relation) in [
+        ("observation", "not_equals"),
+        ("decision", "not_equals"),
+        ("work", "equals"),
+        ("artifact", "equals"),
+        ("rejected_attempt", "equals"),
+    ] {
+        assert!(
+            apply(
+                &engine,
+                revision,
+                json!([asserted("invalid", kind, "scope:key", relation, "3")])
+            )
+            .is_err()
+        );
+    }
+    for assertions in [
+        json!([{"key":"x","relation":"not_equals","value":"3"}]),
+        json!([valid.clone(), valid.clone()]),
+        json!(vec![valid; 17]),
+    ] {
+        assert!(call(&engine, assertion_review(revision, assertions, 4096)).is_err());
+    }
+    assert_eq!(
+        call(&engine, json!({"op":"inspect"})).unwrap()["revision"],
+        revision
+    );
+}
+
+#[test]
+fn structured_review_retains_exact_values_through_fold_selection_supersession_and_restart() {
+    let e = env();
+    let engine = Engine::open_existing(&e.store).unwrap();
+    let revision=apply(&engine,create(&engine),json!([
+        asserted("old","observation","scope:key","equals","3"),
+        {"op":"checkpoint","name":"original"},
+        {"op":"fold","entry_id":"old","summary":"Caller summary says four, without changing the assertion."}
+    ])).unwrap()["revision"].as_u64().unwrap();
+    let rendered = call(&engine, json!({"op":"render","max_bytes":8192})).unwrap();
+    assert_eq!(rendered["entries"][0]["assertions"][0]["value"], "3");
+    assert_eq!(rendered["entries"][0]["representation"], "caller_summary");
+    let mut replacement = asserted("new", "observation", "scope:key", "equals", "4");
+    replacement["entry"]["supersedes"] = json!("old");
+    let revision = apply(
+        &engine,
+        revision,
+        json!([replacement,{"op":"restore","name":"original"}]),
+    )
+    .unwrap()["revision"]
+        .as_u64()
+        .unwrap();
+    let proposed = json!([{"key":"scope:key","relation":"equals","value":"3"}]);
+    let review = call(&engine, assertion_review(revision, proposed.clone(), 8192)).unwrap();
+    assert_eq!(review["advice"].as_array().unwrap().len(), 1);
+    assert_eq!(review["advice"][0]["entry_id"], "new");
+    let revision = apply(
+        &engine,
+        revision,
+        json!([{"op":"select","entry_id":"new","selected":false}]),
+    )
+    .unwrap()["revision"]
+        .as_u64()
+        .unwrap();
+    assert_eq!(
+        call(&engine, assertion_review(revision, proposed.clone(), 8192)).unwrap()["silence"],
+        true
+    );
+    let revision = apply(
+        &engine,
+        revision,
+        json!([{"op":"select","entry_id":"new","selected":true}]),
+    )
+    .unwrap()["revision"]
+        .as_u64()
+        .unwrap();
+    drop(engine);
+    let reopened = cli(&e, assertion_review(revision, proposed, 8192));
+    assert_eq!(reopened["advice"][0]["assertions"][0]["value"], "4");
+    let expected =
+        context_foundry::digest(&serde_json::to_vec(&reopened["advice"][0]["assertions"]).unwrap());
+    assert_eq!(reopened["advice"][0]["assertions_sha256"], expected);
+    let peek = cli(
+        &e,
+        json!({"op":"peek","entry_id":"new","offset":0,"bytes":4}),
+    );
+    assert_eq!(peek["assertions_sha256"], expected);
+    let engine = Engine::open_existing(&e.store).unwrap();
+    for value in ["4", "04", "4 "] {
+        let response = call(
+            &engine,
+            assertion_review(
+                revision,
+                json!([{"key":"scope:key","relation":"equals","value":value}]),
+                8192,
+            ),
+        )
+        .unwrap();
+        assert_eq!(response["silence"], value == "4");
+    }
+    assert!(matches!(
+        call(&engine, assertion_review(revision - 1, json!([]), 8192)),
+        Err(FoundryError::Conflict(_))
+    ));
+    drop(engine);
+    cli(&e, json!({"op":"forget","expected_revision":revision}));
+    let engine = Engine::open_existing(&e.store).unwrap();
+    assert!(matches!(
+        call(&engine, assertion_review(revision, json!([]), 8192)),
+        Err(FoundryError::NotFound)
+    ));
+}
+
+#[test]
+fn structured_review_checks_freshness_and_returns_one_complete_bounded_original_per_entry() {
+    let e = env();
+    let engine = Engine::open_existing(&e.store).unwrap();
+    let source = "pub fn retry() -> u8 { 3 }\n";
+    engine.replace_source("retry.rs", source).unwrap();
+    let handle = context_foundry::SourceHandle {
+        workspace_id: e.wid.clone(),
+        path: "retry.rs".into(),
+        sha256: context_foundry::digest(source.as_bytes()),
+        start: 0,
+        end: source.len() as u64,
+    }
+    .to_v2();
+    let mut edits = Vec::new();
+    for i in 0..9 {
+        let mut edit = asserted(
+            &format!("rule{i}"),
+            "constraint",
+            "scope:key",
+            "equals",
+            "3",
+        );
+        edit["entry"]["source_links"] = json!([handle]);
+        edit["entry"]["assertions"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"key":"scope:second","relation":"not_equals","value":"forbidden"}));
+        edits.push(edit);
+    }
+    let revision = apply(&engine, create(&engine), json!(edits)).unwrap()["revision"]
+        .as_u64()
+        .unwrap();
+    let assertions = json!([{"key":"scope:key","relation":"equals","value":"4"},{"key":"scope:second","relation":"equals","value":"forbidden"}]);
+    let mut request = assertion_review(revision, assertions.clone(), 65536);
+    request["paths"] = json!(["retry.rs"]);
+    request["finishing"] = json!(true);
+    let full = call(&engine, request).unwrap();
+    assert_eq!(full["advice"].as_array().unwrap().len(), 8);
+    assert_eq!(full["omitted"], 1);
+    for row in full["advice"].as_array().unwrap() {
+        assert_eq!(row["trigger"], "constraint_violation");
+        assert_eq!(row["conflicts"].as_array().unwrap().len(), 2);
+        assert_eq!(row["source_links"][0]["status"], "fresh");
+        assert_eq!(row["text"], "Caller-supplied policy or observation.");
+    }
+    let cut = call(&engine, assertion_review(revision, assertions.clone(), 512)).unwrap();
+    assert_eq!(cut["silence"], true);
+    assert_eq!(cut["omitted"], 9);
+    assert!(serde_json::to_vec(&cut).unwrap().len() + 1 <= 512);
+    engine
+        .replace_source("retry.rs", "pub fn retry() -> u8 { 4 }\n")
+        .unwrap();
+    let stale = call(&engine, assertion_review(revision, assertions, 65536)).unwrap();
+    assert_eq!(stale["silence"], true);
+    assert_eq!(stale["stale"], 9);
+}
+
+#[test]
+fn altered_structured_assertions_or_their_digest_are_corrupt_instead_of_new_facts() {
+    for damage in ["value", "digest", "missing_digest"] {
+        let e = env();
+        let engine = Engine::open_existing(&e.store).unwrap();
+        apply(
+            &engine,
+            create(&engine),
+            json!([asserted(
+                "fact",
+                "decision",
+                "scope:key",
+                "equals",
+                "original"
+            )]),
+        )
+        .unwrap();
+        drop(engine);
+        let db = redb::Database::open(e.store.join("knowledge.redb")).unwrap();
+        let tx = db.begin_write().unwrap();
+        {
+            let mut table = tx
+                .open_table(TableDefinition::<&str, &str>::new("task_context"))
+                .unwrap();
+            let raw = table
+                .get("investigation")
+                .unwrap()
+                .unwrap()
+                .value()
+                .to_owned();
+            let mut row: Value = serde_json::from_str(&raw).unwrap();
+            match damage {
+                "value" => row["entries"][0]["entry"]["assertions"][0]["value"] = json!("tampered"),
+                "digest" => row["entries"][0]["assertions_sha256"] = json!("0".repeat(64)),
+                _ => {
+                    row["entries"][0]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("assertions_sha256");
+                }
+            }
+            table
+                .insert("investigation", row.to_string().as_str())
+                .unwrap();
+        }
+        tx.commit().unwrap();
+        drop(db);
+        let engine = Engine::open_existing(&e.store).unwrap();
+        assert!(
+            matches!(
+                call(&engine, json!({"op":"export"})),
+                Err(FoundryError::CorruptStore(_))
+            ),
+            "{damage}"
+        );
+    }
+}
+
+#[test]
+fn structured_decision_promotion_binds_assertions_without_copying_rules_into_memory() {
+    let e = env();
+    let engine = Engine::open_existing(&e.store).unwrap();
+    let revision = apply(
+        &engine,
+        create(&engine),
+        json!([asserted("decision", "decision", "scope:key", "equals", "3")]),
+    )
+    .unwrap()["revision"]
+        .as_u64()
+        .unwrap();
+    let digest = call(&engine, json!({"op":"inspect"})).unwrap()["entries"][0]["assertions_sha256"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let revision = call(&engine, promotion(revision)).unwrap()["revision"]
+        .as_u64()
+        .unwrap();
+    let memory = engine.memory_get("backoff-policy", &e.wid).unwrap();
+    assert_eq!(memory.text, "Caller-supplied policy or observation.");
+    assert!(memory.provenance.contains(&format!("assertions:{digest}")));
+    call(&engine, json!({"op":"forget","expected_revision":revision})).unwrap();
+    assert!(matches!(
+        engine.memory_get("backoff-policy", &e.wid),
+        Err(FoundryError::NotFound)
+    ));
 }
 #[test]
 fn promotion_is_explicit_indexed_and_forget_removes_derived_retrieval() {
