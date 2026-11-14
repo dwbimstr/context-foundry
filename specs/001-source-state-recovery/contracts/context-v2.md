@@ -317,7 +317,8 @@ four-per-file and 32-unit cut. They consume the same limits, may displace later
 candidates, and use existing exact source handles and packing. They are source
 context derived from a Body hit, not independently embedded, lexical matches or
 replacements for that Body. Trace origin, parent Body/rank/key, own/ancestor role
-and real outcomes separately. Revalidation still drops a changed source before
+and real outcomes separately. Emit one policy marker per eligible root, bound to
+its workspace ID. Revalidation still drops a changed source before
 publication; no store/recipe or public response format changes.
 
 The fixed local Gemma/profile/recipe and frozen G1/G2 instruments stay. Development

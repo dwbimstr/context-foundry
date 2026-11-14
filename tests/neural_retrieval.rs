@@ -8978,7 +8978,9 @@ fn semantic_headers_keep_scored_body_and_use_the_existing_caps_for_prefixes() {
                         h.path == SEMANTIC_HEADERS_PATH && (h.start, h.end) == span
                     })
                 })
-                .expect("the independently scored Body stays present");
+                .unwrap_or_else(|| {
+                    panic!("scored Body {span:?} missing; trace={}", trace.snapshot())
+                });
             assert!(original.semantic.is_some());
             let source = std::fs::read_to_string(corpus.root.join(SEMANTIC_HEADERS_PATH)).unwrap();
             assert_eq!(
@@ -9001,6 +9003,12 @@ fn semantic_headers_keep_scored_body_and_use_the_existing_caps_for_prefixes() {
                 .count();
             if enabled {
                 assert_eq!(policies, 1);
+                assert!(
+                    events
+                        .iter()
+                        .filter(|e| e["stage"] == "context_policy")
+                        .all(|e| e["workspace_id"] == corpus.engine().workspace_id().unwrap())
+                );
                 assert_eq!(prefixes.len(), 2);
                 let quoted: Vec<_> = prefixes
                     .iter()
@@ -9130,6 +9138,12 @@ fn semantic_headers_exclude_no_profile_anchors_and_composed_recursion() {
         } else {
             SEMANTIC_HEADERS_QUERY
         };
+        let anchors =
+            context_foundry::roots::select_anchors(&[engine], query, None, &Corpus::control())
+                .unwrap();
+        if dense {
+            assert!(!anchors.is_empty(), "fixture must resolve its named anchor");
+        }
         let mut texts = Vec::new();
         for enabled in [false, true] {
             let trace = context_foundry::retrieval_trace::RetrievalTrace::default();
@@ -9140,6 +9154,7 @@ fn semantic_headers_exclude_no_profile_anchors_and_composed_recursion() {
                     &Corpus::control().with_trace(Some(trace.clone())),
                     &ContextOptions {
                         dense: dense.then_some(&window),
+                        anchors: Some(&anchors),
                         experimental_semantic_headers: enabled,
                         ..Default::default()
                     },

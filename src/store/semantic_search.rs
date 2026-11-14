@@ -254,7 +254,7 @@ impl Engine {
         });
         if headers && let Some(trace) = control.trace() {
             trace.record(serde_json::json!({"stage":"context_policy", "policy":"kept_body_prefixes_v1",
-                "max_prefix_bytes":512, "body_kept":body_kept, "offered":context_offered, "kept":context_kept}));
+                "workspace_id":workspace_id, "max_prefix_bytes":512, "body_kept":body_kept, "offered":context_offered, "kept":context_kept}));
         }
         let mut items = Vec::with_capacity(kept.len());
         let mut delivered = std::collections::BTreeSet::new();
