@@ -55,6 +55,31 @@ outcome. A bundled improvement cannot establish the effect of every component.
    repetitions before outcomes. Never replace a failed, partial or inconvenient
    task. Retain every scheduled row, including unstarted rows after a halt.
 
+### Capability-to-contrast preparation
+
+This matrix identifies the comparisons that a freeze must bind; it does not select
+extra runs, sample sizes, budgets or a host configuration. The ordinary/passive/
+selective three-arm comparison estimates a bundle. It cannot independently accept
+all six task-context capabilities. Any additional confirmatory contrast must enter
+the powered analysis, multiplicity and complete costed schedule before launch.
+
+| Owning task | Contrast to bind to actual implemented configurations | Necessary task/control evidence |
+| --- | --- | --- |
+| 003 T007, explicit delivery | Ordinary tool delivery versus explicitly scoped task-view delivery, with durable operations, recovery search, joint retrieval, composition and intervention held fixed | Record complete delivered and final host-request bytes, exact revision/digest and host acknowledgment where claimed. An MCP reply alone is not host application. |
+| 008 T003, durable state/views | The same delivery interface and initial facts, with ordinary retention versus explicit checkpoint/fold/restore and exact-original recovery | Predetermine restart/continuation points and the externally checked observation/constraint needed after them. Preserve host history/tool linkage. Do not count multiple restarts or seeds of one task as independent tasks. |
+| 003 T008, joint delivery | The same retained state and source candidate configuration, with separate task/source delivery versus one revision-bound joint task/source response | Cap/account the complete control delivery too; preserve every protected task entry. Trace final-snapshot consistency, budget refusals, first complete supporting evidence and verified patch. Smaller replies alone do not pass. |
+| 008 T005, content recovery | The same stored originals/views and joint-delivery policy, with explicit-ID peek versus content search over retained originals | Include folded/deselected evidence whose IDs are not supplied to either arm; freeze the correct original and expected freshness. Keep task instructions and initial information equal, and separately count unsuccessful searches/exploratory reads. |
+| 008 T004, selective review | The same records/assertions and passive delivery, with structured review absent versus the declared selective-review integration | Freeze scoped single-valued keys, proposed assertion source, exact relations, the host call/admission seam and expected intervention/silence cases. Use fresh, conflicting, satisfying, missing-key and stale-source cases; oracle-check both missed and unnecessary interventions. The local comparison engine does not establish this host integration or interpret prose. |
+| 003 T009, evidence composition | The same joint task/source view and review/recovery configuration, with `compose_evidence` disabled versus enabled | Freeze required implementation/consumer/constraint/test facets and actual citations. Measure complete support and verified outcome, including missing/conflicting facets. Hold optional briefs fixed; any selected auxiliary generation needs its own authorized usage and preparation accounting. |
+
+The freeze must resolve shared controls and order without changing the named
+treatment, bind each contrast's concrete prompts/tools/flags and endpoint, and name
+which contrasts remain descriptive. Reusing a baseline does not make task blocks
+independent. All arms receive the same task instructions and initial facts except
+for their declared capability treatment. V2 still needs concrete tasks/oracles and
+rights, current-host qualification, available retrieval repairs, the selected
+statistical design and launch pins; this matrix supplies none of those approvals.
+
 ## Sample size and decision rule
 
 The freeze must include an executable, deterministic power calculation, its

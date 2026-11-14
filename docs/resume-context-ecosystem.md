@@ -280,8 +280,10 @@ and dated paragraphs below are history.
     ([receipt](validation.md#approved-final-wrap-up-publication--2026-11-13)).
     The owner selected explicit structured assertions for 008 T004 under the current
     no-model rule on 2026-11-13. The existing spec owns that comparison contract;
-    local implementation passes the real-store/CLI/MCP focused checks. Full gates
-    are in progress; real-host intervention/outcome acceptance stays open
+    local implementation passes the real-store/CLI/MCP focused checks and all eight
+    gates on `ea33a2e`. The pilot v2 draft now maps each of the six task-context
+    capabilities to its required contrast; this selects no sample, budget or
+    execution. Real-host intervention/outcome acceptance stays open
     ([record](validation.md#structured-task-assertions-008-t004--2026-11-13)).
     Complete coverage of transient library file modes, current installed-host compatibility and
     v2's declared task/arm/host qualification remain open. The installed host now

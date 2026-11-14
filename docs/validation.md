@@ -2,7 +2,7 @@
 
 ## Structured task assertions 008 T004 — 2026-11-13
 
-**Focused local checks pass; full gates in progress.** The owner selected explicit
+**PASS at the selected local structured assertion boundaries.** The owner selected explicit
 structured assertions under the current no-model rule. Contract/test commit
 `969964c` precedes implementation. The retained test fails on the original parser
 because it rejects the new fields (7.677 seconds). Its initial receipt qualifier
@@ -36,9 +36,33 @@ processes reaped; the original partial run remains in `gates/`. The equivalent
 `length < 512` correction precedes a fresh complete gate run; no production rule
 or acceptance bound changes.
 
-Full eight-gate qualification is next on the corrected committed implementation. Real-host
-intervention quality, task benefit and pilot v2/T006 remain unfunded and unaccepted;
-this does not establish source-retrieval improvement or release acceptance.
+All eight gates pass on corrected commit `ea33a2e` in **785.196 seconds**: default
+**1,319 passed / 0 failed / 35 ignored**, pilot-feature unit suite **101/0/1**, and
+**21 recovery checks** counted separately. Nested child-test summaries are excluded.
+The MSRV stages use the actual Rust 1.90.0 binaries and macOS 26.5 SDK. The native
+supervisor records natural exit, no forced cleanup, no observed owned process left
+and sampled individual RSS within the selected 8 GiB bound. The local qualifier
+also retains its first metadata-formatting failure (tuples versus JSON arrays); the
+corrected readback changes no runtime result and reruns no tests.
+
+The operator guide includes the assertion format and a review example. The existing
+unfunded pilot v2 contract now maps all six task-context capabilities to the
+comparisons they need; bundled outcomes cannot independently accept every
+component. That preparation selects no extra run, sample, threshold, budget,
+credential or host configuration.
+
+The local evidence bundle is closed with two complete readbacks: **66 files / 18
+directories / 1,576,514 bytes**, private file/directory modes 0600/0700, and a
+verified Git source bundle. Manifest SHA-256:
+`d4be2f2872b65f56985689d4a66325d44226a5635fbfd204839826440720c9e7`.
+`runs/t004-structured-2026-11-13/evidence-readback.json` is the receipt. The original
+bundle-tip error (a raw commit range exposed no named bundle ref) and corrected
+pinned-HEAD construction remain in the packet. Later publication receipts belong
+in a separate directory; this closed packet must not be edited. This establishes
+local integrity, without claiming off-machine backup or authenticated recovery.
+
+Real-host intervention quality, task benefit and pilot v2/T006 remain unfunded and
+unaccepted; this does not establish source-retrieval improvement or release acceptance.
 
 ## Approved final wrap-up publication — 2026-11-13
 

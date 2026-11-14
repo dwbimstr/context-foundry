@@ -623,6 +623,37 @@ paths cannot admit a repository. Revision conflicts refuse. Dismissal still appl
 to rejected attempts; resolve work/questions using existing selection/supersession
 commands. Requirements and constraints remain protected in the task view.
 
+For explicit contradiction or constraint checks, add structured assertions to the
+entry supplied to `apply`, for example:
+
+```json
+{"id":"retry-policy","kind":"constraint","text":"Keep three retries in environment 42.","author":"user","provenance":"explicit task instruction","source_links":[],"assertions":[{"key":"env-42:retry.limit","relation":"equals","value":"3"}]}
+```
+
+Use the task's current returned revision in the review command (5 in this example):
+
+```json
+{"op":"review","expected_revision":5,"paths":[],"finishing":false,"assertions":[{"key":"env-42:retry.limit","relation":"equals","value":"4"}],"max_bytes":4096}
+```
+
+This returns `constraint_violation` with the stored and proposed assertions. An
+observation, hypothesis or decision asserting a different value for the same key
+returns `assertion_conflict`. Requirements/constraints can also use `not_equals`
+to name a forbidden value; proposed review facts use `equals`. A satisfying value
+or absent key is silent unless a path/finishing reminder also applies.
+
+Keys represent caller-defined single-valued facts and include relevant scope or
+environment identity. Values and keys compare exactly, including case and numeric
+spelling. Each entry/review accepts at most sixteen distinct keys; no prose is
+interpreted. Assertions retain their own `assertions_sha256` alongside the original
+text digest and survive folding, restart and export. Review uses selected current
+entries and fresh source links, within its complete-original/byte caps. A returned
+conflict remains a caller-claim comparison with `verified:false`; actual host use
+and intervention quality need their separate outcome checks. See
+[008 T004](../specs/008-scoped-durable-memory/spec.md#t004--experimental-grounded-reminders-and-explicit-promotion)
+for validation, scope and relation bounds.
+
+
 To find a retained observation when its ID has been forgotten, search the originals:
 
 ```json

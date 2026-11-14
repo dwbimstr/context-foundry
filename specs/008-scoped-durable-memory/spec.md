@@ -299,8 +299,10 @@ the delivery boundary.
 Status: exact-action and grounded path/finishing reminders are implemented locally on
 the experimental branch. The owner selected explicit structured assertions under the
 existing no-model rule on 2026-11-13. The continuation below is implemented with
-real-store/CLI/MCP focused checks; full local gates are in progress. Pilot v2 still
-owns measured agent outcomes, and T004 stays open until an authorized run passes.
+real-store/CLI/MCP focused checks and all eight local gates passing on `ea33a2e`
+([receipt](../../docs/validation.md#structured-task-assertions-008-t004--2026-11-13)).
+Pilot v2 still owns measured agent outcomes, and T004 stays open until an authorized
+run passes.
 
 Build the next stages in the same task record, with no model or background loop.
 `advise {action_key,max_bytes}` returns only active rejected attempts whose optional
