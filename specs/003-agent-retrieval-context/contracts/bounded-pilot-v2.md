@@ -167,6 +167,42 @@ savings from pooled naturally cached runs.
 
 ## Required v1 gap repairs and qualification
 
+**Selected real-host no-provider continuation, 2026-11-14 (owner).** Qualify on
+owned copies without modifying the installed host, user configuration, frozen v1
+contract or live pin. The observed installed artifact is OMP 18.18.1, SHA-256
+`ce80099f10c5ea4367523767230cb5b920f30cc139b9cf8758c1cc4b2f1f9409`.
+Its network-denied `--version` check is runtime evidence, not source/build
+correspondence. Two boundaries must remain distinct:
+
+- Exercise the actual current artifact through existing `Host::launch`, embedded
+  bridge/channel, settings readback and final-request validator. Capture one
+  synthetic prompt's actual serialized request, refuse it locally and reap the
+  host. No Count/Messages transport or real credential is constructed. Hash/recheck
+  the selected binary at use; preserve the request privately, exact refusal and
+  cleanup/mode evidence. Current-native extraction is checked only at its declared
+  `home/.omp/natives/18.18.1/pi_natives.darwin-arm64.node` path. This test does not
+  widen v1's native-path exception or admit this host to v1 CaptureSession/Live.
+- Run the full existing nonignored actual-host integration suite on current
+  Foundry source with the separately archived exact v1 artifact (`38c36452…`),
+  existing owned numeric-loopback TLS fixtures and synthetic credentials. Retain
+  every failed run. A pass qualifies that pinned consumer boundary, not current
+  installed-host admission, a new v2 pin or a paid compatibility probe.
+
+One shared hour includes preparation/build/qualification, with a 120-second cleanup
+reserve, one heavy job, offline dependencies, 20 GiB free-disk and 8 GiB sampled
+individual-process RSS guards. A source change gets the applicable full local
+gates. Mismatches are reported without changing request rules, outcomes, host pins
+or budgets to pass. No provider calls, signing, model downloads or training.
+Complete early startup observation/barrier, transient library modes and concrete
+v2 task/arm/host qualification remain separate requirements; a Ready frame or one
+accepted synthetic request does not close them.
+
+Before either qualification boundary ran, the owner prioritized publishing current
+work and cleaning `target`, `runs` and the Foundry datasets (2026-11-14). Only the
+contained version check above has executed. Preserve the selected artifact and
+inputs; resume qualification with a fresh stated deadline after storage cleanup.
+The preparation deadline is not evidence of a live or completed test.
+
 Before freezing the apparatus, demonstrate these with the actual installed host
 and local no-provider fixtures. These remain freeze requirements; completed narrow
 repairs are identified in the relevant row:

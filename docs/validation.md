@@ -1,5 +1,42 @@
 # Validation
 
+## T004 publication and current-host inventory — 2026-11-14
+
+The owner-approved four commits through `876a3a1` are published to
+`experimental/context-ecosystem`. All 22 Git commands succeeded in 6.506 seconds;
+fresh-clone readback verified every tracked file, type and executable bit:
+**400 paths / 11,717,655 bytes**. Main remained
+`d94b013e3c638276f6afba49f80194776e294fbb`. The local receipt is
+`runs/t004-structured-publication-2026-11-13/publication-publish-2oqm4wal/result.json`.
+No tag, release or workflow dispatch occurred.
+
+On resuming real-host no-provider qualification, an owned private copy of the
+installed OMP executable matches SHA-256
+`ce80099f10c5ea4367523767230cb5b920f30cc139b9cf8758c1cc4b2f1f9409`
+(220,595,344 bytes). A fresh-HOME, cleared-environment, network-denied
+`sandbox-exec` invocation returned `omp/18.18.1`, exit 0, in 1.688 seconds with
+zero stderr bytes. The installed source file was unchanged. This identifies the
+artifact at runtime; it does not establish source/build correspondence, bridge
+compatibility or current-host CaptureSession admission. V1's exact 18.13.2 pin
+is preserved. The owner then prioritized publication and storage cleanup before
+either planned native qualification test started. Inputs and the owned host copy
+remain available for that continuation; no provider call or signing occurred.
+
+## Storage cleanup selection — 2026-11-14
+
+The owner explicitly selected cleanup of Foundry `target`, `runs` and
+`~/VSC_DEV/datasets`, with source/record publication first. Initial allocated sizes
+from `du -k`: target 188,039,184 KiB, runs 16,005,864 KiB and datasets
+278,523,048 KiB. Build output is reproducible; uniquely pinned executables needed
+by existing evidence must remain outside the build cache. Two Rust IDE helper
+processes currently map a small set of target/debug proc-macro libraries; preserve
+those files and the helpers. Completed dataset/run copies may be removed only
+after verifying their retained canonical duplicate or archive. Preserve canonical
+profiles/model bundles/weights, current prepared masters, task/oracle originals,
+private question sets, raw outcome evidence and recovery material. Cleanup does
+not authorize publishing private data or paid/signing work. Results follow after
+the deletion/readback boundary is executed.
+
 ## Structured task assertions 008 T004 — 2026-11-13
 
 **PASS at the selected local structured assertion boundaries.** The owner selected explicit

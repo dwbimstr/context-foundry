@@ -285,6 +285,16 @@ and dated paragraphs below are history.
     capabilities to its required contrast; this selects no sample, budget or
     execution. Real-host intervention/outcome acceptance stays open
     ([record](validation.md#structured-task-assertions-008-t004--2026-11-13)).
+    The owner-approved four-commit T004 snapshot through `876a3a1` is published with
+    full fresh-clone readback
+    ([receipt](validation.md#t004-publication-and-current-host-inventory--2026-11-14)).
+    Real-host no-provider qualification resumed on 2026-11-14. The installed copy
+    identifies as OMP 18.18.1; its sandboxed version check passed. Before bridge or
+    integration tests started, the owner prioritized remote publication and storage
+    cleanup of `target`, `runs` and Foundry datasets. Preserve pinned models, canonical
+    inputs, private evidence and the copied host; archive/verify completed working
+    data before removing it. Paid runs and signing remain gated. Storage receipts
+    and the qualification continuation will be recorded below as they complete.
     Complete coverage of transient library file modes, current installed-host compatibility and
     v2's declared task/arm/host qualification remain open. The installed host now
     differs from the archived pin used by the regression. Pilot v2/T006 remain open.
