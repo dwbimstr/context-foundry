@@ -1,8 +1,14 @@
 //! Dense-aware search (spec 009): current dense locations in similarity order,
 //! followed by lexical units, with one final source validation before placement.
 //! The lexical-only T010 option does not change this path.
-use super::placement::{Cut, Placed, UnitRef};
+use super::placement::{ContextPrefix, Cut, Placed, UnitRef};
 use super::*;
+
+#[cfg(feature = "semantic")]
+pub(super) struct SemanticSelection<'a> {
+    pub(super) anchors: Option<&'a [AnchorCandidate]>,
+    pub(super) headers: bool,
+}
 
 /// Whether `path` lies under a normalized [`path_filter`]: the file itself
 /// or a component-boundary subtree (`src/a` admits `src/a/x.rs`, never
@@ -42,6 +48,29 @@ impl Engine {
         dense: &crate::neural::query::DenseWindow,
         anchors: Option<&[AnchorCandidate]>,
     ) -> FResult<CandidateBatch> {
+        self.search_candidates_semantic_selected(
+            query,
+            path,
+            limit,
+            control,
+            dense,
+            SemanticSelection {
+                anchors,
+                headers: false,
+            },
+        )
+    }
+
+    #[cfg(feature = "semantic")]
+    pub(super) fn search_candidates_semantic_selected(
+        &self,
+        query: &str,
+        path: Option<&str>,
+        limit: usize,
+        control: &crate::Control,
+        dense: &crate::neural::query::DenseWindow,
+        selection: SemanticSelection<'_>,
+    ) -> FResult<CandidateBatch> {
         let filter = check_search(query, path, limit)?;
         let workspace_id = self.require_workspace_id()?;
         let TwoTier {
@@ -55,7 +84,7 @@ impl Engine {
             path,
             control,
             SearchSelection {
-                anchors,
+                anchors: selection.anchors,
                 prose: false,
             },
         )?;
@@ -115,6 +144,8 @@ impl Engine {
         placed.extend(lexical.iter().map(|candidate| Placed {
             unit: candidate.unit(),
             kind: None,
+            dense_rank: None,
+            context: None,
         }));
         // The candidate carrying each lexical unit: its first (best-ranked)
         // current document, as in the baseline.
@@ -127,30 +158,116 @@ impl Engine {
         // placed order.
         let mut seen = std::collections::BTreeSet::new();
         let mut cut = Cut::new(limit, false);
-        let trace_placement = |rank: usize, item: Placed<'_>, outcome: &str| {
+        let trace_placement = |sources: &FinalSources,
+                               rank: usize,
+                               item: Placed<'_>,
+                               outcome: &str| {
             if let Some(trace) = control.trace() {
-                trace.record(serde_json::json!({
-                    "stage": "placement", "origin": if item.kind.is_some() { "dense" } else { "lexical" },
+                let mut event = serde_json::json!({
+                    "stage": "placement", "origin": if item.context.is_some() { "context" } else if item.kind.is_some() { "dense" } else { "lexical" },
                     "rank": rank, "outcome": outcome,
                     "unit": {"workspace_id": workspace_id, "path": item.unit.0,
                         "sha256": sources.loaded(item.unit.0).map(|meta| &meta.hash),
                         "start": item.unit.1, "end": item.unit.2},
-                }));
+                });
+                if let Some(context) = item.context {
+                    event["parent"] = serde_json::json!({"workspace_id":workspace_id,
+                        "path":context.body.0, "sha256":sources.loaded(context.body.0).map(|m| &m.hash),
+                        "start":context.body.1, "end":context.body.2});
+                }
+                trace.record(event);
             }
         };
-        for (rank, &item) in placed.iter().enumerate() {
+        let headers = selection.headers && anchors.is_empty();
+        let mut forests = std::collections::BTreeMap::new();
+        let (mut position, mut body_kept, mut context_offered, mut context_kept) =
+            (0usize, 0usize, 0usize, 0usize);
+        for &item in &placed {
+            control.check()?;
+            let rank = position;
+            position += 1;
             if !seen.insert(item.unit) {
-                trace_placement(rank, item, "duplicate");
+                trace_placement(&sources, rank, item, "duplicate");
                 continue;
             }
-            if let Some(outcome) = cut.offer(rank, item.unit.0, item, &mut counters) {
-                trace_placement(rank, item, outcome);
+            let outcome = cut.offer(rank, item.unit.0, item, &mut counters);
+            if let Some(outcome) = outcome {
+                trace_placement(&sources, rank, item, outcome);
+            }
+            if !headers
+                || item.kind != Some(crate::neural::cache::CardKind::Body)
+                || outcome != Some("kept")
+            {
+                continue;
+            }
+            body_kept += 1;
+            let (prefixes, hash) = {
+                let Some((meta, body)) = sources.body(item.unit.0)? else {
+                    continue;
+                };
+                control.check()?;
+                let forest = forests.entry(item.unit.0).or_insert_with(|| {
+                    crate::syntax::Lang::from_path(item.unit.0)
+                        .filter(|lang| lang.has_units())
+                        .map(|lang| crate::syntax::units(body, lang))
+                        .unwrap_or_default()
+                });
+                control.check()?;
+                (
+                    body_prefixes(body, forest, item.unit.1, item.unit.2, control)?,
+                    meta.hash.clone(),
+                )
+            };
+            for (from, to, role) in prefixes {
+                let context = Placed {
+                    unit: (item.unit.0, from, to),
+                    kind: None,
+                    dense_rank: item.dense_rank,
+                    context: Some(ContextPrefix {
+                        body: item.unit,
+                        role,
+                    }),
+                };
+                context_offered += 1;
+                let input_rank = item.dense_rank.expect("Body location has an input rank");
+                if let Some(trace) = control.trace() {
+                    trace.record(serde_json::json!({"stage":"selection", "origin":"context", "outcome":"eligible",
+                        "rank":input_rank, "input_key":dense.input_key(&dense.hits[input_rank]), "role":role,
+                        "unit":{"workspace_id":workspace_id,"path":item.unit.0,"sha256":hash,"start":from,"end":to},
+                        "parent":{"workspace_id":workspace_id,"path":item.unit.0,"sha256":hash,"start":item.unit.1,"end":item.unit.2},
+                        "passage_independently_embedded":false}));
+                }
+                let rank = position;
+                position += 1;
+                if !seen.insert(context.unit) {
+                    trace_placement(&sources, rank, context, "duplicate");
+                    continue;
+                }
+                if let Some(outcome) = cut.offer(rank, context.unit.0, context, &mut counters) {
+                    context_kept += usize::from(outcome == "kept");
+                    trace_placement(&sources, rank, context, outcome);
+                }
             }
         }
-        let kept = cut.finish(&mut counters, trace_placement);
+        let kept = cut.finish(&mut counters, |rank, item, outcome| {
+            trace_placement(&sources, rank, item, outcome)
+        });
+        if headers && let Some(trace) = control.trace() {
+            trace.record(serde_json::json!({"stage":"context_policy", "policy":"kept_body_prefixes_v1",
+                "max_prefix_bytes":512, "body_kept":body_kept, "offered":context_offered, "kept":context_kept}));
+        }
         let mut items = Vec::with_capacity(kept.len());
         let mut delivered = std::collections::BTreeSet::new();
-        for (rank, Placed { unit, kind }) in kept.into_iter().enumerate() {
+        for (
+            rank,
+            Placed {
+                unit,
+                kind,
+                dense_rank,
+                context,
+            },
+        ) in kept.into_iter().enumerate()
+        {
             control.check()?;
             let from_dense = kind.is_some();
             let exact_body = kind == Some(crate::neural::cache::CardKind::Body);
@@ -158,14 +275,26 @@ impl Engine {
             let Some((meta, body)) = sources.body(unit_path)? else {
                 continue;
             };
-            let candidate = by_unit.get(&unit).copied();
+            let candidate = context
+                .is_none()
+                .then(|| by_unit.get(&unit).copied())
+                .flatten();
             let mut item = match candidate {
                 Some(candidate) => {
                     ranked_item(candidate, rank, &workspace_id, &meta.hash, body, &wanted)?
                 }
                 None => dense_only_item(unit, rank, &workspace_id, &meta.hash, body)?,
             };
-            if from_dense {
+            if let Some(context) = context {
+                if let Some(trace) = control.trace() {
+                    let input_rank = dense_rank.expect("context has its Body input rank");
+                    trace.record(serde_json::json!({"stage":"materialization", "origin":"context", "rank":rank,
+                        "unit":item.handle, "parent":{"workspace_id":workspace_id,"path":context.body.0,
+                            "sha256":meta.hash,"start":context.body.1,"end":context.body.2},
+                        "input_rank":input_rank,"input_key":dense.input_key(&dense.hits[input_rank]),
+                        "role":context.role,"passage_independently_embedded":false}));
+                }
+            } else if from_dense {
                 item.semantic = Some(SemanticEvidence {
                     dense_only: candidate.is_none(),
                 });
@@ -296,6 +425,8 @@ fn current_dense<'d>(
         placed.push(Placed {
             unit: (&*location.path, location.start, location.end),
             kind: Some(location.kind),
+            dense_rank: Some(rank),
+            context: None,
         });
     }
     Ok(DenseOrder { placed, stale })
@@ -341,4 +472,189 @@ fn dense_only_item(
         resolver: None,
         forms: vec![RenderedForm::Verbatim(text.to_owned())],
     })
+}
+
+/// Exact declaration prefixes for one admitted Body span. Source structure
+/// establishes ownership; source proximity and query words do not.
+#[cfg(feature = "semantic")]
+fn body_prefixes(
+    body: &str,
+    units: &[crate::syntax::Unit],
+    from: u64,
+    to: u64,
+    control: &crate::Control,
+) -> FResult<Vec<(u64, u64, &'static str)>> {
+    control.check()?;
+    let (from, to) = (from as usize, to as usize);
+    if !(from < to && body.get(from..to).is_some()) {
+        return Err(FoundryError::CorruptStore(
+            "Body context outside source".into(),
+        ));
+    }
+    let mut owner = None;
+    let mut smallest = usize::MAX;
+    let mut ambiguous = false;
+    for (index, unit) in units.iter().enumerate() {
+        control.check()?;
+        if unit.name_range.is_none() || unit.start > from || to > unit.end {
+            continue;
+        }
+        let width = unit.end - unit.start;
+        if width < smallest {
+            owner = Some(index);
+            smallest = width;
+            ambiguous = false;
+        } else if width == smallest {
+            ambiguous = true;
+        }
+    }
+    let Some(owner) = owner.filter(|_| !ambiguous) else {
+        return Ok(Vec::new());
+    };
+    let mut chosen = vec![(owner, "owner")];
+    let mut at = owner;
+    while let Some(parent) = units[at].parent {
+        control.check()?;
+        if parent >= at || units[parent].start > from || to > units[parent].end {
+            return Ok(Vec::new());
+        }
+        if units[parent].name_range.is_some() {
+            chosen.push((parent, "ancestor"));
+            break;
+        }
+        at = parent;
+    }
+    let mut result = Vec::with_capacity(2);
+    for (index, role) in chosen {
+        control.check()?;
+        let unit = &units[index];
+        let Some((name_start, name_end)) = unit.name_range else {
+            continue;
+        };
+        if !(unit.start <= unit.head
+            && unit.head <= name_start
+            && name_start < name_end
+            && name_end <= unit.end
+            && unit.end <= body.len())
+            || body.get(name_start..name_end).is_none()
+        {
+            continue;
+        }
+        let Some(after_name) = body.get(name_end..unit.end) else {
+            continue;
+        };
+        let end = after_name
+            .find('\n')
+            .map_or(unit.end, |at| name_end + at + 1);
+        if end.saturating_sub(unit.head) > 512
+            || body.get(unit.head..end).is_none()
+            || (from <= unit.head && end <= to)
+        {
+            continue;
+        }
+        result.push((unit.head as u64, end as u64, role));
+    }
+    Ok(result)
+}
+
+#[cfg(all(test, feature = "semantic"))]
+mod prefix_tests {
+    use super::*;
+    fn prefixes(source: &str, needle: &str) -> Vec<(u64, u64, &'static str)> {
+        let from = source.find(needle).unwrap();
+        body_prefixes(
+            source,
+            &crate::syntax::units(source, crate::syntax::Lang::from_path("x.rs").unwrap()),
+            from as u64,
+            (from + needle.len()) as u64,
+            &crate::Control::unbounded(),
+        )
+        .unwrap()
+    }
+    #[test]
+    fn body_prefixes_follow_structural_owner_and_ancestor_not_neighbor() {
+        let source = "fn neighbor() {}\nfn outer() {\n    fn inner() {\n        operation();\n    }\n}\nfn later() {}\n";
+        let found = prefixes(source, "operation()");
+        assert_eq!(found.len(), 2);
+        assert_eq!(
+            &source[found[0].0 as usize..found[0].1 as usize],
+            "fn inner() {\n"
+        );
+        assert_eq!(
+            &source[found[1].0 as usize..found[1].1 as usize],
+            "fn outer() {\n"
+        );
+        assert_eq!((found[0].2, found[1].2), ("owner", "ancestor"));
+    }
+    #[test]
+    fn body_prefixes_keep_complete_utf8_at_512_and_omit_513() {
+        for length in [512usize, 513] {
+            let head = "fn café() { //";
+            let source = format!(
+                "{head}{}\n    operation();\n}}\n",
+                "x".repeat(length - head.len() - 1)
+            );
+            let found = prefixes(&source, "operation()");
+            if length == 512 {
+                assert_eq!(found.len(), 1);
+                assert_eq!(found[0].1 - found[0].0, 512);
+            } else {
+                assert!(found.is_empty());
+            }
+        }
+    }
+    #[test]
+    fn body_prefixes_do_not_repeat_a_declaration_already_in_the_span() {
+        let source = "fn owned() { operation(); }";
+        let forest = crate::syntax::units(source, crate::syntax::Lang::from_path("x.rs").unwrap());
+        assert!(
+            body_prefixes(
+                source,
+                &forest,
+                0,
+                source.len() as u64,
+                &crate::Control::unbounded()
+            )
+            .unwrap()
+            .is_empty()
+        );
+    }
+    #[test]
+    fn body_prefixes_refuse_ambiguous_or_invalid_parentage() {
+        let source = "fn owned() { operation(); }";
+        let forest = crate::syntax::units(source, crate::syntax::Lang::from_path("x.rs").unwrap());
+        let from = source.find("operation").unwrap() as u64;
+        let mut duplicate = forest.clone();
+        duplicate.extend(forest.clone());
+        assert!(
+            body_prefixes(
+                source,
+                &duplicate,
+                from,
+                from + 9,
+                &crate::Control::unbounded()
+            )
+            .unwrap()
+            .is_empty()
+        );
+        let mut cycle = forest;
+        cycle[0].parent = Some(0);
+        assert!(
+            body_prefixes(source, &cycle, from, from + 9, &crate::Control::unbounded())
+                .unwrap()
+                .is_empty()
+        );
+    }
+    #[test]
+    fn body_prefixes_require_an_owner_and_obey_cancellation() {
+        let source = "// prefix\nfn owned() { operation(); }";
+        let forest = crate::syntax::units(source, crate::syntax::Lang::from_path("x.rs").unwrap());
+        assert!(
+            body_prefixes(source, &forest, 0, 3, &crate::Control::unbounded())
+                .unwrap()
+                .is_empty()
+        );
+        assert!(body_prefixes(source, &forest, 0, 3, &crate::Control::cancelled()).is_err());
+        assert!(body_prefixes(source, &forest, 999, 1000, &crate::Control::unbounded()).is_err());
+    }
 }

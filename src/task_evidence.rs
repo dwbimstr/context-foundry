@@ -298,6 +298,9 @@ impl Engine {
         let mut plain = *options;
         plain.compose_evidence = false;
         plain.compact_evidence = false;
+        // T005's ordinary-context experiment excludes composed task evidence,
+        // including this composition's recursive preliminary context request.
+        plain.experimental_semantic_headers = false;
         plain.boundary_config = None;
         plain.briefs = false;
         // 008: memory validates in THIS composition's final transaction

@@ -2423,6 +2423,7 @@ async fn serve(
             knowledge: None,
             retrieval_trace_dir: None,
             experimental_behavior_context: false,
+            experimental_semantic_headers: false,
             store: corpus.store.clone(),
             root: corpus.root.clone(),
             references: Vec::new(),
@@ -3218,6 +3219,7 @@ impl Corpus {
                 knowledge: None,
                 retrieval_trace_dir: None,
                 experimental_behavior_context: false,
+                experimental_semantic_headers: false,
                 store: self.store.clone(),
                 root: self.root.clone(),
                 references: Vec::new(),
@@ -4819,6 +4821,7 @@ async fn owner_with(
             knowledge: None,
             retrieval_trace_dir: None,
             experimental_behavior_context: ContextOptions::default().experimental_behavior,
+            experimental_semantic_headers: false,
             store: store.to_path_buf(),
             root: root.to_path_buf(),
             references,
@@ -8825,4 +8828,470 @@ fn offline_cli_source_commit_preserves_incremental_publication_obligations() {
         status.unpartitioned_sources > 0,
         "offline source requires new partition work"
     );
+}
+
+const SEMANTIC_HEADERS_PATH: &str = "src/semantic_headers.ts";
+const SEMANTIC_HEADERS_QUERY: &str = "quasar zephyr lantern";
+
+/// A real parsed/published body window, with controlled cache vectors so this
+/// fixture tests ownership/placement rather than embedding relevance.
+fn semantic_headers_corpus() -> (Corpus, (u64, u64)) {
+    use context_foundry::neural::cache::CardKind;
+    let body: String = (0..110)
+        .map(|n| format!("        const datum_{n} = record_operation({n});\n"))
+        .collect();
+    let source = format!("export class Ledger {{\n    apply() {{\n{body}    }}\n}}\n");
+    let needle = source.find("const datum_40").unwrap() as u64;
+    let mut files = vec![(SEMANTIC_HEADERS_PATH.to_owned(), source)];
+    files.extend((0..45).map(|n| {
+        (
+            format!("src/auxiliary_{n}.rs"),
+            format!("fn auxiliary_{n}() {{ record_serial({n}); }}\n"),
+        )
+    }));
+    let mut corpus = Corpus::unprepared(&files);
+    select_body_recipe(&mut corpus, 512, 64, None);
+    assert!(!corpus.prepare().partial);
+    let digest = corpus.digest();
+    let mapping = corpus
+        .engine()
+        .semantic_current_mapping(&Corpus::control(), &digest, &corpus.profile.recipe_id())
+        .unwrap();
+    let (key, span) = mapping
+        .units
+        .iter()
+        .find_map(|(key, units)| {
+            units
+                .iter()
+                .find(|u| {
+                    &*u.path == SEMANTIC_HEADERS_PATH
+                        && u.kind == CardKind::Body
+                        && u.start <= needle
+                        && needle < u.end
+                })
+                .map(|u| (key.clone(), (u.start, u.end)))
+        })
+        .unwrap();
+    assert!(
+        span.0 > 100,
+        "the selected body is strictly inside the method"
+    );
+    let query = concept_vector(&provider::render(
+        &corpus.profile.query_template,
+        SEMANTIC_HEADERS_QUERY,
+    ));
+    assert_eq!(query[0], 0.0);
+    let mut ordinary: Vec<_> = query.iter().map(|v| v * 0.8).collect();
+    ordinary[0] = 0.6;
+    let opposite: Vec<_> = query.iter().map(|v| -v).collect();
+    let entries: Vec<_> = mapping
+        .units
+        .iter()
+        .map(|(k, units)| {
+            (
+                k.clone(),
+                if *k == key {
+                    query.clone()
+                } else if units
+                    .iter()
+                    .any(|u| u.kind == CardKind::Body && &*u.path != SEMANTIC_HEADERS_PATH)
+                {
+                    ordinary.clone()
+                } else {
+                    opposite.clone()
+                },
+            )
+        })
+        .collect();
+    corpus
+        .engine()
+        .semantic_cache_commit(&entries, &digest, DIMENSIONS, DEFAULT_CACHE_CAP_BYTES)
+        .unwrap();
+    assert!(
+        corpus
+            .engine()
+            .semantic_rebuild_index(&Corpus::control())
+            .unwrap()
+            .rebuilt
+    );
+    (corpus, span)
+}
+
+#[test]
+fn semantic_headers_keep_scored_body_and_use_the_existing_caps_for_prefixes() {
+    for partial in [false, true] {
+        let (mut corpus, span) = semantic_headers_corpus();
+        if partial {
+            corpus
+                .engine()
+                .replace_source("notes/later.txt", "a later lexical source\n")
+                .unwrap();
+            corpus.engine_mut().refresh(&Corpus::control()).unwrap();
+        }
+        let window = corpus
+            .runtime()
+            .window(
+                corpus.engine(),
+                SEMANTIC_HEADERS_QUERY,
+                Instant::now() + Duration::from_secs(30),
+                &Corpus::control(),
+            )
+            .unwrap();
+        let calls = corpus.probe.document_calls();
+        for enabled in [false, true] {
+            let trace = context_foundry::retrieval_trace::RetrievalTrace::default();
+            let result = corpus
+                .engine()
+                .context_candidates_with(
+                    SEMANTIC_HEADERS_QUERY,
+                    Strategy::Search,
+                    &Corpus::control().with_trace(Some(trace.clone())),
+                    &ContextOptions {
+                        dense: Some(&window),
+                        experimental_semantic_headers: enabled,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            assert_eq!(
+                result.batch.semantic.as_deref(),
+                Some(if partial { "partial" } else { "ready" })
+            );
+            let ordinary: Vec<_> = result
+                .batch
+                .items
+                .iter()
+                .filter(|i| i.tier != context_foundry::store::TIER_OUTLINE)
+                .collect();
+            assert_eq!(ordinary.len(), 32);
+            let mut counts = std::collections::BTreeMap::new();
+            for item in &ordinary {
+                *counts
+                    .entry(item.handle.as_ref().unwrap().path.clone())
+                    .or_insert(0) += 1;
+            }
+            assert!(counts.values().all(|n| *n <= 4));
+            let original = ordinary
+                .iter()
+                .find(|i| {
+                    i.handle.as_ref().is_some_and(|h| {
+                        h.path == SEMANTIC_HEADERS_PATH && (h.start, h.end) == span
+                    })
+                })
+                .expect("the independently scored Body stays present");
+            assert!(original.semantic.is_some());
+            let source = std::fs::read_to_string(corpus.root.join(SEMANTIC_HEADERS_PATH)).unwrap();
+            assert_eq!(
+                original.forms[0],
+                context_foundry::store::RenderedForm::Verbatim(
+                    source[span.0 as usize..span.1 as usize].to_owned()
+                )
+            );
+            let snapshot = trace.snapshot();
+            let events = snapshot["events"].as_array().unwrap();
+            let prefixes: Vec<_> = events
+                .iter()
+                .filter(|e| {
+                    e["stage"] == "placement" && e["origin"] == "context" && e["outcome"] == "kept"
+                })
+                .collect();
+            let policies = events
+                .iter()
+                .filter(|e| e["stage"] == "context_policy")
+                .count();
+            if enabled {
+                assert_eq!(policies, 1);
+                assert_eq!(prefixes.len(), 2);
+                let quoted: Vec<_> = prefixes
+                    .iter()
+                    .map(|e| {
+                        assert_eq!(e["parent"]["start"].as_u64(), Some(span.0));
+                        assert_eq!(e["parent"]["end"].as_u64(), Some(span.1));
+                        let a = e["unit"]["start"].as_u64().unwrap() as usize;
+                        let b = e["unit"]["end"].as_u64().unwrap() as usize;
+                        assert!(b - a <= 512);
+                        source[a..b].to_owned()
+                    })
+                    .collect();
+                assert!(quoted[0].contains("apply()"));
+                assert!(quoted[1].contains("class Ledger"));
+                let context_materializations: Vec<_> = events
+                    .iter()
+                    .filter(|e| e["stage"] == "materialization" && e["origin"] == "context")
+                    .collect();
+                assert_eq!(context_materializations.len(), 2);
+                assert!(
+                    context_materializations
+                        .iter()
+                        .all(|e| e["passage_independently_embedded"] == false)
+                );
+                for prefix in &prefixes {
+                    let h = &prefix["unit"];
+                    let item = ordinary
+                        .iter()
+                        .find(|i| {
+                            i.handle.as_ref().is_some_and(|i| {
+                                Some(i.start) == h["start"].as_u64()
+                                    && Some(i.end) == h["end"].as_u64()
+                                    && i.path == SEMANTIC_HEADERS_PATH
+                            })
+                        })
+                        .unwrap();
+                    assert!(item.semantic.is_none());
+                }
+                let packed = response::pack_enriched_context(
+                    &result,
+                    None,
+                    Budget::request(BUDGET),
+                    &response::stdout_bytes,
+                )
+                .unwrap();
+                assert!(packed.tokens <= BUDGET);
+                assert!(packed.text.contains("class Ledger"));
+                assert!(packed.text.contains("apply()"));
+            } else {
+                assert_eq!(policies, 0);
+                assert!(prefixes.is_empty());
+            }
+        }
+        assert_eq!(
+            corpus.probe.document_calls(),
+            calls,
+            "source prefix discovery makes no embedding calls"
+        );
+    }
+}
+
+#[test]
+fn semantic_headers_never_revive_a_stale_body_or_its_prefixes() {
+    let (mut corpus, _) = semantic_headers_corpus();
+    let window = corpus
+        .runtime()
+        .window(
+            corpus.engine(),
+            SEMANTIC_HEADERS_QUERY,
+            Instant::now() + Duration::from_secs(30),
+            &Corpus::control(),
+        )
+        .unwrap();
+    corpus
+        .engine()
+        .replace_source(
+            SEMANTIC_HEADERS_PATH,
+            "export class Changed { replacement() { return 7; } }\n",
+        )
+        .unwrap();
+    corpus.engine_mut().refresh(&Corpus::control()).unwrap();
+    let trace = context_foundry::retrieval_trace::RetrievalTrace::default();
+    let result = corpus
+        .engine()
+        .context_candidates_with(
+            SEMANTIC_HEADERS_QUERY,
+            Strategy::Search,
+            &Corpus::control().with_trace(Some(trace.clone())),
+            &ContextOptions {
+                dense: Some(&window),
+                experimental_semantic_headers: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert!(result.batch.items.iter().all(|i| {
+        i.handle
+            .as_ref()
+            .is_none_or(|h| h.path != SEMANTIC_HEADERS_PATH)
+    }));
+    let snapshot = trace.snapshot();
+    assert!(
+        snapshot["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|e| e["origin"] != "context" || e["unit"]["path"] != SEMANTIC_HEADERS_PATH)
+    );
+}
+
+#[test]
+fn semantic_headers_exclude_no_profile_anchors_and_composed_recursion() {
+    let (corpus, _) = semantic_headers_corpus();
+    let engine = corpus.engine();
+    for dense in [false, true] {
+        let window = corpus
+            .runtime()
+            .window(
+                engine,
+                SEMANTIC_HEADERS_QUERY,
+                Instant::now() + Duration::from_secs(30),
+                &Corpus::control(),
+            )
+            .unwrap();
+        let query = if dense {
+            "Ledger"
+        } else {
+            SEMANTIC_HEADERS_QUERY
+        };
+        let mut texts = Vec::new();
+        for enabled in [false, true] {
+            let trace = context_foundry::retrieval_trace::RetrievalTrace::default();
+            let result = engine
+                .context_candidates_with(
+                    query,
+                    Strategy::Search,
+                    &Corpus::control().with_trace(Some(trace.clone())),
+                    &ContextOptions {
+                        dense: dense.then_some(&window),
+                        experimental_semantic_headers: enabled,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            assert!(
+                trace.snapshot()["events"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|e| e["stage"] != "context_policy")
+            );
+            texts.push(
+                response::pack_enriched_context(
+                    &result,
+                    None,
+                    Budget::request(BUDGET),
+                    &response::stdout_bytes,
+                )
+                .unwrap()
+                .text,
+            );
+        }
+        assert_eq!(texts[0], texts[1]);
+    }
+    let workspace = engine.workspace_id().unwrap();
+    let create=context_foundry::task_context::parse(serde_json::json!({"workspace_id":workspace,"task_id":"header-composition","command":{"op":"create","title":"Keep task evidence stable"}})).unwrap();
+    let revision = engine.task_context(&create, &Corpus::control()).unwrap()["revision"]
+        .as_u64()
+        .unwrap();
+    let window = corpus
+        .runtime()
+        .window(
+            engine,
+            SEMANTIC_HEADERS_QUERY,
+            Instant::now() + Duration::from_secs(30),
+            &Corpus::control(),
+        )
+        .unwrap();
+    let mut texts = Vec::new();
+    for enabled in [false, true] {
+        let trace = context_foundry::retrieval_trace::RetrievalTrace::default();
+        let result = engine
+            .context_candidates_with(
+                SEMANTIC_HEADERS_QUERY,
+                Strategy::Search,
+                &Corpus::control().with_trace(Some(trace.clone())),
+                &ContextOptions {
+                    dense: Some(&window),
+                    compose_evidence: true,
+                    experimental_semantic_headers: enabled,
+                    task: Some(context_foundry::task_context::Scope {
+                        workspace_id: &workspace,
+                        task_id: "header-composition",
+                        expected_revision: revision,
+                    }),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert!(
+            trace.snapshot()["events"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|e| e["stage"] != "context_policy")
+        );
+        texts.push(
+            response::pack_enriched_context(
+                &result,
+                None,
+                Budget::request(BUDGET),
+                &response::stdout_bytes,
+            )
+            .unwrap()
+            .text,
+        );
+    }
+    assert_eq!(texts[0], texts[1]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn semantic_headers_mcp_owner_forwards_the_flag_without_changing_search() {
+    let (mut corpus, _) = semantic_headers_corpus();
+    let slot = corpus.slot();
+    let expected = mcp::context_primary_with_options(
+        &slot,
+        corpus.engine(),
+        SEMANTIC_HEADERS_QUERY,
+        Strategy::Search,
+        &Corpus::control(),
+        ContextOptions {
+            experimental_semantic_headers: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let expected = response::pack_enriched_context(
+        &expected,
+        None,
+        Budget::request(BUDGET),
+        &response::stdout_bytes,
+    )
+    .unwrap()
+    .text;
+    let expected_search = corpus.search(&slot, SEMANTIC_HEADERS_QUERY, 10).packed.text;
+    drop(slot);
+    let semantic = corpus.serving();
+    corpus.engine = None;
+    let (client_io, server_io) = tokio::io::duplex(1 << 21);
+    let (input, output) = tokio::io::split(server_io);
+    let server = tokio::spawn(mcp::serve_streams(
+        ServerOptions {
+            model_resources: None,
+            knowledge: None,
+            retrieval_trace_dir: None,
+            experimental_behavior_context: ContextOptions::default().experimental_behavior,
+            experimental_semantic_headers: true,
+            store: corpus.store.clone(),
+            root: corpus.root.clone(),
+            references: Vec::new(),
+            no_memory: false,
+            experimental_task_context: false,
+            watch: false,
+            semantic: Some(semantic),
+            policy: None,
+            budget: BudgetConfig::default(),
+        },
+        input,
+        output,
+    ));
+    let client = ().serve(client_io).await.unwrap();
+    let served = Served {
+        client,
+        server: Some(server),
+    };
+    let actual = served
+        .ok(
+            "context",
+            serde_json::json!({"query":SEMANTIC_HEADERS_QUERY,"strategy":"search","tokens":BUDGET}),
+        )
+        .await;
+    assert_eq!(actual, expected);
+    assert!(actual.contains("class Ledger"));
+    assert_eq!(
+        served
+            .ok(
+                "search",
+                serde_json::json!({"query":SEMANTIC_HEADERS_QUERY,"limit":10,"tokens":BUDGET})
+            )
+            .await,
+        expected_search
+    );
+    served.close().await;
 }

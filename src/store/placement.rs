@@ -13,6 +13,15 @@ pub(super) type UnitRef<'a> = (&'a str, u64, u64);
 pub(super) struct Placed<'a> {
     pub(super) unit: UnitRef<'a>,
     pub(super) kind: Option<crate::neural::cache::CardKind>,
+    pub(super) dense_rank: Option<usize>,
+    pub(super) context: Option<ContextPrefix<'a>>,
+}
+
+#[cfg(feature = "semantic")]
+#[derive(Clone, Copy)]
+pub(super) struct ContextPrefix<'a> {
+    pub(super) body: UnitRef<'a>,
+    pub(super) role: &'static str,
 }
 
 /// The baseline's per-file cap and cut over an offered order: at most
