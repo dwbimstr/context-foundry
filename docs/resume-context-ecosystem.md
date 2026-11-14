@@ -2,7 +2,7 @@
 
 ## Current status — 2026-11-06
 
-Updated 2026-11-13. This section owns current status; other documents link here,
+Updated 2026-11-14. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
 - **Measurement.** G2 (388 questions over rust-lang/rust and oh-my-pi, run with
@@ -311,6 +311,16 @@ and dated paragraphs below are history.
     Startup-network observation remains open: matching-release source exposes
     partial diagnostics but no established complete early observation/barrier
     ([source finding](validation.md#pilot-startup-network-source-feasibility--2026-11-11)).
+    The same boundary has now been inspected at the installed 18.18.1 release's
+    associated source revision: constructor fetch injection and refresh settlement
+    do not establish an early, complete CLI observation/acknowledgment seam
+    ([current-source finding](validation.md#current-host-startup-source-feasibility--2026-11-14)).
+    The selected no-provider qualification is finished, with current-host acceptance
+    still HOLD. Further implementation needs a newly selected v2 host contract or
+    a new bounded retrieval experiment; neither changes the frozen v1 policy or
+    authorizes reuse of the consumed T005 final set. Concrete v2 tasks, margins,
+    powered sample, arms, launch pins and rights remain freeze inputs. Paid launch,
+    signing/release and owner-held backup restoration remain gated separately.
   - **Hosts and evidence:** the owner's Mac is the work host. The 2026-10-11
     sandbox and its archive are declared lost; F2, F6, F8, F10 and F11 retire.
     Five encrypted backups are built and checksum-verified in

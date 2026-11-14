@@ -1,5 +1,50 @@
 # Validation
 
+## Current-host startup source feasibility — 2026-11-14
+
+**Source finding only; complete startup observation remains unqualified.** This
+continues 003 T006's existing v2 startup requirement against the current host's
+associated release source, rather than extrapolating the 18.13.2 inspection.
+The [v18.18.1 release metadata](https://api.github.com/repos/can1357/oh-my-pi/releases/tags/v18.18.1)
+lists macOS arm64 asset `722387514`, 220,595,344 bytes, with SHA-256
+`ce80099f10c5ea4367523767230cb5b920f30cc139b9cf8758c1cc4b2f1f9409`, matching the
+owned artifact used below. The [tag reference](https://api.github.com/repos/can1357/oh-my-pi/git/ref/tags/v18.18.1)
+resolves to commit `24439066040e006eb08da7b204f0ac41c79d2de9`. This establishes release
+association, not reproducible-build correspondence. Five fetched source files
+(530,012 bytes) pass exact Git-blob and SHA-256 readback in the private
+`runs/real-host-qualification-2026-11-14/current-source-feasibility/source-readback.json`.
+No additional host launch, model inference, provider request or upstream test ran.
+
+At that commit, [`ModelRegistry`'s constructor](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/config/model-registry.ts#L598)
+accepts an injected fetch for embedders and otherwise captures a wrapped global
+fetch. [`main` constructs it without that override](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/main.ts#L1995),
+before [loading the trusted extension](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/main.ts#L2502).
+Inference: replacing global fetch in the later Foundry bridge cannot retroactively
+observe that captured registry fetch. This is a concrete ordering limitation,
+not a repository-wide claim that no alternative hook exists.
+
+[`awaitInitialBackgroundRefresh`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/config/model-registry.ts#L994)
+can wait for a refresh that has not started yet. Its settlement still follows
+`refreshInBackground`, which swallows errors, and it does not acknowledge a durable
+inventory of every startup owner.
+[`withModelDiscoveryTimeout`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/config/model-provider-discovery.ts#L65)
+races its operation against a timer without passing cancellation; the separate
+[`withTimeoutSignal`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/config/model-discovery.ts#L90)
+also races a deadline while requesting cooperative abort. Inference: wrapper
+settlement alone cannot establish that all underlying work has stopped.
+The [registry test using an injected fetch](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/test/model-registry.test.ts#L669)
+was read, not executed; it covers constructor injection/catalog refresh, not a
+complete shipped-CLI startup observer.
+
+Foundry's existing bridge/channel/journal remain the intended owners. An early
+observation/refusal seam, complete owner drainage and durable-prefix acknowledgment
+before Count/Messages admission are still proposed work, with no landed Rust
+implementation or runtime proof claimed. A new v2 host contract must bind that
+seam and the changed request shape; the frozen v1 pin and policy stay unchanged.
+The current handoff records these inputs alongside the closed retrieval experiment
+and separate paid/signing gates. Older planning text that called T010 acceptance
+and T004's trigger implementation unfinished is corrected to link current status.
+
 ## Real-host no-provider qualification — 2026-11-14
 
 **Frozen host PASS; current-host acceptance HOLD.** On `8d7012f` (product source,

@@ -328,10 +328,11 @@ measure device throughput. Observe actual CPU/device utilization, RAM, total tok
 first-result and full-build time when the target machine is available; historical
 wall times cannot identify which stage caused them.
 
-Previously selected work also remains open: 009 T005 anchorless miss repair beyond
-tracing; 001 T010 behavioral retrieval acceptance; 003 T006 broader real-host
-quality/economics acceptance of the implemented live working-view synchronization; 010 T002 model/resource acceptance;
-and 003 T009 real-host task acceptance. Owner decisions of 2026-11-06
+Remaining acceptance and owner-dependent inputs are recorded in the
+[current handoff](resume-context-ecosystem.md#current-status--2026-11-06).
+They include 009 T005 anchorless quality and 003 T006/T007–T009 real-host outcomes;
+001 T010's lexical retrieval scope is accepted, 010 real-model utility is deferred,
+and signed-package acceptance remains gated. Owner decisions of 2026-11-06
 ([validation](validation.md#owner-decisions--2026-11-06)) set how these close:
 
 - **003 T006** ("Draft pilot v2, unfunded"). A new frozen pilot v2 contract with
@@ -339,8 +340,10 @@ and 003 T009 real-host task acceptance. Owner decisions of 2026-11-06
   gaps is to be drafted. Nothing is spent until the owner separately authorizes a
   credential, rights and a costed budget.
 - **003 T007–T009 and 008 T003–T005** ("Measure them in pilot v2"). Their outcome
-  tasks join the T006 suite and pilot v2, 008 T004's semantic triggers are to be built,
-  and all six stay open until an authorized run passes.
+  tasks join the T006 suite and pilot v2. T004's owner-selected structured assertion
+  triggers are implemented under the no-model rule; their current disposition is in
+  the [handoff](resume-context-ecosystem.md#current-status--2026-11-06).
+  All six outcome tasks stay open until an authorized run passes.
 - **001 T010** ("Lexical-only, drop T006 gate"). Its local gates and the
   2026-10-19 G2 rule qualify the fixed singleton candidate. Lexical behavioral
   selection is accepted and defaults on with explicit opt-out; supplied dense
@@ -476,7 +479,7 @@ and what causes the 249 anchorless misses, remain measurement questions.
 | 2. Improve actual coding tasks | Agents reach the right evidence and a verified patch with fewer unnecessary discovery steps. | [003 T006](../specs/003-agent-retrieval-context/spec.md#t006--validate-retrieval-repairs-in-real-coding-tasks) tests current versus repaired retrieval at the real host boundary. | Verified task outcomes, full-task usage and latency, visible failures, and an inspected host capability boundary for the next milestone. |
 | 3. Preserve task state and observations | A restart retains the user constraint, rejected approach, unresolved question and supporting observation. | Experimental 003 T007 delivery and 008 T003 explicitly scoped retained records; 001 continues to own source identity. | Atomic updates, conflict handling, bounded opt-in capture, exact retained-observation recovery, and no inferred root admission or training permission. |
 | 4. Edit and recover working context | The agent can fold a large observation, keep the task coherent, and recover exact details before acting. | Experimental 003 T007 / 008 T003 reversible views using source identities and milestone 3 records. | A real host applies an identified view revision; round-trip recovery, valid tool linkage, interrupted-commit/restart behavior and measured task economics pass. |
-| 5. Reactivate memory when it helps | Relevant constraints and failed attempts influence the next action without constant reminders. | Experimental 008 T004 exact-failure reminders. Its broader semantic triggers (contradiction and constraint-violation detection) were proposed; by owner decision, 2026-11-06, they are to be built. | Fewer repeated failures and missed obligations than passive memory on held-out tasks, with acceptable total cost and a measured unnecessary-intervention rate. |
+| 5. Reactivate memory when it helps | Relevant constraints and failed attempts influence the next action without constant reminders. | Experimental 008 T004 exact-failure reminders and the owner-selected explicit structured assertion comparisons under the no-model rule; see [current status](resume-context-ecosystem.md#current-status--2026-11-06). | Fewer repeated failures and missed obligations than passive memory on held-out tasks, with acceptable total cost and a measured unnecessary-intervention rate. |
 | 6. Grow reliable durable knowledge | Useful decisions survive across tasks, corrections supersede stale beliefs, and forgetting reaches retained derivatives. | Experimental 008 T004 explicit decision promotion and tracked-copy forgetting. Reactivated 010 owns source-derived repository knowledge under the revised build order above. | Capture/update/retrieve/use evaluated separately; scope, contradiction, export and forget behavior verified through the same lifecycle suite. |
 
 Milestone 1's diagnostic checkpoint unlocks its two repairs; they need not wait for
