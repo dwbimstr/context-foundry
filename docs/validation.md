@@ -1,5 +1,22 @@
 # Validation
 
+## Approved final wrap-up publication — 2026-11-13
+
+The owner approved the exact fifteen-commit snapshot through `966cdf7`, replacing
+the older pending seven-commit request. The non-force push to
+`dwbimstr/context-foundry:experimental/context-ecosystem` passed, followed by a full
+fresh-clone readback: **400 tracked paths / 11,677,115 bytes**, identical contents,
+file types and executable bits. All 22 Git commands succeeded in **6.900 seconds**.
+Experimental resolves to `966cdf7056e8ea4f29d7cec9a1dd6084e556c3b9`;
+main remains `d94b013e3c638276f6afba49f80194776e294fbb`. No release, tag or
+hosted-workflow dispatch occurred. Private evidence and rejected prototype branches
+are excluded. The earlier approval through `69ce9f8` was already fulfilled.
+
+Local receipt: `runs/wrapup-final-publication-2026-11-13/publication-publish-i55sq6h8/result.json`.
+The owner also chose explicit structured assertions for 008 T004 under its existing
+no-model rule. Its contract and failing consumer test precede implementation;
+implementation and task-outcome acceptance are not established by this publication.
+
 ## T005 sealed final pair no promotion — 2026-11-13
 
 **Final guard failed; retain the baseline.** The sole eligible fixed candidate

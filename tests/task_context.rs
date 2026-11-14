@@ -745,6 +745,46 @@ fn review_checks_explicit_scope_and_open_obligations_without_claiming_conflicts(
 fn promotion(revision: u64) -> Value {
     json!({"op":"promote","expected_revision":revision,"entry_id":"decision","memory_id":"backoff-policy","author":"operator","provenance":"explicit sandbox promotion"})
 }
+
+fn asserted(id: &str, kind: &str, key: &str, relation: &str, value: &str) -> Value {
+    let mut edit = add(id, kind, "Caller-supplied policy or observation.");
+    edit["entry"]["assertions"] = json!([{ "key":key, "relation":relation, "value":value }]);
+    edit
+}
+fn assertion_review(revision: u64, assertions: Value, max_bytes: usize) -> Value {
+    json!({"op":"review","expected_revision":revision,"paths":[],"finishing":false,"assertions":assertions,"max_bytes":max_bytes})
+}
+#[test]
+fn structured_assertions_detect_conflicts_and_constraint_violations_without_prose_inference() {
+    let e = env();
+    let engine = Engine::open_existing(&e.store).unwrap();
+    let revision = apply(&engine, create(&engine), json!([
+        asserted("observed", "observation", "server-v1:retry.limit", "equals", "3"),
+        asserted("required", "requirement", "server-v1:retry.limit", "equals", "3"),
+        asserted("forbidden", "constraint", "server-v1:retry.limit", "not_equals", "unlimited"),
+        add("prose", "observation", "The retry limit is unlimited.")
+    ])).unwrap()["revision"].as_u64().unwrap();
+    let result = call(&engine, assertion_review(revision, json!([
+        {"key":"server-v1:retry.limit","relation":"equals","value":"unlimited"}
+    ]), 8192)).unwrap();
+    assert_eq!(result["silence"], false);
+    assert_eq!(result["verified"], false);
+    assert_eq!(result["host_application"], "unknown");
+    let advice = result["advice"].as_array().unwrap();
+    assert_eq!(advice.len(), 3);
+    assert_eq!(advice[0]["trigger"], "assertion_conflict");
+    assert_eq!(advice[1]["trigger"], "constraint_violation");
+    assert_eq!(advice[2]["trigger"], "constraint_violation");
+    for row in advice {
+        assert_eq!(row["conflicts"][0]["proposed"]["value"], "unlimited");
+        assert_eq!(row["assertions_sha256"].as_str().unwrap().len(), 64);
+        assert_eq!(row["author"], "sandbox operator");
+    }
+    for assertions in [json!([]), json!([{"key":"server-v1:retry.limit","relation":"equals","value":"3"}]), json!([{"key":"server-v2:retry.limit","relation":"equals","value":"unlimited"}])] {
+        assert_eq!(call(&engine, assertion_review(revision, assertions, 8192)).unwrap()["silence"], true);
+    }
+    assert_eq!(call(&engine, json!({"op":"inspect"})).unwrap()["revision"], revision);
+}
 #[test]
 fn promotion_is_explicit_indexed_and_forget_removes_derived_retrieval() {
     let e = env();

@@ -296,9 +296,10 @@ the delivery boundary.
 ### T004 — Experimental grounded reminders and explicit promotion
 
 Status: exact-action and grounded path/finishing reminders are implemented locally on
-the experimental branch. Semantic triggers are still to be built, and pilot v2 is to
-measure agent outcomes (owner, 2026-11-06, Status above); T004 stays open until the
-triggers exist and an authorized run passes.
+the experimental branch. The owner selected explicit structured assertions under the
+existing no-model rule on 2026-11-13. The continuation below is selected for
+implementation; pilot v2 still owns measured agent outcomes. T004 stays open until
+the triggers exist and an authorized run passes.
 
 Build the next stages in the same task record, with no model or background loop.
 `advise {action_key,max_bytes}` returns only active rejected attempts whose optional
@@ -350,6 +351,53 @@ and view restoration may select them again. Protected task entries cannot be hid
 Focused tests cover relevance, silence, stale sources, bounds, revision/path refusal
 and CLI restart behavior. Measured unnecessary interventions and verified host outcomes
 remain pending; source-linked reminders are not semantic contradiction reasoning.
+
+T004 structured assertion continuation (owner, 2026-11-13): contradiction and
+constraint reminders compare explicit caller assertions, without interpreting prose.
+Keep the existing task row, CAS edits, source snapshot and bounded review operation.
+A separate rule store, solver, worker or model would add ownership without improving
+the selected literal comparison. This is task state, not a source retrieval ranking
+change or proof of real-host benefit.
+
+- An entry optionally carries `assertions`, at most sixteen
+  `{key,relation,value}` objects. Keys name caller-defined **single-valued** facts,
+  including scope/environment identity when relevant; they match
+  `[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}`. Values are nonblank UTF-8 strings of at most
+  512 bytes. Match keys and values exactly; do not normalize case, numbers, units,
+  aliases or prose. Duplicate keys within one entry/request refuse. Empty/missing
+  arrays preserve existing behavior; null, unknown fields/relations and oversized
+  inputs refuse before mutation.
+- `relation` is required: `equals` or `not_equals`. Observations, hypotheses and
+  decisions may assert `equals` only. Requirements and constraints may use either
+  relation. Other entry kinds cannot carry assertions. These are attributed caller
+  claims, not inferred facts or proof that a constraint is valid.
+- `review` optionally accepts up to sixteen proposed `assertions`, all `equals`.
+  For an active selected observation/hypothesis/decision, the same key with a
+  different value produces `assertion_conflict`. For a requirement/constraint,
+  a different value violates `equals`, and the same value violates `not_equals`;
+  either produces `constraint_violation`. Missing keys and satisfying values are
+  silent. Existing path/finishing reminders still apply independently. A matching
+  structured trigger takes precedence over a path/finishing trigger for that entry,
+  so it is delivered once, with every conflicting stored/proposed assertion.
+- Preserve freshness, revision/workspace checks, supersession, selection, protected
+  entries, eight complete originals, byte caps and omitted/stale counts. Folded
+  entries retain their assertions; no summary changes an asserted value. No review
+  writes state, certifies truth, blocks an action or claims host consumption.
+- Hash the exact canonical serialized assertion array separately from the existing
+  text digest. Validate both on every task decode. Include assertions and their
+  digest, only when nonempty, in inspect/peek/render and structured advice; rendered
+  task views retain them within the existing shared delivery budget. Existing rows
+  need no rewrite; missing fields decode as empty. Older readers refuse unfamiliar
+  task fields rather than silently discarding them. No new table or index is needed.
+  Export/forget and fault recovery retain the same transaction. Project-memory
+  promotion still copies decision prose and links; its attribution also binds the
+  assertion digest when present, without introducing task rules into memory search.
+- Verification: real store comparisons and silence; exact scope/value matching;
+  malformed/duplicate/oversized input rollback and revision preservation; source
+  staleness; fold/select/supersede/restart; digest corruption refusal; abrupt exit
+  before/after commit; real CLI/opt-in MCP parity and catalog; mandatory task-view
+  token/byte caps. Real-agent intervention quality and task outcomes remain open
+  for the separately authorized pilot v2.
 
 
 ### T005 — Recover evidence by content and compose task-aware retrieval

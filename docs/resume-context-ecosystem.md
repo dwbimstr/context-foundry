@@ -275,10 +275,12 @@ and dated paragraphs below are history.
     The exact seven-commit snapshot through `69ce9f8` is now published and verified
     by full fresh-clone readback; both older private bundles are finalized locally
     ([publication receipt](validation.md#approved-experimental-publication-and-evidence-closure--2026-11-13)).
-    Newer local work is outside that approval. The remaining 008 T004 semantic
-    trigger input contract still needs the owner's choice between explicit structured
-    assertions under the no-model rule and revising the contract for natural-language
-    interpretation. No trigger implementation or outcome acceptance is claimed.
+    The owner subsequently approved the final fifteen-commit snapshot through
+    `966cdf7`; it is published with full fresh-clone readback
+    ([receipt](validation.md#approved-final-wrap-up-publication--2026-11-13)).
+    The owner selected explicit structured assertions for 008 T004 under the current
+    no-model rule on 2026-11-13. The existing spec now owns that comparison contract;
+    implementation and real-host outcome acceptance are still to do.
     Complete coverage of transient library file modes, current installed-host compatibility and
     v2's declared task/arm/host qualification remain open. The installed host now
     differs from the archived pin used by the regression. Pilot v2/T006 remain open.
