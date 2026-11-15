@@ -1,5 +1,90 @@
 # Validation
 
+## Original credential-prefetch owner qualification — 2026-11-15
+
+**The owned qualifier observes and settles the SDK's original non-OAuth prefetch
+before bridge Ready, and halts on a later prefetch. Full startup admission stays
+HOLD.** Code/test source `5ed922b` implements the selected
+[startup-owner contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission).
+Ordinary capture, frozen v1 admission and its wire policy stay unchanged.
+
+The first native preload observer could not install and its empty counts were
+rejected; they establish no absence or settlement. The supported trusted-extension
+factory runs earlier than SDK session construction. A fresh native baseline/observer
+pair there completes in **6.706 seconds**. On the actual
+shared AuthStorage namespace it observes one original fixed-provider call, one
+non-OAuth source check, original-promise completion and zero pending/rejected work
+before session_start. Both exits are normal, stderr is empty and their complete
+native model objects match. Neither run sends a prompt or provider request.
+
+The source basis is oh-my-pi `24439066040e006eb08da7b204f0ac41c79d2de9`:
+[trusted factories before session construction](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/main.ts#L2502),
+[`createAgentSessionScoped` startup prefetch](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/sdk.ts#L2364),
+and [`KeyCascade.source/prefetchUsage`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/ai/src/auth/cascade.ts#L360)
+(blob `cf4e827bf6c631243da445609d392af2d11d8b40`). The original method classifies
+source synchronously before awaiting the OAuth usage selector. Undefined means
+explicitly no configured auth; unknown shapes/kinds are refused. This is source
+association with the pinned artifact, not reproducible-build proof.
+
+One small [embedded helper](../src/pilot_capture/startup_auth.ts) owns this operation
+for both the actual bridge factory and real SDK controls. Host::launch writes and
+reads back its private bytes, binding SHA-256 `62f0ae84177e636337fafb6db3bf7eb6bbb57d1596d2f1bfa41bd71549b39c4f` only for
+OwnedQualification; ordinary/frozen paths materialize no helper. It preserves
+original receiver, arguments, source metadata and promise on the admitted path,
+records only bounded counters/identity, and never retains credentials or account/
+session identifiers. The bridge seals that actual namespace before Ready using
+the existing settings fault. A restarted prefetch terminates with exit 75. No new
+channel, journal, worker, provider route, test-injection API or v1 field is added.
+
+The actual owned bridge first fails on `0ffb978`, whose helper cannot record its
+original call: **87.530 seconds** including offline compilation, settings fault,
+zero fixture requests, normal reaping and no forced cleanup. Its executable and
+receipt are retained. The first tracking run passed the conversation and seven
+controls but failed the test parser's assumption that every trace exits zero:
+the restart had correctly exited 75. The parser now takes the explicitly declared
+negative-control exit; ordinary validation still requires zero. That failed run
+is retained and is excluded from green evidence.
+
+All **five current-host diagnostics pass** on `5ed922b` in **124.383 seconds**.
+Eight actual SDK controls cover original-call success, late installation, synthetic
+OAuth classification, unknown classification, unsettled completion, wrong namespace,
+duplicate call and restart after sealing. Success/restart report exactly one call,
+one completion and one non-OAuth source check; the six faults refuse. Restart exits
+75 and the others exit zero. Every process group is gone without forced cleanup,
+all complete models match, no prompt is sent, and owned TCP counts remain zero.
+The synthetic metadata faults do not establish OAuth integration or refresh behavior.
+
+The actual owned bridge's two-generation read-tool conversation still preserves
+full history after the warm-up deadline. Four owned TLS fixture POSTs, native
+synthetic usage reconciliation and 29 corruptions, model/catalog identity, six
+trace mutations, Agent stock/guard/raw counts **[1, 0, 1]**, project MCP exclusion
+and later disk-edit controls all pass. Synthetic usage is not provider economics.
+The owned config digest remains `438b16919108fe971ffb7439c040be5baf4b77670800efa5400f300db2e8a2e2`.
+
+Frozen compatibility passes **33/0/7 ignored** in **292.228 seconds** and
+focused lint passes. All **eight local gates pass** in **819.433 seconds**,
+including actual Rust **1.90.0**. Default outer totals are **1,319/0/35 ignored**;
+pilot units are **102/0/1 ignored**; the custom 21 recovery checks and nested child
+summaries are separate. Existing assertions/deadlines are retained, with no added
+ignore. Review is in-session, not independent.
+
+Private evidence is `runs/pilot-auth-prefetch-2026-11-15/`: rejected preload,
+factory baseline/observer, protocol, actual-bridge expected red, source-pinned
+current/frozen consumers, eight SDK controls and full command/resource receipts.
+Readback finishes in **1695.864 seconds** inside the stated offline
+hour, with one heavy job, 120-second cleanup reserve, 20 GiB disk floor and 8 GiB
+sampled individual RSS ceiling. Maximum sampled individual RSS is
+**1945.328 MiB**; minimum observed free disk is
+**47.534 GiB**. Samples do not establish global/GPU memory
+or hard memory enforcement. No provider spend, real credential or model download
+is used.
+
+This closes only the original non-OAuth prefetch owner. Credential refresh/polling,
+OAuth integration, other startup owners/callbacks, native-timer settlement, general
+transport coverage and durable parent acknowledgment remain open. The qualifier
+still cannot grant full startup admission. V2 remains unfunded/unfrozen; paid runs,
+signing and release remain gated.
+
 ## Fixed qualifier project MCP exclusion — 2026-11-15
 
 **The fixed read/edit qualifier excludes project MCP commands before SDK

@@ -653,7 +653,7 @@ The [dated exclusion receipt](../../../docs/validation.md#fixed-qualifier-projec
 records the actual marker red on `b83a696`, native setting controls, all current/
 frozen consumers and eight gates on `ecdf962`.
 
-**Selected credential-prefetch owner check, 2026-11-15 — implementation pending.**
+**Selected credential-prefetch owner check, 2026-11-15 — implemented and locally qualified.**
 The pinned `KeyCascade.prefetchUsage` returns before usage selection unless the
 observed source is OAuth. A preload observer could not install; its zero counts
 are rejected. The existing trusted-extension factory is an earlier supported
@@ -671,10 +671,12 @@ Ordinary capture/v1 never load it. Hook the actual keys namespace via the shared
 AuthStorage class, return original values/arguments/promise unchanged for the
 admitted non-OAuth path, and keep only bounded counters and namespace identity.
 Never retain keys, headers, account/session identifiers or exception text.
+Undefined is this pinned source API's explicit no-configured-auth result;
+unrecognized metadata shapes or kinds are not treated as that known absence.
 
 The owned bridge requires exactly one completed original fixed-provider call,
 one non-OAuth source observation, no rejection/pending work and the same namespace
-before Ready. Unknown/OAuth eligibility, wrong identity, missing/duplicate call,
+before Ready. Unknown metadata or OAuth eligibility, wrong identity, missing/duplicate call,
 late installation or an unsettled result fails the existing settings stage.
 Block OAuth usage selection at its source-classification boundary, before the
 selector can start IO. Once sealed, another prefetch call halts the host. No new
@@ -698,6 +700,11 @@ compatibility, focused lint and eight gates. Use the offline hour, 120-second
 cleanup reserve, one heavy job, 20 GiB disk floor and 8 GiB sampled individual RSS
 ceiling. Publish reviewed changes and prune verified generated caches, preserving
 raw evidence and runnable red/green consumers. Paid runs and signing stay gated.
+
+The [dated original-prefetch receipt](../../../docs/validation.md#original-credential-prefetch-owner-qualification--2026-11-15)
+records the original-call factory witness, actual-bridge expected red and current/
+frozen consumers plus all eight gates on `5ed922b`. This qualification closes
+only the original non-OAuth prefetch; full startup admission remains open.
 
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association

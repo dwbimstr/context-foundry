@@ -484,6 +484,15 @@ and dated paragraphs below are history.
     are pruned after exact checks, retaining runnable red/green diagnostics and
     all other evidence. All five current native diagnostics pass directly after
     cleanup without Cargo; the project MCP receipt owns counts and retention details.
+    The owned bridge now observes the original credential-prefetch call from its
+    trusted factory, requires its non-OAuth completion on the actual namespace before
+    Ready and halts a later restart. Actual bridge red/green, eight native fault/
+    success controls, all five current diagnostics, frozen compatibility and eight
+    gates pass on `5ed922b`
+    ([original-prefetch receipt](validation.md#original-credential-prefetch-owner-qualification--2026-11-15)).
+    Credential refresh/polling and OAuth integration remain unqualified; complete
+    startup admission and durable acknowledgment stay open. No paid run or signing
+    is authorized.
     The settlement finding/design through `2238253` is published with full fresh-clone
     readback; ten redundant native-library copies are removed after byte/open-file
     checks, preserving all other evidence and the prior retained library.
