@@ -34,6 +34,9 @@ use super::{
 /// The bridge source, embedded from the repository and materialized with
 /// its exact bytes into each private host root.
 pub const BRIDGE_SOURCE: &[u8] = include_bytes!("bridge.ts");
+/// Bounded startup metadata diagnostic, loaded only by the owned qualifier.
+/// It does not establish startup settlement or grant capture admission.
+pub const QUALIFICATION_STARTUP_PROBE: &[u8] = include_bytes!("startup_probe.ts");
 pub const SANDBOX_EXEC: &str = "/usr/bin/sandbox-exec";
 /// Exact owned extraction path of the pinned OMP 18.13.2 macOS arm64 host.
 /// This declares private executable metadata, not a per-request content hash.
@@ -225,6 +228,7 @@ pub struct LaunchRecord {
     pub bridge_sha256: String,
     pub models_yml_sha256: String,
     pub config_yml_sha256: String,
+    pub startup_probe_sha256: Option<String>,
     pub env_names: Vec<String>,
 }
 
@@ -486,6 +490,19 @@ impl Host {
         if bridge_sha256 != sha256_hex(BRIDGE_SOURCE) {
             return Err(fault(FaultClass::Bootstrap, "bridge_bytes_mismatch"));
         }
+        let startup_probe_sha256 = if spec.catalog == CatalogProfile::OwnedQualification {
+            let path = root.join("bridge/startup_probe.ts");
+            write_private_new(&path, QUALIFICATION_STARTUP_PROBE)?;
+            let written = fs::read(&path)
+                .map_err(|_| fault(FaultClass::Bootstrap, "startup_probe_unreadable"))?;
+            let digest = sha256_hex(&written);
+            if digest != sha256_hex(QUALIFICATION_STARTUP_PROBE) {
+                return Err(fault(FaultClass::Bootstrap, "startup_probe_bytes_mismatch"));
+            }
+            Some(digest)
+        } else {
+            None
+        };
 
         let policy_text = sandbox_policy(
             &spec.omp,
@@ -508,6 +525,18 @@ impl Host {
         let mut env = host_env(&paths, &spec.identity, tx_ino, rx_ino);
         if spec.catalog == CatalogProfile::OwnedQualification {
             env.push(("CF_PILOT_CATALOG".into(), "owned-bundled-fixed-v1".into()));
+            env.push((
+                "BUN_OPTIONS".into(),
+                "--preload ./bridge/startup_probe.ts".into(),
+            ));
+            env.push((
+                "CF_PILOT_PROBE_WORKSPACE".into(),
+                workspace.to_string_lossy().into_owned(),
+            ));
+            env.push((
+                "CF_PILOT_PROBE_TRACE".into(),
+                root.join("startup.jsonl").to_string_lossy().into_owned(),
+            ));
         }
 
         let mut cmd = Command::new(SANDBOX_EXEC);
@@ -515,7 +544,13 @@ impl Host {
             .arg(&policy_text)
             .arg(&spec.omp)
             .args(&args)
-            .current_dir(&workspace)
+            // Relative preload arguments avoid Bun's whitespace parsing. The
+            // qualifier restores the canonical workspace before SDK startup.
+            .current_dir(if startup_probe_sha256.is_some() {
+                &root
+            } else {
+                &workspace
+            })
             .env_clear()
             .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
             .stdin(Stdio::piped())
@@ -551,6 +586,7 @@ impl Host {
             bridge_sha256,
             models_yml_sha256: sha256_hex(MODELS_YML.as_bytes()),
             config_yml_sha256: sha256_hex(config.as_bytes()),
+            startup_probe_sha256,
             env_names: env.iter().map(|(k, _)| k.clone()).collect(),
         };
 

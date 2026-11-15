@@ -123,6 +123,19 @@ async fn qualify_current_host_history(
     let (host, mut events) = Host::launch(&spec).unwrap();
     let bridge_sha = host.launch.bridge_sha256.clone();
     let config_sha = host.launch.config_yml_sha256.clone();
+    let startup_probe_sha = host.launch.startup_probe_sha256.clone();
+    assert_eq!(
+        startup_probe_sha,
+        owned_catalog
+            .then(|| pilot_capture::sha256_hex(pilot_capture::host::QUALIFICATION_STARTUP_PROBE))
+    );
+    assert_eq!(
+        host.launch
+            .env_names
+            .iter()
+            .any(|name| name == "BUN_OPTIONS"),
+        owned_catalog
+    );
     let host_root = host.paths.root.clone();
     assert_eq!(
         pilot_capture::sha256_hex(&std::fs::read(host.paths.agent.join("config.yml")).unwrap()),
@@ -668,6 +681,7 @@ async fn qualify_current_host_history(
     let report = json!({"host_sha256": SHA, "bridge_sha256": bridge_sha,
         "body_sha256": pilot_capture::sha256_hex(&body), "body_bytes":body.len(),
         "config_yml_sha256":config_sha,
+        "startup_probe_sha256":startup_probe_sha,
         "no_thread_field":no_thread, "validator_passed":request_passed,
         "validator_fault":admitted.as_ref().and_then(|r|r.as_ref().err()).map(ToString::to_string),
         "qualified_requests":if tool_followup {requests.len()} else {1},"missing_completion_control_rejected":negative_control,
