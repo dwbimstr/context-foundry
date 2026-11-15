@@ -450,6 +450,11 @@ and dated paragraphs below are history.
     This closes the selected settings-stability repair only. Full startup owner and
     transport coverage, callback/timer settlement and durable parent acknowledgment
     remain open; v2 remains unfunded/unfrozen and paid runs/signing stay gated.
+    Settings repair/records through `e3c9540` are published with full
+    fresh-clone readback. New build/MSRV and eleven duplicate SDK-library caches
+    are pruned after exact checks, retaining runnable red/green diagnostics and
+    all other evidence. All five current native diagnostics pass directly after
+    cleanup without Cargo; the settings receipt owns counts and retention details.
     The settlement finding/design through `2238253` is published with full fresh-clone
     readback; ten redundant native-library copies are removed after byte/open-file
     checks, preserving all other evidence and the prior retained library.

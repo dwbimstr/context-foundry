@@ -77,6 +77,32 @@ startup owners and the shared-channel durable parent acknowledgment remain open.
 V2 is unfunded/unfrozen. No provider spend, model download, real provider credential,
 paid execution, signing, main update, tag or release is used or enabled.
 
+The repair and qualification records through `e3c9540` are published to
+experimental with complete fresh-clone byte/type/executable-mode readback of all
+**403 tracked paths**; main remains `d94b013`. New build/MSRV allocation falls
+from **8,443,121,664 to 34,934,784 bytes**,
+removing **11,755** generated files. The runnable green
+diagnostic and separately retained proper-red executable keep their exact hashes,
+list all **40** tests and require only system dynamic libraries. All
+**109** existing implementation evidence files remain exact.
+
+Eleven duplicate SDK-library extractions from the rejected catalog and owner
+controls are removed only after exact byte comparison with the retained master
+and empty open-file checks: **1,222,213,520 logical bytes**. All
+**330** other files in those roots remain exact. Their failed
+attempts and original bounds are retained. The qualified executable then passes
+all **five current diagnostics** directly in **54.210 seconds**
+without Cargo, including the disk-edit control, actual tool conversation and TCP
+bypass control. The owned-directory allocation reduction totals
+**9,630,420,992 bytes**; this is not an inferred APFS physical
+free-space gain. Post-cleanup readback finishes at **1707.818
+seconds** inside the implementation hour. Target/runs/datasets allocations are
+**92,450,816 / 9,283,108,864 /
+34,715,725,824 bytes**. Required models, datasets,
+backups, SDK masters and all other evidence remain retained. Detailed mappings are
+in `cleanup-build-result.json`, `private-probe-cleanup-result.json`,
+`retained-result.json` and `post-cleanup-readback.json` in the implementation root.
+
 ## Native Agent startup refusal — 2026-11-15
 
 **The known SDK/custom-Agent HTTPS route is refused before its TCP connection in
