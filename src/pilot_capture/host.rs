@@ -90,7 +90,10 @@ pub enum CatalogProfile {
 
 impl CatalogProfile {
     fn is_owned_qualification(self) -> bool {
-        self != Self::HostDefault
+        matches!(
+            self,
+            Self::OwnedQualification | Self::OwnedEarlyApiQualification
+        )
     }
 }
 
@@ -483,7 +486,16 @@ impl Host {
         ] {
             create_private_dir(dir)?;
         }
-        write_private_new(&paths.agent.join("models.yml"), MODELS_YML.as_bytes())?;
+        let models = if spec.catalog == CatalogProfile::OwnedEarlyApiQualification {
+            format!(
+                "{MODELS_YML}    modelOverrides:\n      {}:\n        api: {}\n",
+                policy::MODEL,
+                policy::BRIDGE_API
+            )
+        } else {
+            MODELS_YML.to_owned()
+        };
+        write_private_new(&paths.agent.join("models.yml"), models.as_bytes())?;
         let config = match spec.catalog {
             CatalogProfile::HostDefault => CONFIG_YML.to_owned(),
             CatalogProfile::OwnedQualification | CatalogProfile::OwnedEarlyApiQualification => {
@@ -596,7 +608,7 @@ impl Host {
             argv_sha256: sha256_hex(args.join("\0").as_bytes()),
             policy_sha256: sha256_hex(policy_text.as_bytes()),
             bridge_sha256,
-            models_yml_sha256: sha256_hex(MODELS_YML.as_bytes()),
+            models_yml_sha256: sha256_hex(models.as_bytes()),
             config_yml_sha256: sha256_hex(config.as_bytes()),
             startup_probe_sha256,
             env_names: env.iter().map(|(k, _)| k.clone()).collect(),
@@ -1422,7 +1434,7 @@ mod tests {
         let omp = policy.workspace.join("not-omp");
         fixture_private_write(&omp, b"not the qualified artifact").unwrap();
         let root = policy.workspace.join("new-host");
-        let spec = HostSpec {
+        let mut spec = HostSpec {
             omp,
             root: root.clone(),
             workspace: policy.workspace,
@@ -1433,12 +1445,18 @@ mod tests {
                 .unwrap(),
             catalog: CatalogProfile::OwnedQualification,
         };
-        let Err(error) = Host::launch(&spec) else {
-            panic!("unqualified host must not launch");
-        };
-        assert_eq!(error.class, FaultClass::Pins);
-        assert_eq!(error.code, "qualification_host_pin_mismatch");
-        assert!(!root.exists());
+        for catalog in [
+            CatalogProfile::OwnedQualification,
+            CatalogProfile::OwnedEarlyApiQualification,
+        ] {
+            spec.catalog = catalog;
+            let Err(error) = Host::launch(&spec) else {
+                panic!("unqualified host must not launch");
+            };
+            assert_eq!(error.class, FaultClass::Pins);
+            assert_eq!(error.code, "qualification_host_pin_mismatch");
+            assert!(!root.exists());
+        }
     }
 
     #[test]
