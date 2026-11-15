@@ -344,6 +344,9 @@ and dated paragraphs below are history.
     non-fetch bypass coverage, drain or parent-journal acknowledgment. Existing
     launcher admission is unchanged; evaluate this seam before requiring a rebuilt
     upstream host. Complete startup qualification remains open.
+    The preload finding through `9684a58` is published with full fresh-clone
+    readback. Its three redundant native-library extractions are removed after
+    byte/open-file checks; all other evidence and the generated catalog are retained.
     The selected request repair is finished; unfunded v2 contract preparation
     remains authorized without changing frozen v1 policy or enabling execution.
     A new retrieval experiment still needs a bounded selection and unexposed

@@ -49,6 +49,17 @@ owned preload in the existing launcher; it need not assume an upstream rebuild i
 required. Production `Host::launch`, frozen v1 admission and pilot-v2 execution
 remain unchanged. Complete current-host/v2 acceptance stays **HOLD**.
 
+The finding through `9684a58` is published to the experimental branch with full
+fresh-clone byte/type/executable-mode readback of all **400 tracked paths**; main
+remains `d94b013`. Only after publication, three newly extracted native-library
+copies are removed after exact-byte comparison against the retained current-host
+copy and an empty open-file check. This removes **333,330,960 logical bytes**;
+the owned probe's allocated size falls from **342,056,960 to 8,740,864 bytes**.
+All **105** other existing files pass exact readback, including the generated
+catalog and raw failures. `cleanup-result.json` records the mapping. These are
+directory allocations, not a claim about APFS physical free-space gain; older
+manifests retain their pre-cleanup meaning. No new Rust build cache is created.
+
 ## Current-host tool continuation — 2026-11-15
 
 **PASS at the selected owned-fixture consumer boundary.** Test/contract commit
