@@ -1,5 +1,99 @@
 # Validation
 
+## Native warm-up refusal lifetime repair — 2026-11-15
+
+**The known Agent refusal now completes through the SDK's request error path;
+full startup admission remains HOLD.** Source is `61a286f`, under 003 T006's
+existing [startup contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission).
+The preceding TCP and short-conversation checks did not cover the native
+10-second warm-up abort deadline. Ordinary capture, v1 policy/protocol and paid
+authority retain their existing behavior.
+
+The synchronous refusal introduced in `7f54889` throws during request construction.
+On the pinned OMP 18.18.1 / Bun 1.4.4 artifact, a no-prompt SDK host reaches Ready
+and returns native state, then exits **1** with an uncaught ReferenceError after
+**11.218 seconds**, without a normal trace exit row. The initial controller also
+rejects that missing row; its failed result is retained. A corrected bounded
+counterfactual records this outcome explicitly rather than calling it a passing
+host. The paired immediate-destruction case survives the unchanged deadline, but
+that observation alone does not prove cleanup.
+
+Source owner:
+[`sendCoworkRequest`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/ai/src/providers/cowork-fetch.ts#L185)
+at oh-my-pi `24439066040e006eb08da7b204f0ac41c79d2de9`, Git blob
+`eae421ff469791b76a485bb687c1e64896f9edfb`. It installs its abort listener before
+https.request initializes the captured request variable, and releases the listener
+from request error/response cleanup. The Agent throw bypasses that release path.
+[`prewarmModelConnection`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/ai/src/providers/connection-prewarm.ts#L48)
+creates the unmodified 10-second signal (blob
+`14e6795b6630d2dae57fca8b9da988fcae4d00ce`). The related
+[prewarm tests](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/ai/test/connection-prewarm.test.ts)
+were inspected, not run; source association is not reproducible-build proof.
+
+The committed actual-capture regression on `91d0c34` crosses the native deadline
+after initial settings readback and requires another state response before its
+first prompt. It fails in **103.790 seconds** including the offline build:
+the correct native model was read, then the host exits 1 with **134 stderr bytes**,
+no force and its process group reaped. Its stderr digest exactly matches the SDK
+counterexample: `b3984f9235b9df87e9a4bf4b944ba100e21430ca755dc12bfeef89a727512ca2`.
+The independent owned fixture sees
+**zero Count/Messages calls**, and no request is captured. The red executable and
+closed failure metadata are retained; product stderr still remains count/hash only.
+
+Immediate destruction candidate `1c75a4f` passes four current diagnostics but fails
+the custom-Agent witness: TCP remains zero and its refusal error never arrives,
+so the witness times out. No full gates run on that candidate. An additional native
+control shows that both immediate and microtask-deferred destroy(error) leave the
+SDK listener registered, even while the host survives the deadline. Its rejected
+removal assertion and all native reports remain retained. Neither candidate is
+accepted based on survival or zero TCP alone.
+
+The final guard retires the socketless request and explicitly emits its local
+refusal error in one queued microtask, after construction lets the consumer install
+its handler. The original Agent queue is never invoked. A native owner control
+observes one timeout creation, one abort-listener addition and one removal, with
+two state responses and normal exit in **12.564 seconds**. Its metadata wrappers
+call the original timeout/add/remove methods, add no abort listener and keep only
+weak signal identities. They are private diagnostics, not a product owner or
+admission authority. No uncaught exception is suppressed, successful response
+invented or native timeout shortened. The implementation stays in the existing
+[embedded preload](../src/pilot_capture/startup_probe.ts), SHA-256
+`1468f13e8b2e18d2b26a41d5c73216b126ce8f5ed9a0e5811603bf685030c6b0`;
+no new module, transport, worker or protocol is added.
+
+All **five current-host diagnostics pass** on `61a286f` in **86.720 seconds**.
+The actual owned capture bridge answers a fresh state query after its 12-second
+hold, preserves the complete native model digest and finishes the strict
+two-generation tool conversation. All four owned fixture POSTs, synthetic native
+usage totals and 29 corruptions, authoritative one-model cache and six trace
+mutations pass. Independent stock/guard/raw TCP counts remain **[1, 0, 1]**, and
+the custom-Agent error is now delivered. Raw sockets remain an uncovered control.
+Synthetic usage counters do not establish provider economics.
+
+Frozen-host compatibility passes **33/0/7 ignored** in **297.527 seconds**;
+focused lint passes. All **eight local gates pass** on `61a286f` in
+**822.094 seconds**, including actual Rust **1.90.0**. Default outer totals
+are **1,319/0/35 ignored**; pilot units are **102/0/1 ignored**. The 21 custom recovery
+successes and nested child summaries remain separate. No existing assertion or
+deadline is relaxed; the existing owned conversation gains the deadline check.
+
+Private evidence is `runs/pilot-warmup-lifetime-2026-11-15/` and
+`runs/pilot-warmup-repair-2026-11-15/`, including all failed candidates/controllers,
+raw SDK error/trace data, actual-capture failure hashes, native lifecycle metadata,
+source pins and in-session readback. Qualification finishes at
+**1883.128 seconds** inside the original offline hour; the
+candidate failure does not reset its deadline. One heavy job, 120-second cleanup
+reserve, 20 GiB disk floor and 8 GiB sampled individual RSS ceiling apply. Maximum
+sampled implementation-process RSS is **2005.719 MiB**;
+minimum observed free disk is **48.294 GiB**. These
+samples do not establish global/GPU memory or hard resource enforcement.
+
+This repairs the demonstrated request/abort-listener lifetime failure. It does
+not establish cancellation of the native timeout itself, complete owner/transport
+coverage, all callback settlement or the shared-channel durable startup acknowledgment.
+V2 remains unfunded/unfrozen; paid execution, signing and release remain gated.
+No provider spend, real provider credential or model download is used.
+
 ## Owned native settings quiescence — 2026-11-15
 
 **The explicit owned qualifier disables live config reloading before bridge Ready;

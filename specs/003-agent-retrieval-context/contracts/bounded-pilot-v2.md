@@ -576,7 +576,7 @@ The [dated settings receipt](../../../docs/validation.md#owned-native-settings-q
 records the proper native red on `db47f71`, five current consumers, frozen
 compatibility and all eight gates on `6a9bb15`. Full startup admission remains open.
 
-**Selected Agent-refusal lifetime repair, 2026-11-15 — implementation pending.**
+**Selected Agent-refusal lifetime repair, 2026-11-15 — implemented and locally qualified.**
 The pinned SDK registers an abort callback before constructing its HTTPS request.
 A synchronous Agent refusal bypasses the transport's release path; an actual
 no-prompt host reaches Ready and then exits with an uncaught ReferenceError at
@@ -610,6 +610,10 @@ one heavy job, 20 GiB disk floor and 8 GiB sampled individual RSS ceiling. Publi
 reviewed public changes and prune new build/duplicate extraction caches after exact
 readback. This repairs a demonstrated callback lifetime failure; it does not prove
 every owner settled or enable v2 admission, paid runs or signing.
+
+The [dated lifetime receipt](../../../docs/validation.md#native-warm-up-refusal-lifetime-repair--2026-11-15)
+records the actual-bridge red on `91d0c34`, rejected destruction candidate, native
+listener removal, all current/frozen consumers and eight gates on `61a286f`.
 
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association

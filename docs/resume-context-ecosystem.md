@@ -455,6 +455,16 @@ and dated paragraphs below are history.
     are pruned after exact checks, retaining runnable red/green diagnostics and
     all other evidence. All five current native diagnostics pass directly after
     cleanup without Cargo; the settings receipt owns counts and retention details.
+    A subsequent native deadline check exposes the synchronous Agent guard's stale
+    abort callback: the host reaches Ready, then crashes. The repaired guard retires
+    the request and queues its refusal through the SDK's error handler; native
+    controls observe listener removal and the actual capture bridge survives the
+    deadline before its full tool conversation. All five current consumers, frozen
+    compatibility and eight gates pass on `61a286f`
+    ([lifetime receipt](validation.md#native-warm-up-refusal-lifetime-repair--2026-11-15)).
+    The immediate-destruction candidate is rejected. Complete startup owner/transport
+    coverage, native-timer settlement and durable parent acknowledgment remain open;
+    v2 remains unfunded/unfrozen and paid runs/signing stay gated.
     The settlement finding/design through `2238253` is published with full fresh-clone
     readback; ten redundant native-library copies are removed after byte/open-file
     checks, preserving all other evidence and the prior retained library.
