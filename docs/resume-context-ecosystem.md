@@ -498,8 +498,8 @@ and dated paragraphs below are history.
     after exact/open-file checks; runnable red/green diagnostics and all other
     evidence remain. All five current native diagnostics pass directly after cleanup
     without Cargo; the original-prefetch receipt owns counts and retention details.
-    The fixed qualifier now observes the actual off-memory backend's original start
-    before SDK construction and requires its completion on the same Settings/registry
+    The fixed qualifier installs its off-memory observer before SDK construction,
+    then requires the original start's completion on the same Settings/registry
     before Ready. Active-backend/auto-learn settings, missing/foreign/unfinished work
     and restarts refuse. Actual bridge red/green, nine native memory controls, all
     five current diagnostics, frozen compatibility and eight gates pass on `48822e9`
@@ -507,6 +507,11 @@ and dated paragraphs below are history.
     This qualifies only the fixed off profile. Credential refresh/polling, telemetry,
     other backends, native-timer/transport coverage and durable acknowledgment stay
     open. Paid runs, signing and release remain gated.
+    Off-memory repair/records through `6761cdb` are published with full
+    fresh-clone readback. New build/MSRV and two duplicate SDK libraries are pruned
+    after exact/open-file checks; runnable red/green diagnostics and all other
+    evidence remain. All five current native diagnostics pass directly after cleanup
+    without Cargo; the off-memory receipt owns counts and retention details.
     The settlement finding/design through `2238253` is published with full fresh-clone
     readback; ten redundant native-library copies are removed after byte/open-file
     checks, preserving all other evidence and the prior retained library.
