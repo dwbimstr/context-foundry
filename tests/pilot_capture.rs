@@ -147,6 +147,7 @@ async fn qualify_current_host_history(
     let mut negative_control = false;
     let mut observations = Vec::<Value>::new();
     let mut projections = Vec::<Vec<u8>>::new();
+    let mut startup_before_prompt: Option<Vec<u8>> = None;
     let collect = async {
         let (mut rpc, mut bridge, mut setup, mut sent) = (false, false, false, false);
         let mut pending = BTreeSet::<String>::new();
@@ -396,6 +397,17 @@ async fn qualify_current_host_history(
                         }
                     }
                     if pending.is_empty() && !sent {
+                        if owned_catalog {
+                            startup_before_prompt = std::fs::read(host_root.join("startup.jsonl"))
+                                .ok()
+                                .filter(|bytes| bytes.len() <= 8192)
+                                .and_then(|bytes| {
+                                    bytes
+                                        .iter()
+                                        .rposition(|b| *b == b'\n')
+                                        .map(|last| bytes[..=last].to_vec())
+                                });
+                        }
                         host.send_rpc(&json!({"id":"p1", "type":"prompt", "message":prompt}))
                             .await
                             .map_err(|_| "prompt send failed")?;
@@ -503,6 +515,21 @@ async fn qualify_current_host_history(
             |b| current_startup_probe(b),
         );
         if let Some(bytes) = bytes.filter(|_| observed["valid"] == true) {
+            let prefix = startup_before_prompt.as_deref().unwrap_or_default();
+            let prefix_matches = !prefix.is_empty() && bytes.starts_with(prefix);
+            let before = prefix
+                .iter()
+                .filter(|b| **b == b'\n')
+                .count()
+                .saturating_sub(1);
+            observed["before_prompt_prefix_matches"] = json!(prefix_matches);
+            observed["observed_before_prompt_attempts"] = json!(before);
+            observed["observed_after_prompt_attempts"] = json!(
+                observed["observed_attempts"]
+                    .as_u64()
+                    .unwrap()
+                    .saturating_sub(before as u64)
+            );
             let mut controls = Vec::new();
             let rows = observed["rows"].as_array().unwrap().clone();
             let encode = |rows: &[Value]| {
@@ -529,9 +556,11 @@ async fn qualify_current_host_history(
             changed.push(rows.last().unwrap().clone());
             controls.push(current_startup_probe(encode(&changed).as_bytes())["valid"] == false);
             observed["mutation_controls_rejected"] = json!(controls.iter().filter(|x| **x).count());
-            observed["valid"] = json!(controls.len() == 6 && controls.iter().all(|x| *x));
+            observed["valid"] =
+                json!(prefix_matches && controls.len() == 6 && controls.iter().all(|x| *x));
             if let Some(out) = &evidence_root {
                 fixture_private_write(out.join("startup.jsonl"), bytes).unwrap();
+                fixture_private_write(out.join("startup-before-prompt.jsonl"), prefix).unwrap();
             }
         }
         if let Some(out) = &evidence_root {

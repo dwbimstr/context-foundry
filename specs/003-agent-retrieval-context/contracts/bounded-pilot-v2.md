@@ -448,7 +448,9 @@ before-IO guard. Retain only bounded method, scheme/host/port and a fixed route
 classification, never headers, bodies, query strings, credentials or exception
 text. Verify ordered, complete trace format and the pinned runtime after normal
 host exit, rejecting missing/partial/malformed output. Bind the preload digest in
-the launch record. This is qualification evidence, not the product journal, a
+the launch record. Capture a complete byte prefix before the first user prompt
+and require the trace after exit to start with those exact bytes. Report later
+observations separately. This is qualification evidence, not the product journal, a
 startup-settlement proof, or a source of admission authority. The proposed product
 observer must still share the bridge's channel/sequence owner and existing journal.
 
