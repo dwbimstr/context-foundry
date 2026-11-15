@@ -112,7 +112,11 @@ interface FrozenModel {
 }
 type Handler = (event: unknown, ctx: unknown) => unknown;
 interface PiApi {
-	registerProvider(name: string, config: { api: string; streamSimple: typeof streamSimple }): void;
+	registerProvider(name: string, config: {
+		api: string;
+		streamSimple: typeof streamSimple;
+		fetchDynamicModels?: () => Promise<Obj[]>;
+	}): void;
 	on(event: string, handler: Handler): void;
 	setModel(model: Obj): Promise<boolean>;
 	setThinkingLevel(level: string): void;
@@ -716,7 +720,29 @@ function onToolResult(event: unknown): void {
 	if (!send({ type: "tool_done", call, outcome, result_sha256, result_bytes: bytes.length })) fault("internal");
 }
 
-export default function capture(pi: PiApi): void {
+/** Current-artifact qualification only; ordinary/frozen hosts never import this SDK API. */
+async function ownedCatalog(): Promise<() => Promise<Obj[]>> {
+	const { getBundledModel } = await import("@oh-my-pi/pi-catalog/models");
+	const model: unknown = getBundledModel(PROVIDER, MODEL);
+	if (!isPlain(model) || model.provider !== PROVIDER || model.id !== MODEL ||
+		model.api !== DELEGATE_API || model.baseUrl !== "https://api.anthropic.com" ||
+		typeof model.contextWindow !== "number" || !Number.isSafeInteger(model.contextWindow) || model.contextWindow <= 0 ||
+		typeof model.maxTokens !== "number" || !Number.isSafeInteger(model.maxTokens) || model.maxTokens < MAX_TOKENS) {
+		throw new Error("pilot capture bridge: bundled model unavailable");
+	}
+	// ProviderModelConfig fields from the pinned SDK. The SDK restores intrinsic
+	// metadata for this canonical identity; an alias would change that behavior.
+	const keys = ["id", "name", "api", "kind", "baseUrl", "reasoning", "thinking", "input", "supportsTools", "cost",
+		"contextWindow", "maxTokens", "promptCache", "preferWebsockets", "headers", "compat", "contextPromotionTarget",
+		"compactionModel", "remoteCompaction", "premiumMultiplier"];
+	const definition = Object.fromEntries(keys.filter((key) => model[key] !== undefined).map((key) => [key, model[key]]));
+	const serialized = JSON.stringify([definition]);
+	if (encoder.encode(serialized).length > MAX_HEADER_BYTES) throw new Error("pilot capture bridge: bundled model oversized");
+	// Fresh objects on each SDK refresh; no IO, credentials, timers or retries.
+	return async () => JSON.parse(serialized) as Obj[];
+}
+
+export default async function capture(pi: PiApi): Promise<void> {
 	if (loaded) throw new Error("pilot capture bridge: loaded twice");
 	loaded = true;
 	const env = process.env;
@@ -744,7 +770,20 @@ export default function capture(pi: PiApi): void {
 		fault("config");
 		throw new Error("pilot capture bridge: private channel unreadable");
 	}
-	pi.registerProvider(PROVIDER, { api: API, streamSimple });
+	let fetchDynamicModels: (() => Promise<Obj[]>) | undefined;
+	if (env.CF_PILOT_CATALOG !== undefined) {
+		if (env.CF_PILOT_CATALOG !== "owned-bundled-fixed-v1") {
+			fault("config");
+			throw new Error("pilot capture bridge: unknown catalog profile");
+		}
+		try {
+			fetchDynamicModels = await ownedCatalog();
+		} catch {
+			fault("model_selection");
+			throw new Error("pilot capture bridge: owned catalog unavailable");
+		}
+	}
+	pi.registerProvider(PROVIDER, { api: API, streamSimple, ...(fetchDynamicModels ? { fetchDynamicModels } : {}) });
 	pi.on("session_start", (_event, ctx) => onSessionStart(pi, ctx));
 	pi.on("tool_call", (event) => onToolCall(event));
 	pi.on("tool_result", (event) => {

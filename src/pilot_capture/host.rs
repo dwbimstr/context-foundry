@@ -550,7 +550,7 @@ impl Host {
             policy_sha256: sha256_hex(policy_text.as_bytes()),
             bridge_sha256,
             models_yml_sha256: sha256_hex(MODELS_YML.as_bytes()),
-            config_yml_sha256: sha256_hex(CONFIG_YML.as_bytes()),
+            config_yml_sha256: sha256_hex(config.as_bytes()),
             env_names: env.iter().map(|(k, _)| k.clone()).collect(),
         };
 

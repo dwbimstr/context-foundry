@@ -118,7 +118,12 @@ async fn qualify_current_host_history(
     };
     let (host, mut events) = Host::launch(&spec).unwrap();
     let bridge_sha = host.launch.bridge_sha256.clone();
+    let config_sha = host.launch.config_yml_sha256.clone();
     let host_root = host.paths.root.clone();
+    assert_eq!(
+        pilot_capture::sha256_hex(&std::fs::read(host.paths.agent.join("config.yml")).unwrap()),
+        config_sha
+    );
     let native_sessions = host.paths.sessions.clone();
     let source_before = std::fs::read(e.workspace.join("src/lib.rs")).unwrap();
     let mut requests = Vec::<(Value, Vec<u8>)>::new();
@@ -602,6 +607,7 @@ async fn qualify_current_host_history(
     };
     let report = json!({"host_sha256": SHA, "bridge_sha256": bridge_sha,
         "body_sha256": pilot_capture::sha256_hex(&body), "body_bytes":body.len(),
+        "config_yml_sha256":config_sha,
         "no_thread_field":no_thread, "validator_passed":request_passed,
         "validator_fault":admitted.as_ref().and_then(|r|r.as_ref().err()).map(ToString::to_string),
         "qualified_requests":if tool_followup {requests.len()} else {1},"missing_completion_control_rejected":negative_control,
