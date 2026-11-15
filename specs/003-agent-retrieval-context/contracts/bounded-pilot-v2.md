@@ -469,36 +469,35 @@ prefix, six trace mutation controls, frozen compatibility and eight gates on
 `1357756`. This accepts the diagnostic only; complete startup admission remains
 unimplemented.
 
-**Selected early capture-API qualification, 2026-11-15 — not yet qualified.**
-Compare the owned-catalog profile with an explicit artifact-pinned qualifier that
-sets only `modelOverrides.claude-sonnet-5-5.api` to the existing capture API in
-`models.yml`, before SDK model selection. Preserve the canonical Anthropic provider
-and model, authoritative single-model catalog, bridge, tool policy and full native
-model metadata after session setup. Ordinary capture remains HostDefault. Hash the
-actual model configuration in the launch receipt. The matching-release source
-(`can1357/oh-my-pi` at `24439066040e006eb08da7b204f0ac41c79d2de9`,
-`config/model-patch.ts::applyModelOverride` and
-`providers/transform-messages.ts::isAnthropicMessagesModel`) supports this narrow
-configuration candidate: connection preparation first checks the selected API.
-Source association is not a reproducible build or runtime proof.
+**Early capture-API configuration candidate, 2026-11-15 — rejected and removed.**
+The committed paired red used the original model configuration in both profiles:
+both complete tool conversations passed with identical complete native model
+digests, then the zero-startup-attempt assertion failed on the observed HEAD. The
+candidate set only `modelOverrides.claude-sonnet-5-5.api` to the custom capture API
+before SDK selection. It failed before the first request with the closed bridge
+fault `model_selection`; a HEAD was still observed. Its full metadata comparison
+and zero-attempt acceptance did not run. Neither assertion was relaxed to accept it.
 
-First commit a native paired test with both profiles still using the original
-model configuration. Require the complete two-generation tool conversation,
-strict four-request loopback fixture and 29 native-usage mutation controls in both
-arms, exact equality of the complete native model digest, and a red assertion for
-the candidate's observed startup attempt. Then apply the early override and require
-zero observed attempts in that arm while the unchanged baseline retains its known
-HEAD attempt. Both trace formats, pre-prompt prefixes, six trace mutation controls,
-normal exit and private evidence must pass. A metadata mismatch rejects the
-candidate; do not weaken that assertion. Zero observed attempts do not establish
-complete owner coverage, settlement or startup admission.
+Matching source at `can1357/oh-my-pi` commit
+`24439066040e006eb08da7b204f0ac41c79d2de9` exposes `applyModelOverride`, but
+[`models-config-schema-bundle.ts::ApiSchema/ModelOverrideSchema`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/config/models-config-schema-bundle.ts#L122)
+accepts a closed API set that excludes the capture API. This is a source-supported
+explanation, not a runtime trace of the exact fault caller or reproducible build
+proof. The upstream `model-registry.test.ts` test "an api override keeps a kind the
+new api still serves" covers supported built-in APIs; it was inspected, not run.
+Keep the rejected source commits, executable and native failure evidence. Ordinary
+capture, the qualified catalog, bridge and preload retain their existing behavior.
 
-Use one offline hour with a 120-second cleanup reserve, one heavy job, a 20 GiB
-disk floor and an 8 GiB sampled individual RSS ceiling. Require current-host
-diagnostics, complete nonignored frozen-host compatibility, focused lint and all
-eight local gates before publication. Preserve red/green native evidence and
-runnable diagnostics, then prune new build/extraction caches. No provider calls,
-model downloads, signing, v1 policy change or paid authority are authorized here.
+Retain the useful diagnostic additions: hash the complete parsed native model
+object without storing its headers, check the owned qualifier against its observed
+artifact-bound model digest, verify the materialized models.yml digest, and retain
+only closed bridge fault codes on failed capture. Require current-host diagnostics,
+the complete nonignored frozen-host suite, focused lint and all eight gates on the
+final source. Use the same offline hour, cleanup reserve and resource limits; then
+publish the reviewed public payload and prune new build/extraction caches while
+preserving runnable diagnostics and exact evidence. This diagnostic hardening does
+not repair warm-up, prove settlement or enable startup admission. Provider calls,
+paid authority and signing remain gated.
 
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association

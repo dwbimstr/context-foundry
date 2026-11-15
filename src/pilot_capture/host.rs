@@ -84,17 +84,6 @@ pub enum CatalogProfile {
     HostDefault,
     /// Current-artifact, no-provider qualification; never selected by Live admission.
     OwnedQualification,
-    /// Compare selecting the capture API before the SDK prepares a connection.
-    OwnedEarlyApiQualification,
-}
-
-impl CatalogProfile {
-    fn is_owned_qualification(self) -> bool {
-        matches!(
-            self,
-            Self::OwnedQualification | Self::OwnedEarlyApiQualification
-        )
-    }
 }
 
 /// Artifact whose catalog API and inventory this qualification profile exercises.
@@ -447,7 +436,7 @@ impl Host {
     /// Returns the host and the receiver of its events (kept separate so
     /// the driver can await events while sending frames).
     pub fn launch(spec: &HostSpec) -> Result<(Host, mpsc::Receiver<HostEvent>), CaptureFault> {
-        if spec.catalog.is_owned_qualification() {
+        if spec.catalog == CatalogProfile::OwnedQualification {
             let bytes = fs::read(&spec.omp)
                 .map_err(|_| fault(FaultClass::Pins, "qualification_host_unreadable"))?;
             if sha256_hex(&bytes) != QUALIFICATION_OMP_SHA256 {
@@ -486,25 +475,14 @@ impl Host {
         ] {
             create_private_dir(dir)?;
         }
-        let models = if spec.catalog == CatalogProfile::OwnedEarlyApiQualification {
-            format!(
-                "{MODELS_YML}    modelOverrides:\n      {}:\n        api: {}\n",
-                policy::MODEL,
-                policy::BRIDGE_API
-            )
-        } else {
-            MODELS_YML.to_owned()
-        };
-        write_private_new(&paths.agent.join("models.yml"), models.as_bytes())?;
+        write_private_new(&paths.agent.join("models.yml"), MODELS_YML.as_bytes())?;
         let config = match spec.catalog {
             CatalogProfile::HostDefault => CONFIG_YML.to_owned(),
-            CatalogProfile::OwnedQualification | CatalogProfile::OwnedEarlyApiQualification => {
-                format!(
-                    "{CONFIG_YML}\ndisabledProviders: {}\n",
-                    serde_json::to_string(QUALIFICATION_DISABLED_PROVIDERS)
-                        .expect("literal provider inventory")
-                )
-            }
+            CatalogProfile::OwnedQualification => format!(
+                "{CONFIG_YML}\ndisabledProviders: {}\n",
+                serde_json::to_string(QUALIFICATION_DISABLED_PROVIDERS)
+                    .expect("literal provider inventory")
+            ),
         };
         write_private_new(&paths.agent.join("config.yml"), config.as_bytes())?;
         write_private_new(&paths.bridge, BRIDGE_SOURCE)?;
@@ -514,7 +492,7 @@ impl Host {
         if bridge_sha256 != sha256_hex(BRIDGE_SOURCE) {
             return Err(fault(FaultClass::Bootstrap, "bridge_bytes_mismatch"));
         }
-        let startup_probe_sha256 = if spec.catalog.is_owned_qualification() {
+        let startup_probe_sha256 = if spec.catalog == CatalogProfile::OwnedQualification {
             let path = root.join("bridge/startup_probe.ts");
             write_private_new(&path, QUALIFICATION_STARTUP_PROBE)?;
             let written = fs::read(&path)
@@ -547,7 +525,7 @@ impl Host {
         let tx_ino = fstat_ino(c2r_write.as_raw_fd())?;
         let rx_ino = fstat_ino(r2c_read.as_raw_fd())?;
         let mut env = host_env(&paths, &spec.identity, tx_ino, rx_ino);
-        if spec.catalog.is_owned_qualification() {
+        if spec.catalog == CatalogProfile::OwnedQualification {
             env.push(("CF_PILOT_CATALOG".into(), "owned-bundled-fixed-v1".into()));
             env.push((
                 "BUN_OPTIONS".into(),
@@ -608,7 +586,7 @@ impl Host {
             argv_sha256: sha256_hex(args.join("\0").as_bytes()),
             policy_sha256: sha256_hex(policy_text.as_bytes()),
             bridge_sha256,
-            models_yml_sha256: sha256_hex(models.as_bytes()),
+            models_yml_sha256: sha256_hex(MODELS_YML.as_bytes()),
             config_yml_sha256: sha256_hex(config.as_bytes()),
             startup_probe_sha256,
             env_names: env.iter().map(|(k, _)| k.clone()).collect(),
@@ -1434,7 +1412,7 @@ mod tests {
         let omp = policy.workspace.join("not-omp");
         fixture_private_write(&omp, b"not the qualified artifact").unwrap();
         let root = policy.workspace.join("new-host");
-        let mut spec = HostSpec {
+        let spec = HostSpec {
             omp,
             root: root.clone(),
             workspace: policy.workspace,
@@ -1445,18 +1423,12 @@ mod tests {
                 .unwrap(),
             catalog: CatalogProfile::OwnedQualification,
         };
-        for catalog in [
-            CatalogProfile::OwnedQualification,
-            CatalogProfile::OwnedEarlyApiQualification,
-        ] {
-            spec.catalog = catalog;
-            let Err(error) = Host::launch(&spec) else {
-                panic!("unqualified host must not launch");
-            };
-            assert_eq!(error.class, FaultClass::Pins);
-            assert_eq!(error.code, "qualification_host_pin_mismatch");
-            assert!(!root.exists());
-        }
+        let Err(error) = Host::launch(&spec) else {
+            panic!("unqualified host must not launch");
+        };
+        assert_eq!(error.class, FaultClass::Pins);
+        assert_eq!(error.code, "qualification_host_pin_mismatch");
+        assert!(!root.exists());
     }
 
     #[test]

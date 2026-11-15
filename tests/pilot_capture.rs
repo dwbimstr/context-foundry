@@ -55,18 +55,10 @@ async fn current_host_owned_catalog_preserves_full_history() {
         pilot_capture::host::CatalogProfile::OwnedQualification,
     )
     .await;
-    let early_api = qualify_current_host_history(
-        true,
-        pilot_capture::host::CatalogProfile::OwnedEarlyApiQualification,
-    )
-    .await;
-    assert!(baseline["native_model_sha256"].is_string());
     assert_eq!(
         baseline["native_model_sha256"],
-        early_api["native_model_sha256"]
+        "53bec6f047bbd7eeab26c93c1a6dd6c0e4ccc30d50a29d79e416c28692d5a027"
     );
-    assert_eq!(baseline["native_startup_probe"]["observed_attempts"], 1);
-    assert_eq!(early_api["native_startup_probe"]["observed_attempts"], 0);
 }
 
 async fn qualify_current_host_history(
@@ -81,8 +73,7 @@ async fn qualify_current_host_history(
     use std::time::Duration;
 
     const SHA: &str = pilot_capture::host::QUALIFICATION_OMP_SHA256;
-    let owned_catalog = catalog != pilot_capture::host::CatalogProfile::HostDefault;
-    let early_api = catalog == pilot_capture::host::CatalogProfile::OwnedEarlyApiQualification;
+    let owned_catalog = catalog == pilot_capture::host::CatalogProfile::OwnedQualification;
     let prompt = if tool_followup {
         "Read src/lib.rs once, then state the function name."
     } else {
@@ -498,7 +489,7 @@ async fn qualify_current_host_history(
     let (drained, exit) = host.finish(events, Duration::from_secs(30)).await;
     let evidence_root = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT").map(|path| {
         let mut out=PathBuf::from(path);
-        if owned_catalog {out.set_file_name(format!("{}-{}",out.file_name().unwrap().to_string_lossy(),if early_api {"owned-early-api"} else {"owned-catalog"}));}
+        if owned_catalog {out.set_file_name(format!("{}-owned-catalog",out.file_name().unwrap().to_string_lossy()));}
         else if tool_followup {out.set_file_name(format!("{}-followup",out.file_name().unwrap().to_string_lossy()));}
         fixture_private_dir(&out).unwrap();
         for (index,(meta,bytes)) in requests.iter().enumerate() {
@@ -735,7 +726,7 @@ async fn qualify_current_host_history(
     let report = json!({"host_sha256": SHA, "bridge_sha256": bridge_sha,
         "body_sha256": pilot_capture::sha256_hex(&body), "body_bytes":body.len(),
         "config_yml_sha256":config_sha,"models_yml_sha256":models_sha,
-        "native_model_sha256":native_model_sha,"early_api_profile":early_api,
+        "native_model_sha256":native_model_sha,
         "startup_probe_sha256":startup_probe_sha,
         "no_thread_field":no_thread, "validator_passed":request_passed,
         "validator_fault":admitted.as_ref().and_then(|r|r.as_ref().err()).map(ToString::to_string),
