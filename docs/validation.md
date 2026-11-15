@@ -1,5 +1,54 @@
 # Validation
 
+## Current-host startup preload feasibility — 2026-11-15
+
+**An early fetch-interception seam is demonstrated; complete startup observation
+remains unqualified.** On public base `68e87ec`, private, bounded probes use the same
+owned OMP 18.18.1 artifact, SHA-256
+`ce80099f10c5ea4367523767230cb5b920f30cc139b9cf8758c1cc4b2f1f9409`.
+No application, Cargo, v1 pin, protocol or request-policy input changes.
+[Bun's standalone documentation](https://bun.sh/docs/compiler/executables#runtime-arguments-via-bun-options)
+describes runtime options; the shipped artifact is checked directly rather than
+assumed to share the separately installed Bun's behavior.
+
+All nine sentinel/control commands pass their declared checks in **4.169 seconds**.
+`BUN_OPTIONS="--preload /abs/owned/preload.mjs"` makes the owned host write a marker
+and exit 73 before its ordinary `--help` entrypoint. A missing preload exits 1
+without the marker. Passing `--preload` as ordinary host CLI arguments does not
+execute it. Installed Bun **1.3.14** supplies positive main/preload and missing-file
+controls; the host later identifies its embedded runtime as **1.4.4**.
+
+A separate RPC startup with stdin EOF installs a private preloader that records
+bounded destination metadata and rejects every intercepted fetch locally without
+calling the original fetch. It records **15 GET invocations**: eight to loopback
+destinations and seven to other hosts. Native RPC `ready` is observed, followed by
+normal exit 0, empty stderr and observed group cleanup in **1.451 seconds**.
+The native `ready` is not a Foundry startup-prefix acknowledgment. The probe first
+fails on a private JavaScript syntax error before its hook installs. After that is
+corrected, its site-specific `models.dev` assertion fails: the actual invocations
+target other destinations. Both failures remain unchanged. Separate readback
+verifies the actual metadata sequence, local refusal, runtime, bytes and lifecycle;
+it does not relabel the original observer test as passing.
+
+The inherited network-denied sandbox is enforced, child environments are cleared,
+homes are fresh, no prompt or credential is supplied, and no provider transport is
+constructed. Bounds are 240 seconds with 60 reserved for cleanup for the sentinel
+phase, then 120/60 seconds for RPC observation; commands are capped at 15/30 seconds,
+with a 20 GiB disk floor and 8 GiB sampled individual RSS ceiling. Observation is
+capped at 16 fetches/8 KiB metadata. Closed evidence modes pass; transient modes,
+non-fetch bypass coverage, complete owner attribution, drain/cancellation and a
+durable parent-journal acknowledgment remain unqualified. Source association is
+the earlier [pinned-source finding](#current-host-startup-source-feasibility--2026-11-14),
+not reproducible-build or runtime caller attribution. No Rust build runs in this
+phase, and no external-provider request, spend, signing or release action occurs.
+
+Private evidence: `runs/pilot-startup-preload-2026-11-15/`, including both protocols,
+`probe.py`, retained `observe-initial.py`, corrected `observe.py`, original failed
+reports and `qualification-readback.json`. The next implementation can evaluate an
+owned preload in the existing launcher; it need not assume an upstream rebuild is
+required. Production `Host::launch`, frozen v1 admission and pilot-v2 execution
+remain unchanged. Complete current-host/v2 acceptance stays **HOLD**.
+
 ## Current-host tool continuation — 2026-11-15
 
 **PASS at the selected owned-fixture consumer boundary.** Test/contract commit

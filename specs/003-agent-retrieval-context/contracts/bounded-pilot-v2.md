@@ -319,6 +319,25 @@ Extend their hash-chained journal and the
 [`full_pilot_pipeline_qualifies_without_provider` integration test](../../../tests/pilot_capture.rs).
 The current source pointers establish ownership, not completed qualification.
 
+**Startup preload feasibility, 2026-11-15 — earlier seam demonstrated, not implemented.**
+The same owned current artifact executes an absolute owned preload supplied through
+`BUN_OPTIONS` before its ordinary entrypoint. Sentinel and missing-preload controls
+pass. A network-denied RPC startup records and locally refuses 15 fetch invocations,
+then exits normally. Its original destination-specific assertion remains failed;
+the [runtime finding](../../../docs/validation.md#current-host-startup-preload-feasibility--2026-11-15)
+qualifies only the actual observations. This refines the earlier source finding:
+a new upstream build is not yet established as necessary for an early hook.
+
+Evaluate an owned preload through the existing `Host::launch`/environment owner
+under a separately qualified v2 configuration, rather than adding a wrapper service.
+It must precede every captured fetch reference, bind exact preload/host bytes and
+use the existing journal/channel for durable refusal and explicit acknowledgment.
+This is design preparation, not an environment exception for frozen v1. Complete
+owner coverage, non-fetch bypass controls, drained/cancelled startup work and the
+parent-prefix acknowledgment still need implementation and actual-host proof;
+ordinary RPC readiness or process exit does not replace them. No v2 pin or execution
+authority is selected here.
+
 | Disclosed gap | Required evidence |
 | --- | --- |
 | Host startup network denials absent from journal | Capture denied startup attempts and their destination/classification before any paid request; disallow unobserved routes. A sandbox denial is not evidence of journal completeness. Matching-release source establishes only partial diagnostics; a complete early observer and completion boundary remain needed ([source finding](../../../docs/validation.md#pilot-startup-network-source-feasibility--2026-11-11)). |

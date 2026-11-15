@@ -335,6 +335,15 @@ and dated paragraphs below are history.
     associated source revision: constructor fetch injection and refresh settlement
     do not establish an early, complete CLI observation/acknowledgment seam
     ([current-source finding](validation.md#current-host-startup-source-feasibility--2026-11-14)).
+    A subsequent owned-artifact probe demonstrates a pre-main `BUN_OPTIONS`
+    preload and records/refuses 15 actual RPC-startup fetch invocations locally
+    ([preload finding](validation.md#current-host-startup-preload-feasibility--2026-11-15)).
+    Its original syntax and destination-specific assertion failures are retained;
+    separate readback verifies only the observed calls and normal cleanup.
+    This supplies a candidate earlier hook without establishing complete owners,
+    non-fetch bypass coverage, drain or parent-journal acknowledgment. Existing
+    launcher admission is unchanged; evaluate this seam before requiring a rebuilt
+    upstream host. Complete startup qualification remains open.
     The selected request repair is finished; unfunded v2 contract preparation
     remains authorized without changing frozen v1 policy or enabling execution.
     A new retrieval experiment still needs a bounded selection and unexposed
