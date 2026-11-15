@@ -392,7 +392,7 @@ cannot replace observation, drain or admission checks. Qualify actual generation
 requests/tool behavior/headroom under the selected profile, not only state readback.
 This is preparation, not a selected v2 execution profile or a v1 configuration edit.
 
-**Selected owned fixed-catalog qualification, 2026-11-15 — implementation pending.**
+**Selected owned fixed-catalog qualification, 2026-11-15 — implemented and locally qualified.**
 Use the supported provider-registration API to own later catalog refreshes for the
 existing canonical provider and fixed bundled model. A late factory cannot prevent
 an already-started ambient request; zero initial fetches is not the acceptance
@@ -425,6 +425,11 @@ numeric-loopback fixtures and synthetic credentials only; no Live transport.
 The shared hour includes offline builds, 120 seconds for cleanup, one heavy job,
 20 GiB disk floor and 8 GiB sampled individual RSS. Publish reviewed code/records,
 then prune new build/native extraction caches after exact evidence readback.
+
+The [dated qualification receipt](../../../docs/validation.md#owned-canonical-host-catalog-qualification--2026-11-15)
+records the original cache red, actual-host green, frozen-host compatibility and
+eight gates on `0b19098`. The complete early startup/settlement/parent-acknowledgment
+boundary below remains unimplemented and unfrozen.
 
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association

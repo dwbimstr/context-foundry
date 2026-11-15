@@ -1,5 +1,90 @@
 # Validation
 
+## Owned canonical host catalog qualification — 2026-11-15
+
+**PASS at the explicit no-provider qualification boundary.** Red contract/test
+`88f420c` precedes bridge implementation `0b19098`. The opt-in host profile is bound
+to owned OMP 18.18.1, SHA-256
+`ce80099f10c5ea4367523767230cb5b920f30cc139b9cf8758c1cc4b2f1f9409`,
+and rejects an unqualified artifact before creating host state. It disables the
+other **92** IDs from the actual SDK's **93**-provider catalog union, including
+legacy `minimax-cn`. Ordinary capture explicitly retains host defaults; no ambient
+environment variable can select this profile through the cleared host launch.
+
+The existing bridge uses the supported registration callback to return a fresh
+copy of one bounded bundled-model definition. It preserves canonical Anthropic
+identity and native metadata, with no IO, timer, retry or credential operation in
+the callback. The launch receipt hashes the actual written config. Neither v1's
+frozen host pin/contract nor wire admission changes. This is not a v2 execution
+configuration or a complete startup barrier.
+
+The actual current-host red test completes its two-generation tool conversation,
+all four numeric-loopback fixture POSTs and all 29 native-usage mutation controls,
+then fails the intended SDK-cache assertion: **19 models, authoritative 0**.
+With the callback, the real private SDK cache instead contains **one fixed model,
+authoritative 1**. All **three** current-host diagnostics pass, including full
+history, read-tool completion, strict request validation and native usage. Both
+follow-up variants match the four scripted usage categories and totals and reject
+all 29 corruptions. These are synthetic fixture counters, not provider economics.
+All native processes exit normally with their observed groups gone.
+
+The complete nonignored frozen-host suite passes **33/0/5 ignored**. The private
+wrapper initially expects four ignored tests and fails its summary assertion;
+`frozen-readback.json` verifies the same completed exit-0 command, all five named
+ignored cases and the compiled **38**-test list. The original wrapper failure is
+retained; no Rust test is rerun or weakened. Focused lint passes. All **eight gates
+pass** on `0b19098` in **819.684 seconds**. Default outer harness totals are **1,319
+passed, 0 failed, 35 ignored**; pilot unit totals are **102 passed, 0 failed,
+1 ignored**. Child-process summaries remain separate in the readback and are not
+added to these totals.
+
+Startup probes retained in this continuation establish narrower boundaries:
+
+- The actual registry wait method returns while one controlled, abort-ignoring
+  Ollama fetch is still pending. Joining the explicitly observed fetch promises
+  delays the handler/state response until that controlled operation settles.
+  All three controls pass in **22.185 seconds**. This covers that subset, not all
+  owners, native channels or durable parent acknowledgment.
+- Late provider registration preserves the complete native model bytes (SHA-256
+  `d83362d570f6dc8c135e3da69c167b830cea0f0a730725e26b3b7cdb0caff233`)
+  and produces the authoritative one-model row, but an initial shared-catalog
+  fetch has already begun. Its original zero-fetch expectation fails and remains
+  failed; the network-witness case remains unstarted.
+- A declarative alias also fails the zero-fetch expectation and changes native
+  `provider`, `compatConfig`, `int` and `promptCacheConfig`. It is rejected and
+  absent from product code; its re-enable control remains unstarted. The native
+  catalog inventory then enumerates the missing legacy provider in **7.531 seconds**.
+
+Source/release association is upstream commit
+`24439066040e006eb08da7b204f0ac41c79d2de9`:
+[`getBundledModel`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/catalog/src/models.ts#L58),
+[`fetchDynamicModels`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/extensibility/extensions/types.ts#L2267),
+[`model_cache`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/catalog/src/model-cache.ts#L251)
+and the prior disabled-provider tests linked below (read, not run). Relevant source
+files pass Git-blob/SHA-256 readback; this is not reproducible-build proof. Foundry
+003 T006 owns this qualification. Landed implementation is
+[`CatalogProfile`](../src/pilot_capture/host.rs), the
+[`bridge`](../src/pilot_capture/bridge.ts) and the actual-host
+[`diagnostic`](../tests/pilot_capture.rs). The intentional difference from ordinary
+SDK discovery is a fixed single-model callback inside an explicit artifact-bound
+qualifier, with ordinary capture left on its existing profile.
+
+Private evidence is in `runs/pilot-owned-catalog-implementation-2026-11-15/`,
+`runs/pilot-startup-owner-wait-2026-11-15/`,
+`runs/pilot-owned-catalog-2026-11-15/` and
+`runs/pilot-local-catalog-2026-11-15/`. Raw red/green requests, native sessions/cache
+rows, rejected controls, source pins, lifecycle/resource receipts and the in-session
+readbacks remain local. The shared implementation hour includes offline builds,
+120 seconds reserved for cleanup, one heavy job, a 20 GiB disk floor and an 8 GiB
+sampled individual RSS ceiling. The complete qualification readback is reached in
+**1375.926 seconds**; maximum sampled individual RSS is **2008.266 MiB**, and minimum
+observed free disk is **79.039 GiB**. Sampled RSS is a lower bound on actual peaks,
+not a global/GPU memory claim.
+No external provider calls, spend, model downloads, training, owner signing
+identity, tags or release publication are used. Complete startup owner inventory,
+non-fetch coverage, settlement and durable parent acknowledgment remain open;
+v2 is unfunded/unfrozen, and paid runs, signing and release remain gated.
+
 ## Restricted startup provider profile — 2026-11-15
 
 **Qualified at the selected owned RPC/configuration boundary.** On public base

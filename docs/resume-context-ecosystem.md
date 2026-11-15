@@ -374,6 +374,15 @@ and dated paragraphs below are history.
     The profile finding through `ed58509` is published with full fresh-clone
     readback. Its three redundant native-library extractions are removed after
     byte/open-file checks, preserving all other evidence and the retained library.
+    The canonical fixed-catalog qualifier is now implemented and locally qualified
+    on `0b19098`: an explicit artifact-bound profile preserves native identity and
+    returns one owned bundled definition. Actual cache red/green, current and frozen
+    host consumers, and all eight gates pass
+    ([qualification receipt](validation.md#owned-canonical-host-catalog-qualification--2026-11-15)).
+    The actual registry waiter is also shown to return before a controlled fetch
+    settles; joining observed work qualifies only that subset. Complete owner
+    inventory, non-fetch coverage, settlement and durable parent acknowledgment
+    remain open. V2 execution, paid runs and owner signing remain gated.
     The settlement finding/design through `2238253` is published with full fresh-clone
     readback; ten redundant native-library copies are removed after byte/open-file
     checks, preserving all other evidence and the prior retained library.
