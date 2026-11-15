@@ -79,6 +79,8 @@ pub(super) async fn control(
 ) -> Value {
     use std::os::unix::process::CommandExt;
     let auth = kind.starts_with("auth-");
+    let memory = kind.starts_with("memory-");
+    let restart = matches!(kind, "auth-restart" | "memory-restart");
     for dir in [
         root.to_path_buf(),
         root.join("home"),
@@ -96,6 +98,8 @@ pub(super) async fn control(
             "bridge/witness.mjs",
             if auth {
                 include_bytes!("auth_witness.mjs").as_slice()
+            } else if memory {
+                include_bytes!("memory_witness.mjs").as_slice()
             } else {
                 include_bytes!("startup_witness.mjs").as_slice()
             },
@@ -116,6 +120,13 @@ pub(super) async fn control(
         )
         .unwrap();
     }
+    if memory {
+        super::fixture_private_write(
+            root.join("bridge/startup_memory.ts"),
+            host::QUALIFICATION_STARTUP_MEMORY,
+        )
+        .unwrap();
+    }
     let mut counter = TcpCounter::new();
     let policy = host::sandbox_policy(
         omp,
@@ -126,7 +137,7 @@ pub(super) async fn control(
         &[],
     )
     .unwrap()
-        + &if auth {
+        + &if auth || memory {
             String::new()
         } else {
             format!(
@@ -264,7 +275,7 @@ pub(super) async fn control(
     assert!(
         !forced
             && group_gone
-            && exit.code() == Some(if kind == "auth-restart" { 75 } else { 0 })
+            && exit.code() == Some(if restart { 75 } else { 0 })
             && stderr.is_empty(),
         "native startup exit: {exit:?}"
     );
@@ -281,22 +292,25 @@ pub(super) async fn control(
         Value::Null
     } else {
         let bytes = std::fs::read(root.join("startup.jsonl")).unwrap();
-        if auth && let Some(path) = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT") {
+        if (auth || memory)
+            && let Some(path) = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT")
+        {
             let path = std::path::PathBuf::from(format!(
-                "{}-auth-controls",
-                std::path::PathBuf::from(path).display()
+                "{}-{}-controls",
+                std::path::PathBuf::from(path).display(),
+                if auth { "auth" } else { "memory" }
             ));
             super::fixture_private_dirs(&path).unwrap();
             super::fixture_private_write(path.join(format!("{kind}-startup.jsonl")), &bytes)
                 .unwrap();
         }
-        let trace =
-            super::current_startup_probe_exit(&bytes, if kind == "auth-restart" { 75 } else { 0 });
+        let trace = super::current_startup_probe_exit(&bytes, if restart { 75 } else { 0 });
         assert_eq!(trace["valid"], true);
         trace
     };
     json!({"case":kind,"connections":connections,"witness":witness,
         "auth_sha256":auth.then(|| pilot_capture::sha256_hex(host::QUALIFICATION_STARTUP_AUTH)),
+        "memory_sha256":memory.then(|| pilot_capture::sha256_hex(host::QUALIFICATION_STARTUP_MEMORY)),
         "native_model_sha256":pilot_capture::sha256_hex(&serde_json::to_vec(&state["model"]).unwrap()),
         "probe_sha256":pilot_capture::sha256_hex(probe),"trace":trace,
         "normal_exit":exit.success(),"exit_code":exit.code(),"group_gone":group_gone,"forced":false,"no_prompt":true,"provider_calls":0})

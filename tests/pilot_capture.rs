@@ -64,7 +64,7 @@ async fn current_host_owned_catalog_preserves_full_history() {
     assert_eq!(baseline["native_warmup_deadline_readback"], true);
 }
 
-/// Native controls for the Agent route and the original credential prefetch.
+/// Native controls for the Agent route, credential prefetch and off-memory start.
 /// Raw sockets remain a bypass; injected OAuth metadata is not OAuth integration.
 #[tokio::test]
 #[ignore = "needs explicit CF_PILOT_CURRENT_OMP; no-provider current-host diagnostic"]
@@ -239,6 +239,57 @@ async fn current_host_startup_owners_have_native_controls() {
         );
         if let Some(path) = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT") {
             let path = PathBuf::from(format!("{}-auth-controls", PathBuf::from(path).display()));
+            fixture_private_dirs(&path).unwrap();
+            fixture_private_write(
+                path.join(format!("{kind}.json")),
+                serde_json::to_vec_pretty(&report).unwrap(),
+            )
+            .unwrap();
+        }
+    }
+    for kind in [
+        "memory-success",
+        "memory-late",
+        "memory-active-backend",
+        "memory-auto-learn",
+        "memory-unsettled",
+        "memory-wrong-settings",
+        "memory-wrong-registry",
+        "memory-duplicate",
+        "memory-restart",
+    ] {
+        let root = base.join(format!("{kind} control with spaces"));
+        let report = startup::control(&omp, &root, &e.workspace, &config, &models, kind).await;
+        assert_owned_private_tree(
+            &root,
+            Some(Path::new(
+                "home/.omp/natives/18.18.1/pi_natives.darwin-arm64.node",
+            )),
+        );
+        assert_eq!(report["connections"], 0);
+        assert_eq!(
+            report["memory_sha256"],
+            pilot_capture::sha256_hex(pilot_capture::host::QUALIFICATION_STARTUP_MEMORY)
+        );
+        assert_eq!(&report["native_model_sha256"], auth_model.as_ref().unwrap());
+        let expected = match kind {
+            "memory-success" | "memory-restart" => "sealed",
+            "memory-active-backend" | "memory-auto-learn" => "before_sdk_refused",
+            _ => "refused",
+        };
+        assert_eq!(report["witness"]["outcome"], expected);
+        if expected == "sealed" {
+            assert_eq!(
+                report["witness"]["summary"],
+                json!({"calls":1,"completed":1})
+            );
+        }
+        assert_eq!(
+            report["exit_code"],
+            if kind == "memory-restart" { 75 } else { 0 }
+        );
+        if let Some(path) = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT") {
+            let path = PathBuf::from(format!("{}-memory-controls", PathBuf::from(path).display()));
             fixture_private_dirs(&path).unwrap();
             fixture_private_write(
                 path.join(format!("{kind}.json")),
