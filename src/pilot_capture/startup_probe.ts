@@ -1,10 +1,12 @@
 /**
  * Metadata-only diagnostic for the artifact-pinned, no-provider qualifier.
  * This file grants no admission. Its trace is not the capture journal, and
- * ClientRequest.end observation does not precede all possible socket IO.
+ * The known Node HTTP Agent route is refused before its TCP connection.
+ * Raw sockets and other transports remain outside this diagnostic's coverage.
  */
 import * as fs from "node:fs";
 import http from "node:http";
+import https from "node:https";
 
 const fail = (code = 75): never => process.exit(code);
 const workspace = process.env.CF_PILOT_PROBE_WORKSPACE;
@@ -64,7 +66,7 @@ if (typeof originalFetch.preconnect === "function") {
 }
 globalThis.fetch = refuseFetch;
 
-// Observe the original operation; the sandbox still denies all network IO.
+// The Agent queue runs before the known SDK route opens a TCP connection.
 // Only the Host destination is read; no other header or body is inspected.
 interface RequestMetadata {
 	protocol?: string;
@@ -74,14 +76,21 @@ interface RequestMetadata {
 	method?: string;
 	getHeader(name: string): unknown;
 }
-const originalEnd = http.ClientRequest.prototype.end;
-http.ClientRequest.prototype.end = function (this: RequestMetadata, ...args: unknown[]) {
-	const scheme = this.protocol ?? this.agent?.protocol;
-	const host = this.getHeader("host") ?? this.host;
-	if ((scheme !== "http:" && scheme !== "https:") || typeof host !== "string") fail();
-	observe("client_request_end", `${scheme}//${host}${this.path ?? "/"}`, this.method);
-	return Reflect.apply(originalEnd, this, args);
-};
+for (const prototype of new Set([http.Agent.prototype, https.Agent.prototype])) {
+	if (typeof prototype.addRequest !== "function") fail();
+	Object.defineProperty(prototype, "addRequest", {
+		configurable: false, writable: false,
+		value(this: { protocol?: string }, request: RequestMetadata, options: { protocol?: string; hostname?: string; host?: string; port?: number }) {
+			const scheme = this.protocol ?? request.protocol ?? request.agent?.protocol ?? options.protocol;
+			const header = request.getHeader("host");
+			const host = header ?? options.hostname ?? options.host;
+			if ((scheme !== "http:" && scheme !== "https:") || typeof host !== "string") fail();
+			const port = header === undefined && options.port !== undefined ? `:${options.port}` : "";
+			observe("agent_add_request", `${scheme}//${host}${port}${request.path ?? "/"}`, request.method);
+			throw new Error("CF_QUALIFICATION_STARTUP_REFUSED");
+		},
+	});
+}
 
 record({ kind: "installed", runtime: Bun.version, workspace_restored: true });
 process.on("exit", code => {

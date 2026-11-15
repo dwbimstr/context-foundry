@@ -94,6 +94,14 @@ async fn current_host_agent_refusal_has_independent_tcp_controls() {
     let config = std::fs::read(host.paths.agent.join("config.yml")).unwrap();
     let models = std::fs::read(host.paths.agent.join("models.yml")).unwrap();
     assert!(config.len() <= 16384 && models.len() <= 16384);
+    assert_eq!(
+        pilot_capture::sha256_hex(&config),
+        host.launch.config_yml_sha256
+    );
+    assert_eq!(
+        pilot_capture::sha256_hex(&models),
+        host.launch.models_yml_sha256
+    );
     let ready = tokio::time::timeout(Duration::from_secs(30), async {
         let (mut rpc, mut bridge) = (false, false);
         while !(rpc && bridge) {
