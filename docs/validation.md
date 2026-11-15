@@ -1,5 +1,67 @@
 # Validation
 
+## Current-host tool continuation — 2026-11-15
+
+**PASS at the selected owned-fixture consumer boundary.** Test/contract commit
+`7ee124e` adds a second ignored current-host diagnostic and shares the existing
+setup; `bb17708` distinguishes owned-fixture HTTP from external-provider usage.
+Application, Cargo, frozen v1 pin, frame codec and request/SSE admission inputs
+remain identical to `98157db`. The owned OMP 18.18.1 artifact retains SHA-256
+`ce80099f10c5ea4367523767230cb5b920f30cc139b9cf8758c1cc4b2f1f9409`.
+
+Both explicitly selected current-host tests pass. The new case uses only the
+existing numeric-loopback TLS fixture, synthetic credential and
+`Endpoint::Verification` transport. Two actual native serialized requests pass
+unchanged admission, omit `thread` and preserve the initial message. A synthetic
+SSE tool response causes one policy-admitted read of the owned `src/lib.rs` fixture;
+the actual ToolDone precedes a three-message followup containing its source result.
+The same followup bytes are rejected as `followup_not_tool_progression` when a
+control removes completion evidence. The final synthetic text response leads to
+native `prompt_result: completed`, followed by normal host exit with its group gone.
+The fixture source file remains byte-identical and no extra fetch is observed.
+
+The server observes exactly **four POSTs**, in Count/Messages/Count/Messages order,
+with no scripted response left unused. Messages bodies match the native payloads
+byte-for-byte; Count bodies match their exact admitted projections. Both synthetic
+SSE streams pass the existing `MessagesStream` event/terminal/usage checks before
+relay. Source, model, tool and settings linkage are checked at this actual boundary.
+**All counter and
+usage numbers are scripted fixture data, not real-provider usage or cost.** The
+native transcript's usage ledger is not read back by this test.
+
+The initial diagnostic pair passes in **94.726 seconds**, including offline build.
+After adding explicit fixture/external HTTP labels, the final pair passes in
+**12.070 seconds** on `bb17708`; focused pilot Clippy passes in **28.832 seconds**.
+All eight local gates pass on that candidate in **850.851 seconds**: default tests
+**1,319 passed / 0 failed / 35 ignored**, **21 recovery cases**, pilot unit tests
+**101 passed / 0 failed / 1 ignored**, plus formatting, both Clippy boundaries and
+the three actual Rust 1.90 checks. The complete frozen-host suite from the preceding
+repair remains evidence on unchanged application/fixture inputs; it was not rerun
+in this test-only phase. The normal suite keeps both explicit newer-host diagnostics
+ignored, so an installed newer artifact is not a default prerequisite.
+
+The shared one-hour stage completed in **1,653.424 seconds**, including preparation,
+with its 120-second cleanup reserve, one-heavy-job rule, offline dependencies,
+20 GiB disk floor and 8 GiB sampled individual RSS guard. Observed peak individual
+RSS was **2,068.922 MiB**, and minimum sampled free disk was **97.002 GiB**.
+An initial private continuation-launcher syntax error occurred before any child
+work; its source and failure log remain alongside the corrected launcher. No
+product test, admission rule or resource bound was loosened. Every observed owned
+process exited naturally, with no forced cleanup or surviving observed descendant.
+
+Private evidence: `runs/pilot-current-followup-2026-11-15/qualification-readback.json`,
+the phase receipts, full gate logs and `focus-final-evidence{-followup}/`. These
+retain actual request bodies, exact loopback-received bodies and closed-file mode
+checks. Readback rechecks body identity, history shape, projection fields and all
+gate summaries. Publication and cache-cleanup receipts follow in the same directory.
+
+This qualifies current-artifact full-history tool continuation, native completion
+and parsing of the scripted responses. It does not grant current-host
+CaptureSession/Live admission, prove native transcript usage accounting, complete
+startup observation/transient modes or accept pilot-v2 task outcomes. Those
+requirements remain open. External-provider requests/spend are zero; owner signing
+credentials and paid/release execution remain gated.
+
 ## Stateless native request repair — 2026-11-15
 
 **PASS at the selected local request and regression boundaries.** The qualification

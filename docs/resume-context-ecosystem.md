@@ -312,6 +312,14 @@ and dated paragraphs below are history.
     qualified by separate gate readback. Complete current-host acceptance remains
     **HOLD**; the frozen live pin and validator are unchanged
     ([qualification](validation.md#real-host-no-provider-qualification--2026-11-14)).
+    A test-only continuation now qualifies the same artifact's actual two-generation
+    tool conversation through owned numeric-loopback TLS fixtures: full request/
+    projection identity, completed-tool history binding, synthetic SSE consumption
+    and native prompt completion pass, as do all eight gates on `bb17708`
+    ([continuation receipt](validation.md#current-host-tool-continuation--2026-11-15)).
+    These are scripted responses and counters; actual-provider economics and native
+    transcript usage readback are not established. Application inputs remain equal
+    to `98157db`; current-host Live admission and v2 acceptance stay HOLD.
     New build intermediates were removed after retaining runnable artifacts.
     Paid runs and signing remain gated.
     Complete coverage of transient library file modes, current installed-host compatibility and

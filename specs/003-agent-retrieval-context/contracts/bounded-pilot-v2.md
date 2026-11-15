@@ -273,7 +273,7 @@ synthetic request and result under owner-only permissions. It must name a fresh
 directory. The accepted run and cache-retention paths are in the linked receipt;
 no installed host, model or credential is acquired by this command.
 
-**Selected current-host continuation qualification, 2026-11-15 — pending.**
+**Selected current-host continuation qualification, 2026-11-15 — qualified at the owned-fixture boundary.**
 Extend the existing ignored diagnostic with one two-generation tool conversation
 on the same owned OMP 18.18.1 artifact. Keep application code, v1 pin, codec and
 request/SSE admission unchanged. Reuse the owned numeric-loopback TLS fixture and
@@ -299,6 +299,18 @@ change; keep all failures and the original first-request evidence. The shared ho
 includes builds, with 120 seconds for cleanup, one heavy job, offline dependencies,
 20 GiB disk floor and 8 GiB sampled individual RSS ceiling. Complete early startup
 observation, current-host Live admission, pilot-v2 outcomes and signing stay gated.
+
+Both explicit current-host tests and all eight local gates pass on `bb17708`;
+application inputs remain unchanged from `98157db`. The actual two-generation
+conversation completes, the four owned-fixture HTTP bodies pass identity checks,
+and the missing-completion negative control rejects. The full
+[continuation receipt](../../../docs/validation.md#current-host-tool-continuation--2026-11-15)
+separates scripted usage from unknown real-provider economics and leaves native
+transcript usage readback and complete early startup observation unqualified.
+Select both diagnostics with `current_host_ -- --ignored --nocapture
+--test-threads=1` in the command above, omitting `--exact`. Optional evidence uses
+the named fresh directory for the first case and its `-followup` sibling for the
+continuation; no real credential or model is acquired.
 
 The existing owners are [`CaptureSession` and `IndependentCheckReceipt`](../../../src/pilot_capture.rs),
 [`Host::launch` and `HostEvent`](../../../src/pilot_capture/host.rs), and
