@@ -436,6 +436,11 @@ and dated paragraphs below are history.
     distinguishes active tool selection from restricted startup and leaves MCP,
     memory, telemetry, settings watching and callback/timer ownership to qualify,
     alongside the shared-channel durable acknowledgment. V2 remains unfunded.
+    Guard and records through `1918830` are published with full fresh-clone readback
+    of 403 tracked paths. The new build/MSRV cache and three duplicate SDK libraries
+    are pruned after exact checks; all four native diagnostics pass directly from
+    the retained executable after cleanup without Cargo. The Agent-route receipt
+    owns the resource, deletion and retention details; the wrap-up remains active.
     The settlement finding/design through `2238253` is published with full fresh-clone
     readback; ten redundant native-library copies are removed after byte/open-file
     checks, preserving all other evidence and the prior retained library.

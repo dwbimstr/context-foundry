@@ -97,6 +97,31 @@ settlement proof. The raw bypass, complete owner inventory and shared-channel
 durable parent acknowledgment remain open; v2 is unfunded/unfrozen and paid runs,
 signing and release remain gated.
 
+The guard and records through `1918830` are published to experimental with full
+fresh-clone byte/type/executable-mode readback of all **403 tracked paths**; main
+remains `d94b013`. The new build/MSRV allocation is then reduced from
+**8,443,154,432 to 34,873,344 bytes**, deleting **11,755** generated files. The
+qualified diagnostic and separately retained expected-red executable keep their
+exact hashes, list all **39** tests and depend only on system dynamic libraries.
+All **106** implementation evidence files pass exact readback.
+
+Three primitive-control SDK libraries are removed only after byte comparison with
+the retained master and empty open-file checks: **333,330,960 logical bytes**.
+All **93** other primitive files remain exact; these evidence scopes are disjoint.
+The retained executable then passes all **four current-host diagnostics** in
+**45.017 seconds**, including the actual bridge conversation and `[1, 0, 1]` TCP
+controls, without Cargo or a rebuild. No new SDK extraction remains in either stage.
+
+`cleanup-build-result.json`, `primitive-cleanup-result.json`,
+`retained-result.json` and `post-cleanup-readback.json` retain deletion/retention
+mappings and the actual-consumer proof. Combined owned-directory allocation drops
+by **8,741,617,664 bytes**, not an inferred APFS physical free-space gain. The
+post-cleanup readback finishes at **2,509.958 seconds**, inside the implementation
+hour. Observed target/runs/dataset allocations are **92,450,816 / 9,203,838,976 /
+34,715,725,824 bytes** respectively. Cleanup is confined to this stage's generated
+build/MSRV cache and the three duplicate libraries; required data, models, backups
+and all other evidence remain retained.
+
 ## Early capture-API rejection and native model identity — 2026-11-15
 
 **Early configuration candidate rejected; retained diagnostics qualified on
