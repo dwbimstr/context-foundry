@@ -1,5 +1,102 @@
 # Validation
 
+## Native Agent startup refusal — 2026-11-15
+
+**The known SDK/custom-Agent HTTPS route is refused before its TCP connection in
+the explicit no-provider qualifier; full startup admission remains HOLD.**
+Implementation/test source is `7f54889`, owned by 003 T006's existing
+[startup contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission).
+Ordinary CaptureSession/HostDefault, the frozen host/protocol/policy and the
+capture bridge remain unchanged. This does not enable live use of the current host.
+
+Three fixed native primitive controls use the pinned OMP 18.18.1 artifact and an
+independent owned raw TCP listener: stock namespace HTTPS connects once; refusing
+at Agent.addRequest or Agent.createConnection connects zero times. Both hooks
+observe the SDK startup destination and custom-Agent witness, retain normal RPC/
+model behavior and identical native metadata. The controls finish in **66.599
+seconds** within their four-minute command/process-cleanup bound. Select the
+earlier addRequest boundary. No DNS, complete transport coverage or owner
+settlement is inferred from the TCP counter.
+
+The durable native test first obtains configuration from the actual Rust launcher,
+then runs pinned SDK controls with that configuration and the exact embedded
+preload. Only the exact owned numeric-loopback port is re-allowed in these control
+sandboxes; the product launcher gains no network override. The stock fixture has
+the same local global-fetch refusal. A separate raw `Bun.connect` control exposes
+a route the Agent hook does not observe. No user prompt or provider call is sent.
+
+Test/contract `bff78f7` initially fails to compile because its home-path conversion
+is ambiguous. That original failure is retained and does not count as behavioral
+red. Correction `dbe7033` leaves the preload unchanged: the committed native test
+then fails solely at the guarded listener assertion in **29.074 seconds**, with
+stock/observation-only/raw counts **[1, 1, 1]**, matching complete model digests,
+normal exits and the explicit raw-open witness. The red executable is retained.
+
+`7f54889` replaces ClientRequest.end observation with a refusal on the shared HTTP/
+HTTPS Agent prototypes. It reads only the destination/method metadata, writes the
+bounded trace and throws locally without invoking the original queue operation.
+Missing expected methods fail closed. The existing 20-attempt/8-KiB bounds and
+metadata privacy remain; the trace is still a diagnostic rather than the product
+journal. Embedded preload SHA-256 is
+`80517cd37a140a3204e5c6cf0e398ec6b514ff0137a979367095c8ed886aa95d`.
+
+All **four current-host diagnostics pass** in **63.578 seconds**. The permanent
+TCP control reports **[1, 0, 1]**: stock HTTPS reaches the listener, guarded custom-
+Agent HTTPS is locally refused, and the raw socket still reaches it. The complete
+native model digest is identical across red/green controls:
+`83aac156b7678be8faab3ca2d09fbf4e9773214fc968f1c4a13839dc718317c9`.
+The primitive's pretty JSON has a different byte digest; decoding/re-encoding it
+compactly matches this value. No model difference is inferred from serialization.
+
+The other current diagnostics exercise the actual capture bridge, canonical model,
+xhigh setting and complete two-generation read-tool conversation. Strict request
+validation, all four owned fixture POSTs, native usage's four scripted categories/
+totals and 29 corruptions, the authoritative single-model cache and six malformed-
+trace controls pass. Actual bridge model digest remains
+`53bec6f047bbd7eeab26c93c1a6dd6c0e4ccc30d50a29d79e416c28692d5a027` as recorded
+in the [preceding receipt](#early-capture-api-rejection-and-native-model-identity--2026-11-15).
+These are synthetic usage counters, not provider economics.
+
+The actual-profile trace records one pre-prompt Agent HEAD and no observed later
+attempt during the fixture. The final trace is **290 bytes**, SHA-256
+`529fac26dc989820f27b93a2037d0ac6beec7d2d02d9c8353bd2ec1adbe61666`;
+the exact pre-prompt prefix is **252 bytes**, SHA-256
+`621eb30b849966a811bef641c3e94a77da6193df764efd89798ca17e3bdf5c9f`.
+
+The complete nonignored frozen-host suite passes **33/0/6 ignored** in **303.117
+seconds**; focused lint passes. All **eight local gates pass** on `7f54889` in
+**904.877 seconds**, including actual Rust **1.90.0**. Default outer totals are
+**1,319 passed, 0 failed, 35 ignored**; pilot units are **102 passed, 0 failed,
+1 ignored**. The 21 custom recovery successes and nested child summaries remain
+separate. The additional ignored test is the explicitly executed current-host TCP
+control; no previous test assertion/deadline is relaxed.
+
+Private evidence is `runs/pilot-startup-agent-2026-11-15/` and
+`runs/pilot-agent-refusal-2026-11-15/`, including original failures, raw traces/
+requests/native sessions, listener counts, source/model hashes, lifecycle/resource
+receipts and the in-session readback. Implementation qualification finishes at
+**1,843.620 seconds** within its offline hour, with 120 seconds reserved for cleanup,
+one heavy job, a 20 GiB disk floor and an 8 GiB sampled individual RSS ceiling.
+Across implementation commands, including compilation failure, maximum sampled
+individual RSS is **2,010.156 MiB** and minimum observed free disk **67.775 GiB**.
+Samples are lower bounds, not global/GPU memory measurements. Qualified commands
+exit naturally; no real credential, model download, provider spend, owner signing,
+tag or release publication is used.
+
+A partial source census is retained with verified upstream Git blobs. In
+`can1357/oh-my-pi` at `24439066040e006eb08da7b204f0ac41c79d2de9`,
+[`main.ts::buildSessionOptions`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/main.ts#L1419)
+sets active tool names; this does not establish
+[`sdk.ts`'s restricted-startup guard](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/sdk.ts#L2480)
+for MCP/memory. Credential usage,
+telemetry eligibility, RPC settings watching and abort-deadline callbacks still
+need owner/lifetime proof. The upstream `connection-prewarm.test.ts` test "warms
+official Anthropic with the real request's TLS options and no credentials" was
+inspected, not run. Source association is not reproducible-build or runtime
+settlement proof. The raw bypass, complete owner inventory and shared-channel
+durable parent acknowledgment remain open; v2 is unfunded/unfrozen and paid runs,
+signing and release remain gated.
+
 ## Early capture-API rejection and native model identity — 2026-11-15
 
 **Early configuration candidate rejected; retained diagnostics qualified on

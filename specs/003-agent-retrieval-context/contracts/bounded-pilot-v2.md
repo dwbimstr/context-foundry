@@ -505,13 +505,13 @@ qualification, frozen compatibility and eight gates on `5d9aa0e`. The unsupporte
 configuration is absent from active code; the complete admission boundary below
 remains unimplemented.
 
-**Selected Agent-route refusal, 2026-11-15 — not yet qualified.**
+**Agent-route refusal, 2026-11-15 — implemented and qualified at the named TCP boundary.**
 Native primitive controls on the pinned current artifact observe one accepted
 owned-loopback connection for stock namespace HTTPS and zero for both earlier
 Agent hooks, with identical native model metadata. Select `Agent.addRequest`,
 the earlier boundary. Replace the existing owned qualifier's end observation with
-a metadata-only refusal there; ordinary capture remains unchanged. This removes
-the known SDK route from socket construction without selecting a proxy, changing
+a metadata-only refusal there; ordinary capture remains unchanged. This refuses
+the known SDK route before the tested TCP connection without selecting a proxy, changing
 the canonical model or adding a product configuration/transport owner.
 
 First commit a durable native test against the existing observation-only preload.
@@ -535,15 +535,33 @@ prune the new build and duplicate SDK extraction caches after evidence readback.
 Full owner inventory, non-Agent routes, settlement and the shared-channel durable
 acknowledgment below remain required. No paid execution, signing or v1 change.
 
+The [dated Agent-route receipt](../../../docs/validation.md#native-agent-startup-refusal--2026-11-15)
+records the independent-listener red on `dbe7033`, the `[1, 0, 1]` stock/guard/raw
+controls, actual bridge consumers, frozen compatibility and eight gates on
+`7f54889`. The raw-socket bypass remains accepted evidence of incomplete coverage,
+not an exception that can enable v2 admission.
+
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
 and a complete startup-owner inventory: catalog/discovery, credential refresh,
-connection preparation, telemetry/update and extension initialization where present.
+connection preparation, telemetry/update, MCP/memory startup, settings watching
+and extension initialization where present.
 These are inspection categories, not an asserted complete current inventory.
 Unknown owners and bypass routes fail closed. Install observation before any owner
 captures a transport reference. The preload and later bridge share one child
 channel/sequence owner; do not open a second connection or reset its sequence.
 Do not add a worker, proxy, service, database or independent log.
+
+Source inspection at `24439066040e006eb08da7b204f0ac41c79d2de9` distinguishes
+`main.ts::buildSessionOptions` assigning `toolNames` for `--tools` from
+`sdk.ts::createAgentSessionScoped` guarding MCP and memory work with the separate
+`restrictToolNames` option. Tool names alone do not establish restricted startup.
+RPC also starts settings watching, and telemetry initialization has settings/env
+eligibility. Trace the final selected options, backends, owners and lifetimes
+before freezing the inventory; this source census proves neither active model
+work nor absence of these owners at runtime. The known warm-up source constructs
+an abort deadline, whose timer/callback settlement is not qualified by the Agent
+TCP control or a quiet trace.
 
 The [native HTTPS controls](../../../docs/validation.md#native-https-startup-boundaries--2026-11-15)
 now demonstrate a concrete alternate SDK path: Anthropic connection warm-up uses

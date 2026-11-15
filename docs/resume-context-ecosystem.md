@@ -426,6 +426,16 @@ and dated paragraphs below are history.
     checks, and the retained executable passes the actual native tool conversation
     directly after cleanup without Cargo. The dated receipt above owns deletion,
     retention and resource details. Paid runs, signing and release remain gated.
+    The owned qualifier now refuses the known SDK/custom-Agent HTTPS route at
+    Agent.addRequest. A committed independent TCP control changes from `[1, 1, 1]`
+    red to `[1, 0, 1]` stock/guard/raw, preserving native model metadata; the raw
+    socket remains an explicit uncovered route. All four current diagnostics,
+    frozen compatibility and eight gates pass on `7f54889`
+    ([Agent-route receipt](validation.md#native-agent-startup-refusal--2026-11-15)).
+    This is a known-route refusal, not general startup admission. The source census
+    distinguishes active tool selection from restricted startup and leaves MCP,
+    memory, telemetry, settings watching and callback/timer ownership to qualify,
+    alongside the shared-channel durable acknowledgment. V2 remains unfunded.
     The settlement finding/design through `2238253` is published with full fresh-clone
     readback; ten redundant native-library copies are removed after byte/open-file
     checks, preserving all other evidence and the prior retained library.
