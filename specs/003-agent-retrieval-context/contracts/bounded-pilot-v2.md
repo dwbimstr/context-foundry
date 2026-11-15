@@ -217,7 +217,7 @@ Before freezing the apparatus, demonstrate these with the actual installed host
 and local no-provider fixtures. These remain freeze requirements; completed narrow
 repairs are identified in the relevant row:
 
-**Selected full-history delegate repair, 2026-11-14 — green qualification pending.**
+**Selected full-history delegate repair, 2026-11-14 — qualified at the selected request boundary, 2026-11-15.**
 The retained current-host request contains both `thread: {type: "create"}` and the
 new message-threads beta. Its associated upstream
 [`wantsAnthropicThreads`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/ai/src/providers/anthropic-threads.ts#L140)
@@ -227,9 +227,8 @@ uses that choice. Set `statefulResponses: false` in the existing embedded bridge
 delegate options so the native serializer retains complete request history. Do not
 strip actual request fields/headers, widen beta/body admission, add server-history
 state or change the v1 host pin. This reduces state/accounting responsibilities
-instead of introducing a second history owner. V2 drafting is already authorized;
-the optional next-direction question does not gate this repair under the existing
-full-request invariant.
+instead of introducing a second history owner. This repair preserves the existing
+full-request invariant and grants no new execution authority.
 
 First commit the actual-host regression with this contract and confirm red on the
 unchanged bridge. The ignored `current_host_first_request_preserves_full_history`
@@ -252,6 +251,15 @@ and the host exits normally with its group gone. The 92.031-second receipt inclu
 offline compilation. The original current-host failure is preserved separately.
 Private evidence: `runs/pilot-stateless-host-2026-11-14/red-result.json` and
 `red-evidence/`; no provider request or policy change was involved.
+
+On `98157db`, the current-host regression passes unchanged request admission, the
+complete nonignored frozen-host suite passes, and all eight local gates exit 0.
+The private gate wrapper incorrectly rejected the expected fake workers; the
+original failure is retained and qualified by separate complete gate/log/fixture
+readback, without rerunning or changing any product gate. See the
+[repair receipt](../../../docs/validation.md#stateless-native-request-repair--2026-11-15).
+The exact v1 host pin and request policy remain unchanged. First-request
+qualification does not accept complete current-host behavior or pilot v2.
 
 The existing owners are [`CaptureSession` and `IndependentCheckReceipt`](../../../src/pilot_capture.rs),
 [`Host::launch` and `HostEvent`](../../../src/pilot_capture/host.rs), and

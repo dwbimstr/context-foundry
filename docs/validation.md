@@ -1,5 +1,69 @@
 # Validation
 
+## Stateless native request repair — 2026-11-15
+
+**PASS at the selected local request and regression boundaries.** The qualification
+ran on 2026-11-14; its completed receipts were read back on 2026-11-15. Contract/test
+commit `50c571c` precedes the implementation in `98157db`. On the unchanged bridge,
+the explicit current-host regression is red: the actual request contains
+`thread: {type: "create"}` and fails `request_binding:beta_not_admitted`. The host
+still exits normally with its group gone. This is retained in
+`runs/pilot-stateless-host-2026-11-14/red-result.json` and `red-evidence/`.
+
+The embedded bridge now passes `statefulResponses: false` to the host-bundled
+delegate. It configures the native serializer; it does not remove serialized fields,
+rewrite headers, widen admission or add a second history owner. Upstream reference:
+commit `24439066040e006eb08da7b204f0ac41c79d2de9`,
+[`wantsAnthropicThreads`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/ai/src/providers/anthropic-threads.ts#L140),
+the [delegate call](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/ai/src/providers/anthropic.ts#L2262)
+and the [two-turn explicit-false test](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/ai/test/anthropic-message-threads.test.ts#L335).
+Those upstream sources were read and blob-verified, not executed. Foundry's test
+uses the actual pinned 18.18.1 executable, existing `Host::launch`, bridge/setup
+readback and unchanged request validator, then refuses locally and reaps the host.
+The ordinary suite keeps this newer-host diagnostic ignored unless explicitly
+selected with `CF_PILOT_CURRENT_OMP`; no newer installed host becomes a default
+test prerequisite or a v1 Live admission pin.
+
+On `98157db`, the same current-host test is green: its native request has no
+`thread` field and passes unchanged admission. Red/green command times, including
+offline compilation, are **92.031 / 25.827 seconds**. The complete nonignored
+frozen-host integration suite also passes: **33 passed, 0 failed, 3 ignored**,
+323.890 seconds including command overhead. The separate ignored current-host
+test was explicitly run above; the private pipeline/oracle tests were not rerun.
+Every selected host exited naturally, without forced cleanup or observed owned
+processes left behind. Private request bodies and metadata remain local.
+
+All eight `scripts/gates.sh` gates exit 0 on `98157db` in **883.465 seconds**:
+formatting, default Clippy/tests, pilot Clippy/unit tests and all three actual
+Rust 1.90 checks. Default tests: **1,319 passed, 0 failed, 35 ignored**, plus
+**21 recovery cases**. Pilot unit tests: **101 passed, 0 failed, 1 ignored**.
+Counts use the final summary of each Cargo harness, excluding nested child-test
+summaries. The original private wrapper reports failure solely because it applied
+`forbid_worker` to the full gate suite. Its 46 observed worker identities join to
+the passing fake-bundle fixtures in `tests/embed_worker.rs` and
+`tests/neural_retrieval.rs`, and fake package components in `tests/install.rs`.
+Those fixtures bind the fake executable's bytes/hash. The original failed wrapper
+receipt remains unchanged; `gates-readback.json` records the separate readback
+of all eight exit codes, logs and fixture identities. The private caller is corrected
+for future use. No product gate, resource limit or test assertion was changed, and
+the already completed gates were not rerun.
+
+The shared one-hour qualification completed in **1,503.608 seconds**, retaining
+its 120-second cleanup reserve and one-heavy-job rule. Peak sampled individual
+RSS was **2,047.625 MiB**; minimum sampled disk free was **292.856 GiB**, within
+the original 8 GiB / 20 GiB guards. Readback/publication does not extend or restart
+that completed experiment. Receipts and complete gate logs are under
+`runs/pilot-stateless-host-2026-11-14/`; the verified aggregate is
+`gates-readback.json`. Cache cleanup and publication receipts are recorded there
+as they complete.
+
+Frozen v1 contract/pin, frame protocol, request validator and Cargo inputs are
+unchanged. This qualifies the current artifact's first full-history request and
+the frozen-host regression; it does not newly qualify current-host response usage,
+tool continuations, complete startup observation, transient modes or
+CaptureSession/Live admission. Pilot v2/T006 remain open. External-provider spend
+is zero. Owner signing credentials, paid launch and release publication remain gated.
+
 ## Current-host startup source feasibility — 2026-11-14
 
 **Source finding only; complete startup observation remains unqualified.** This

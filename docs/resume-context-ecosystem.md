@@ -2,7 +2,7 @@
 
 ## Current status — 2026-11-06
 
-Updated 2026-11-14. This section owns current status; other documents link here,
+Updated 2026-11-15. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
 - **Measurement.** G2 (388 questions over rust-lang/rust and oh-my-pi, run with
@@ -299,9 +299,15 @@ and dated paragraphs below are history.
     `runs/storage-cleanup-2026-11-14/retention-index.json`
     ([cleanup receipt](validation.md#storage-cleanup--2026-11-14)). The selected
     no-provider native continuation has now run: the complete nonignored frozen-host
-    suite passes, while the current host reaches the bridge/settings boundary but
-    its actual request is refused for an unadmitted beta token. Current-host
-    acceptance is **HOLD**; the frozen live pin and validator are unchanged
+    suite passes. The first current-host attempt reached the bridge/settings
+    boundary but its actual request was refused for an unadmitted beta token.
+    The stateless-delegate repair is now qualified at the selected request boundary:
+    the same explicit current-host regression passes unchanged admission, the
+    frozen-host suite passes and all eight local gates pass on `98157db`
+    ([repair receipt](validation.md#stateless-native-request-repair--2026-11-15)).
+    The original failed wrapper's fake-worker classification is retained and
+    qualified by separate gate readback. Complete current-host acceptance remains
+    **HOLD**; the frozen live pin and validator are unchanged
     ([qualification](validation.md#real-host-no-provider-qualification--2026-11-14)).
     New build intermediates were removed after retaining runnable artifacts.
     Paid runs and signing remain gated.
@@ -315,10 +321,10 @@ and dated paragraphs below are history.
     associated source revision: constructor fetch injection and refresh settlement
     do not establish an early, complete CLI observation/acknowledgment seam
     ([current-source finding](validation.md#current-host-startup-source-feasibility--2026-11-14)).
-    The selected no-provider qualification is finished, with current-host acceptance
-    still HOLD. Further implementation needs a newly selected v2 host contract or
-    a new bounded retrieval experiment; neither changes the frozen v1 policy or
-    authorizes reuse of the consumed T005 final set. Concrete v2 tasks, margins,
+    The selected request repair is finished; unfunded v2 contract preparation
+    remains authorized without changing frozen v1 policy or enabling execution.
+    A new retrieval experiment still needs a bounded selection and unexposed
+    acceptance evidence; the consumed T005 final set cannot be reused. Concrete v2 tasks, margins,
     powered sample, arms, launch pins and rights remain freeze inputs. Paid launch,
     signing/release and owner-held backup restoration remain gated separately.
   - **Hosts and evidence:** the owner's Mac is the work host. The 2026-10-11
