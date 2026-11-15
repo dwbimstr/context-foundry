@@ -84,6 +84,14 @@ pub enum CatalogProfile {
     HostDefault,
     /// Current-artifact, no-provider qualification; never selected by Live admission.
     OwnedQualification,
+    /// Compare selecting the capture API before the SDK prepares a connection.
+    OwnedEarlyApiQualification,
+}
+
+impl CatalogProfile {
+    fn is_owned_qualification(self) -> bool {
+        self != Self::HostDefault
+    }
 }
 
 /// Artifact whose catalog API and inventory this qualification profile exercises.
@@ -235,6 +243,8 @@ pub struct LaunchRecord {
 /// Summary of a native session `get_state` response.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct HostState {
+    /// Digest of the complete native model object; no model headers are retained.
+    pub native_model_sha256: Option<String>,
     pub provider: Option<String>,
     pub model: Option<String>,
     pub api: Option<String>,
@@ -434,7 +444,7 @@ impl Host {
     /// Returns the host and the receiver of its events (kept separate so
     /// the driver can await events while sending frames).
     pub fn launch(spec: &HostSpec) -> Result<(Host, mpsc::Receiver<HostEvent>), CaptureFault> {
-        if spec.catalog == CatalogProfile::OwnedQualification {
+        if spec.catalog.is_owned_qualification() {
             let bytes = fs::read(&spec.omp)
                 .map_err(|_| fault(FaultClass::Pins, "qualification_host_unreadable"))?;
             if sha256_hex(&bytes) != QUALIFICATION_OMP_SHA256 {
@@ -476,11 +486,13 @@ impl Host {
         write_private_new(&paths.agent.join("models.yml"), MODELS_YML.as_bytes())?;
         let config = match spec.catalog {
             CatalogProfile::HostDefault => CONFIG_YML.to_owned(),
-            CatalogProfile::OwnedQualification => format!(
-                "{CONFIG_YML}\ndisabledProviders: {}\n",
-                serde_json::to_string(QUALIFICATION_DISABLED_PROVIDERS)
-                    .expect("literal provider inventory")
-            ),
+            CatalogProfile::OwnedQualification | CatalogProfile::OwnedEarlyApiQualification => {
+                format!(
+                    "{CONFIG_YML}\ndisabledProviders: {}\n",
+                    serde_json::to_string(QUALIFICATION_DISABLED_PROVIDERS)
+                        .expect("literal provider inventory")
+                )
+            }
         };
         write_private_new(&paths.agent.join("config.yml"), config.as_bytes())?;
         write_private_new(&paths.bridge, BRIDGE_SOURCE)?;
@@ -490,7 +502,7 @@ impl Host {
         if bridge_sha256 != sha256_hex(BRIDGE_SOURCE) {
             return Err(fault(FaultClass::Bootstrap, "bridge_bytes_mismatch"));
         }
-        let startup_probe_sha256 = if spec.catalog == CatalogProfile::OwnedQualification {
+        let startup_probe_sha256 = if spec.catalog.is_owned_qualification() {
             let path = root.join("bridge/startup_probe.ts");
             write_private_new(&path, QUALIFICATION_STARTUP_PROBE)?;
             let written = fs::read(&path)
@@ -523,7 +535,7 @@ impl Host {
         let tx_ino = fstat_ino(c2r_write.as_raw_fd())?;
         let rx_ino = fstat_ino(r2c_read.as_raw_fd())?;
         let mut env = host_env(&paths, &spec.identity, tx_ino, rx_ino);
-        if spec.catalog == CatalogProfile::OwnedQualification {
+        if spec.catalog.is_owned_qualification() {
             env.push(("CF_PILOT_CATALOG".into(), "owned-bundled-fixed-v1".into()));
             env.push((
                 "BUN_OPTIONS".into(),
@@ -1012,6 +1024,9 @@ pub fn parse_rpc_line(line: &[u8]) -> Result<RpcEvent, &'static str> {
 fn state_from(data: &Value) -> HostState {
     let model = data.get("model");
     HostState {
+        native_model_sha256: model
+            .filter(|m| m.is_object())
+            .map(|m| sha256_hex(&serde_json::to_vec(m).expect("parsed native model"))),
         provider: model.and_then(|m| str_field(m, "provider")),
         model: model.and_then(|m| str_field(m, "id")),
         api: model.and_then(|m| str_field(m, "api")),

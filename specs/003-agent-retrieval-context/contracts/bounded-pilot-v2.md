@@ -469,6 +469,37 @@ prefix, six trace mutation controls, frozen compatibility and eight gates on
 `1357756`. This accepts the diagnostic only; complete startup admission remains
 unimplemented.
 
+**Selected early capture-API qualification, 2026-11-15 — not yet qualified.**
+Compare the owned-catalog profile with an explicit artifact-pinned qualifier that
+sets only `modelOverrides.claude-sonnet-5-5.api` to the existing capture API in
+`models.yml`, before SDK model selection. Preserve the canonical Anthropic provider
+and model, authoritative single-model catalog, bridge, tool policy and full native
+model metadata after session setup. Ordinary capture remains HostDefault. Hash the
+actual model configuration in the launch receipt. The matching-release source
+(`can1357/oh-my-pi` at `24439066040e006eb08da7b204f0ac41c79d2de9`,
+`config/model-patch.ts::applyModelOverride` and
+`providers/transform-messages.ts::isAnthropicMessagesModel`) supports this narrow
+configuration candidate: connection preparation first checks the selected API.
+Source association is not a reproducible build or runtime proof.
+
+First commit a native paired test with both profiles still using the original
+model configuration. Require the complete two-generation tool conversation,
+strict four-request loopback fixture and 29 native-usage mutation controls in both
+arms, exact equality of the complete native model digest, and a red assertion for
+the candidate's observed startup attempt. Then apply the early override and require
+zero observed attempts in that arm while the unchanged baseline retains its known
+HEAD attempt. Both trace formats, pre-prompt prefixes, six trace mutation controls,
+normal exit and private evidence must pass. A metadata mismatch rejects the
+candidate; do not weaken that assertion. Zero observed attempts do not establish
+complete owner coverage, settlement or startup admission.
+
+Use one offline hour with a 120-second cleanup reserve, one heavy job, a 20 GiB
+disk floor and an 8 GiB sampled individual RSS ceiling. Require current-host
+diagnostics, complete nonignored frozen-host compatibility, focused lint and all
+eight local gates before publication. Preserve red/green native evidence and
+runnable diagnostics, then prune new build/extraction caches. No provider calls,
+model downloads, signing, v1 policy change or paid authority are authorized here.
+
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
 and a complete startup-owner inventory: catalog/discovery, credential refresh,

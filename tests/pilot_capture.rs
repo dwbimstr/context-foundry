@@ -50,17 +50,29 @@ async fn current_host_tool_followup_preserves_full_history() {
 #[tokio::test]
 #[ignore = "needs explicit CF_PILOT_CURRENT_OMP; no-provider current-host diagnostic"]
 async fn current_host_owned_catalog_preserves_full_history() {
-    qualify_current_host_history(
+    let baseline = qualify_current_host_history(
         true,
         pilot_capture::host::CatalogProfile::OwnedQualification,
     )
     .await;
+    let early_api = qualify_current_host_history(
+        true,
+        pilot_capture::host::CatalogProfile::OwnedEarlyApiQualification,
+    )
+    .await;
+    assert!(baseline["native_model_sha256"].is_string());
+    assert_eq!(
+        baseline["native_model_sha256"],
+        early_api["native_model_sha256"]
+    );
+    assert_eq!(baseline["native_startup_probe"]["observed_attempts"], 1);
+    assert_eq!(early_api["native_startup_probe"]["observed_attempts"], 0);
 }
 
 async fn qualify_current_host_history(
     tool_followup: bool,
     catalog: pilot_capture::host::CatalogProfile,
-) {
+) -> Value {
     use pilot_capture::host::{Host, HostEvent, HostSpec, RpcEvent, ToolPolicy, ToolVerdict};
     use pilot_capture::protocol::{
         ChannelIdentity, ChildMessage, CloseReason, ParentMessage, ToolOutcome,
@@ -69,7 +81,8 @@ async fn qualify_current_host_history(
     use std::time::Duration;
 
     const SHA: &str = pilot_capture::host::QUALIFICATION_OMP_SHA256;
-    let owned_catalog = catalog == pilot_capture::host::CatalogProfile::OwnedQualification;
+    let owned_catalog = catalog != pilot_capture::host::CatalogProfile::HostDefault;
+    let early_api = catalog == pilot_capture::host::CatalogProfile::OwnedEarlyApiQualification;
     let prompt = if tool_followup {
         "Read src/lib.rs once, then state the function name."
     } else {
@@ -123,6 +136,7 @@ async fn qualify_current_host_history(
     let (host, mut events) = Host::launch(&spec).unwrap();
     let bridge_sha = host.launch.bridge_sha256.clone();
     let config_sha = host.launch.config_yml_sha256.clone();
+    let models_sha = host.launch.models_yml_sha256.clone();
     let startup_probe_sha = host.launch.startup_probe_sha256.clone();
     assert_eq!(
         startup_probe_sha,
@@ -141,6 +155,10 @@ async fn qualify_current_host_history(
         pilot_capture::sha256_hex(&std::fs::read(host.paths.agent.join("config.yml")).unwrap()),
         config_sha
     );
+    assert_eq!(
+        pilot_capture::sha256_hex(&std::fs::read(host.paths.agent.join("models.yml")).unwrap()),
+        models_sha
+    );
     let native_sessions = host.paths.sessions.clone();
     let source_before = std::fs::read(e.workspace.join("src/lib.rs")).unwrap();
     let mut requests = Vec::<(Value, Vec<u8>)>::new();
@@ -148,6 +166,7 @@ async fn qualify_current_host_history(
     let mut observations = Vec::<Value>::new();
     let mut projections = Vec::<Vec<u8>>::new();
     let mut startup_before_prompt: Option<Vec<u8>> = None;
+    let mut native_model_sha = None;
     let collect = async {
         let (mut rpc, mut bridge, mut setup, mut sent) = (false, false, false, false);
         let mut pending = BTreeSet::<String>::new();
@@ -386,6 +405,7 @@ async fn qualify_current_host_history(
                     }
                     if id == "c4" {
                         let s = state.ok_or("settings missing")?;
+                        native_model_sha = s.native_model_sha256.clone();
                         if s.provider.as_deref() != Some(policy::PROVIDER)
                             || s.model.as_deref() != Some(policy::MODEL)
                             || s.api.as_deref() != Some(policy::BRIDGE_API)
@@ -473,7 +493,7 @@ async fn qualify_current_host_history(
     let (drained, exit) = host.finish(events, Duration::from_secs(30)).await;
     let evidence_root = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT").map(|path| {
         let mut out=PathBuf::from(path);
-        if owned_catalog {out.set_file_name(format!("{}-owned-catalog",out.file_name().unwrap().to_string_lossy()));}
+        if owned_catalog {out.set_file_name(format!("{}-{}",out.file_name().unwrap().to_string_lossy(),if early_api {"owned-early-api"} else {"owned-catalog"}));}
         else if tool_followup {out.set_file_name(format!("{}-followup",out.file_name().unwrap().to_string_lossy()));}
         fixture_private_dir(&out).unwrap();
         for (index,(meta,bytes)) in requests.iter().enumerate() {
@@ -709,7 +729,8 @@ async fn qualify_current_host_history(
     };
     let report = json!({"host_sha256": SHA, "bridge_sha256": bridge_sha,
         "body_sha256": pilot_capture::sha256_hex(&body), "body_bytes":body.len(),
-        "config_yml_sha256":config_sha,
+        "config_yml_sha256":config_sha,"models_yml_sha256":models_sha,
+        "native_model_sha256":native_model_sha,"early_api_profile":early_api,
         "startup_probe_sha256":startup_probe_sha,
         "no_thread_field":no_thread, "validator_passed":request_passed,
         "validator_fault":admitted.as_ref().and_then(|r|r.as_ref().err()).map(ToString::to_string),
@@ -749,6 +770,7 @@ async fn qualify_current_host_history(
         no_thread && request_passed && exit.normal && !exit.forced && exit.group_gone,
         "{report}"
     );
+    report
 }
 
 /// Diagnostic-format validation only; this never establishes owner coverage or admission.
