@@ -465,6 +465,11 @@ and dated paragraphs below are history.
     The immediate-destruction candidate is rejected. Complete startup owner/transport
     coverage, native-timer settlement and durable parent acknowledgment remain open;
     v2 remains unfunded/unfrozen and paid runs/signing stay gated.
+    Lifetime repair/records through `a3538fc` are published with full
+    fresh-clone readback. New build/MSRV and six duplicate SDK-library caches
+    are pruned after exact checks, retaining runnable red/green diagnostics and
+    all other evidence. All five current native diagnostics pass directly after
+    cleanup without Cargo; the lifetime receipt owns counts and retention details.
     The settlement finding/design through `2238253` is published with full fresh-clone
     readback; ten redundant native-library copies are removed after byte/open-file
     checks, preserving all other evidence and the prior retained library.

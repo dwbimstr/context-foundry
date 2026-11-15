@@ -94,6 +94,32 @@ coverage, all callback settlement or the shared-channel durable startup acknowle
 V2 remains unfunded/unfrozen; paid execution, signing and release remain gated.
 No provider spend, real provider credential or model download is used.
 
+The repair and qualification records through `a3538fc` are published to
+experimental with complete fresh-clone byte/type/executable-mode readback of all
+**403 tracked paths**; main remains `d94b013`. New build/MSRV allocation falls
+from **8,444,424,192 to 34,938,880 bytes**,
+removing **11,755** generated files. The runnable green
+diagnostic and separately retained proper-red executable keep their exact hashes,
+list all **40** tests and require only system dynamic libraries. All
+**156** existing implementation evidence files remain exact.
+
+Six duplicate SDK-library extractions from the lifetime
+controls are removed only after exact byte comparison with the retained master
+and empty open-file checks: **666,661,920 logical bytes**. All
+**203** other files in those roots remain exact. Their failed
+attempts and original bounds are retained. The qualified executable then passes
+all **five current diagnostics** directly in **65.434 seconds**
+without Cargo, including post-deadline state readback, the full tool conversation,
+disk-edit and TCP controls. The owned-directory allocation reduction totals
+**9,076,158,464 bytes**; this is not an inferred APFS physical
+free-space gain. Post-cleanup readback finishes at **2165.632
+seconds** inside the implementation hour. Target/runs/datasets allocations are
+**92,450,816 / 9,359,921,152 /
+34,715,725,824 bytes**. Required models, datasets,
+backups, SDK masters and all other evidence remain retained. Detailed mappings are
+in `cleanup-build-result.json`, `private-probe-cleanup-result.json`,
+`retained-result.json` and `post-cleanup-readback.json` in the implementation root.
+
 ## Owned native settings quiescence — 2026-11-15
 
 **The explicit owned qualifier disables live config reloading before bridge Ready;
