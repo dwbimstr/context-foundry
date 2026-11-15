@@ -371,6 +371,9 @@ and dated paragraphs below are history.
     The v2 draft can reuse this existing configuration instead of adding a discovery
     subsystem; complete early observation, owner drain and acknowledgment are still
     required. Production configuration and v1 remain unchanged.
+    The profile finding through `ed58509` is published with full fresh-clone
+    readback. Its three redundant native-library extractions are removed after
+    byte/open-file checks, preserving all other evidence and the retained library.
     The settlement finding/design through `2238253` is published with full fresh-clone
     readback; ten redundant native-library copies are removed after byte/open-file
     checks, preserving all other evidence and the prior retained library.

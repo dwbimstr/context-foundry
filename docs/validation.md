@@ -54,6 +54,17 @@ unqualified. No parent Count/Messages transport, generation prompt, provider spe
 model download, owner signing identity or Rust build is used. Complete current-host
 startup and pilot-v2 acceptance remain **HOLD**.
 
+The profile finding through `ed58509` is published to the experimental branch with
+full fresh-clone byte/type/executable-mode readback of all **400 tracked paths**;
+main remains `d94b013`. After publication, three duplicate native-library
+extractions are removed following exact-byte comparison with the prior retained
+library and an empty open-file check. **333,330,960 logical bytes** are removed;
+this probe's directory allocation falls from **344,326,144 to 11,005,952 bytes**.
+All **86** other existing evidence files pass exact readback. The original configs,
+source pins, catalogs and raw controls remain available; `cleanup-result.json`
+records the mapping. No Rust cache is created, and directory allocation is not
+treated as an APFS physical free-space measurement.
+
 ## Startup settlement counterexample — 2026-11-15
 
 **Qualified counterexample to treating native RPC readiness as startup settlement.**
