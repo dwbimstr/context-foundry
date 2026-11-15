@@ -37,6 +37,8 @@ pub const BRIDGE_SOURCE: &[u8] = include_bytes!("bridge.ts");
 /// Bounded startup metadata diagnostic, loaded only by the owned qualifier.
 /// It does not establish startup settlement or grant capture admission.
 pub const QUALIFICATION_STARTUP_PROBE: &[u8] = include_bytes!("startup_probe.ts");
+/// Original credential-prefetch owner check, only for the pinned owned qualifier.
+pub const QUALIFICATION_STARTUP_AUTH: &[u8] = include_bytes!("startup_auth.ts");
 pub const SANDBOX_EXEC: &str = "/usr/bin/sandbox-exec";
 /// Exact owned extraction path of the pinned OMP 18.13.2 macOS arm64 host.
 /// This declares private executable metadata, not a per-request content hash.
@@ -229,6 +231,7 @@ pub struct LaunchRecord {
     pub models_yml_sha256: String,
     pub config_yml_sha256: String,
     pub startup_probe_sha256: Option<String>,
+    pub startup_auth_sha256: Option<String>,
     pub env_names: Vec<String>,
 }
 
@@ -506,6 +509,20 @@ impl Host {
             None
         };
 
+        let startup_auth_sha256 = if spec.catalog == CatalogProfile::OwnedQualification {
+            let path = root.join("bridge/startup_auth.ts");
+            write_private_new(&path, QUALIFICATION_STARTUP_AUTH)?;
+            let written = fs::read(&path)
+                .map_err(|_| fault(FaultClass::Bootstrap, "startup_auth_unreadable"))?;
+            let digest = sha256_hex(&written);
+            if digest != sha256_hex(QUALIFICATION_STARTUP_AUTH) {
+                return Err(fault(FaultClass::Bootstrap, "startup_auth_bytes_mismatch"));
+            }
+            Some(digest)
+        } else {
+            None
+        };
+
         let policy_text = sandbox_policy(
             &spec.omp,
             &root,
@@ -589,6 +606,7 @@ impl Host {
             models_yml_sha256: sha256_hex(MODELS_YML.as_bytes()),
             config_yml_sha256: sha256_hex(config.as_bytes()),
             startup_probe_sha256,
+            startup_auth_sha256,
             env_names: env.iter().map(|(k, _)| k.clone()).collect(),
         };
 

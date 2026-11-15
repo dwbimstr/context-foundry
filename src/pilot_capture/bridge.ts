@@ -617,6 +617,8 @@ function exactTools(tools: unknown): tools is string[] {
 	);
 }
 
+let ownedPrefetch: { seal(keys: unknown): unknown } | undefined;
+
 async function onSessionStart(pi: PiApi, ctxValue: unknown): Promise<void> {
 	if (sessionStarted) {
 		fault("internal");
@@ -647,6 +649,9 @@ async function onSessionStart(pi: PiApi, ctxValue: unknown): Promise<void> {
 			// Cancellation closes watches/timers; the serialized strict reload also
 			// joins a reload already in flight before the final settings readback.
 			await settings.reloadFromDisk();
+			const auth = (ctx.modelRegistry as { authStorage?: { keys?: unknown } } | undefined)?.authStorage;
+			if (!ownedPrefetch || !auth) throw new Error("owned prefetch owner unavailable");
+			ownedPrefetch.seal(auth.keys);
 		}
 		stage = "model_selection";
 		const model = observedModel(ctx);
@@ -792,6 +797,13 @@ export default async function capture(pi: PiApi): Promise<void> {
 		} catch {
 			fault("model_selection");
 			throw new Error("pilot capture bridge: owned catalog unavailable");
+		}
+		try {
+			const { installOwnedPrefetchGuard } = await import("./startup_auth.ts");
+			ownedPrefetch = await installOwnedPrefetchGuard();
+		} catch {
+			fault("settings");
+			throw new Error("pilot capture bridge: owned prefetch unavailable");
 		}
 	}
 	pi.registerProvider(PROVIDER, { api: API, streamSimple, ...(fetchDynamicModels ? { fetchDynamicModels } : {}) });

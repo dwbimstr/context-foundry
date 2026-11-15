@@ -653,6 +653,52 @@ The [dated exclusion receipt](../../../docs/validation.md#fixed-qualifier-projec
 records the actual marker red on `b83a696`, native setting controls, all current/
 frozen consumers and eight gates on `ecdf962`.
 
+**Selected credential-prefetch owner check, 2026-11-15 — implementation pending.**
+The pinned `KeyCascade.prefetchUsage` returns before usage selection unless the
+observed source is OAuth. A preload observer could not install; its zero counts
+are rejected. The existing trusted-extension factory is an earlier supported
+hook for this owner: main preloads trusted factories before createAgentSession.
+An actual SDK control there observes the original call on the actual namespace,
+one non-OAuth source check and original-promise completion before session_start,
+with the same complete model as its uninstrumented baseline. Do not substitute a
+second invocation or a late empty pending-count snapshot.
+
+Add one small embedded host-extension module for this domain operation. The bridge
+factory and real SDK control consume the same implementation; this avoids copying
+the owner rule or adding a product test hook. The existing Host materialization
+owner binds exact bytes, owner-only mode and digest, only for OwnedQualification.
+Ordinary capture/v1 never load it. Hook the actual keys namespace via the shared
+AuthStorage class, return original values/arguments/promise unchanged for the
+admitted non-OAuth path, and keep only bounded counters and namespace identity.
+Never retain keys, headers, account/session identifiers or exception text.
+
+The owned bridge requires exactly one completed original fixed-provider call,
+one non-OAuth source observation, no rejection/pending work and the same namespace
+before Ready. Unknown/OAuth eligibility, wrong identity, missing/duplicate call,
+late installation or an unsettled result fails the existing settings stage.
+Block OAuth usage selection at its source-classification boundary, before the
+selector can start IO. Once sealed, another prefetch call halts the host. No new
+channel, journal, worker, provider route or v1 protocol field is introduced.
+
+Source basis: oh-my-pi `24439066040e006eb08da7b204f0ac41c79d2de9`,
+`main.ts::loadTrustedSessionExtensions`/trusted preload before session creation,
+`sdk.ts::createAgentSessionScoped` startup prefetch, and
+`auth/cascade.ts::KeyCascade::{source,prefetchUsage}` (blob
+`cf4e827bf6c631243da445609d392af2d11d8b40`). Source association is not a
+reproducible-build proof. Credential refresh/polling, OAuth behavior and all other
+owners remain unqualified; this check cannot grant full startup admission.
+
+First require the actual owned capture bridge to fail before its first fixture
+request on an implementation that cannot record its original prefetch. Retain
+that executable/result. Then implement tracking and require actual SDK controls
+for original-call success, missing/late installation, injected OAuth metadata and
+restart after sealing; synthetic faults are not OAuth integration evidence.
+Require the actual full tool conversation, all current diagnostics, frozen-host
+compatibility, focused lint and eight gates. Use the offline hour, 120-second
+cleanup reserve, one heavy job, 20 GiB disk floor and 8 GiB sampled individual RSS
+ceiling. Publish reviewed changes and prune verified generated caches, preserving
+raw evidence and runnable red/green consumers. Paid runs and signing stay gated.
+
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
 and a complete startup-owner inventory: catalog/discovery, credential refresh,

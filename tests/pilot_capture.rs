@@ -428,6 +428,24 @@ async fn qualify_current_host_history(
     let config_sha = host.launch.config_yml_sha256.clone();
     let models_sha = host.launch.models_yml_sha256.clone();
     let startup_probe_sha = host.launch.startup_probe_sha256.clone();
+    let startup_auth_sha = host.launch.startup_auth_sha256.clone();
+    assert_eq!(
+        startup_auth_sha,
+        owned_catalog
+            .then(|| pilot_capture::sha256_hex(pilot_capture::host::QUALIFICATION_STARTUP_AUTH))
+    );
+    assert_eq!(
+        host.paths.root.join("bridge/startup_auth.ts").exists(),
+        owned_catalog
+    );
+    if owned_catalog {
+        assert_eq!(
+            startup_auth_sha,
+            Some(pilot_capture::sha256_hex(
+                &std::fs::read(host.paths.root.join("bridge/startup_auth.ts")).unwrap()
+            ))
+        );
+    }
     assert_eq!(
         startup_probe_sha,
         owned_catalog
@@ -1048,6 +1066,7 @@ async fn qualify_current_host_history(
         "native_model_sha256":native_model_sha,
         "native_warmup_deadline_readback":native_warmup_deadline_readback,
         "startup_probe_sha256":startup_probe_sha,
+        "startup_auth_sha256":startup_auth_sha,
         "no_thread_field":no_thread, "validator_passed":request_passed,
         "validator_fault":admitted.as_ref().and_then(|r|r.as_ref().err()).map(ToString::to_string),
         "qualified_requests":if tool_followup {requests.len()} else {1},"missing_completion_control_rejected":negative_control,
