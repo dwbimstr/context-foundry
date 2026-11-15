@@ -493,6 +493,11 @@ and dated paragraphs below are history.
     Credential refresh/polling and OAuth integration remain unqualified; complete
     startup admission and durable acknowledgment stay open. No paid run or signing
     is authorized.
+    Original-prefetch repair/records through `6367ca5` are published with full
+    fresh-clone readback. New build/MSRV and four duplicate SDK libraries are pruned
+    after exact/open-file checks; runnable red/green diagnostics and all other
+    evidence remain. All five current native diagnostics pass directly after cleanup
+    without Cargo; the original-prefetch receipt owns counts and retention details.
     The settlement finding/design through `2238253` is published with full fresh-clone
     readback; ten redundant native-library copies are removed after byte/open-file
     checks, preserving all other evidence and the prior retained library.
