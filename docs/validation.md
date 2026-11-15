@@ -66,6 +66,17 @@ prompt or parent Count/Messages transport, real credential access, model downloa
 training, owner signing identity or provider spend is used. V2 remains unfunded
 and unfrozen; paid runs, signing and release remain gated.
 
+The findings through `0cd6514` are published to the experimental branch with full
+fresh-clone byte/type/executable-mode readback of all **400 tracked paths**; main
+remains `d94b013`. After publication, seven duplicate native-library extractions
+are removed following exact-byte comparison with the retained library and empty
+open-file checks: **777,772,240 logical bytes**. All **262** other existing evidence
+files pass exact readback. This probe's allocation falls from **781,787,136 to
+4,050,944 bytes**; no APFS physical free-space gain is inferred. Raw failed and
+successful controls, durable listener logs, source pins, configs and generated
+catalog data remain available in `cleanup-result.json`'s retention mapping.
+No Rust build cache is created.
+
 ## Owned canonical host catalog qualification — 2026-11-15
 
 **PASS at the explicit no-provider qualification boundary.** Red contract/test

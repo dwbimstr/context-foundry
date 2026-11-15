@@ -396,6 +396,9 @@ and dated paragraphs below are history.
     Those hooks are rejected as admission gates. Complete before-IO coverage at
     the actual bridge/profile boundary, owner settlement and durable parent
     acknowledgment remain open; no production proxy or protocol is enabled.
+    The findings through `0cd6514` are published with full fresh-clone readback.
+    Seven redundant native-library copies are removed after byte/open-file checks;
+    all other evidence and the retained library remain exact. No Rust cache is built.
     The settlement finding/design through `2238253` is published with full fresh-clone
     readback; ten redundant native-library copies are removed after byte/open-file
     checks, preserving all other evidence and the prior retained library.
