@@ -58,6 +58,16 @@ No owner signing identity or model download is used. Complete startup coverage,
 transient modes, current-host CaptureSession/Live admission and pilot-v2 outcomes
 remain **HOLD**; paid runs and signing remain gated.
 
+The three commits through `22fa8fb` are published to the experimental branch with
+full fresh-clone byte/type/executable-mode readback of all **400 tracked paths**;
+main remains `d94b013`. Only after publication, this stage's build/MSRV cache is
+pruned from **8,442,306,560 to 34,422,784 allocated bytes**. One standalone native
+diagnostic is retained after hash/system-dependency checks; existing application
+diagnostics remain in the prior stage. **11,755** generated files are removed;
+all **76** other existing evidence files pass exact hash readback. No open/mapped
+build file is found. `cleanup-build-result.json` records the retained artifact and
+evidence hashes. Directory allocation changes are not APFS physical-space claims.
+
 ## Current-host startup preload feasibility — 2026-11-15
 
 **An early fetch-interception seam is demonstrated; complete startup observation

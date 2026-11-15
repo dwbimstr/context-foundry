@@ -326,6 +326,10 @@ and dated paragraphs below are history.
     This is fixture reconciliation, not real-provider economics or complete category
     evidence. Application inputs remain equal to `98157db`; current-host Live
     admission and v2 acceptance stay HOLD.
+    Native usage tests/records through `22fa8fb` are published with full fresh-clone
+    readback. Their new build/MSRV intermediates are pruned to one standalone
+    diagnostic after exact evidence/binary checks; prior application diagnostics
+    remain retained. Paid runs and signing remain gated.
     The continuation test/records through `215abcd` are published and verified by
     full fresh-clone readback. Its build/MSRV cache is pruned, with exact evidence
     and runnable-binary retention recorded in the continuation receipt.
