@@ -317,9 +317,15 @@ and dated paragraphs below are history.
     projection identity, completed-tool history binding, synthetic SSE consumption
     and native prompt completion pass, as do all eight gates on `bb17708`
     ([continuation receipt](validation.md#current-host-tool-continuation--2026-11-15)).
-    These are scripted responses and counters; actual-provider economics and native
-    transcript usage readback are not established. Application inputs remain equal
-    to `98157db`; current-host Live admission and v2 acceptance stay HOLD.
+    These are scripted responses and counters; actual-provider economics remain
+    unestablished. Subsequent native readback on `40b75c6` now joins both assistant
+    entries to their wire response IDs and reconciles all four scripted counters
+    plus checked totals. All 29 mutation controls reject, absent reasoning stays
+    absent, and both current-host tests and all eight gates pass
+    ([native usage receipt](validation.md#native-four-category-fixture-usage--2026-11-15)).
+    This is fixture reconciliation, not real-provider economics or complete category
+    evidence. Application inputs remain equal to `98157db`; current-host Live
+    admission and v2 acceptance stay HOLD.
     The continuation test/records through `215abcd` are published and verified by
     full fresh-clone readback. Its build/MSRV cache is pruned, with exact evidence
     and runnable-binary retention recorded in the continuation receipt.

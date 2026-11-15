@@ -1,5 +1,63 @@
 # Validation
 
+## Native four-category fixture usage — 2026-11-15
+
+**PASS at the selected native transcript/owned-fixture boundary.** Contract/test
+`5eb0008` extends the existing ignored current-host continuation; `40b75c6` saves
+the session path before consuming the host at shutdown. The initial E0382 compiler
+failure remains in the private evidence. Application, Cargo, v1 host pin, codec and
+admission inputs remain equal to `98157db`. The owned OMP 18.18.1 executable keeps
+SHA-256 `ce80099f10c5ea4367523767230cb5b920f30cc139b9cf8758c1cc4b2f1f9409`.
+
+After the actual two-generation conversation and normal host exit, the existing
+bounded/private native-session reader finds one **5,057-byte** transcript, SHA-256
+`bde8ca3c2c07796e56bdfde0314e85fa12d7db6d3dc0f4cf7c27ff56c464ee45`.
+Both assistant entries match the accepted wire response IDs, model, order and
+stop disposition. There are no unparsed lines or out-of-transcript `model_usage`
+entries. Native counters equal the four accepted scripted wire buckets and their
+checked totals:
+
+| Scripted response | Uncached input | Cache read | Cache write | Output | Total |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Tool call | 1,300 | 40 | 0 | 30 | 1,370 |
+| Final text | 1,200 | 0 | 40 | 12 | 1,252 |
+
+**These are fixture values, not actual-provider usage or cost.** The unreported
+reasoning subset stays absent in both wire and native observations; it is not
+invented as zero. Calculated native prices are not qualified. All **29** controls
+on copies of the actual native rows reject: wrong response identity; missing,
+null, negative, fractional or changed counters; fabricated reasoning zero;
+duplicate assistant; and an out-of-transcript usage entry. The original transcript
+is retained byte-for-byte and never altered by those controls.
+
+The two explicit current-host diagnostics pass on `40b75c6` in **12.535 seconds**;
+focused pilot Clippy passes in **27.944 seconds**. All eight local gates exit 0 in
+**812.273 seconds**, with **1,319 default tests passed / 0 failed / 35 ignored**,
+**21 recovery cases**, **101 pilot unit tests passed / 0 failed / 1 ignored**, and
+the three actual Rust 1.90 checks. The unchanged application/frozen-host fixture
+inputs retain their earlier full-suite evidence; that host suite is not rerun in
+this test-only phase. The shared hour includes the retained failed build; the
+stage completes in **966.409 seconds**, leaving more than the 120-second cleanup reserve.
+Sampled individual RSS peaks at **2,035.938 MiB**, with minimum sampled free space
+**96.649 GiB**; these are sampled observations, not global memory guarantees.
+
+Pinned upstream source supplies the
+[`Usage` field contract](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/catalog/src/types.ts#L211)
+and [`streamAnthropic` delta mapping](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/ai/src/providers/anthropic.ts#L3194).
+Three source files pass Git-blob/SHA-256 readback; this is source/release association,
+not reproducible-build proof. Foundry's actual-host
+`current_host_tool_followup_preserves_full_history` test owns this qualification;
+upstream tests are not run. The intended difference is a bounded, synthetic
+two-generation diagnostic rather than a new native import policy or economic claim.
+
+Private evidence: `runs/pilot-current-native-usage-2026-11-15/`, including protocol,
+retained build failure, accepted requests/fixture HTTP bodies, exact native session,
+native usage report, all gate logs and `qualification-readback.json`. The fixture
+receives exactly four HTTP requests; external-provider calls and spend are zero.
+No owner signing identity or model download is used. Complete startup coverage,
+transient modes, current-host CaptureSession/Live admission and pilot-v2 outcomes
+remain **HOLD**; paid runs and signing remain gated.
+
 ## Current-host startup preload feasibility — 2026-11-15
 
 **An early fetch-interception seam is demonstrated; complete startup observation

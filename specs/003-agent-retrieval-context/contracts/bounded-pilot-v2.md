@@ -312,7 +312,7 @@ Select both diagnostics with `current_host_ -- --ignored --nocapture
 the named fresh directory for the first case and its `-followup` sibling for the
 continuation; no real credential or model is acquired.
 
-**Selected native usage readback, 2026-11-15 — qualification pending.**
+**Selected native usage readback, 2026-11-15 — qualified at the owned-fixture boundary.**
 Extend that same owned-fixture continuation after normal host exit. Read the single
 native session through the existing private/bounded reader, retain its exact bytes
 when evidence output is selected, and join both assistant entries to the admitted
@@ -332,6 +332,14 @@ reserve, one heavy job, 20 GiB disk floor and 8 GiB sampled individual RSS ceili
 Publish only public tests/records; retain private evidence and prune new build
 intermediates after publication and readback. Startup coverage, real-provider
 economics, paid authority and signing remain separate gates.
+
+Both current-host diagnostics and all eight gates pass on `40b75c6`. The exact
+native transcript joins both wire response identities and all four scripted usage
+buckets/totals, with no extra assistant or usage entry. All 29 native-row mutation
+controls reject, including fabricated reasoning zero. The initial compiler failure
+is retained. See the [native usage receipt](../../../docs/validation.md#native-four-category-fixture-usage--2026-11-15).
+This closes the selected fixture readback gap; it does not measure real-provider
+economics, supply unreported categories, admit the host to Live or accept v2.
 
 The existing owners are [`CaptureSession` and `IndependentCheckReceipt`](../../../src/pilot_capture.rs),
 [`Host::launch` and `HostEvent`](../../../src/pilot_capture/host.rs), and
