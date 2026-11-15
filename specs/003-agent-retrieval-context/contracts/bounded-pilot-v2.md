@@ -615,6 +615,40 @@ The [dated lifetime receipt](../../../docs/validation.md#native-warm-up-refusal-
 records the actual-bridge red on `91d0c34`, rejected destruction candidate, native
 listener removal, all current/frozen consumers and eight gates on `61a286f`.
 
+**Selected project MCP exclusion for the fixed qualifier, 2026-11-15 — implementation pending.**
+The selected diagnostic profile exposes only read/edit tools and has no admitted
+project MCP server. Actual SDK controls nevertheless execute an owned project
+MCP command with those tool names; disabling the existing
+`mcp.enableProjectConfig` setting prevents that execution while preserving the
+native model. Set this flag before SDK construction in the explicit owned
+qualification configuration only. Ordinary capture and frozen v1 remain unchanged.
+This excludes an unadmitted startup owner instead of attempting late teardown.
+
+Source basis is oh-my-pi `24439066040e006eb08da7b204f0ac41c79d2de9`:
+`mcp/settings.ts::cfgMcpEnableProjectConfig` (blob
+`23e41ba77c247256287ec38a0c46e53ff5dfaa45`) and
+`mcp/config.ts::loadAllMCPConfigs` (blob
+`1e4f839bd63c630e8d7fa79dbb58bc6de881c50a`). The source excludes project entries
+before deduplication/connection. `MCPManager.disconnectAll` clears pending maps
+after aborting; that source alone does not prove all pending promises/callbacks
+joined. No map snapshot or late disconnect is an admission authority.
+
+Extend the existing actual-launcher settings regression with a private
+`.mcp.json` whose owned command only creates a marker inside its workspace.
+Require the ordinary profile to execute this positive control and the owned
+profile not to execute it. Keep the native model, later disk-edit assertions,
+normal reaping and private-mode checks. Before implementation, both profiles must
+execute the marker and the owned assertion must fail. No prompt or provider call
+is needed. Then require all current diagnostics, frozen compatibility, focused
+lint and eight local gates within the offline hour, 120-second cleanup reserve,
+one heavy job, 20 GiB disk floor and 8 GiB sampled individual RSS ceiling. Publish
+reviewed changes and prune only new verified caches.
+
+This does not remove the pilot's future admitted MCP/task-context integrations or
+accept their outcomes. Those require an explicit server/tool inventory and fresh
+qualification; no general MCP cancellation, transport coverage, complete startup
+settlement or parent acknowledgment is claimed. V2 remains unfunded/unfrozen.
+
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
 and a complete startup-owner inventory: catalog/discovery, credential refresh,

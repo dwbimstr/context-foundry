@@ -199,11 +199,11 @@ async fn current_host_agent_refusal_has_independent_tcp_controls() {
     );
 }
 
-/// A real config edit after Ready must no longer change the owned run. The
-/// ordinary profile is a positive control for native live settings watching.
+/// The fixed owned profile excludes project MCP commands and later disk edits.
+/// The ordinary profile provides positive controls for both SDK settings.
 #[tokio::test]
 #[ignore = "needs explicit CF_PILOT_CURRENT_OMP; no-provider current-host diagnostic"]
-async fn current_host_owned_settings_ignore_later_disk_edits() {
+async fn current_host_owned_settings_exclude_project_mcp_and_disk_edits() {
     use pilot_capture::host::{CatalogProfile, Host, HostEvent, HostSpec, RpcEvent};
     use pilot_capture::protocol::{ChannelIdentity, ChildMessage, CloseReason, ParentMessage};
     use std::time::Duration;
@@ -219,6 +219,15 @@ async fn current_host_owned_settings_ignore_later_disk_edits() {
     ] {
         let e = env();
         let base = std::fs::canonicalize(e._root.path()).unwrap();
+        let witness = e.workspace.join("mcp-startup-witness");
+        fixture_private_write(
+            e.workspace.join(".mcp.json"),
+            serde_json::to_vec(&json!({"mcpServers":{"cf-owned-startup-witness":{
+                "command":"/usr/bin/touch","args":[witness]
+            }}}))
+            .unwrap(),
+        )
+        .unwrap();
         let spec = HostSpec {
             omp: omp.clone(),
             root: base.join("settings host with spaces"),
@@ -230,6 +239,11 @@ async fn current_host_owned_settings_ignore_later_disk_edits() {
             catalog,
         };
         let (host, mut events) = Host::launch(&spec).unwrap();
+        let config_sha = host.launch.config_yml_sha256.clone();
+        assert_eq!(
+            pilot_capture::sha256_hex(&std::fs::read(host.paths.agent.join("config.yml")).unwrap()),
+            config_sha
+        );
         let capture = tokio::time::timeout(Duration::from_secs(30), async {
             let (mut rpc, mut bridge) = (false, false);
             while !(rpc && bridge) {
@@ -305,8 +319,10 @@ async fn current_host_owned_settings_ignore_later_disk_edits() {
                 Some("53bec6f047bbd7eeab26c93c1a6dd6c0e4ccc30d50a29d79e416c28692d5a027")
             );
         }
+        assert_owned_private_tree(&e.workspace, None);
         reports.push(json!({"case":name,"compaction_before":states[0].auto_compaction,
             "compaction_after":states[1].auto_compaction,"native_model_sha256":states[1].native_model_sha256,
+            "project_mcp_witness_started":witness.exists(),"config_yml_sha256":config_sha,
             "disk_edit_retained":true,"normal_exit":exit.normal,"forced":exit.forced,
             "group_gone":exit.group_gone,"no_prompt":true,"provider_calls":0}));
     }
@@ -329,6 +345,14 @@ async fn current_host_owned_settings_ignore_later_disk_edits() {
     assert_eq!(
         reports[1]["compaction_after"], false,
         "owned settings quiescence: {reports:?}"
+    );
+    assert_eq!(
+        reports[0]["project_mcp_witness_started"], true,
+        "native project MCP control: {reports:?}"
+    );
+    assert_eq!(
+        reports[1]["project_mcp_witness_started"], false,
+        "owned project MCP exclusion: {reports:?}"
     );
     assert_eq!(
         pilot_capture::sha256_hex(&std::fs::read(&omp).unwrap()),
