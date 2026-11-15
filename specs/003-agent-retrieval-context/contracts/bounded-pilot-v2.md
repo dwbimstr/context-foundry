@@ -392,6 +392,40 @@ cannot replace observation, drain or admission checks. Qualify actual generation
 requests/tool behavior/headroom under the selected profile, not only state readback.
 This is preparation, not a selected v2 execution profile or a v1 configuration edit.
 
+**Selected owned fixed-catalog qualification, 2026-11-15 — implementation pending.**
+Use the supported provider-registration API to own later catalog refreshes for the
+existing canonical provider and fixed bundled model. A late factory cannot prevent
+an already-started ambient request; zero initial fetches is not the acceptance
+criterion. The initial request still needs early observation and settlement under
+the complete startup contract. Reject the native-alias alternative: it changes
+intrinsic/compatibility metadata and does not establish startup admission.
+
+Add an explicit `HostSpec` catalog profile for no-provider qualification on the
+owned 18.18.1 artifact only. Verify its SHA before creating a host root. Bind the
+disabled list to the shipped SDK's bundled/shared-catalog/descriptor/implicit
+inventory, including `minimax-cn`; the earlier compiled-entry list is not complete
+for this purpose. Ordinary CaptureSession launches explicitly retain host defaults;
+ambient environment cannot select the qualification profile. V1 pin, contract,
+wire rules and paid authority remain unchanged; this is not a v2 execution profile.
+
+In that profile, the existing bridge registers an owned callback that returns a
+fresh copy of one bounded serialized bundled-model definition. The callback has no
+IO, timer, retry or credential operation. Preserve canonical provider/model and
+native capabilities rather than inventing metadata. Unsupported/malformed bundled
+metadata fails before bridge readiness. The host's derived cache is an observation
+surface, never a new admission authority or independent product log.
+
+First require the actual-current-host two-generation diagnostic to fail on a
+bridge without the callback: read the bounded private SDK cache after normal exit
+and require an authoritative single-model row for the fixed canonical model.
+Then implement the callback and require that test green, all current-host
+diagnostics, the complete nonignored frozen-host suite and all eight local gates.
+Retain cache/native/request evidence and the original red result. Use existing
+numeric-loopback fixtures and synthetic credentials only; no Live transport.
+The shared hour includes offline builds, 120 seconds for cleanup, one heavy job,
+20 GiB disk floor and 8 GiB sampled individual RSS. Publish reviewed code/records,
+then prune new build/native extraction caches after exact evidence readback.
+
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
 and a complete startup-owner inventory: catalog/discovery, credential refresh,

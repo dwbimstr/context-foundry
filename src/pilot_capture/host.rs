@@ -74,6 +74,117 @@ fn fault(class: FaultClass, code: &'static str) -> CaptureFault {
     CaptureFault::new(class, code)
 }
 
+/// Catalog behavior is explicit; ordinary capture never selects the qualifier.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CatalogProfile {
+    /// Preserve the host configuration used by ordinary capture sessions.
+    HostDefault,
+    /// Current-artifact, no-provider qualification; never selected by Live admission.
+    OwnedQualification,
+}
+
+/// Artifact whose catalog API and inventory this qualification profile exercises.
+/// This is separate from the frozen live host pin in `policy`.
+pub const QUALIFICATION_OMP_SHA256: &str =
+    "ce80099f10c5ea4367523767230cb5b920f30cc139b9cf8758c1cc4b2f1f9409";
+
+// Shipped catalog union enumerated on the artifact above (bundled, shared,
+// descriptors, implicit and special managers); includes legacy minimax-cn.
+const QUALIFICATION_DISABLED_PROVIDERS: &[&str] = &[
+    "abliteration",
+    "aiand",
+    "aimlapi",
+    "alibaba-coding-plan",
+    "alibaba-token-plan",
+    "amazon-bedrock",
+    "apple",
+    "azure",
+    "baseten",
+    "bedrock-mantle",
+    "cerebras",
+    "charm-hyper",
+    "cline-pass",
+    "cloudflare-ai-gateway",
+    "cloudflare-workers-ai",
+    "commandcode",
+    "coralbricks",
+    "coreweave",
+    "cursor",
+    "deepinfra",
+    "deepseek",
+    "devin",
+    "factory-droid",
+    "firepass",
+    "fireworks",
+    "github-copilot",
+    "gitlab-duo",
+    "gitlab-duo-agent",
+    "gmi-cloud",
+    "google",
+    "google-antigravity",
+    "google-gemini-cli",
+    "google-vertex",
+    "groq",
+    "helmcode",
+    "huggingface",
+    "inception",
+    "kilo",
+    "kimi-code",
+    "litellm",
+    "llama.cpp",
+    "lm-studio",
+    "local",
+    "meta",
+    "minimax",
+    "minimax-cn",
+    "minimax-code",
+    "minimax-code-cn",
+    "mistral",
+    "modular",
+    "moonshot",
+    "muse-code",
+    "nanogpt",
+    "novita",
+    "nvidia",
+    "ollama",
+    "ollama-cloud",
+    "openai",
+    "openai-codex",
+    "opencode-go",
+    "opencode-zen",
+    "openrouter",
+    "qianfan",
+    "qwen-portal",
+    "sakana",
+    "sambanova",
+    "scaleway",
+    "siliconflow",
+    "siliconflow-cn",
+    "singularityapi-dev",
+    "singularityapi-tech",
+    "snowflake",
+    "stepfun",
+    "synthetic",
+    "together",
+    "typesafe",
+    "umans",
+    "venice",
+    "vercel-ai-gateway",
+    "vllm",
+    "wafer-serverless",
+    "web",
+    "xai",
+    "xai-oauth",
+    "xiaomi",
+    "xiaomi-token-plan-ams",
+    "xiaomi-token-plan-cn",
+    "xiaomi-token-plan-sgp",
+    "yolo-auto",
+    "zai",
+    "zenmux",
+    "zhipu-coding-plan",
+];
+
 /// Everything needed to launch one fresh native host.
 #[derive(Clone, Debug)]
 pub struct HostSpec {
@@ -91,6 +202,7 @@ pub struct HostSpec {
     /// Literal files the host must not read (the credential file).
     pub deny_literals: Vec<PathBuf>,
     pub identity: ChannelIdentity,
+    pub catalog: CatalogProfile,
 }
 
 /// Paths of a launched host root.
@@ -318,6 +430,13 @@ impl Host {
     /// Returns the host and the receiver of its events (kept separate so
     /// the driver can await events while sending frames).
     pub fn launch(spec: &HostSpec) -> Result<(Host, mpsc::Receiver<HostEvent>), CaptureFault> {
+        if spec.catalog == CatalogProfile::OwnedQualification {
+            let bytes = fs::read(&spec.omp)
+                .map_err(|_| fault(FaultClass::Pins, "qualification_host_unreadable"))?;
+            if sha256_hex(&bytes) != QUALIFICATION_OMP_SHA256 {
+                return Err(fault(FaultClass::Pins, "qualification_host_pin_mismatch"));
+            }
+        }
         let workspace = fs::canonicalize(&spec.workspace)
             .map_err(|_| fault(FaultClass::Bootstrap, "workspace_missing"))?;
         if workspace != spec.workspace {
@@ -351,7 +470,15 @@ impl Host {
             create_private_dir(dir)?;
         }
         write_private_new(&paths.agent.join("models.yml"), MODELS_YML.as_bytes())?;
-        write_private_new(&paths.agent.join("config.yml"), CONFIG_YML.as_bytes())?;
+        let config = match spec.catalog {
+            CatalogProfile::HostDefault => CONFIG_YML.to_owned(),
+            CatalogProfile::OwnedQualification => format!(
+                "{CONFIG_YML}\ndisabledProviders: {}\n",
+                serde_json::to_string(QUALIFICATION_DISABLED_PROVIDERS)
+                    .expect("literal provider inventory")
+            ),
+        };
+        write_private_new(&paths.agent.join("config.yml"), config.as_bytes())?;
         write_private_new(&paths.bridge, BRIDGE_SOURCE)?;
         let written = fs::read(&paths.bridge)
             .map_err(|_| fault(FaultClass::Bootstrap, "bridge_unreadable"))?;
@@ -378,7 +505,10 @@ impl Host {
         let r2c_read: OwnedFd = r2c_read.into();
         let tx_ino = fstat_ino(c2r_write.as_raw_fd())?;
         let rx_ino = fstat_ino(r2c_read.as_raw_fd())?;
-        let env = host_env(&paths, &spec.identity, tx_ino, rx_ino);
+        let mut env = host_env(&paths, &spec.identity, tx_ino, rx_ino);
+        if spec.catalog == CatalogProfile::OwnedQualification {
+            env.push(("CF_PILOT_CATALOG".into(), "owned-bundled-fixed-v1".into()));
+        }
 
         let mut cmd = Command::new(SANDBOX_EXEC);
         cmd.arg("-p")
@@ -1233,6 +1363,31 @@ mod tests {
             fixture_private_write(ws.join(f), b"x").unwrap();
         }
         (dir, ToolPolicy::pilot(ws))
+    }
+
+    #[test]
+    fn owned_catalog_rejects_an_unqualified_artifact_before_creating_host_state() {
+        let (dir, policy) = workspace();
+        let omp = policy.workspace.join("not-omp");
+        fixture_private_write(&omp, b"not the qualified artifact").unwrap();
+        let root = policy.workspace.join("new-host");
+        let spec = HostSpec {
+            omp,
+            root: root.clone(),
+            workspace: policy.workspace,
+            real_home: dir.path().to_path_buf(),
+            deny: Vec::new(),
+            deny_literals: Vec::new(),
+            identity: ChannelIdentity::new("qualification-test".into(), "host-test".into())
+                .unwrap(),
+            catalog: CatalogProfile::OwnedQualification,
+        };
+        let Err(error) = Host::launch(&spec) else {
+            panic!("unqualified host must not launch");
+        };
+        assert_eq!(error.class, FaultClass::Pins);
+        assert_eq!(error.code, "qualification_host_pin_mismatch");
+        assert!(!root.exists());
     }
 
     #[test]

@@ -38,16 +38,29 @@ const TASK: &str = "Repair malformed percent escapes in src/lib.rs so no bytes a
 #[tokio::test]
 #[ignore = "needs explicit CF_PILOT_CURRENT_OMP; no-provider current-host diagnostic"]
 async fn current_host_first_request_preserves_full_history() {
-    qualify_current_host_history(false).await;
+    qualify_current_host_history(false, pilot_capture::host::CatalogProfile::HostDefault).await;
 }
 
 #[tokio::test]
 #[ignore = "needs explicit CF_PILOT_CURRENT_OMP; no-provider current-host diagnostic"]
 async fn current_host_tool_followup_preserves_full_history() {
-    qualify_current_host_history(true).await;
+    qualify_current_host_history(true, pilot_capture::host::CatalogProfile::HostDefault).await;
 }
 
-async fn qualify_current_host_history(tool_followup: bool) {
+#[tokio::test]
+#[ignore = "needs explicit CF_PILOT_CURRENT_OMP; no-provider current-host diagnostic"]
+async fn current_host_owned_catalog_preserves_full_history() {
+    qualify_current_host_history(
+        true,
+        pilot_capture::host::CatalogProfile::OwnedQualification,
+    )
+    .await;
+}
+
+async fn qualify_current_host_history(
+    tool_followup: bool,
+    catalog: pilot_capture::host::CatalogProfile,
+) {
     use pilot_capture::host::{Host, HostEvent, HostSpec, RpcEvent, ToolPolicy, ToolVerdict};
     use pilot_capture::protocol::{
         ChannelIdentity, ChildMessage, CloseReason, ParentMessage, ToolOutcome,
@@ -55,7 +68,8 @@ async fn qualify_current_host_history(tool_followup: bool) {
     use std::collections::BTreeSet;
     use std::time::Duration;
 
-    const SHA: &str = "ce80099f10c5ea4367523767230cb5b920f30cc139b9cf8758c1cc4b2f1f9409";
+    const SHA: &str = pilot_capture::host::QUALIFICATION_OMP_SHA256;
+    let owned_catalog = catalog == pilot_capture::host::CatalogProfile::OwnedQualification;
     let prompt = if tool_followup {
         "Read src/lib.rs once, then state the function name."
     } else {
@@ -100,6 +114,7 @@ async fn qualify_current_host_history(tool_followup: bool) {
         deny_literals: Vec::new(),
         identity: ChannelIdentity::new("current-qualification".into(), "current-host".into())
             .unwrap(),
+        catalog,
     };
     let (host, mut events) = Host::launch(&spec).unwrap();
     let bridge_sha = host.launch.bridge_sha256.clone();
@@ -424,7 +439,8 @@ async fn qualify_current_host_history(tool_followup: bool) {
     let (drained, exit) = host.finish(events, Duration::from_secs(30)).await;
     let evidence_root = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT").map(|path| {
         let mut out=PathBuf::from(path);
-        if tool_followup {out.set_file_name(format!("{}-followup",out.file_name().unwrap().to_string_lossy()));}
+        if owned_catalog {out.set_file_name(format!("{}-owned-catalog",out.file_name().unwrap().to_string_lossy()));}
+        else if tool_followup {out.set_file_name(format!("{}-followup",out.file_name().unwrap().to_string_lossy()));}
         fixture_private_dir(&out).unwrap();
         for (index,(meta,bytes)) in requests.iter().enumerate() {
             fixture_private_write(out.join(format!("request-{}.json",index+1)),bytes).unwrap();
@@ -440,6 +456,20 @@ async fn qualify_current_host_history(tool_followup: bool) {
         }
         out
     });
+    let catalog_cache = if owned_catalog {
+        let observed = current_native_catalog_cache(&host_root.join("agent/models.db"));
+        if let Some(out) = &evidence_root {
+            fixture_private_write(
+                out.join("native-catalog-cache.json"),
+                serde_json::to_vec_pretty(&observed).unwrap(),
+            )
+            .unwrap();
+        }
+        observed
+    } else {
+        Value::Null
+    };
+    let catalog_passed = !owned_catalog || catalog_cache["matched"] == true;
     let mut native_report = Value::Null;
     let mut native_usage_passed = !tool_followup;
     if tool_followup {
@@ -536,6 +566,7 @@ async fn qualify_current_host_history(tool_followup: bool) {
     let document: Value = serde_json::from_slice(&body).unwrap();
     let no_thread = document.get("thread").is_none();
     let followup_passed = tool_followup
+        && catalog_passed
         && native_usage_passed
         && requests.len() == 2
         && negative_control
@@ -576,6 +607,7 @@ async fn qualify_current_host_history(tool_followup: bool) {
         "qualified_requests":if tool_followup {requests.len()} else {1},"missing_completion_control_rejected":negative_control,
         "synthetic_observations":observations,"synthetic_usage_is_not_provider_usage":tool_followup,
         "native_usage_readback":native_report,
+        "owned_catalog_profile":owned_catalog,"native_catalog_cache":catalog_cache,
         "owned_fixture_http_requests":fixture.as_ref().map_or(0,|fx|fx.seen().len()),
         "external_provider_calls":0,
         "normal_exit":exit.normal, "forced":exit.forced, "group_gone":exit.group_gone,
@@ -643,6 +675,39 @@ fn current_native_usage_matches(rows: &[Value], observations: &[Value]) -> bool 
                     })
                 && message["usage"].get("reasoningTokens") == expected.get("reasoningTokens")
         })
+}
+
+/// Observe the current SDK's derived cache after its process has exited. This
+/// readback is test evidence and never participates in production admission.
+fn current_native_catalog_cache(path: &Path) -> Value {
+    if !path.is_file() || std::fs::metadata(path).unwrap().len() > 64 * 1024 * 1024 {
+        return json!({"matched":false,"fault":"catalog_cache_missing_or_oversized"});
+    }
+    let output = std::process::Command::new("/usr/bin/sqlite3")
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .env("HOME", path.parent().unwrap())
+        .args(["-readonly", "-batch", "-init", "/dev/null", "-json"])
+        .arg(path)
+        .arg("SELECT provider_id,authoritative,models FROM model_cache WHERE provider_id='anthropic' AND length(models)<=65536;")
+        .output()
+        .unwrap();
+    if !output.status.success() || !output.stderr.is_empty() {
+        return json!({"matched":false,"fault":"catalog_cache_query_failed"});
+    }
+    let rows: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap_or_default();
+    let models: Vec<Value> = rows
+        .first()
+        .and_then(|row| row["models"].as_str())
+        .and_then(|text| serde_json::from_str(text).ok())
+        .unwrap_or_default();
+    let matched = rows.len() == 1
+        && rows[0]["authoritative"] == 1
+        && models.len() == 1
+        && models[0]["id"] == policy::MODEL
+        && models[0]["provider"] == policy::PROVIDER;
+    json!({"matched":matched,"rows":rows,"model_count":models.len(),
+        "database_sha256":pilot_capture::sha256_hex(&std::fs::read(path).unwrap())})
 }
 
 fn require_host() {

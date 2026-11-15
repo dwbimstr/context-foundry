@@ -2853,6 +2853,7 @@ impl Inner {
             deny,
             deny_literals: self.deny_literals.clone(),
             identity,
+            catalog: host::CatalogProfile::HostDefault,
         };
         let tool_policy = if is_probe || purpose == Purpose::Preview {
             host::ToolPolicy {
