@@ -541,6 +541,37 @@ controls, actual bridge consumers, frozen compatibility and eight gates on
 `7f54889`. The raw-socket bypass remains accepted evidence of incomplete coverage,
 not an exception that can enable v2 admission.
 
+**Selected owned settings quiescence, 2026-11-15 — implementation pending.**
+The current RPC host starts config watching before `session_start`. For the
+explicit owned qualification profile only, finish the bridge's intended startup
+settings writes, then use the pinned SDK Settings owner to cancel future saves
+and watching, join existing saves and serialize a final strict disk reload before
+the bridge reads settings/model state and sends Ready. Verify the singleton's
+agent directory equals the launcher's private directory; an unavailable or wrong
+owner fails the existing settings stage. Keep this operation in the bridge,
+whose existing embedded-source digest binds it; no additional owner or protocol.
+Ordinary capture and frozen v1 launches retain their behavior.
+
+The source basis is oh-my-pi `24439066040e006eb08da7b204f0ac41c79d2de9`,
+`config/settings.ts::Settings::{flush,cancelPendingSaves,reloadFromDisk}` and its
+private `#exclusive` reload serialization (blob
+`8d427132126850002b94dbf6fd897f1ae6062e29`). `flush` alone does not join a reload.
+Cancellation is normally used for discarded instances; this profile deliberately
+uses it for an immutable owned run. Explicit future settings changes and unrelated
+owners remain outside this settlement claim.
+
+First commit a native regression against the unchanged bridge: after actual RPC
+and bridge readiness, change only the private compaction-enabled flag and read
+native state. The ordinary profile must apply the disk edit; the owned profile
+must retain the original setting and complete model digest. The unchanged bridge
+must fail the owned assertion. Then require the repaired test, all current-host
+diagnostics, the nonignored frozen-host suite, focused lint and eight local gates.
+Use an offline hour with one heavy job, a 120-second cleanup reserve, 20 GiB disk
+floor and 8 GiB sampled individual RSS limit. Retain red/green evidence, publish
+reviewed code/records and prune only new verified build/extraction caches. No
+prompt or provider call is needed for this regression. Full owner coverage,
+transport coverage and durable startup acknowledgment remain open.
+
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
 and a complete startup-owner inventory: catalog/discovery, credential refresh,

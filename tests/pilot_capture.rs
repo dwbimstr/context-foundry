@@ -198,6 +198,141 @@ async fn current_host_agent_refusal_has_independent_tcp_controls() {
     );
 }
 
+/// A real config edit after Ready must no longer change the owned run. The
+/// ordinary profile is a positive control for native live settings watching.
+#[tokio::test]
+#[ignore = "needs explicit CF_PILOT_CURRENT_OMP; no-provider current-host diagnostic"]
+async fn current_host_owned_settings_ignore_later_disk_edits() {
+    use pilot_capture::host::{CatalogProfile, Host, HostEvent, HostSpec, RpcEvent};
+    use pilot_capture::protocol::{ChannelIdentity, ChildMessage, CloseReason, ParentMessage};
+    use std::time::Duration;
+    let omp = PathBuf::from(std::env::var_os("CF_PILOT_CURRENT_OMP").expect("explicit owned host"));
+    assert_eq!(
+        pilot_capture::sha256_hex(&std::fs::read(&omp).unwrap()),
+        pilot_capture::host::QUALIFICATION_OMP_SHA256
+    );
+    let mut reports = Vec::new();
+    for (name, catalog) in [
+        ("ordinary", CatalogProfile::HostDefault),
+        ("owned", CatalogProfile::OwnedQualification),
+    ] {
+        let e = env();
+        let base = std::fs::canonicalize(e._root.path()).unwrap();
+        let spec = HostSpec {
+            omp: omp.clone(),
+            root: base.join("settings host with spaces"),
+            workspace: e.workspace.clone(),
+            real_home: std::env::var_os("HOME").unwrap().into(),
+            deny: vec![base],
+            deny_literals: vec![],
+            identity: ChannelIdentity::new("settings-control".into(), name.into()).unwrap(),
+            catalog,
+        };
+        let (host, mut events) = Host::launch(&spec).unwrap();
+        let capture = tokio::time::timeout(Duration::from_secs(30), async {
+            let (mut rpc, mut bridge) = (false, false);
+            while !(rpc && bridge) {
+                match events.recv().await.ok_or("startup EOF")? {
+                    HostEvent::Rpc(RpcEvent::Ready) => rpc = true,
+                    HostEvent::Bridge(inbound)
+                        if matches!(inbound.msg, ChildMessage::Ready { .. }) =>
+                    {
+                        bridge = true
+                    }
+                    HostEvent::Rpc(RpcEvent::Other) => {}
+                    _ => return Err("unexpected startup event"),
+                }
+            }
+            let mut states = Vec::new();
+            for id in ["before-edit", "after-edit"] {
+                if id == "after-edit" {
+                    let path = host.paths.agent.join("config.yml");
+                    let original = std::fs::read_to_string(&path).map_err(|_| "config read")?;
+                    let marker = "compaction:\n  enabled: false";
+                    if original.matches(marker).count() != 1 {
+                        return Err("config control marker");
+                    }
+                    let changed = original.replace(marker, "compaction:\n  enabled: true");
+                    std::fs::write(&path, &changed).map_err(|_| "config edit")?;
+                    // This is the positive control's watch/debounce window, not
+                    // a startup settlement criterion or an admission authority.
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    if std::fs::read_to_string(path).map_err(|_| "config readback")? != changed {
+                        return Err("config edit overwritten");
+                    }
+                }
+                host.send_rpc(&json!({"id":id,"type":"get_state"}))
+                    .await
+                    .map_err(|_| "state write")?;
+                loop {
+                    match events.recv().await.ok_or("state EOF")? {
+                        HostEvent::Rpc(RpcEvent::Response {
+                            id: Some(response),
+                            success: true,
+                            state: Some(state),
+                            ..
+                        }) if response == id => {
+                            states.push(state);
+                            break;
+                        }
+                        HostEvent::Rpc(RpcEvent::Other) => {}
+                        _ => return Err("unexpected state event"),
+                    }
+                }
+            }
+            Ok(states)
+        })
+        .await;
+        let _ = host
+            .send_bridge(
+                ParentMessage::Close {
+                    reason: CloseReason::Completed,
+                },
+                vec![],
+            )
+            .await;
+        let (_, exit) = host.finish(events, Duration::from_secs(30)).await;
+        assert!(exit.normal && !exit.forced && exit.group_gone && exit.stderr_bytes == 0);
+        let states = capture
+            .expect("settings deadline")
+            .expect("settings control");
+        assert_eq!(states[0].auto_compaction, Some(false));
+        assert_eq!(states[0].native_model_sha256, states[1].native_model_sha256);
+        assert_eq!(
+            states[0].native_model_sha256.as_deref(),
+            Some("53bec6f047bbd7eeab26c93c1a6dd6c0e4ccc30d50a29d79e416c28692d5a027")
+        );
+        reports.push(json!({"case":name,"compaction_before":states[0].auto_compaction,
+            "compaction_after":states[1].auto_compaction,"native_model_sha256":states[1].native_model_sha256,
+            "disk_edit_retained":true,"normal_exit":exit.normal,"forced":exit.forced,
+            "group_gone":exit.group_gone,"no_prompt":true,"provider_calls":0}));
+    }
+    if let Some(path) = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT") {
+        let path = PathBuf::from(format!(
+            "{}-settings-control",
+            PathBuf::from(path).display()
+        ));
+        fixture_private_dirs(&path).unwrap();
+        fixture_private_write(
+            path.join("result.json"),
+            serde_json::to_vec_pretty(&reports).unwrap(),
+        )
+        .unwrap();
+    }
+    assert_eq!(
+        reports[0]["compaction_after"], true,
+        "native watching control: {reports:?}"
+    );
+    assert_eq!(
+        reports[1]["compaction_after"], false,
+        "owned settings quiescence: {reports:?}"
+    );
+    assert_eq!(
+        pilot_capture::sha256_hex(&std::fs::read(&omp).unwrap()),
+        pilot_capture::host::QUALIFICATION_OMP_SHA256
+    );
+}
+
 async fn qualify_current_host_history(
     tool_followup: bool,
     catalog: pilot_capture::host::CatalogProfile,
