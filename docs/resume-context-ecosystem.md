@@ -387,6 +387,15 @@ and dated paragraphs below are history.
     readback. Its build/MSRV cache and eight duplicate native-library extractions
     are pruned after exact evidence/binary checks; runnable red/green diagnostics,
     all probe findings and required inputs remain retained in the receipt above.
+    Native HTTPS controls now establish an alternate SDK warm-up route outside
+    global fetch in the trusted-observer profile. The default-export patch misses
+    the namespace call, and an end-hook refusal still allows a loopback connection.
+    Existing per-provider proxy routing exposes that known warm-up, while a direct
+    HTTPS bypass remains
+    ([transport findings](validation.md#native-https-startup-boundaries--2026-11-15)).
+    Those hooks are rejected as admission gates. Complete before-IO coverage at
+    the actual bridge/profile boundary, owner settlement and durable parent
+    acknowledgment remain open; no production proxy or protocol is enabled.
     The settlement finding/design through `2238253` is published with full fresh-clone
     readback; ten redundant native-library copies are removed after byte/open-file
     checks, preserving all other evidence and the prior retained library.

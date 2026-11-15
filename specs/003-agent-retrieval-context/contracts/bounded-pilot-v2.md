@@ -441,6 +441,19 @@ captures a transport reference. The preload and later bridge share one child
 channel/sequence owner; do not open a second connection or reset its sequence.
 Do not add a worker, proxy, service, database or independent log.
 
+The [native HTTPS controls](../../../docs/validation.md#native-https-startup-boundaries--2026-11-15)
+now demonstrate a concrete alternate SDK path: Anthropic connection warm-up uses
+`coworkFetch`/`node:https.request` outside global fetch in the diagnostic profile.
+Replacing the default HTTPS export does not replace the namespace call on the
+owned runtime. A `ClientRequest.end` refusal still permits an independently
+observed loopback connection, so neither patch qualifies the required before-IO
+boundary. Existing `PI_PROXY_ANTHROPIC` routing exposes the known warm-up to global
+fetch, but the direct-HTTPS bypass remains. It is a configuration candidate, not
+a selected fence or new proxy service. Qualify every admitted owner/route before
+construction/IO at the actual bridge/profile boundary; do not enable admission
+from a zero-fetch snapshot or the narrow routing control. Ordinary configuration,
+frozen v1 and execution authority remain unchanged.
+
 A future closed protocol revision carries metadata-only messages, using existing
 identity, sequence, length and journal limits:
 

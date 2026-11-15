@@ -1,5 +1,71 @@
 # Validation
 
+## Native HTTPS startup boundaries — 2026-11-15
+
+**Qualified counterexamples and one narrow routing control; complete startup
+admission remains HOLD.** Public base is `23aea9a`. All application, test and Cargo
+inputs remain byte-identical to eight-gate-qualified `0b19098`; no Rust build or
+production hook/proxy setting changes in this continuation. The owned OMP 18.18.1
+artifact retains SHA-256
+`ce80099f10c5ea4367523767230cb5b920f30cc139b9cf8758c1cc4b2f1f9409`.
+
+The native diagnostic uses a trusted catalog observer, the canonical SDK model/API
+and thinking `off`, rather than the capture bridge's custom API. Its config bytes
+equal the qualified owned-catalog config. Seven native RPC cases return the same
+complete model metadata, zero messages and no streaming, then exit 0 normally with
+observed processes gone. This is not an actual CaptureSession startup qualification.
+
+| Actual native control | Observed result | Implication |
+| --- | --- | --- |
+| Replace default `node:https.request`, then call `syncBuiltinESMExports` | The observer's HTTPS namespace retains a different function; its direct witness opens one connection to the owned listener | The default-export patch does not intercept this namespace call on the embedded Bun 1.4.4 runtime |
+| Refuse at shared `ClientRequest.end` | Records the SDK's credentialless `HEAD` to `api.anthropic.com` and reports an owned refusal for the witness; a durable independent listener log still records one connection | Observing/refusing at `end` cannot establish a before-IO gate. The precise constructor/destroy ordering is not established |
+| Set only `PI_PROXY_ANTHROPIC` to the owned loopback endpoint | The SDK warm-up reaches global fetch with proxy options and is locally refused; a separate direct HTTPS witness still opens one loopback connection | Existing SDK routing can expose this known warm-up to the observer, but is not a general transport fence |
+
+The durable counterexample retains the original failing before-IO assertion; it
+is not relabeled as a repaired gate. The proxy control and counterexample readback
+complete in **15.076 seconds**. The earlier zero-count warm-up prediction, failed
+export/prototype candidates, sandbox-address parser refusal and unstarted cases
+remain intact. A separate readback corrects a copied proxy-case hook flag using
+the actual branch, controller state and runtime events without rewriting it.
+One private generator syntax error occurred before any host started. Nothing here
+establishes permanent silence or complete non-fetch/owner coverage.
+
+Source/release association is upstream commit
+`24439066040e006eb08da7b204f0ac41c79d2de9`:
+[`createAgentSessionScoped` warm-up](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/sdk.ts#L2351),
+[`prewarmModelConnection`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/ai/src/providers/connection-prewarm.ts#L46),
+[`transportFetch`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/ai/src/utils/transport-fetch.ts#L27),
+[`sendCoworkRequest`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/ai/src/providers/cowork-fetch.ts#L209)
+and [`getProxyForProvider` / `withProxyInit`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/ai/src/utils/proxy.ts#L136).
+All **12** retained source files pass Git-blob/SHA-256 readback. The relevant
+[`connection-prewarm.test.ts`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/ai/test/connection-prewarm.test.ts#L51)
+is read, not run. This is source/release association, not reproducible-build proof.
+003 T006 owns these controls. No proposed hook is landed as application code.
+
+The source inventory also identifies credential-usage prefetch, auth-settings
+listeners, marketplace refresh and settings watchers. Telemetry registration has
+an endpoint/env gate, and the version check is in the interactive branch. Those
+source observations do not qualify a complete inactive-owner inventory or drain.
+The next boundary must cover the actual bridge/profile, every admitted owner and
+unsupported routes before IO, then the proposed shared-channel durable refusal,
+settlement and parent acknowledgment. Any use of the supported proxy setting also
+needs complete request/tool/headroom qualification under that selected profile.
+
+Private evidence: `runs/pilot-startup-https-2026-11-15/`, including all phase
+protocols, raw RPC/metadata and listener logs, original failed assertions, source
+pins and `qualification-readback.json`. Each phase has a finite 120–240-second
+budget, 60 seconds reserved for cleanup, 25–30 seconds per command, one job, a
+20 GiB disk floor and an 8 GiB sampled individual RSS ceiling. Native metadata is
+capped at 20 attempts/8 KiB; the listener counter has its own finite cap. Maximum
+sampled individual RSS is **465.641 MiB** and minimum observed free disk is
+**83.620 GiB**. Seven normal native cases and one pre-start sandbox refusal are
+retained. Closed modes are normalized only in this owned probe; transient modes
+remain unqualified. External networking stays denied, with an explicit owned-port
+loopback exception in listener cases. Only `get_state` is sent; no generation
+prompt or parent Count/Messages transport, real credential access, model download,
+training, owner signing identity or provider spend is used. V2 remains unfunded
+and unfrozen; paid runs, signing and release remain gated.
+
 ## Owned canonical host catalog qualification — 2026-11-15
 
 **PASS at the explicit no-provider qualification boundary.** Red contract/test
