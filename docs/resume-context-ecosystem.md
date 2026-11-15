@@ -409,6 +409,10 @@ and dated paragraphs below are history.
     This qualifies observation and an exact pre-prompt prefix, not before-IO
     enforcement or settlement. The diagnostic file is not the product journal;
     the shared-channel durable startup acknowledgment still remains to implement.
+    The qualifier and records through `54b5b8e` are published with full fresh-clone
+    readback. Its new build/MSRV cache and two preflight SDK-library copies are
+    pruned after exact evidence/binary checks; runnable red/green diagnostics and
+    all other evidence remain retained in the actual-bridge receipt above.
     The settlement finding/design through `2238253` is published with full fresh-clone
     readback; ten redundant native-library copies are removed after byte/open-file
     checks, preserving all other evidence and the prior retained library.

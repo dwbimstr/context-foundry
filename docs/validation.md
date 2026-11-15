@@ -90,6 +90,24 @@ TLS fixture and synthetic key. No real credential access, model download,
 training, provider spend, owner signing identity, tags or release publication is
 used. V2 remains unfunded/unfrozen; paid runs, signing and release remain gated.
 
+The qualifier and records through `54b5b8e` are published to the experimental
+branch with full fresh-clone byte/type/executable-mode readback of all **401
+tracked paths**; main remains `d94b013`. After publication, this stage's build/MSRV
+allocation falls from **8,441,352,192 to 34,525,184 bytes**, removing **11,755**
+generated files while retaining the green standalone diagnostic and the separately
+saved red executable. Both successfully list all **38** tests after cleanup and
+depend only on system dynamic libraries. All **180** pre-existing non-cache
+evidence files pass exact readback.
+
+Two duplicate SDK-native libraries created by the path preflights are removed
+after exact comparison with the retained library and empty open-file checks:
+**222,220,640 logical bytes**. The native cleanup separately verifies all **182**
+retained files; these scopes overlap and are not additive. Combined owned-directory
+allocation decreases by **8,629,018,624 bytes**, not an inferred APFS physical gain.
+`cleanup-build-result.json`, `cleanup-result.json` and `post-cleanup-readback.json`
+retain deletion/retention mappings and flag scopes. The post-cleanup readback
+finishes inside the shared hour at **2,908.567 seconds**, with no provider spend.
+
 ## Native HTTPS startup boundaries — 2026-11-15
 
 **Qualified counterexamples and one narrow routing control; complete startup
