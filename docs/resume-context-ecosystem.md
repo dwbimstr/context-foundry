@@ -479,6 +479,11 @@ and dated paragraphs below are history.
     Future admitted MCP/task-context integration remains required. General MCP drain,
     other startup owners and durable acknowledgment are still open; v2 remains
     unfunded/unfrozen and paid runs/signing stay gated.
+    Project MCP repair/records through `a55c497` are published with full
+    fresh-clone readback. New build/MSRV and three duplicate SDK-library caches
+    are pruned after exact checks, retaining runnable red/green diagnostics and
+    all other evidence. All five current native diagnostics pass directly after
+    cleanup without Cargo; the project MCP receipt owns counts and retention details.
     The settlement finding/design through `2238253` is published with full fresh-clone
     readback; ten redundant native-library copies are removed after byte/open-file
     checks, preserving all other evidence and the prior retained library.

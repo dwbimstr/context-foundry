@@ -87,6 +87,32 @@ callback settlement, transport coverage and durable parent acknowledgment remain
 open. V2 stays unfunded/unfrozen; paid runs, signing and release remain gated.
 No provider spend, real provider credential or model download is used.
 
+The repair and qualification records through `a55c497` are published to
+experimental with complete fresh-clone byte/type/executable-mode readback of all
+**403 tracked paths**; main remains `d94b013`. New build/MSRV allocation falls
+from **8,441,696,256 to 34,955,264 bytes**,
+removing **11,755** generated files. The runnable green
+diagnostic and separately retained proper-red executable keep their exact hashes,
+list all **40** tests and require only system dynamic libraries. All
+**105** existing implementation evidence files remain exact.
+
+Three duplicate SDK-library extractions from the owner
+controls are removed only after exact byte comparison with the retained master
+and empty open-file checks: **333,330,960 logical bytes**. All
+**108** other files in those roots remain exact. Their inputs
+and original bounds are retained. The qualified executable then passes
+all **five current diagnostics** directly in **63.860 seconds**
+without Cargo, including project-command exclusion, later disk edits, the
+post-deadline tool conversation and TCP controls. The owned-directory allocation reduction totals
+**8,740,077,568 bytes**; this is not an inferred APFS physical
+free-space gain. Post-cleanup readback finishes at **1739.081
+seconds** inside the implementation hour. Target/runs/datasets allocations are
+**92,450,816 / 9,434,599,424 /
+34,715,725,824 bytes**. Required models, datasets,
+backups, SDK masters and all other evidence remain retained. Detailed mappings are
+in `cleanup-build-result.json`, `private-probe-cleanup-result.json`,
+`retained-result.json` and `post-cleanup-readback.json` in the implementation root.
+
 ## Native warm-up refusal lifetime repair — 2026-11-15
 
 **The known Agent refusal now completes through the SDK's request error path;
