@@ -104,6 +104,7 @@ async fn qualify_current_host_history(tool_followup: bool) {
     let (host, mut events) = Host::launch(&spec).unwrap();
     let bridge_sha = host.launch.bridge_sha256.clone();
     let host_root = host.paths.root.clone();
+    let native_sessions = host.paths.sessions.clone();
     let source_before = std::fs::read(e.workspace.join("src/lib.rs")).unwrap();
     let mut requests = Vec::<(Value, Vec<u8>)>::new();
     let mut negative_control = false;
@@ -442,7 +443,7 @@ async fn qualify_current_host_history(tool_followup: bool) {
     let mut native_report = Value::Null;
     let mut native_usage_passed = !tool_followup;
     if tool_followup {
-        let native = pilot_capture::host::read_native_session(&host.paths.sessions);
+        let native = pilot_capture::host::read_native_session(&native_sessions);
         native_report = match native {
             Ok(Some(native)) => {
                 let bytes = std::fs::read(&native.path).unwrap();
