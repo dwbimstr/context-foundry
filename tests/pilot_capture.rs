@@ -167,6 +167,7 @@ async fn qualify_current_host_history(
     let mut projections = Vec::<Vec<u8>>::new();
     let mut startup_before_prompt: Option<Vec<u8>> = None;
     let mut native_model_sha = None;
+    let mut bridge_fault = None;
     let collect = async {
         let (mut rpc, mut bridge, mut setup, mut sent) = (false, false, false, false);
         let mut pending = BTreeSet::<String>::new();
@@ -388,6 +389,10 @@ async fn qualify_current_host_history(
                             .completed_calls
                             .push(call);
                     }
+                    ChildMessage::Fault { code } => {
+                        bridge_fault = Some(code);
+                        return Err("host bridge fault");
+                    }
                     _ => return Err("unexpected bridge event"),
                 },
                 HostEvent::Rpc(RpcEvent::Response {
@@ -501,7 +506,7 @@ async fn qualify_current_host_history(
             fixture_private_write(out.join(format!("request-{}-metadata.json",index+1)),serde_json::to_vec_pretty(meta).unwrap()).unwrap();
         }
         let failure=match &captured {Ok(Ok(_))=>None,Ok(Err(code))=>Some(*code),Err(_)=>Some("capture deadline")};
-        fixture_private_write(out.join("capture-result.json"),serde_json::to_vec_pretty(&json!({"capture_error":failure,
+        fixture_private_write(out.join("capture-result.json"),serde_json::to_vec_pretty(&json!({"capture_error":failure,"bridge_fault":bridge_fault,
             "captured_requests":requests.len(),"normal_exit":exit.normal,"forced":exit.forced,"group_gone":exit.group_gone})).unwrap()).unwrap();
         if let Some(fx)=&fixture {
             for (index,seen) in fx.seen().iter().enumerate() {
