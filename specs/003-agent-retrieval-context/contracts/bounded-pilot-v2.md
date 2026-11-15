@@ -431,6 +431,36 @@ records the original cache red, actual-host green, frozen-host compatibility and
 eight gates on `0b19098`. The complete early startup/settlement/parent-acknowledgment
 boundary below remains unimplemented and unfrozen.
 
+**Selected actual-bridge startup diagnostic, 2026-11-15 — implementation pending.**
+Make startup observation reproducible through the existing explicit owned-catalog
+qualifier on the pinned artifact, using the actual embedded capture bridge, custom
+API, xhigh setting and tool conversation. Install a hash-bound embedded preload
+before SDK startup. Load its fixed relative path from the private host root and
+restore the canonical workspace before SDK initialization; the native runtime does
+not accept the tested quoted/file-URI preload paths containing spaces. Exercise a
+host root containing spaces. Ordinary CaptureSession/HostDefault launches retain
+their current environment and working directory.
+
+Keep the diagnostic's metadata-only output in the owned host root, bounded to
+20 observed attempts and 8 KiB including installation/normal-exit records. Refuse
+global fetch/preconnect locally; observe ClientRequest.end without calling it a
+before-IO guard. Retain only bounded method, scheme/host/port and a fixed route
+classification, never headers, bodies, query strings, credentials or exception
+text. Verify ordered, complete trace format and the pinned runtime after normal
+host exit, rejecting missing/partial/malformed output. Bind the preload digest in
+the launch record. This is qualification evidence, not the product journal, a
+startup-settlement proof, or a source of admission authority. The proposed product
+observer must still share the bridge's channel/sequence owner and existing journal.
+
+First require the actual owned-host conversation to fail solely for the missing
+trace on an implementation without the preload. Then require all current-host
+diagnostics, complete nonignored frozen-host compatibility, focused lint and eight
+gates. Retain raw trace, requests, native usage and the red result. Do not infer
+complete coverage from zero observed calls. Use the shared offline hour, 120-second
+cleanup reserve, one heavy job, 20 GiB disk floor and 8 GiB sampled individual RSS
+ceiling. Publish reviewed changes, then prune new build intermediates while
+preserving runnable diagnostics and exact evidence. Paid runs and signing stay gated.
+
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
 and a complete startup-owner inventory: catalog/discovery, credential refresh,

@@ -107,7 +107,11 @@ async fn qualify_current_host_history(
     let root = std::fs::canonicalize(e._root.path()).unwrap();
     let spec = HostSpec {
         omp: omp.clone(),
-        root: e.run_dir.clone(),
+        root: if owned_catalog {
+            e.run_dir.with_file_name("run with spaces")
+        } else {
+            e.run_dir.clone()
+        },
         workspace: e.workspace.clone(),
         real_home: std::env::var_os("HOME").expect("real home path").into(),
         deny: vec![root],
@@ -475,6 +479,61 @@ async fn qualify_current_host_history(
         Value::Null
     };
     let catalog_passed = !owned_catalog || catalog_cache["matched"] == true;
+    let startup_probe = if owned_catalog {
+        let path = host_root.join("startup.jsonl");
+        let bytes = std::fs::symlink_metadata(&path)
+            .ok()
+            .filter(|m| m.is_file() && m.len() <= 8192)
+            .and_then(|_| std::fs::read(&path).ok());
+        let mut observed = bytes.as_ref().map_or_else(
+            || json!({"valid":false,"fault":"missing_or_oversized_trace"}),
+            |b| current_startup_probe(b),
+        );
+        if let Some(bytes) = bytes.filter(|_| observed["valid"] == true) {
+            let mut controls = Vec::new();
+            let rows = observed["rows"].as_array().unwrap().clone();
+            let encode = |rows: &[Value]| {
+                rows.iter()
+                    .map(|row| format!("{row}\n"))
+                    .collect::<String>()
+            };
+            controls.push(
+                current_startup_probe(encode(&rows[..rows.len() - 1]).as_bytes())["valid"] == false,
+            );
+            for (key, value) in [
+                ("code", json!(1)),
+                ("sequence", json!(rows.len())),
+                ("body", json!("forbidden")),
+            ] {
+                let mut changed = rows.clone();
+                changed.last_mut().unwrap()[key] = value;
+                controls.push(current_startup_probe(encode(&changed).as_bytes())["valid"] == false);
+            }
+            let mut changed = rows.clone();
+            changed[0]["runtime"] = json!("unqualified");
+            controls.push(current_startup_probe(encode(&changed).as_bytes())["valid"] == false);
+            let mut changed = rows.clone();
+            changed.push(rows.last().unwrap().clone());
+            controls.push(current_startup_probe(encode(&changed).as_bytes())["valid"] == false);
+            observed["mutation_controls_rejected"] = json!(controls.iter().filter(|x| **x).count());
+            observed["valid"] = json!(controls.len() == 6 && controls.iter().all(|x| *x));
+            if let Some(out) = &evidence_root {
+                fixture_private_write(out.join("startup.jsonl"), bytes).unwrap();
+            }
+        }
+        if let Some(out) = &evidence_root {
+            fixture_private_write(
+                out.join("startup-readback.json"),
+                serde_json::to_vec_pretty(&observed).unwrap(),
+            )
+            .unwrap();
+        }
+        observed
+    } else {
+        assert!(!host_root.join("startup.jsonl").exists());
+        Value::Null
+    };
+    let startup_probe_passed = !owned_catalog || startup_probe["valid"] == true;
     let mut native_report = Value::Null;
     let mut native_usage_passed = !tool_followup;
     if tool_followup {
@@ -572,6 +631,7 @@ async fn qualify_current_host_history(
     let no_thread = document.get("thread").is_none();
     let followup_passed = tool_followup
         && catalog_passed
+        && startup_probe_passed
         && native_usage_passed
         && requests.len() == 2
         && negative_control
@@ -614,6 +674,7 @@ async fn qualify_current_host_history(
         "synthetic_observations":observations,"synthetic_usage_is_not_provider_usage":tool_followup,
         "native_usage_readback":native_report,
         "owned_catalog_profile":owned_catalog,"native_catalog_cache":catalog_cache,
+        "native_startup_probe":startup_probe,
         "owned_fixture_http_requests":fixture.as_ref().map_or(0,|fx|fx.seen().len()),
         "external_provider_calls":0,
         "normal_exit":exit.normal, "forced":exit.forced, "group_gone":exit.group_gone,
@@ -645,6 +706,85 @@ async fn qualify_current_host_history(
         no_thread && request_passed && exit.normal && !exit.forced && exit.group_gone,
         "{report}"
     );
+}
+
+/// Diagnostic-format validation only; this never establishes owner coverage or admission.
+fn current_startup_probe(bytes: &[u8]) -> Value {
+    let invalid = || json!({"valid":false});
+    if bytes.len() > 8192 || bytes.last() != Some(&b'\n') {
+        return invalid();
+    }
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return invalid();
+    };
+    let rows: Result<Vec<Value>, _> = text.lines().map(serde_json::from_str).collect();
+    let Ok(rows) = rows else { return invalid() };
+    if !(2..=22).contains(&rows.len()) {
+        return invalid();
+    }
+    let keys = |row: &Value, wanted: &[&str]| {
+        row.as_object()
+            .is_some_and(|o| o.len() == wanted.len() && wanted.iter().all(|k| o.contains_key(*k)))
+    };
+    if !keys(
+        &rows[0],
+        &["sequence", "kind", "runtime", "workspace_restored"],
+    ) || rows[0]["kind"] != "installed"
+        || rows[0]["runtime"] != "1.4.4"
+        || rows[0]["workspace_restored"] != true
+        || !keys(rows.last().unwrap(), &["sequence", "kind", "code"])
+        || rows.last().unwrap()["kind"] != "exit"
+        || rows.last().unwrap()["code"] != 0
+    {
+        return invalid();
+    }
+    for (index, row) in rows.iter().enumerate() {
+        if row["sequence"].as_u64() != Some(index as u64) {
+            return invalid();
+        }
+        if index == 0 || index == rows.len() - 1 {
+            continue;
+        }
+        if !keys(
+            row,
+            &[
+                "sequence",
+                "kind",
+                "transport",
+                "method",
+                "scheme",
+                "host",
+                "port",
+                "route",
+            ],
+        ) || row["kind"] != "attempt"
+            || !["global_fetch", "fetch_preconnect", "client_request_end"]
+                .iter()
+                .any(|x| row["transport"] == *x)
+            || !["http:", "https:"].iter().any(|x| row["scheme"] == *x)
+            || !["anthropic_connection_prewarm", "shared_catalog", "other"]
+                .iter()
+                .any(|x| row["route"] == *x)
+            || !row["method"].as_str().is_some_and(|s| {
+                !s.is_empty() && s.len() <= 16 && s.bytes().all(|b| b.is_ascii_uppercase())
+            })
+            || !row["host"].as_str().is_some_and(|s| {
+                !s.is_empty()
+                    && s.len() <= 253
+                    && s.bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b".-:[]".contains(&b))
+            })
+            || !row["port"].as_str().is_some_and(|s| {
+                s.is_empty()
+                    || (s.len() <= 5
+                        && s.bytes().all(|b| b.is_ascii_digit())
+                        && s.parse::<u16>().is_ok())
+            })
+        {
+            return invalid();
+        }
+    }
+    json!({"valid":true,"runtime":"1.4.4","observed_attempts":rows.len()-2,"rows":rows,"complete_startup_admission":false})
 }
 
 /// Compare the current host's actual native ledger with the accepted fixture wire
