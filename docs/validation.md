@@ -56,6 +56,17 @@ and `qualification-readback.json`. The [v2 draft](../specs/003-agent-retrieval-c
 now specifies explicit owner settlement and durable prefix acknowledgment. That
 boundary remains proposed; complete startup/current-host/v2 acceptance stays **HOLD**.
 
+The finding/design through `2238253` is published to the experimental branch with
+full fresh-clone byte/type/executable-mode readback of all **400 tracked paths**;
+main remains `d94b013`. After publication, ten newly extracted native-library
+copies are removed following exact-byte comparison against the retained current
+library and an empty open-file check. **1,111,103,200 logical bytes** are removed;
+the probe's directory allocation falls from **1,191,825,408 to 80,752,640 bytes**.
+All **255** other existing evidence files pass exact readback, including original
+crashes, collector failures and generated catalogs. `cleanup-result.json` records
+the mapping; prior manifests keep their pre-cleanup meaning. No Rust cache is
+created, and no APFS physical free-space gain is inferred from directory allocation.
+
 ## Native four-category fixture usage — 2026-11-15
 
 **PASS at the selected native transcript/owned-fixture boundary.** Contract/test

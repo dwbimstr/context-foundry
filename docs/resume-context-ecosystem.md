@@ -362,6 +362,9 @@ and dated paragraphs below are history.
     ([settlement counterexample](validation.md#startup-settlement-counterexample--2026-11-15)).
     The v2 draft now owns the proposed explicit settlement/durable-prefix exchange;
     its owner inventory, drain control and actual parent admission remain unimplemented.
+    The settlement finding/design through `2238253` is published with full fresh-clone
+    readback; ten redundant native-library copies are removed after byte/open-file
+    checks, preserving all other evidence and the prior retained library.
     The preload finding through `9684a58` is published with full fresh-clone
     readback. Its three redundant native-library extractions are removed after
     byte/open-file checks; all other evidence and the generated catalog are retained.
