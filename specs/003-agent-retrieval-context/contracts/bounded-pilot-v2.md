@@ -706,7 +706,7 @@ records the original-call factory witness, actual-bridge expected red and curren
 frozen consumers plus all eight gates on `5ed922b`. This qualification closes
 only the original non-OAuth prefetch; full startup admission remains open.
 
-**Selected fixed-profile memory owner check, 2026-11-15 — implementation pending.**
+**Selected fixed-profile memory owner check, 2026-11-15 — implemented and locally qualified.**
 The native baseline/observer pair selects the actual `offBackend` singleton and
 observes one original `start` call with the actual model registry, completed before
 session-start readback. Complete model objects match and auto-learn is disabled.
@@ -744,6 +744,9 @@ auto-learn execution, original credential refresh/polling or full startup admiss
 must not be reused; it is not selected as an admission barrier. The native empty
 pool/no-broker metadata does not prove every credential callback is settled. The
 late telemetry import is unavailable, so no exporter state is inferred from it.
+The [dated off-memory receipt](../../../docs/validation.md#fixed-off-memory-startup-owner-qualification--2026-11-15)
+records native baseline/observer, actual-bridge expected red, nine SDK memory
+controls and all current/frozen consumers plus eight gates on `48822e9`.
 V2 remains unfunded/unfrozen; paid runs and signing remain gated.
 
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing

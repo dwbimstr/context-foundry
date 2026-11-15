@@ -1,5 +1,99 @@
 # Validation
 
+## Fixed off-memory startup owner qualification — 2026-11-15
+
+**The fixed read/edit qualifier now checks its actual off-memory startup owner
+before bridge Ready; full startup admission stays HOLD.** Code/test source
+`48822e9` implements the selected
+[startup-owner contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission).
+Ordinary capture, frozen v1 and future admitted memory/task-context integrations
+retain their separate contracts. No memory capability is removed from the product.
+
+A native baseline/observer pair on the pinned current artifact selects the actual
+`offBackend` singleton and `autolearn.enabled=false`. It observes one original
+start call on the actual model registry, one completion and no pending/rejected
+work before session-start readback. Complete native model objects match, both
+exits are normal with empty stderr and each has two state readbacks. The bounded
+stage takes **23.833 seconds**, including a corrected scratch-directory
+preparation failure before any host launch; original deadlines are preserved.
+No prompt or provider request is sent. The actual AuthStorage instance remains
+open with zero cached credential providers and no broker configured. Those metadata
+checks do not establish all credential callback/refresh/polling lifetimes.
+
+The source basis is oh-my-pi `24439066040e006eb08da7b204f0ac41c79d2de9`:
+[`createAgentSessionScoped::startMemoryBackend`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/sdk.ts#L5704),
+[`resolveMemoryBackend`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/memory-backend/resolve.ts#L23)
+(blob `c38c4aef395a661664c6cd4354fd8d1e272dc525`) and
+[`offBackend`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/memory-backend/off-backend.ts#L8)
+(blob `f354947d9da408bb9496b9cceba1e8f6d87373f9`). Off start contains no downstream
+work; other backends and auto-learn execution are unqualified. Source association
+is not reproducible-build proof. Eight primary-source blobs are retained and
+Git-blob verified locally.
+
+Credential teardown remains unqualified. The actual source
+[`AuthStorage.close`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/ai/src/auth-storage.ts#L217)
+returns void, allows an existing refresh to finish saving, and prohibits reuse of
+the closed instance. [`OAuthRefresher.close`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/ai/src/auth/refresh.ts#L407)
+(blob `6edc62f044ced69f1ab758a12294ab6834f25e74`) starts an asynchronous drain when
+work remains. This is source evidence, not an executed OAuth/drain proof. The
+telemetry setting reads true, but the late telemetry-export module import is
+unavailable. Exporter state remains **unknown**, never false by default or inferred
+from the empty trace. Those owners still need qualification.
+
+One small [embedded helper](../src/pilot_capture/startup_memory.ts) is consumed by
+the real bridge factory and real SDK controls. It requires native Settings identity,
+the off backend and disabled auto-learn before SDK construction resumes, observes
+the original start without changing its receiver/arguments/promise, then requires
+one completed call on the same Settings and model-registry identities before Ready.
+Missing, foreign, duplicate, unfinished or rejected work refuses the existing
+settings stage; a later start terminates the host with exit 75. Only bounded
+counters and object identity are kept. Host::launch binds private materialized
+bytes to SHA-256 `c50927240b8665413bf987642316f2a0c3e07d819bbf41f99aca40ce7e6045cf` only for OwnedQualification. Its repeated
+embedded-source write/read/hash operation is now one private helper used by the
+existing bridge, probe, auth and memory sources, preserving prior fault codes.
+No new protocol, worker, model, loop, test-injection API or memory backend is added.
+
+The actual bridge first fails on `e0be803`, which cannot observe its original
+memory start: **89.227 seconds** including offline compilation, a settings fault,
+zero fixture requests, normal reaping and no forced cleanup. The executable and
+receipt are retained. All **five current-host diagnostics pass** on `48822e9` in
+**203.115 seconds**. Nine actual SDK memory controls cover success, late
+installation, active-backend and auto-learn eligibility, unsettled completion,
+foreign Settings/registry, duplicate start and restart. Eligibility faults use
+actual native Settings overrides and restore off/false before SDK construction;
+they do not run or qualify an active backend or auto-learn. Success/restart report
+one original start and one completion; all named faults refuse. Restart exits 75;
+the others exit zero. All process groups are gone, stderr is empty, complete models
+match the credential controls and owned TCP counts stay zero, without a prompt.
+
+The actual owned bridge's post-warm-up-deadline two-generation tool conversation,
+full history, four owned TLS POSTs, native synthetic usage and 29 corruptions,
+model/cache identity, six trace mutations, Agent stock/guard/raw counts **[1, 0, 1]**,
+eight original-prefetch controls, project MCP exclusion and disk-edit controls
+remain green. The owned config digest stays `438b16919108fe971ffb7439c040be5baf4b77670800efa5400f300db2e8a2e2`. Synthetic
+usage is not provider economics.
+
+Frozen compatibility passes **33/0/7 ignored** in **299.851 seconds**, and focused
+lint passes. All **eight local gates pass** in **819.930 seconds**, including
+actual Rust **1.90.0**. Default outer totals are **1,319/0/35 ignored**; pilot units
+are **102/0/1 ignored**. The custom 21 recovery checks and nested child summaries
+remain separate. No assertion/deadline is relaxed or ignore added. Review is
+in-session, not independent.
+
+Private evidence is `runs/pilot-startup-lifecycle-2026-11-15/` and
+`runs/pilot-memory-owner-2026-11-15/`: source blobs, baseline/observer, exact native
+readbacks, actual-bridge expected red, SDK fault/success controls, current/frozen
+consumers and command/resource receipts. Readback finishes at
+**1612.735 seconds** inside the selected offline hour, with one heavy
+job, 120-second cleanup reserve, 20 GiB disk floor and 8 GiB sampled individual
+RSS ceiling. Maximum sampled individual RSS is
+**2032.938 MiB** and minimum observed free disk is
+**43.342 GiB**. Samples do not establish global/GPU memory
+or hard memory enforcement. No provider spend, real credential or model download
+is used. Complete owner/transport coverage, credential and telemetry lifetimes,
+native timers and durable parent acknowledgment remain open. V2 stays unfunded/
+unfrozen; paid runs, signing and release remain gated.
+
 ## Original credential-prefetch owner qualification — 2026-11-15
 
 **The owned qualifier observes and settles the SDK's original non-OAuth prefetch
