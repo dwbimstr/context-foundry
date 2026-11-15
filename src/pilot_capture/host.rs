@@ -39,6 +39,8 @@ pub const BRIDGE_SOURCE: &[u8] = include_bytes!("bridge.ts");
 pub const QUALIFICATION_STARTUP_PROBE: &[u8] = include_bytes!("startup_probe.ts");
 /// Original credential-prefetch owner check, only for the pinned owned qualifier.
 pub const QUALIFICATION_STARTUP_AUTH: &[u8] = include_bytes!("startup_auth.ts");
+/// Fixed off-memory owner check, only for the pinned owned qualifier.
+pub const QUALIFICATION_STARTUP_MEMORY: &[u8] = include_bytes!("startup_memory.ts");
 pub const SANDBOX_EXEC: &str = "/usr/bin/sandbox-exec";
 /// Exact owned extraction path of the pinned OMP 18.13.2 macOS arm64 host.
 /// This declares private executable metadata, not a per-request content hash.
@@ -77,6 +79,21 @@ edit:\n  mode: replace\n  fuzzyMatch: false\n";
 
 fn fault(class: FaultClass, code: &'static str) -> CaptureFault {
     CaptureFault::new(class, code)
+}
+
+fn materialize_source(
+    path: &Path,
+    source: &[u8],
+    unreadable: &'static str,
+    mismatch: &'static str,
+) -> Result<String, CaptureFault> {
+    write_private_new(path, source)?;
+    let written = fs::read(path).map_err(|_| fault(FaultClass::Bootstrap, unreadable))?;
+    let digest = sha256_hex(&written);
+    if digest != sha256_hex(source) {
+        return Err(fault(FaultClass::Bootstrap, mismatch));
+    }
+    Ok(digest)
 }
 
 /// Catalog behavior is explicit; ordinary capture never selects the qualifier.
@@ -232,6 +249,7 @@ pub struct LaunchRecord {
     pub config_yml_sha256: String,
     pub startup_probe_sha256: Option<String>,
     pub startup_auth_sha256: Option<String>,
+    pub startup_memory_sha256: Option<String>,
     pub env_names: Vec<String>,
 }
 
@@ -488,37 +506,40 @@ impl Host {
             ),
         };
         write_private_new(&paths.agent.join("config.yml"), config.as_bytes())?;
-        write_private_new(&paths.bridge, BRIDGE_SOURCE)?;
-        let written = fs::read(&paths.bridge)
-            .map_err(|_| fault(FaultClass::Bootstrap, "bridge_unreadable"))?;
-        let bridge_sha256 = sha256_hex(&written);
-        if bridge_sha256 != sha256_hex(BRIDGE_SOURCE) {
-            return Err(fault(FaultClass::Bootstrap, "bridge_bytes_mismatch"));
-        }
+        let bridge_sha256 = materialize_source(
+            &paths.bridge,
+            BRIDGE_SOURCE,
+            "bridge_unreadable",
+            "bridge_bytes_mismatch",
+        )?;
         let startup_probe_sha256 = if spec.catalog == CatalogProfile::OwnedQualification {
-            let path = root.join("bridge/startup_probe.ts");
-            write_private_new(&path, QUALIFICATION_STARTUP_PROBE)?;
-            let written = fs::read(&path)
-                .map_err(|_| fault(FaultClass::Bootstrap, "startup_probe_unreadable"))?;
-            let digest = sha256_hex(&written);
-            if digest != sha256_hex(QUALIFICATION_STARTUP_PROBE) {
-                return Err(fault(FaultClass::Bootstrap, "startup_probe_bytes_mismatch"));
-            }
-            Some(digest)
+            Some(materialize_source(
+                &root.join("bridge/startup_probe.ts"),
+                QUALIFICATION_STARTUP_PROBE,
+                "startup_probe_unreadable",
+                "startup_probe_bytes_mismatch",
+            )?)
         } else {
             None
         };
 
         let startup_auth_sha256 = if spec.catalog == CatalogProfile::OwnedQualification {
-            let path = root.join("bridge/startup_auth.ts");
-            write_private_new(&path, QUALIFICATION_STARTUP_AUTH)?;
-            let written = fs::read(&path)
-                .map_err(|_| fault(FaultClass::Bootstrap, "startup_auth_unreadable"))?;
-            let digest = sha256_hex(&written);
-            if digest != sha256_hex(QUALIFICATION_STARTUP_AUTH) {
-                return Err(fault(FaultClass::Bootstrap, "startup_auth_bytes_mismatch"));
-            }
-            Some(digest)
+            Some(materialize_source(
+                &root.join("bridge/startup_auth.ts"),
+                QUALIFICATION_STARTUP_AUTH,
+                "startup_auth_unreadable",
+                "startup_auth_bytes_mismatch",
+            )?)
+        } else {
+            None
+        };
+        let startup_memory_sha256 = if spec.catalog == CatalogProfile::OwnedQualification {
+            Some(materialize_source(
+                &root.join("bridge/startup_memory.ts"),
+                QUALIFICATION_STARTUP_MEMORY,
+                "startup_memory_unreadable",
+                "startup_memory_bytes_mismatch",
+            )?)
         } else {
             None
         };
@@ -607,6 +628,7 @@ impl Host {
             config_yml_sha256: sha256_hex(config.as_bytes()),
             startup_probe_sha256,
             startup_auth_sha256,
+            startup_memory_sha256,
             env_names: env.iter().map(|(k, _)| k.clone()).collect(),
         };
 

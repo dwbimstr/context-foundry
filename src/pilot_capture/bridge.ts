@@ -618,6 +618,7 @@ function exactTools(tools: unknown): tools is string[] {
 }
 
 let ownedPrefetch: { seal(keys: unknown): unknown } | undefined;
+let ownedMemory: { seal(settings: unknown, registry: unknown): unknown } | undefined;
 
 async function onSessionStart(pi: PiApi, ctxValue: unknown): Promise<void> {
 	if (sessionStarted) {
@@ -649,6 +650,8 @@ async function onSessionStart(pi: PiApi, ctxValue: unknown): Promise<void> {
 			// Cancellation closes watches/timers; the serialized strict reload also
 			// joins a reload already in flight before the final settings readback.
 			await settings.reloadFromDisk();
+			if (!ownedMemory) throw new Error("owned memory owner unavailable");
+			await ownedMemory.seal(settings, ctx.modelRegistry);
 			const auth = (ctx.modelRegistry as { authStorage?: { keys?: unknown } } | undefined)?.authStorage;
 			if (!ownedPrefetch || !auth) throw new Error("owned prefetch owner unavailable");
 			ownedPrefetch.seal(auth.keys);
@@ -804,6 +807,13 @@ export default async function capture(pi: PiApi): Promise<void> {
 		} catch {
 			fault("settings");
 			throw new Error("pilot capture bridge: owned prefetch unavailable");
+		}
+		try {
+			const { installOwnedMemoryGuard } = await import("./startup_memory.ts");
+			ownedMemory = await installOwnedMemoryGuard();
+		} catch {
+			fault("settings");
+			throw new Error("pilot capture bridge: owned memory unavailable");
 		}
 	}
 	pi.registerProvider(PROVIDER, { api: API, streamSimple, ...(fetchDynamicModels ? { fetchDynamicModels } : {}) });

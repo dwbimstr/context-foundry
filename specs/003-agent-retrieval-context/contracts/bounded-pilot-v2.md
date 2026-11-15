@@ -706,6 +706,46 @@ records the original-call factory witness, actual-bridge expected red and curren
 frozen consumers plus all eight gates on `5ed922b`. This qualification closes
 only the original non-OAuth prefetch; full startup admission remains open.
 
+**Selected fixed-profile memory owner check, 2026-11-15 — implementation pending.**
+The native baseline/observer pair selects the actual `offBackend` singleton and
+observes one original `start` call with the actual model registry, completed before
+session-start readback. Complete model objects match and auto-learn is disabled.
+This is the existing no-provider read/edit qualifier's profile, not a policy that
+removes future declared memory/task-context integration.
+
+Install one small embedded memory-owner check in the trusted factory before SDK
+construction. It must require the actual native Settings instance, `memory.backend`
+off and `autolearn.enabled=false`, then observe the actual off-backend original
+start without changing its receiver, arguments or returned promise. Require exactly
+one completed call on the same Settings/model-registry identities before Ready,
+with no rejected/pending work. Unknown/active settings, late installation, foreign
+identity, duplicate call or unsettled completion refuse the existing settings stage.
+Once sealed, a subsequent start halts the host. No model, loop, generic interceptor,
+worker, v1 protocol field or alternative memory implementation is added. The bridge
+and real SDK controls consume the same helper; reuse the existing Host byte/mode/
+digest owner and factor its now-repeated embedded-source write/readback operation.
+
+First retain an actual-bridge red that cannot observe its original memory start,
+with zero fixture requests and normal cleanup. Then require actual SDK success,
+late-installation, active-backend/auto-learn eligibility faults, foreign identity,
+unsettled completion and restart controls, preserving the complete native model.
+Run all current diagnostics, frozen compatibility, lint and eight gates. Use an
+offline hour, 120-second cleanup reserve, one heavy job, 20 GiB disk floor and
+8 GiB sampled individual RSS ceiling; publish reviewed changes and prune only
+verified generated caches while preserving runnable red/green consumers/evidence.
+
+Source association is oh-my-pi `24439066040e006eb08da7b204f0ac41c79d2de9`,
+`sdk.ts::startMemoryBackend`, `memory-backend/resolve.ts` (blob
+`c38c4aef395a661664c6cd4354fd8d1e272dc525`) and
+`memory-backend/off-backend.ts` (blob `f354947d9da408bb9496b9cceba1e8f6d87373f9`).
+The no-op start contains no downstream work; this does not qualify other backends,
+auto-learn execution, original credential refresh/polling or full startup admission.
+`AuthStorage.close()` returns void before an existing refresh drains and its instance
+must not be reused; it is not selected as an admission barrier. The native empty
+pool/no-broker metadata does not prove every credential callback is settled. The
+late telemetry import is unavailable, so no exporter state is inferred from it.
+V2 remains unfunded/unfrozen; paid runs and signing remain gated.
+
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
 and a complete startup-owner inventory: catalog/discovery, credential refresh,
