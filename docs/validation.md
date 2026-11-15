@@ -1,5 +1,61 @@
 # Validation
 
+## Startup settlement counterexample — 2026-11-15
+
+**Qualified counterexample to treating native RPC readiness as startup settlement.**
+Public base is `1f9c7ab`; application/test/Cargo inputs remain byte-identical to
+`40b75c6`, whose eight-gate receipt remains applicable. The owned OMP 18.18.1
+artifact retains SHA-256
+`ce80099f10c5ea4367523767230cb5b920f30cc139b9cf8758c1cc4b2f1f9409`.
+No production code, v1 policy, host pin or admission changes in this phase.
+
+With the existing launcher's sandbox permissions and exact owned config/model
+files, a preload locally delays one actual Ollama catalog fetch for six seconds,
+ignores its abort signal, and refuses every intercepted request without calling
+the original fetch. Native RPC emits `ready` and successfully answers `get_state`
+while that invocation is pending. The readiness snapshot contains metadata
+sequence **0–13**; two more refusal records appear afterward, followed by the
+ignored abort at **16**, delayed local refusal at **17**, and normal exit at **18**.
+The host exits 0 with empty stderr in **7.036 seconds**, and its observed group is
+gone. A fresh canonical-policy baseline without any preload also exits normally
+after the owned idle interval, in **7.027 seconds**. Only `get_state` is sent; no
+generation prompt or parent Count/Messages transport is constructed.
+
+The source association is pinned upstream
+[`discoverOllamaModels` / `withTimeoutSignal`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/config/model-discovery.ts#L90)
+and [`ModelRegistry.refreshInBackground`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/config/model-registry.ts#L902).
+The source races a timeout while signalling abort; the actual-host control shows
+readiness before the controlled operation settles. The registry wait method itself
+is not exercised here, and no complete owner inventory or drain API is qualified.
+This is source/release association, not reproducible-build proof. Relevant upstream
+constructor-fetch tests were read previously, not run; this private actual-host
+probe owns the narrower readiness observation.
+
+All original failures remain: five segmentation faults occur in ad-hoc sandbox
+controls, including controls without a preload or fetch replacement; one stricter
+policy fails native-addon loading. Those profiles differ from `Host::launch`.
+The exact permission/runtime cause is unestablished; the corresponding canonical
+policy runs complete normally. An absent-preload-log collector error is preserved,
+then fixed only for the fresh baseline. A readback assumption that all other
+refusals preceded readiness is also retained and corrected to check the actual
+contiguous prefix. The unstarted no-listener case stays unstarted. None of these
+failures is relabeled as passing or attributed to a production regression/fix.
+
+Each bounded diagnostic phase allows 180 seconds with 60 reserved for cleanup,
+30 seconds per command, one job, a 20 GiB disk floor and an 8 GiB sampled individual
+RSS ceiling. Captured startup metadata is capped at 20 attempts/8 KiB. Eleven
+runtime cases are retained; observed processes are gone without forced cleanup.
+Networking is denied throughout. The baseline retains the SDK's original fetch;
+the delayed case refuses locally. Environments/homes are fresh, with zero external
+provider traffic/spend, owner signing identities, model downloads or Rust builds.
+Closed evidence modes are checked; transient modes remain unqualified.
+
+Private evidence: `runs/pilot-startup-settlement-2026-11-15/`, including all phase
+protocols, original failures, raw RPC/metadata, canonical baseline/delay reports,
+and `qualification-readback.json`. The [v2 draft](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission)
+now specifies explicit owner settlement and durable prefix acknowledgment. That
+boundary remains proposed; complete startup/current-host/v2 acceptance stays **HOLD**.
+
 ## Native four-category fixture usage — 2026-11-15
 
 **PASS at the selected native transcript/owned-fixture boundary.** Contract/test

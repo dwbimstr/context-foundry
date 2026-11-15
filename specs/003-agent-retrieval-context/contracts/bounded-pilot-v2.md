@@ -367,6 +367,78 @@ parent-prefix acknowledgment still need implementation and actual-host proof;
 ordinary RPC readiness or process exit does not replace them. No v2 pin or execution
 authority is selected here.
 
+### Proposed startup observation and admission
+
+**Unfunded design preparation; not implemented or frozen.** Preserve complete
+early observation and explicit settlement. The
+[actual-host counterexample](../../../docs/validation.md#startup-settlement-counterexample--2026-11-15)
+shows RPC readiness while a controlled discovery fetch is pending, followed by
+abort and a later callback. The preload is an available early seam; readiness,
+a timeout race, an aborted waiter or a quiet interval cannot establish drain.
+The existing `ModelRegistry` source interfaces alone have not qualified that
+complete boundary. A new upstream build is not assumed necessary, but the selected
+artifact must expose source-grounded control of every admitted startup owner.
+
+**Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
+private channel and hash-chained journal. Freeze the artifact/source association
+and a complete startup-owner inventory: catalog/discovery, credential refresh,
+connection preparation, telemetry/update and extension initialization where present.
+These are inspection categories, not an asserted complete current inventory.
+Unknown owners and bypass routes fail closed. Install observation before any owner
+captures a transport reference. The preload and later bridge share one child
+channel/sequence owner; do not open a second connection or reset its sequence.
+Do not add a worker, proxy, service, database or independent log.
+
+A future closed protocol revision carries metadata-only messages, using existing
+identity, sequence, length and journal limits:
+
+- Child `startup_attempt`: host/session identity, unique bounded attempt identity,
+  declared frozen owner, bounded method and destination classification. Keep only
+  scheme/host/port and a frozen route class; never credentials, bodies, query strings
+  or raw error text. Unclassifiable input is refused with bounded private identity.
+- Parent `startup_refused`: binds that exact attempt after its refusal is appended
+  and synced. The child rejects locally without starting network IO. This message
+  grants no provider route or generation permission.
+- Child `startup_settled`: binds the inventory digest and terminal state of every
+  owner. It is valid only after their work, callbacks, timers and outstanding
+  refusals are drained or cancelled and those owners cannot start again. Required
+  owner controls must prove this; a wrapper's pending-count snapshot is insufficient.
+- Parent `startup_ack`: binds the durable startup-prefix journal sequence/digest,
+  launch identity and owner inventory. The subsequent child `Ready` echoes this
+  exact digest alongside ordinary settings/model/tool evidence. Enqueueing the ack
+  is not host acknowledgment; the matching echo is required.
+
+These are proposed fields in a new closed revision, not optional/unknown-message
+exceptions for v1. Frozen v1 protocol, pin, policy and historical receipts retain
+their meaning. Finite startup wall/attempt/metadata limits are required freeze
+inputs within existing bounds; missing values receive no permissive default.
+
+**Ordering and failure.** Rust starts unready. It classifies and durably refuses
+every attempt, verifies complete owner settlement, appends/syncs/readbacks the
+prefix, then sends the ack. Only a matching Ready echo and ordinary settings
+readback can enable preview/count/generation admission. No per-generation counter,
+usage reservation, permit or provider transmission is available earlier. A startup attempt after
+settlement halts the host; it cannot silently begin another discovery pass.
+
+The journal owns durable truth. A dropped frame, unknown owner, premature fetch,
+append/sync/readback failure, overflow, timeout, EOF or digest/identity mismatch
+halts and reaps the host through existing cleanup. If halt persistence also fails,
+return the persistence error and publish no successful seal. Preserve consumed
+authority and unknown spend. Restart uses fresh launch/channel/prefix identities;
+journal replay cannot create a new execution authority. No fallback to v1 or an
+unobserved route can convert failed v2 startup into readiness.
+
+**Qualification.** Protocol/state tests reject ordering, replay, duplicate, stale,
+conflicting, truncated and exhausted inputs. Actual-host controls exercise every
+frozen owner, ignored abort, late callback and a transport bypass. Independently
+instrument the owned counter/Messages fixture: incomplete-startup and crash/write-
+failure controls between refusal, prefix sync, ack send and Ready echo must observe
+zero calls and no permit. Retain normal cleanup, destination classifications,
+private-mode checks and journal readback. A scripted child or the present RPC-only
+counterexample cannot qualify this complete parent/host boundary. Freeze inventory,
+owner drain controls, source/artifact pins and this revision before v2 readiness;
+paid authority, task/sample freeze and signing remain separate gates.
+
 | Disclosed gap | Required evidence |
 | --- | --- |
 | Host startup network denials absent from journal | Capture denied startup attempts and their destination/classification before any paid request; disallow unobserved routes. A sandbox denial is not evidence of journal completeness. Matching-release source establishes only partial diagnostics; a complete early observer and completion boundary remain needed ([source finding](../../../docs/validation.md#pilot-startup-network-source-feasibility--2026-11-11)). |

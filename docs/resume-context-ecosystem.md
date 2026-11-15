@@ -354,6 +354,14 @@ and dated paragraphs below are history.
     non-fetch bypass coverage, drain or parent-journal acknowledgment. Existing
     launcher admission is unchanged; evaluate this seam before requiring a rebuilt
     upstream host. Complete startup qualification remains open.
+    Canonical-launcher-permission controls now show native RPC readiness and a
+    successful state readback while an actual discovery invocation remains pending,
+    then observes abort and a later local refusal. The canonical baseline and delayed
+    case exit normally; all ad-hoc-profile crashes and collector failures are retained
+    without a claimed runtime root cause
+    ([settlement counterexample](validation.md#startup-settlement-counterexample--2026-11-15)).
+    The v2 draft now owns the proposed explicit settlement/durable-prefix exchange;
+    its owner inventory, drain control and actual parent admission remain unimplemented.
     The preload finding through `9684a58` is published with full fresh-clone
     readback. Its three redundant native-library extractions are removed after
     byte/open-file checks; all other evidence and the generated catalog are retained.
