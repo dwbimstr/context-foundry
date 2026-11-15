@@ -273,6 +273,33 @@ synthetic request and result under owner-only permissions. It must name a fresh
 directory. The accepted run and cache-retention paths are in the linked receipt;
 no installed host, model or credential is acquired by this command.
 
+**Selected current-host continuation qualification, 2026-11-15 — pending.**
+Extend the existing ignored diagnostic with one two-generation tool conversation
+on the same owned OMP 18.18.1 artifact. Keep application code, v1 pin, codec and
+request/SSE admission unchanged. Reuse the owned numeric-loopback TLS fixture and
+`Transport` with `Endpoint::Verification` and the synthetic fixture credential: count each actual
+request's exact projection, send its unchanged body to the local scripted Messages
+endpoint, and relay only events accepted by the existing `MessagesStream`. No Live
+transport, real credential or external-provider request is authorized.
+
+The synthetic first response asks for one read of the owned `src/lib.rs` fixture.
+Admit only that exact call through the existing tool policy, observe completion,
+and bind the next actual request to the first request's prior history and observed
+tool ID. Both requests must omit `thread` and pass unchanged admission; the followup
+must preserve the original message and include the actual source result. A control
+using the same followup bytes without completion evidence must fail. Complete the
+second scripted response and require native prompt completion, exact four-request
+fixture order/exhaustion, unchanged source bytes, owner-only closed outputs and
+normal host reaping with no extra fetch. Fixture counters/usage are synthetic,
+never real-provider usage or cost evidence.
+
+Share the existing diagnostic setup so the first-request case stays exercised.
+Run both explicit current-host tests and the full local gates on the test-only
+change; keep all failures and the original first-request evidence. The shared hour
+includes builds, with 120 seconds for cleanup, one heavy job, offline dependencies,
+20 GiB disk floor and 8 GiB sampled individual RSS ceiling. Complete early startup
+observation, current-host Live admission, pilot-v2 outcomes and signing stay gated.
+
 The existing owners are [`CaptureSession` and `IndependentCheckReceipt`](../../../src/pilot_capture.rs),
 [`Host::launch` and `HostEvent`](../../../src/pilot_capture/host.rs), and
 [`run_independent_check`, `restore_workspace` and `run_coding`](../../../src/pilot_capture/apparatus.rs).

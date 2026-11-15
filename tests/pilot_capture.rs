@@ -38,13 +38,52 @@ const TASK: &str = "Repair malformed percent escapes in src/lib.rs so no bytes a
 #[tokio::test]
 #[ignore = "needs explicit CF_PILOT_CURRENT_OMP; no-provider current-host diagnostic"]
 async fn current_host_first_request_preserves_full_history() {
-    use pilot_capture::host::{Host, HostEvent, HostSpec, RpcEvent};
-    use pilot_capture::protocol::{ChannelIdentity, ChildMessage, CloseReason, ParentMessage};
+    qualify_current_host_history(false).await;
+}
+
+#[tokio::test]
+#[ignore = "needs explicit CF_PILOT_CURRENT_OMP; no-provider current-host diagnostic"]
+async fn current_host_tool_followup_preserves_full_history() {
+    qualify_current_host_history(true).await;
+}
+
+async fn qualify_current_host_history(tool_followup: bool) {
+    use pilot_capture::host::{Host, HostEvent, HostSpec, RpcEvent, ToolPolicy, ToolVerdict};
+    use pilot_capture::protocol::{
+        ChannelIdentity, ChildMessage, CloseReason, ParentMessage, ToolOutcome,
+    };
     use std::collections::BTreeSet;
     use std::time::Duration;
 
     const SHA: &str = "ce80099f10c5ea4367523767230cb5b920f30cc139b9cf8758c1cc4b2f1f9409";
-    const PROMPT: &str = "Say only: local qualification. Do not use tools.";
+    let prompt = if tool_followup {
+        "Read src/lib.rs once, then state the function name."
+    } else {
+        "Say only: local qualification. Do not use tools."
+    };
+    let fixture = tool_followup.then(|| {
+        Fixture::start(vec![
+            Reply::Count(1340),
+            fixture::tool_reply(
+                "msg_current_read",
+                "toolu_current_read",
+                "read",
+                json!({"path":"src/lib.rs"}),
+            ),
+            Reply::Count(1240),
+            fixture::text_reply("msg_current_done", "The function is decode."),
+        ])
+    });
+    let transport = fixture.as_ref().map(|fx| {
+        wire::Transport::new(
+            &wire::Endpoint::Verification {
+                addr: fx.addr,
+                ca_pem: fx.ca_pem.clone(),
+            },
+            wire::Credential::new(CANARY).unwrap(),
+        )
+        .unwrap()
+    });
     let omp = PathBuf::from(std::env::var_os("CF_PILOT_CURRENT_OMP").expect("explicit owned host"));
     assert_eq!(
         pilot_capture::sha256_hex(&std::fs::read(&omp).unwrap()),
@@ -65,9 +104,21 @@ async fn current_host_first_request_preserves_full_history() {
     let (host, mut events) = Host::launch(&spec).unwrap();
     let bridge_sha = host.launch.bridge_sha256.clone();
     let host_root = host.paths.root.clone();
+    let source_before = std::fs::read(e.workspace.join("src/lib.rs")).unwrap();
+    let mut requests = Vec::<(Value, Vec<u8>)>::new();
+    let mut negative_control = false;
+    let mut observations = Vec::<Value>::new();
+    let mut projections = Vec::<Vec<u8>>::new();
     let collect = async {
         let (mut rpc, mut bridge, mut setup, mut sent) = (false, false, false, false);
         let mut pending = BTreeSet::<String>::new();
+        let mut prior: Option<wire::PriorGeneration> = None;
+        let mut tool_checked = false;
+        let mut tool_completed = false;
+        let expect = wire::RequestExpectation {
+            initial_user_text: prompt.into(),
+            workspace: pilot_capture::host_display_path(&e.workspace),
+        };
         loop {
             let event = events.recv().await.ok_or("host channels closed")?;
             match event {
@@ -102,6 +153,121 @@ async fn current_host_first_request_preserves_full_history() {
                         url,
                         headers,
                     } => {
+                        if tool_followup {
+                            requests.push((
+                                json!({"method":&method,"url":&url,"headers":&headers}),
+                                inbound.payload.clone(),
+                            ));
+                            let generation = requests.len();
+                            if !sent || generation > 2 || invocation as usize != generation {
+                                let _ = host
+                                    .send_bridge(
+                                        ParentMessage::ResponseError {
+                                            fetch,
+                                            class: FaultClass::Authority,
+                                        },
+                                        Vec::new(),
+                                    )
+                                    .await;
+                                return Err("unexpected continuation ordering");
+                            }
+                            let admitted = wire::validate_request(
+                                &method,
+                                &url,
+                                &headers,
+                                &inbound.payload,
+                                &expect,
+                                prior.as_ref(),
+                            )
+                            .map_err(|_| "current request admission failed")?;
+                            let document: Value = serde_json::from_slice(&inbound.payload)
+                                .map_err(|_| "invalid request JSON")?;
+                            if document.get("thread").is_some() {
+                                return Err("server history appeared");
+                            }
+                            if generation == 2 {
+                                let mut incomplete =
+                                    prior.clone().ok_or("missing prior generation")?;
+                                incomplete.completed_calls.clear();
+                                negative_control = wire::validate_request(
+                                    &method,
+                                    &url,
+                                    &headers,
+                                    &inbound.payload,
+                                    &expect,
+                                    Some(&incomplete),
+                                )
+                                .is_err_and(|f| {
+                                    f.class == FaultClass::Retry
+                                        && f.code == "followup_not_tool_progression"
+                                });
+                                if !admitted.followup
+                                    || admitted.message_count != 3
+                                    || !String::from_utf8_lossy(&inbound.payload)
+                                        .contains("pub fn decode")
+                                    || !negative_control
+                                {
+                                    return Err("full history or completion guard missing");
+                                }
+                            }
+                            projections.push(admitted.count_projection.clone());
+                            let transport = transport
+                                .as_ref()
+                                .ok_or("missing owned fixture transport")?;
+                            let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+                            let count = transport
+                                .count(&admitted.count_projection, &admitted.beta, deadline)
+                                .await
+                                .map_err(|_| "owned counter fixture failed")?;
+                            let mut stream = transport
+                                .messages(&inbound.payload, &admitted.beta, deadline)
+                                .await
+                                .map_err(|_| "owned messages fixture failed")?;
+                            host.send_bridge(
+                                ParentMessage::ResponseStart {
+                                    fetch,
+                                    status: stream.status(),
+                                    headers: stream.relay_headers(),
+                                },
+                                Vec::new(),
+                            )
+                            .await
+                            .map_err(|_| "response start failed")?;
+                            while let Some(event) = stream
+                                .next_event(deadline)
+                                .await
+                                .map_err(|_| "synthetic SSE admission failed")?
+                            {
+                                host.send_bridge(
+                                    ParentMessage::ResponseData { fetch },
+                                    event.to_vec(),
+                                )
+                                .await
+                                .map_err(|_| "response relay failed")?;
+                            }
+                            let observed = stream.observation();
+                            if !observed.terminal
+                                || !observed.usage.complete()
+                                || observed.usage.inclusive_input() != Some(count.input_tokens)
+                            {
+                                return Err("synthetic stream did not reconcile");
+                            }
+                            observations.push(json!({"message_id":observed.message_id,"model":observed.returned_model,"terminal":observed.terminal,
+                                "synthetic_input_tokens":count.input_tokens,"synthetic_usage_complete":observed.usage.complete(),"tool_uses":observed.tool_uses.len()}));
+                            prior = Some(wire::PriorGeneration {
+                                messages: admitted.messages,
+                                system_sha256: admitted.system_sha256,
+                                tools_sha256: admitted.tools_sha256,
+                                settings_sha256: admitted.settings_sha256,
+                                beta: admitted.beta,
+                                tool_uses: observed.tool_uses,
+                                completed_calls: Vec::new(),
+                            });
+                            host.send_bridge(ParentMessage::ResponseEnd { fetch }, Vec::new())
+                                .await
+                                .map_err(|_| "response end failed")?;
+                            continue;
+                        }
                         host.send_bridge(
                             ParentMessage::ResponseError {
                                 fetch,
@@ -118,6 +284,40 @@ async fn current_host_first_request_preserves_full_history() {
                             json!({"method": method, "url": url, "headers": headers}),
                             inbound.payload,
                         ));
+                    }
+                    ChildMessage::ToolCheck { call, name } if tool_followup => {
+                        let allow = !tool_checked
+                            && call == "toolu_current_read"
+                            && name == "read"
+                            && serde_json::from_slice::<Value>(&inbound.payload)
+                                .is_ok_and(|v| v == json!({"path":"src/lib.rs"}))
+                            && pilot_capture::host::admit_tool(
+                                &ToolPolicy::pilot(e.workspace.clone()),
+                                &name,
+                                &inbound.payload,
+                            ) == ToolVerdict::Allow;
+                        host.send_bridge(ParentMessage::ToolDecision { call, allow }, Vec::new())
+                            .await
+                            .map_err(|_| "tool decision failed")?;
+                        if !allow {
+                            return Err("unexpected tool attempted");
+                        }
+                        tool_checked = true;
+                    }
+                    ChildMessage::ToolDone { call, outcome, .. } if tool_followup => {
+                        if !tool_checked
+                            || tool_completed
+                            || call != "toolu_current_read"
+                            || outcome != ToolOutcome::Ok
+                        {
+                            return Err("tool completion differs");
+                        }
+                        tool_completed = true;
+                        prior
+                            .as_mut()
+                            .ok_or("tool precedes response settlement")?
+                            .completed_calls
+                            .push(call);
                     }
                     _ => return Err("unexpected bridge event"),
                 },
@@ -147,11 +347,21 @@ async fn current_host_first_request_preserves_full_history() {
                         }
                     }
                     if pending.is_empty() && !sent {
-                        host.send_rpc(&json!({"id":"p1", "type":"prompt", "message":PROMPT}))
+                        host.send_rpc(&json!({"id":"p1", "type":"prompt", "message":prompt}))
                             .await
                             .map_err(|_| "prompt send failed")?;
                         sent = true;
                     }
+                }
+                HostEvent::Rpc(RpcEvent::PromptResult { id, status }) if tool_followup => {
+                    if id.as_deref() != Some("p1")
+                        || status != "completed"
+                        || requests.len() != 2
+                        || !tool_completed
+                    {
+                        return Err("prompt did not complete the two-generation fixture");
+                    }
+                    return requests.last().cloned().ok_or("missing final request");
                 }
                 HostEvent::Rpc(RpcEvent::Other | RpcEvent::SessionSettled | RpcEvent::AgentEnd) => {
                 }
@@ -183,43 +393,103 @@ async fn current_host_first_request_preserves_full_history() {
         }
     };
     let captured = tokio::time::timeout(Duration::from_secs(120), collect).await;
+    let completed = tool_followup && matches!(&captured, Ok(Ok(_)));
     let _ = host
         .send_bridge(
             ParentMessage::Close {
-                reason: CloseReason::Halted,
+                reason: if completed {
+                    CloseReason::Completed
+                } else {
+                    CloseReason::Halted
+                },
             },
             Vec::new(),
         )
         .await;
-    let _ = host.send_rpc(&json!({"id":"a1", "type":"abort"})).await;
-    let (_, exit) = host.finish(events, Duration::from_secs(30)).await;
+    if !completed {
+        let _ = host.send_rpc(&json!({"id":"a1", "type":"abort"})).await;
+    }
+    let (drained, exit) = host.finish(events, Duration::from_secs(30)).await;
+    let evidence_root = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT").map(|path| {
+        let mut out=PathBuf::from(path);
+        if tool_followup {out.set_file_name(format!("{}-followup",out.file_name().unwrap().to_string_lossy()));}
+        fixture_private_dir(&out).unwrap();
+        for (index,(meta,bytes)) in requests.iter().enumerate() {
+            fixture_private_write(out.join(format!("request-{}.json",index+1)),bytes).unwrap();
+            fixture_private_write(out.join(format!("request-{}-metadata.json",index+1)),serde_json::to_vec_pretty(meta).unwrap()).unwrap();
+        }
+        let failure=match &captured {Ok(Ok(_))=>None,Ok(Err(code))=>Some(*code),Err(_)=>Some("capture deadline")};
+        fixture_private_write(out.join("capture-result.json"),serde_json::to_vec_pretty(&json!({"capture_error":failure,
+            "captured_requests":requests.len(),"normal_exit":exit.normal,"forced":exit.forced,"group_gone":exit.group_gone})).unwrap()).unwrap();
+        if let Some(fx)=&fixture {
+            for (index,seen) in fx.seen().iter().enumerate() {
+                fixture_private_write(out.join(format!("http-{}.body",index+1)),&seen.body).unwrap();
+            }
+        }
+        out
+    });
     let (metadata, body) = captured
         .expect("capture deadline")
         .expect("actual host request");
     let headers: Vec<(String, String)> =
         serde_json::from_value(metadata["headers"].clone()).unwrap();
-    let admitted = wire::validate_request(
-        metadata["method"].as_str().unwrap(),
-        metadata["url"].as_str().unwrap(),
-        &headers,
-        &body,
-        &wire::RequestExpectation {
-            initial_user_text: PROMPT.into(),
-            workspace: pilot_capture::host_display_path(&e.workspace),
-        },
-        None,
-    );
+    let admitted = (!tool_followup).then(|| {
+        wire::validate_request(
+            metadata["method"].as_str().unwrap(),
+            metadata["url"].as_str().unwrap(),
+            &headers,
+            &body,
+            &wire::RequestExpectation {
+                initial_user_text: prompt.into(),
+                workspace: pilot_capture::host_display_path(&e.workspace),
+            },
+            None,
+        )
+    });
     let document: Value = serde_json::from_slice(&body).unwrap();
     let no_thread = document.get("thread").is_none();
+    let followup_passed = tool_followup
+        && requests.len() == 2
+        && negative_control
+        && observations.len() == 2
+        && fixture.as_ref().is_some_and(|fx| {
+            fx.paths()
+                == [
+                    "/v1/messages/count_tokens",
+                    "/v1/messages",
+                    "/v1/messages/count_tokens",
+                    "/v1/messages",
+                ]
+                && fx.remaining_script() == 0
+                && {
+                    let seen = fx.seen();
+                    seen.len() == 4
+                        && projections.len() == 2
+                        && seen.iter().all(|s| s.method == "POST")
+                        && seen[0].body == projections[0]
+                        && seen[1].body == requests[0].1
+                        && seen[2].body == projections[1]
+                        && seen[3].body == requests[1].1
+                }
+        })
+        && !drained.iter().any(
+            |e| matches!(e,HostEvent::Bridge(i) if matches!(i.msg,ChildMessage::FetchBegin{..})),
+        )
+        && std::fs::read(e.workspace.join("src/lib.rs")).unwrap() == source_before;
+    let request_passed = if tool_followup {
+        followup_passed
+    } else {
+        admitted.as_ref().is_some_and(Result::is_ok)
+    };
     let report = json!({"host_sha256": SHA, "bridge_sha256": bridge_sha,
         "body_sha256": pilot_capture::sha256_hex(&body), "body_bytes":body.len(),
-        "no_thread_field":no_thread, "validator_passed":admitted.is_ok(),
-        "validator_fault":admitted.as_ref().err().map(ToString::to_string),
+        "no_thread_field":no_thread, "validator_passed":request_passed,
+        "validator_fault":admitted.as_ref().and_then(|r|r.as_ref().err()).map(ToString::to_string),
+        "qualified_requests":if tool_followup {requests.len()} else {1},"missing_completion_control_rejected":negative_control,
+        "synthetic_observations":observations,"synthetic_usage_is_not_provider_usage":tool_followup,
         "normal_exit":exit.normal, "forced":exit.forced, "group_gone":exit.group_gone,
         "stderr_bytes":exit.stderr_bytes, "provider_calls":0, "v1_host_admission":false});
-    if let Some(path) = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT") {
-        let out = PathBuf::from(path);
-        fixture_private_dir(&out).unwrap();
+    if let Some(out) = evidence_root {
         fixture_private_write(out.join("request-body.json"), &body).unwrap();
         fixture_private_write(
             out.join("request-metadata.json"),
@@ -243,7 +513,7 @@ async fn current_host_first_request_preserves_full_history() {
         SHA
     );
     assert!(
-        no_thread && admitted.is_ok() && exit.normal && !exit.forced && exit.group_gone,
+        no_thread && request_passed && exit.normal && !exit.forced && exit.group_gone,
         "{report}"
     );
 }
