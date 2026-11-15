@@ -379,6 +379,19 @@ The existing `ModelRegistry` source interfaces alone have not qualified that
 complete boundary. A new upstream build is not assumed necessary, but the selected
 artifact must expose source-grounded control of every admitted startup owner.
 
+**Configuration preparation.** The owned current-artifact
+[profile control](../../../docs/validation.md#restricted-startup-provider-profile--2026-11-15)
+qualifies the existing `disabledProviders` setting for reducing built-in discovery
+while retaining the fixed native model. Prefer this existing owner for excluding
+providers unused by a future fixed-model pilot, rather than a new discovery loop.
+Bind the exact artifact, compiled provider inventory, explicit list and config
+digest at freeze; do not infer provider identity or silently carry this list to a
+new host. The retained model's shared catalog still fetches. Extension-registered
+runtime managers and non-fetch routes need separate coverage, so the setting
+cannot replace observation, drain or admission checks. Qualify actual generation
+requests/tool behavior/headroom under the selected profile, not only state readback.
+This is preparation, not a selected v2 execution profile or a v1 configuration edit.
+
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
 and a complete startup-owner inventory: catalog/discovery, credential refresh,

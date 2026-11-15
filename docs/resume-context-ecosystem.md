@@ -362,6 +362,15 @@ and dated paragraphs below are history.
     ([settlement counterexample](validation.md#startup-settlement-counterexample--2026-11-15)).
     The v2 draft now owns the proposed explicit settlement/durable-prefix exchange;
     its owner inventory, drain control and actual parent admission remain unimplemented.
+    A subsequent owned-profile control qualifies the existing `disabledProviders`
+    setting as a way to reduce built-in discovery while preserving the fixed native
+    model selection. Re-enabling Ollama supplies a positive control; the shared
+    catalog fetch remains, and extension runtime managers/full generation behavior
+    are outside this proof
+    ([profile receipt](validation.md#restricted-startup-provider-profile--2026-11-15)).
+    The v2 draft can reuse this existing configuration instead of adding a discovery
+    subsystem; complete early observation, owner drain and acknowledgment are still
+    required. Production configuration and v1 remain unchanged.
     The settlement finding/design through `2238253` is published with full fresh-clone
     readback; ten redundant native-library copies are removed after byte/open-file
     checks, preserving all other evidence and the prior retained library.

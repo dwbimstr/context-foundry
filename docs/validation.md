@@ -1,5 +1,59 @@
 # Validation
 
+## Restricted startup provider profile — 2026-11-15
+
+**Qualified at the selected owned RPC/configuration boundary.** On public base
+`8b3bcd7`, application/test/Cargo inputs remain byte-identical to `40b75c6`; its
+eight-gate evidence remains applicable. The owned OMP 18.18.1 artifact retains
+SHA-256 `ce80099f10c5ea4367523767230cb5b920f30cc139b9cf8758c1cc4b2f1f9409`.
+Only fresh owned config copies change. No v1 default, policy, pin or production
+configuration changes, and no v2 execution configuration is frozen.
+
+All three actual-host controls pass under the existing launcher's sandbox
+permissions, fresh cleared homes/environments and the same seven-second observation
+window. A pre-main hook records and locally refuses each fetch without invoking
+the original transport:
+
+| Owned config | Disabled provider IDs | Observed fetch invocations |
+| --- | ---: | ---: |
+| Existing config | 0 | 15 |
+| Retain Anthropic, disable other catalog/implicit providers | 91 | 1 shared-catalog fetch |
+| Same restriction, re-enable Ollama | 90 | Shared catalog plus Ollama tags |
+
+Every native state response keeps provider `anthropic`, model `claude-sonnet-5-5`,
+thinking `off`, zero messages and no streaming. Only `get_state` is sent. Each host
+exits normally with empty stderr and its observed group gone. Config files match
+the declared base plus the exact disabled list; model config bytes are unchanged.
+The remaining shared-catalog call is observed, not silently treated as zero.
+This phase completes in **22.304 seconds**, with all original artifacts retained.
+
+Source association is upstream commit `24439066040e006eb08da7b204f0ac41c79d2de9`:
+[`cfgDisabledProviders`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/config/model-settings.ts#L77),
+[`ModelRegistry` discovery filtering](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/config/model-registry.ts#L2201)
+and the [Anthropic catalog manager](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/catalog/src/provider-models/openai-compat.ts#L7004).
+The list comes from all **91** compiled catalog entries plus source-declared
+implicit `llama.cpp`, retaining Anthropic. Four source files pass Git-blob/SHA-256
+readback. Relevant disabled-local-provider tests at
+[`model-registry.test.ts`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/test/model-registry.test.ts#L2588)
+are read, not run. This is source/release association, not reproducible-build proof.
+
+This filter reduces observed built-in work; it is not a transport gate. The source's
+separate extension-registered runtime-manager path is not covered by this filter
+proof. Complete owner inventory, non-fetch coverage, owner settlement and parent
+journal acknowledgment remain unqualified. The fixed observation window proves
+neither permanent silence nor a latency improvement. Actual generation payload,
+tool behavior and request headroom are not exercised by `get_state`; they must be
+qualified under any future selected v2 profile before freeze.
+
+Private evidence: `runs/pilot-startup-profile-2026-11-15/`, including protocol,
+source pins, exact provider list/configs, raw RPC/refusal metadata, phase receipts
+and `qualification-readback.json`. Bounds are 240 seconds with 60 for cleanup,
+30 seconds per command, one job, 20 GiB disk floor, 8 GiB sampled individual RSS,
+20 fetches and 8 KiB startup metadata. Closed modes pass; transient modes remain
+unqualified. No parent Count/Messages transport, generation prompt, provider spend,
+model download, owner signing identity or Rust build is used. Complete current-host
+startup and pilot-v2 acceptance remain **HOLD**.
+
 ## Startup settlement counterexample — 2026-11-15
 
 **Qualified counterexample to treating native RPC readiness as startup settlement.**
