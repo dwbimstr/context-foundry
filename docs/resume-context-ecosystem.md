@@ -421,6 +421,11 @@ and dated paragraphs below are history.
     ([rejection and diagnostic receipt](validation.md#early-capture-api-rejection-and-native-model-identity--2026-11-15)).
     This does not repair warm-up or complete startup admission; the shared-channel
     owner settlement and durable acknowledgment work remains open.
+    Diagnostic/rejection records through `786e96d` are published with a complete
+    fresh-clone readback. Its new build/MSRV cache is pruned after evidence/binary
+    checks, and the retained executable passes the actual native tool conversation
+    directly after cleanup without Cargo. The dated receipt above owns deletion,
+    retention and resource details. Paid runs, signing and release remain gated.
     The settlement finding/design through `2238253` is published with full fresh-clone
     readback; ten redundant native-library copies are removed after byte/open-file
     checks, preserving all other evidence and the prior retained library.

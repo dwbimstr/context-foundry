@@ -66,6 +66,26 @@ startup acknowledgment is accepted by this work. V2 remains unfunded/unfrozen;
 paid runs, owner signing and release publication remain gated. The stateless
 request repair at `98157db` remains an ancestor of this freshly checked source.
 
+The diagnostic/rejection records through `786e96d` are published to experimental
+with a full fresh-clone byte/type/executable-mode readback of all **401 tracked
+paths**; main remains `d94b013`. This stage's build/MSRV allocation is then reduced
+from **8,441,249,792 to 34,529,280 bytes**, removing **11,755** generated files.
+The green diagnostic and separately saved paired-red/rejected executables retain
+their exact hashes, list all **38** tests and depend only on system dynamic
+libraries. All **252** pre-existing non-cache evidence files pass exact readback.
+The retained green executable then directly completes the actual owned-host
+two-generation/tool/strict-wire/native-usage/trace checks in **6.630 seconds**,
+without Cargo or a rebuild. No SDK-native extraction remains in this stage.
+
+`cleanup-build-result.json`, `retained-result.json` and
+`post-cleanup-readback.json` retain the deletion mapping and actual-consumer proof.
+The post-cleanup readback finishes at **2,098.301 seconds** within the shared hour.
+Removed cache allocation is **8,406,720,512 bytes**; this is `du` allocation, not an
+inferred APFS physical free-space gain. Observed totals are **92,450,816 bytes**
+for the repo's target, **9,129,259,008 bytes** for runs and **34,715,725,824 bytes**
+for the retained datasets. This cleanup changes only the new stage's generated
+build/MSRV cache; required data, models, evidence and backup inputs remain retained.
+
 ## Actual bridge startup diagnostic — 2026-11-15
 
 **Qualified at the selected no-provider diagnostic boundary; full startup admission
