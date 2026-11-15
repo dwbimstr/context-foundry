@@ -586,8 +586,8 @@ returns its failed request, the SDK's error handler can release its listener,
 and a second state response beyond the unmodified deadline succeeds. Retain both
 outcomes and the first controller's rejected missing-exit record. Source basis:
 oh-my-pi `24439066040e006eb08da7b204f0ac41c79d2de9`,
-`utils/connection-prewarm.ts::prewarmModelConnection` and
-`utils/cowork-fetch.ts::directFetch` (request construction and release).
+`providers/connection-prewarm.ts::prewarmModelConnection` and
+`providers/cowork-fetch.ts::sendCoworkRequest` (request construction and release).
 
 Repair the existing qualifier's known-route refusal at the request owner, keeping
 the original Agent queue uncalled and the TCP count zero. Do not catch or suppress
