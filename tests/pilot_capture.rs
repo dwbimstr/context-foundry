@@ -252,8 +252,19 @@ async fn qualify_current_host_history(tool_followup: bool) {
                             {
                                 return Err("synthetic stream did not reconcile");
                             }
+                            let mut native_usage = json!({
+                                "input":observed.usage.uncached_input.as_ref().unwrap().value,
+                                "output":observed.usage.output.as_ref().unwrap().value,
+                                "cacheRead":observed.usage.cache_read_input.as_ref().unwrap().value,
+                                "cacheWrite":observed.usage.cache_creation_input.as_ref().unwrap().value,
+                                "totalTokens":observed.usage.total().unwrap(),
+                            });
+                            if let Some(reasoning) = &observed.usage.reasoning {
+                                native_usage["reasoningTokens"] = json!(reasoning.value);
+                            }
                             observations.push(json!({"message_id":observed.message_id,"model":observed.returned_model,"terminal":observed.terminal,
-                                "synthetic_input_tokens":count.input_tokens,"synthetic_usage_complete":observed.usage.complete(),"tool_uses":observed.tool_uses.len()}));
+                                "synthetic_input_tokens":count.input_tokens,"synthetic_usage_complete":observed.usage.complete(),"tool_uses":observed.tool_uses.len(),
+                                "expected_native_usage":native_usage}));
                             prior = Some(wire::PriorGeneration {
                                 messages: admitted.messages,
                                 system_sha256: admitted.system_sha256,
@@ -428,6 +439,81 @@ async fn qualify_current_host_history(tool_followup: bool) {
         }
         out
     });
+    let mut native_report = Value::Null;
+    let mut native_usage_passed = !tool_followup;
+    if tool_followup {
+        let native = pilot_capture::host::read_native_session(&host.paths.sessions);
+        native_report = match native {
+            Ok(Some(native)) => {
+                let bytes = std::fs::read(&native.path).unwrap();
+                assert_eq!(pilot_capture::sha256_hex(&bytes), native.sha256);
+                if let Some(out) = &evidence_root {
+                    fixture_private_write(out.join("native-session.jsonl"), &bytes).unwrap();
+                }
+                let rows: Result<Vec<Value>, _> = bytes
+                    .split(|b| *b == b'\n')
+                    .filter(|line| !line.iter().all(u8::is_ascii_whitespace))
+                    .map(serde_json::from_slice)
+                    .collect();
+                let mut controls = Vec::new();
+                let matches = rows.as_ref().is_ok_and(|rows| {
+                    if !current_native_usage_matches(rows, &observations) {
+                        return false;
+                    }
+                    let index = rows
+                        .iter()
+                        .position(|r| r["message"]["role"] == "assistant")
+                        .unwrap();
+                    let mut altered = rows.clone();
+                    altered[index]["message"]["responseId"] = json!("msg_unobserved");
+                    controls.push(!current_native_usage_matches(&altered, &observations));
+                    for key in ["input", "output", "cacheRead", "cacheWrite", "totalTokens"] {
+                        for bad in [Value::Null, json!(-1), json!(1.5), json!(99999)] {
+                            let mut altered = rows.clone();
+                            altered[index]["message"]["usage"][key] = bad;
+                            controls.push(!current_native_usage_matches(&altered, &observations));
+                        }
+                        let mut altered = rows.clone();
+                        altered[index]["message"]["usage"]
+                            .as_object_mut()
+                            .unwrap()
+                            .remove(key);
+                        controls.push(!current_native_usage_matches(&altered, &observations));
+                    }
+                    let mut altered = rows.clone();
+                    altered[index]["message"]["usage"]["reasoningTokens"] = json!(0);
+                    controls.push(!current_native_usage_matches(&altered, &observations));
+                    let mut altered = rows.clone();
+                    altered.push(rows[index].clone());
+                    controls.push(!current_native_usage_matches(&altered, &observations));
+                    let mut altered = rows.clone();
+                    altered.push(json!({"type":"model_usage"}));
+                    controls.push(!current_native_usage_matches(&altered, &observations));
+                    true
+                });
+                native_usage_passed = matches
+                    && native.unparsed_lines == 0
+                    && native.model_usage_entries == 0
+                    && native.assistant.len() == 2
+                    && controls.len() == 29
+                    && controls.iter().all(|rejected| *rejected);
+                json!({"session_sha256":native.sha256,"session_bytes":native.bytes,
+                    "assistant_entries":native.assistant.len(),"model_usage_entries":native.model_usage_entries,
+                    "unparsed_lines":native.unparsed_lines,"four_category_usage_matches":matches,
+                    "negative_controls_rejected":controls.iter().filter(|rejected| **rejected).count(),
+                    "expected_negative_controls":29,"passed":native_usage_passed})
+            }
+            Ok(None) => json!({"passed":false,"fault":"native_session_missing"}),
+            Err(fault) => json!({"passed":false,"fault":fault.to_string()}),
+        };
+        if let Some(out) = &evidence_root {
+            fixture_private_write(
+                out.join("native-usage-readback.json"),
+                serde_json::to_vec_pretty(&native_report).unwrap(),
+            )
+            .unwrap();
+        }
+    }
     let (metadata, body) = captured
         .expect("capture deadline")
         .expect("actual host request");
@@ -449,6 +535,7 @@ async fn qualify_current_host_history(tool_followup: bool) {
     let document: Value = serde_json::from_slice(&body).unwrap();
     let no_thread = document.get("thread").is_none();
     let followup_passed = tool_followup
+        && native_usage_passed
         && requests.len() == 2
         && negative_control
         && observations.len() == 2
@@ -487,6 +574,7 @@ async fn qualify_current_host_history(tool_followup: bool) {
         "validator_fault":admitted.as_ref().and_then(|r|r.as_ref().err()).map(ToString::to_string),
         "qualified_requests":if tool_followup {requests.len()} else {1},"missing_completion_control_rejected":negative_control,
         "synthetic_observations":observations,"synthetic_usage_is_not_provider_usage":tool_followup,
+        "native_usage_readback":native_report,
         "owned_fixture_http_requests":fixture.as_ref().map_or(0,|fx|fx.seen().len()),
         "external_provider_calls":0,
         "normal_exit":exit.normal, "forced":exit.forced, "group_gone":exit.group_gone,
@@ -518,6 +606,42 @@ async fn qualify_current_host_history(tool_followup: bool) {
         no_thread && request_passed && exit.normal && !exit.forced && exit.group_gone,
         "{report}"
     );
+}
+
+/// Compare the current host's actual native ledger with the accepted fixture wire
+/// observations. This diagnostic does not change production native import policy.
+fn current_native_usage_matches(rows: &[Value], observations: &[Value]) -> bool {
+    if observations.len() != 2 || rows.iter().any(|row| row["type"] == "model_usage") {
+        return false;
+    }
+    let assistant: Vec<_> = rows
+        .iter()
+        .filter(|row| row["type"] == "message" && row["message"]["role"] == "assistant")
+        .collect();
+    assistant.len() == observations.len()
+        && assistant.iter().zip(observations).all(|(row, observed)| {
+            let message = &row["message"];
+            let expected = &observed["expected_native_usage"];
+            row["id"].as_str().is_some_and(|id| !id.is_empty())
+                && message["responseId"]
+                    .as_str()
+                    .is_some_and(|id| !id.is_empty() && Some(id) == observed["message_id"].as_str())
+                && message["model"] == observed["model"]
+                && message["provider"] == policy::PROVIDER
+                && message["stopReason"]
+                    == if observed["tool_uses"] == 0 {
+                        "stop"
+                    } else {
+                        "toolUse"
+                    }
+                && ["input", "output", "cacheRead", "cacheWrite", "totalTokens"]
+                    .iter()
+                    .all(|key| {
+                        expected[key].as_u64().is_some()
+                            && message["usage"][key].as_u64() == expected[key].as_u64()
+                    })
+                && message["usage"].get("reasoningTokens") == expected.get("reasoningTokens")
+        })
 }
 
 fn require_host() {

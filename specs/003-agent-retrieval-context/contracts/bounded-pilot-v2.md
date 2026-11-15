@@ -312,6 +312,27 @@ Select both diagnostics with `current_host_ -- --ignored --nocapture
 the named fresh directory for the first case and its `-followup` sibling for the
 continuation; no real credential or model is acquired.
 
+**Selected native usage readback, 2026-11-15 — qualification pending.**
+Extend that same owned-fixture continuation after normal host exit. Read the single
+native session through the existing private/bounded reader, retain its exact bytes
+when evidence output is selected, and join both assistant entries to the admitted
+wire response IDs in order. Require unchanged model and stop disposition, no extra
+assistant or out-of-transcript usage entry, no unparsed line, and equality of the
+four scripted wire counters and their checked total. An absent reasoning subset
+must remain absent. Do not treat the host's calculated price as observed spend.
+Exercise altered response identity, omitted/null/negative/changed counters, a
+fabricated reasoning zero, duplicate assistant and out-of-transcript usage controls
+against that actual native readback. Missing or disagreeing evidence fails this
+diagnostic; it cannot be repaired by mutating the native transcript or relaxing v1.
+
+This is test-only no-provider qualification, not CaptureSession/Live or v2
+admission. Run both explicit current-host diagnostics, focused lint and applicable
+local gates under a shared hour including offline builds, 120-second cleanup
+reserve, one heavy job, 20 GiB disk floor and 8 GiB sampled individual RSS ceiling.
+Publish only public tests/records; retain private evidence and prune new build
+intermediates after publication and readback. Startup coverage, real-provider
+economics, paid authority and signing remain separate gates.
+
 The existing owners are [`CaptureSession` and `IndependentCheckReceipt`](../../../src/pilot_capture.rs),
 [`Host::launch` and `HostEvent`](../../../src/pilot_capture/host.rs), and
 [`run_independent_check`, `restore_workspace` and `run_coding`](../../../src/pilot_capture/apparatus.rs).
