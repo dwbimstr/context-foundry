@@ -261,6 +261,18 @@ readback, without rerunning or changing any product gate. See the
 The exact v1 host pin and request policy remain unchanged. First-request
 qualification does not accept complete current-host behavior or pilot v2.
 
+Repeat only the explicitly selected current-host diagnostic with an owned artifact
+matching the test's fixed SHA, without changing v1 admission:
+
+```sh
+CF_PILOT_CURRENT_OMP=/abs/owned/omp cargo test --locked --offline --features pilot-capture --test pilot_capture current_host_first_request_preserves_full_history -- --ignored --exact --nocapture --test-threads=1
+```
+
+`CF_PILOT_CURRENT_EVIDENCE_ROOT=/abs/new/private-dir` optionally retains the exact
+synthetic request and result under owner-only permissions. It must name a fresh
+directory. The accepted run and cache-retention paths are in the linked receipt;
+no installed host, model or credential is acquired by this command.
+
 The existing owners are [`CaptureSession` and `IndependentCheckReceipt`](../../../src/pilot_capture.rs),
 [`Host::launch` and `HostEvent`](../../../src/pilot_capture/host.rs), and
 [`run_independent_check`, `restore_workspace` and `run_coding`](../../../src/pilot_capture/apparatus.rs).

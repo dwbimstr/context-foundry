@@ -54,8 +54,26 @@ RSS was **2,047.625 MiB**; minimum sampled disk free was **292.856 GiB**, within
 the original 8 GiB / 20 GiB guards. Readback/publication does not extend or restart
 that completed experiment. Receipts and complete gate logs are under
 `runs/pilot-stateless-host-2026-11-14/`; the verified aggregate is
-`gates-readback.json`. Cache cleanup and publication receipts are recorded there
-as they complete.
+`gates-readback.json`.
+
+The source/test/record snapshot through `7eda5ed` is published to
+`experimental/context-ecosystem`; fresh-clone readback verifies all **400 tracked
+paths / 11,753,701 bytes**, including file types and executable bits. Main remains
+`d94b013e3c638276f6afba49f80194776e294fbb`. The private receipt is
+`runs/storage-cleanup-2026-11-14/publication-stateless-host.json`; the scoped payload
+review is `runs/pilot-stateless-host-2026-11-14/publication-review.json`.
+
+Only after that publication/readback, this stage's generated build intermediates
+and MSRV cache were removed: **8,440,766,464 → 465,141,760 allocated bytes**
+(7.86 GiB → 444 MiB). Seven standalone binaries, including the qualified actual-host
+test, retain their exact hashes and have only system-library dependencies. All
+**61 pre-existing evidence files** in the stage pass byte-hash readback; the two
+active cleanup-driver logs and new cleanup receipt are outside that comparison.
+No open/mapped cache file was found. Cleanup deleted 11,749 generated files and
+removed only this stage's `build`/`msrv` intermediates; source, original failure/pass
+evidence, pinned host inputs, model stores and unrelated work remain. Exact private
+receipt: `runs/pilot-stateless-host-2026-11-14/cleanup-build-result.json`. Directory
+allocation changes do not establish additive physical reclamation on APFS.
 
 Frozen v1 contract/pin, frame protocol, request validator and Cargo inputs are
 unchanged. This qualifies the current artifact's first full-history request and

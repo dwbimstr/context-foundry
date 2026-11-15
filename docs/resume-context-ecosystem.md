@@ -305,6 +305,9 @@ and dated paragraphs below are history.
     the same explicit current-host regression passes unchanged admission, the
     frozen-host suite passes and all eight local gates pass on `98157db`
     ([repair receipt](validation.md#stateless-native-request-repair--2026-11-15)).
+    The fix and qualification records through `7eda5ed` are published with full
+    fresh-clone readback. This stage's build/MSRV intermediates are removed after
+    exact binary/evidence readback; runnable diagnostics remain available.
     The original failed wrapper's fake-worker classification is retained and
     qualified by separate gate readback. Complete current-host acceptance remains
     **HOLD**; the frozen live pin and validator are unchanged
