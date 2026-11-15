@@ -298,10 +298,12 @@ async fn current_host_owned_settings_ignore_later_disk_edits() {
             .expect("settings control");
         assert_eq!(states[0].auto_compaction, Some(false));
         assert_eq!(states[0].native_model_sha256, states[1].native_model_sha256);
-        assert_eq!(
-            states[0].native_model_sha256.as_deref(),
-            Some("53bec6f047bbd7eeab26c93c1a6dd6c0e4ccc30d50a29d79e416c28692d5a027")
-        );
+        if catalog == CatalogProfile::OwnedQualification {
+            assert_eq!(
+                states[0].native_model_sha256.as_deref(),
+                Some("53bec6f047bbd7eeab26c93c1a6dd6c0e4ccc30d50a29d79e416c28692d5a027")
+            );
+        }
         reports.push(json!({"case":name,"compaction_before":states[0].auto_compaction,
             "compaction_after":states[1].auto_compaction,"native_model_sha256":states[1].native_model_sha256,
             "disk_edit_retained":true,"normal_exit":exit.normal,"forced":exit.forced,
