@@ -541,7 +541,7 @@ controls, actual bridge consumers, frozen compatibility and eight gates on
 `7f54889`. The raw-socket bypass remains accepted evidence of incomplete coverage,
 not an exception that can enable v2 admission.
 
-**Selected owned settings quiescence, 2026-11-15 — implementation pending.**
+**Selected owned settings quiescence, 2026-11-15 — implemented and locally qualified.**
 The current RPC host starts config watching before `session_start`. For the
 explicit owned qualification profile only, finish the bridge's intended startup
 settings writes, then use the pinned SDK Settings owner to cancel future saves
@@ -571,6 +571,10 @@ floor and 8 GiB sampled individual RSS limit. Retain red/green evidence, publish
 reviewed code/records and prune only new verified build/extraction caches. No
 prompt or provider call is needed for this regression. Full owner coverage,
 transport coverage and durable startup acknowledgment remain open.
+
+The [dated settings receipt](../../../docs/validation.md#owned-native-settings-quiescence--2026-11-15)
+records the proper native red on `db47f71`, five current consumers, frozen
+compatibility and all eight gates on `6a9bb15`. Full startup admission remains open.
 
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association

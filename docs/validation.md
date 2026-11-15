@@ -1,5 +1,82 @@
 # Validation
 
+## Owned native settings quiescence — 2026-11-15
+
+**The explicit owned qualifier disables live config reloading before bridge Ready;
+full startup admission remains HOLD.** Code/test source is `6a9bb15`, under
+003 T006's existing [startup contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission).
+Ordinary capture, frozen v1 policy/protocol and paid authority remain unchanged.
+
+A valid static canonical-model registration is rejected: it still observes one
+startup HEAD and changes `compat`, `isOAuth` and `webSearchModel`. Both native
+cases exit normally with an authoritative one-model cache, but the candidate's
+complete model digest differs. No candidate is landed. Earlier wrapper, timeout,
+alias and configuration-validation attempts remain retained and are excluded
+from that semantic comparison; the original bounds are not reset or presented
+as one successful run. Evidence is `runs/pilot-early-catalog-2026-11-15/`.
+
+Literal imports on the pinned OMP 18.18.1 artifact expose the actual Settings
+singleton and off memory backend. The owner readback sees memory start settle,
+then settings watching start before session_start. Its first controllers fail
+mechanically and are not accepted as complete qualification. A subsequent fixed
+native settings control completes in **14.664 seconds**: a benign disk edit
+applies with watching, but not after cancellation even after explicitly calling
+startWatching again. Telemetry/autolearn import failures do not prove those
+owners absent. These private roots are `runs/pilot-startup-owner-readback-2026-11-15/`
+and `runs/pilot-settings-freeze-2026-11-15/`.
+
+The source basis is oh-my-pi `24439066040e006eb08da7b204f0ac41c79d2de9`,
+[`Settings::cancelPendingSaves`, `flush`, `reloadFromDisk` and `#exclusive`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/config/settings.ts#L1315),
+Git blob `8d427132126850002b94dbf6fd897f1ae6062e29`.
+The related [settings-manager tests](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/test/settings-manager.test.ts#L1234)
+for mutation during reload and retained runtime overrides were inspected, not run.
+The bridge verifies the owner's private agent directory, flushes intended startup
+writes, cancels watching/future background saves, joins existing saves and awaits
+a serialized strict reload before final model/settings readback and Ready.
+Cancellation normally serves discarded instances; the owned immutable run uses
+that existing capability intentionally. The operation stays in the existing
+[bridge settings stage](../src/pilot_capture/bridge.ts), bound by its source hash;
+no new worker, module, protocol or source owner is introduced.
+
+The durable [actual-launcher regression](../tests/pilot_capture.rs) changes only
+the private compaction flag after RPC and bridge Ready, then reads native state.
+Initial test source `10c8d52` stops on an incorrect assumption that ordinary and
+owned catalog metadata match; that **89.809-second** result is retained and is not
+the intended red. Corrected source `db47f71` preserves/checks identity within each
+profile and fails the owned assertion in **12.756 seconds**:
+both profiles apply the disk edit. The repaired control yields **[true, false]**
+for ordinary/owned, with the changed disk bytes retained in both cases. Both
+complete native model digests remain exact across red/green and before/after.
+Owned digest stays `53bec6f047bbd7eeab26c93c1a6dd6c0e4ccc30d50a29d79e416c28692d5a027`.
+No prompt or provider request is sent by this control; exits are normal and reaped.
+
+All **five current-host diagnostics pass** in **71.470 seconds**,
+including the strict two-generation tool conversation, four owned fixture POSTs,
+native usage totals and 29 corruption controls, authoritative fixed-model cache,
+six trace mutations and independent TCP counts **[1, 0, 1]**. These are synthetic
+usage counters, not provider economics. The complete nonignored frozen-host suite
+passes **33/0/7 ignored** in **303.708 seconds**; focused lint passes.
+All **eight local gates pass** on `6a9bb15` in **851.019 seconds**, including
+actual Rust **1.90.0**. Default outer totals are **1,319/0/35 ignored**; pilot units
+are **102/0/1 ignored**. Nested child summaries and the 21 custom recovery successes
+stay separate; no existing assertion or deadline is relaxed.
+
+Private implementation evidence is `runs/pilot-settings-quiescence-2026-11-15/`,
+with both original failure and proper expected-red executable, native reports,
+source pins, command/resource receipts and the in-session readback. Qualification
+finishes at **1532.642 seconds** within the offline hour,
+with 120 seconds reserved for cleanup, one heavy job, 20 GiB disk floor and 8 GiB
+sampled individual RSS ceiling. Maximum observed individual RSS is **2044.812 MiB**;
+minimum observed free disk is **51.187 GiB**. Samples do not establish global/GPU
+memory or hard resource enforcement.
+
+The disk-edit regression proves effective settings stability in this profile,
+not every in-flight reload interleaving. Join semantics are source-grounded in
+the pinned native owner; complete callback/timer and transport coverage, other
+startup owners and the shared-channel durable parent acknowledgment remain open.
+V2 is unfunded/unfrozen. No provider spend, model download, real provider credential,
+paid execution, signing, main update, tag or release is used or enabled.
+
 ## Native Agent startup refusal — 2026-11-15
 
 **The known SDK/custom-Agent HTTPS route is refused before its TCP connection in

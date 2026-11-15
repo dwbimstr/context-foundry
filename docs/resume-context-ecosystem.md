@@ -441,6 +441,15 @@ and dated paragraphs below are history.
     are pruned after exact checks; all four native diagnostics pass directly from
     the retained executable after cleanup without Cargo. The Agent-route receipt
     owns the resource, deletion and retention details; the wrap-up remains active.
+    The static canonical-registration alternative is rejected: it retains the warm-up
+    and changes model metadata. The owned qualifier now quiesces the existing native
+    Settings owner before bridge Ready, preserving the model while ignoring later
+    disk edits; ordinary capture still applies them. The permanent native red/green,
+    all five current consumers, frozen compatibility and eight gates pass on `6a9bb15`
+    ([settings receipt](validation.md#owned-native-settings-quiescence--2026-11-15)).
+    This closes the selected settings-stability repair only. Full startup owner and
+    transport coverage, callback/timer settlement and durable parent acknowledgment
+    remain open; v2 remains unfunded/unfrozen and paid runs/signing stay gated.
     The settlement finding/design through `2238253` is published with full fresh-clone
     readback; ten redundant native-library copies are removed after byte/open-file
     checks, preserving all other evidence and the prior retained library.
