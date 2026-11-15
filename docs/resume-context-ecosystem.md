@@ -320,6 +320,9 @@ and dated paragraphs below are history.
     These are scripted responses and counters; actual-provider economics and native
     transcript usage readback are not established. Application inputs remain equal
     to `98157db`; current-host Live admission and v2 acceptance stay HOLD.
+    The continuation test/records through `215abcd` are published and verified by
+    full fresh-clone readback. Its build/MSRV cache is pruned, with exact evidence
+    and runnable-binary retention recorded in the continuation receipt.
     New build intermediates were removed after retaining runnable artifacts.
     Paid runs and signing remain gated.
     Complete coverage of transient library file modes, current installed-host compatibility and

@@ -53,7 +53,21 @@ Private evidence: `runs/pilot-current-followup-2026-11-15/qualification-readback
 the phase receipts, full gate logs and `focus-final-evidence{-followup}/`. These
 retain actual request bodies, exact loopback-received bodies and closed-file mode
 checks. Readback rechecks body identity, history shape, projection fields and all
-gate summaries. Publication and cache-cleanup receipts follow in the same directory.
+gate summaries.
+
+The test/record snapshot through `215abcd` is published to
+`experimental/context-ecosystem` with full fresh-clone readback of **400 tracked
+paths / 11,777,448 bytes**, file types and executable bits. Main remains `d94b013`.
+The scoped review is `publication-review.json` in this stage; its private publish
+receipt is `runs/storage-cleanup-2026-11-14/publication-current-followup.json`.
+After publication, only this stage's build/MSRV intermediates were retired:
+**8,440,840,192 → 465,211,392 allocated bytes** (7.86 GiB → 444 MiB), with seven
+hash-verified standalone binaries and system-only dependencies retained. All
+**85 existing evidence files** pass exact hash readback, excluding the active
+cleanup-driver logs and new receipt. No open/mapped cache file was found; 11,749
+generated files were removed. `cleanup-build-result.json` records the paths,
+hashes and scope. Other stores, model inputs, earlier evidence and unrelated work
+were preserved. APFS directory allocation is not additive physical reclamation.
 
 This qualifies current-artifact full-history tool continuation, native completion
 and parsing of the scripted responses. It does not grant current-host
