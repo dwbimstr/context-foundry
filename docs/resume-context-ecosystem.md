@@ -413,6 +413,14 @@ and dated paragraphs below are history.
     readback. Its new build/MSRV cache and two preflight SDK-library copies are
     pruned after exact evidence/binary checks; runnable red/green diagnostics and
     all other evidence remain retained in the actual-bridge receipt above.
+    A tested early custom-API model configuration is rejected and removed: the
+    native bridge reports `model_selection` before its first captured request and
+    still observes the HEAD. The retained diagnostic now checks the complete
+    native model digest and configuration bytes and preserves closed fault codes.
+    Its current/frozen native consumers and all eight gates pass on `5d9aa0e`
+    ([rejection and diagnostic receipt](validation.md#early-capture-api-rejection-and-native-model-identity--2026-11-15)).
+    This does not repair warm-up or complete startup admission; the shared-channel
+    owner settlement and durable acknowledgment work remains open.
     The settlement finding/design through `2238253` is published with full fresh-clone
     readback; ten redundant native-library copies are removed after byte/open-file
     checks, preserving all other evidence and the prior retained library.

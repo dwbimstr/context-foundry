@@ -499,6 +499,12 @@ preserving runnable diagnostics and exact evidence. This diagnostic hardening do
 not repair warm-up, prove settlement or enable startup admission. Provider calls,
 paid authority and signing remain gated.
 
+The [dated rejection and diagnostic receipt](../../../docs/validation.md#early-capture-api-rejection-and-native-model-identity--2026-11-15)
+records the committed paired red, rejected native candidate, final diagnostic
+qualification, frozen compatibility and eight gates on `5d9aa0e`. The unsupported
+configuration is absent from active code; the complete admission boundary below
+remains unimplemented.
+
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
 and a complete startup-owner inventory: catalog/discovery, credential refresh,

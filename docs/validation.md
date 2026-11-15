@@ -1,5 +1,71 @@
 # Validation
 
+## Early capture-API rejection and native model identity — 2026-11-15
+
+**Early configuration candidate rejected; retained diagnostics qualified on
+`5d9aa0e`; full startup admission remains HOLD.** The current and frozen host
+artifacts, capture bridge, preload, wire policy and ordinary launch configuration
+retain the pins and scope of the [preceding diagnostic](#actual-bridge-startup-diagnostic--2026-11-15).
+This is 003 T006 no-provider work under the existing
+[startup contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission).
+
+The committed paired red at `f46d773` uses the original models.yml in both arms.
+Both complete two generations, four owned TLS fixture POSTs, the authoritative
+one-model cache, six malformed-trace controls and all 29 native-usage corruptions.
+Their complete native model digests match; the final zero-attempt assertion then
+fails on the known HEAD. The first receipt parser looks for the panic in stdout
+instead of stderr and rejects its readback. That original result remains retained;
+the corrected wrapper reruns the pinned red in **12.925 seconds** without resetting
+the shared deadline.
+
+Candidate `a9f89fe` sets only the canonical model's API override to the custom
+capture API before SDK selection. It fails before its first captured request.
+Diagnostic `7ca2651` retains the closed bridge fault **`model_selection`**, with
+normal exit and the observed process group gone; the HEAD is still present. Its
+complete model comparison and zero-attempt acceptance are unexecuted. Matching
+source at `24439066040e006eb08da7b204f0ac41c79d2de9` exposes the override function,
+but [`models-config-schema-bundle.ts::ApiSchema/ModelOverrideSchema`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/config/models-config-schema-bundle.ts#L122)
+accepts a closed API set excluding our custom API. That supports an explanation;
+it does not establish the exact runtime fault caller or a reproducible host build.
+The upstream supported-API override test was inspected, not run. No assertion is
+relaxed to admit this candidate. Its profile/configuration is removed in `5d9aa0e`;
+the red and rejected executables, source commits and raw evidence remain retained.
+
+The remaining code hashes the complete parsed native model object after bridge
+setup, retaining a digest rather than its headers. The owned diagnostic now checks
+SHA-256 `53bec6f047bbd7eeab26c93c1a6dd6c0e4ccc30d50a29d79e416c28692d5a027` on
+the pinned current artifact. It also verifies materialized models.yml against the
+launch digest and retains only the closed bridge fault code on failed capture.
+Ordinary capture behavior, the qualified catalog, bridge and preload are unchanged.
+
+All **three current-host diagnostics pass** in **35.462 seconds** on `5d9aa0e`.
+The owned full-history/tool conversation, strict fixture requests, native usage,
+catalog and six trace controls pass. Its trace/prefix bytes and digests exactly
+match the preceding diagnostic: one pre-prompt HEAD and no observed later attempt
+during this fixture. The complete nonignored frozen-host suite passes **33/0/5
+ignored** in **292.892 seconds**; focused lint passes. All **eight local gates
+pass** in **820.434 seconds**, including the actual Rust **1.90.0** toolchain.
+Default outer harness totals are **1,319 passed, 0 failed, 35 ignored**; pilot unit
+totals are **102 passed, 0 failed, 1 ignored**. The **21** custom recovery successes
+and nested child summaries are bound separately rather than added to those totals.
+
+Private evidence is `runs/pilot-early-api-2026-11-15/`: protocol/source pins, five
+Git-blob-verified upstream files, every original failure, raw requests, native
+sessions/catalog/usage/trace readbacks and resource/lifecycle receipts. The
+in-session qualification readback finishes at **1,838.788 seconds** within the
+same offline hour, with a 120-second cleanup reserve, one heavy job, 20 GiB disk
+floor and 8 GiB sampled individual RSS ceiling. Across all monitored commands,
+including rejected cases, peak sampled individual RSS is **2,040.328 MiB** and
+minimum observed free disk is **76.799 GiB**. Samples are lower bounds, not global
+or GPU memory measurements. No SDK-native extraction remains in this stage.
+All qualified commands exit naturally. Synthetic usage is not provider economics.
+No real credential, model download, training or provider spend is used.
+
+No warm-up repair, complete transport/owner coverage, settlement or durable
+startup acknowledgment is accepted by this work. V2 remains unfunded/unfrozen;
+paid runs, owner signing and release publication remain gated. The stateless
+request repair at `98157db` remains an ancestor of this freshly checked source.
+
 ## Actual bridge startup diagnostic — 2026-11-15
 
 **Qualified at the selected no-provider diagnostic boundary; full startup admission
