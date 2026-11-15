@@ -85,6 +85,26 @@ identity, tags or release publication are used. Complete startup owner inventory
 non-fetch coverage, settlement and durable parent acknowledgment remain open;
 v2 is unfunded/unfrozen, and paid runs, signing and release remain gated.
 
+The qualifier and records through `008b5a3` are published to the experimental
+branch, with full fresh-clone byte/type/executable-mode readback of all **400
+tracked paths**; main remains `d94b013`. After publication, this stage's build/MSRV
+allocation falls from **8,443,719,680 to 34,451,456 bytes**, removing **11,755**
+generated files while retaining the green standalone diagnostic. Its separately
+retained red executable also remains exact. Both executables successfully list
+all **38** tests after cleanup and depend only on system dynamic libraries.
+All **107** pre-existing non-cache evidence files pass exact readback.
+
+Eight duplicate native-library extractions in the three startup-probe directories
+are removed after exact comparison with the previously retained library and empty
+open-file checks: **888,882,560 logical bytes**. All **246** other existing probe
+files pass exact readback, including original failures, configs, native model/cache
+data and unstarted controls. Combined owned-directory allocation decreases by
+**9,298,165,760 bytes (8.660 GiB)**. This is directory allocation, not an inferred
+APFS physical free-space gain. Private `cleanup-build-result.json`,
+`cleanup-probes-result.json` and `post-cleanup-readback.json` record retention and
+deletion mappings. Complete qualification/publication/cleanup readback is reached
+inside the shared hour, in **1,566.229 seconds**; no provider calls or spend occur.
+
 ## Restricted startup provider profile — 2026-11-15
 
 **Qualified at the selected owned RPC/configuration boundary.** On public base

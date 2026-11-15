@@ -383,6 +383,10 @@ and dated paragraphs below are history.
     settles; joining observed work qualifies only that subset. Complete owner
     inventory, non-fetch coverage, settlement and durable parent acknowledgment
     remain open. V2 execution, paid runs and owner signing remain gated.
+    The qualifier and records through `008b5a3` are published with full fresh-clone
+    readback. Its build/MSRV cache and eight duplicate native-library extractions
+    are pruned after exact evidence/binary checks; runnable red/green diagnostics,
+    all probe findings and required inputs remain retained in the receipt above.
     The settlement finding/design through `2238253` is published with full fresh-clone
     readback; ten redundant native-library copies are removed after byte/open-file
     checks, preserving all other evidence and the prior retained library.
