@@ -61,6 +61,7 @@ async fn current_host_owned_catalog_preserves_full_history() {
         baseline["native_model_sha256"],
         "53bec6f047bbd7eeab26c93c1a6dd6c0e4ccc30d50a29d79e416c28692d5a027"
     );
+    assert_eq!(baseline["native_warmup_deadline_readback"], true);
 }
 
 /// The embedded preload must stop the SDK's Agent route before an owned TCP
@@ -432,6 +433,7 @@ async fn qualify_current_host_history(
     let mut projections = Vec::<Vec<u8>>::new();
     let mut startup_before_prompt: Option<Vec<u8>> = None;
     let mut native_model_sha = None;
+    let mut native_warmup_deadline_readback = false;
     let mut bridge_fault = None;
     let collect = async {
         let (mut rpc, mut bridge, mut setup, mut sent) = (false, false, false, false);
@@ -673,8 +675,11 @@ async fn qualify_current_host_history(
                     if !success || !pending.remove(&id) {
                         return Err("setup RPC refused or unexpected");
                     }
-                    if id == "c4" {
+                    if id == "c4" || id == "c5" {
                         let s = state.ok_or("settings missing")?;
+                        if id == "c5" && s.native_model_sha256 != native_model_sha {
+                            return Err("post-deadline native model differs");
+                        }
                         native_model_sha = s.native_model_sha256.clone();
                         if s.provider.as_deref() != Some(policy::PROVIDER)
                             || s.model.as_deref() != Some(policy::MODEL)
@@ -684,6 +689,18 @@ async fn qualify_current_host_history(
                             || s.auto_compaction != Some(false)
                         {
                             return Err("settings readback differs");
+                        }
+                        if id == "c5" {
+                            native_warmup_deadline_readback = true;
+                        } else if owned_catalog {
+                            // Cross the pinned SDK's 10-second warm-up deadline,
+                            // then require a fresh native response before any prompt.
+                            // Waiting alone does not establish startup settlement.
+                            tokio::time::sleep(Duration::from_secs(12)).await;
+                            pending.insert("c5".into());
+                            host.send_rpc(&json!({"id":"c5","type":"get_state"}))
+                                .await
+                                .map_err(|_| "post-deadline state send failed")?;
                         }
                     }
                     if pending.is_empty() && !sent {
@@ -772,7 +789,10 @@ async fn qualify_current_host_history(
         }
         let failure=match &captured {Ok(Ok(_))=>None,Ok(Err(code))=>Some(*code),Err(_)=>Some("capture deadline")};
         fixture_private_write(out.join("capture-result.json"),serde_json::to_vec_pretty(&json!({"capture_error":failure,"bridge_fault":bridge_fault,
-            "captured_requests":requests.len(),"normal_exit":exit.normal,"forced":exit.forced,"group_gone":exit.group_gone})).unwrap()).unwrap();
+            "captured_requests":requests.len(),"owned_fixture_http_requests":fixture.as_ref().map_or(0,|fx|fx.seen().len()),
+            "native_model_sha256":native_model_sha,"native_warmup_deadline_readback":native_warmup_deadline_readback,
+            "normal_exit":exit.normal,"exit_code":exit.code,"stderr_bytes":exit.stderr_bytes,"stderr_sha256":exit.stderr_sha256,
+            "forced":exit.forced,"group_gone":exit.group_gone})).unwrap()).unwrap();
         if let Some(fx)=&fixture {
             for (index,seen) in fx.seen().iter().enumerate() {
                 fixture_private_write(out.join(format!("http-{}.body",index+1)),&seen.body).unwrap();
@@ -962,6 +982,7 @@ async fn qualify_current_host_history(
     let document: Value = serde_json::from_slice(&body).unwrap();
     let no_thread = document.get("thread").is_none();
     let followup_passed = tool_followup
+        && (!owned_catalog || native_warmup_deadline_readback)
         && catalog_passed
         && startup_probe_passed
         && native_usage_passed
@@ -1001,6 +1022,7 @@ async fn qualify_current_host_history(
         "body_sha256": pilot_capture::sha256_hex(&body), "body_bytes":body.len(),
         "config_yml_sha256":config_sha,"models_yml_sha256":models_sha,
         "native_model_sha256":native_model_sha,
+        "native_warmup_deadline_readback":native_warmup_deadline_readback,
         "startup_probe_sha256":startup_probe_sha,
         "no_thread_field":no_thread, "validator_passed":request_passed,
         "validator_fault":admitted.as_ref().and_then(|r|r.as_ref().err()).map(ToString::to_string),

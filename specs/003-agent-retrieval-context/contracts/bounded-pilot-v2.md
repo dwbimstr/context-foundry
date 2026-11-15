@@ -576,6 +576,37 @@ The [dated settings receipt](../../../docs/validation.md#owned-native-settings-q
 records the proper native red on `db47f71`, five current consumers, frozen
 compatibility and all eight gates on `6a9bb15`. Full startup admission remains open.
 
+**Selected Agent-refusal lifetime repair, 2026-11-15 — implementation pending.**
+The pinned SDK registers an abort callback before constructing its HTTPS request.
+A synchronous Agent refusal bypasses the transport's release path; an actual
+no-prompt host reaches Ready and then exits with an uncaught ReferenceError at
+the native timeout. A fixed native counterfactual instead destroys the request
+with the local refusal error and returns from Agent.addRequest. The constructor
+returns its failed request, the SDK's error handler can release its listener,
+and a second state response beyond the unmodified deadline succeeds. Retain both
+outcomes and the first controller's rejected missing-exit record. Source basis:
+oh-my-pi `24439066040e006eb08da7b204f0ac41c79d2de9`,
+`utils/connection-prewarm.ts::prewarmModelConnection` and
+`utils/cowork-fetch.ts::directFetch` (request construction and release).
+
+Repair the existing qualifier's known-route refusal at the request owner, keeping
+the original Agent queue uncalled and the TCP count zero. Do not catch or suppress
+uncaught exceptions, shorten the native timeout, synthesize a successful response,
+or change ordinary capture/v1. No additional module, transport or protocol is
+needed. Other transports and complete startup settlement remain open.
+
+First extend the actual owned capture-bridge conversation: after its initial
+native settings readback, cross the pinned 10-second deadline and require another
+state response with the same complete model before the first prompt. The existing
+guard must fail before any Count/Messages fixture call, with a reaped nonzero host
+and no successful trace. Then repair the refusal, require the full tool conversation,
+all current diagnostics including independent TCP controls, frozen compatibility,
+focused lint and all eight gates. Use the offline hour, 120-second cleanup reserve,
+one heavy job, 20 GiB disk floor and 8 GiB sampled individual RSS ceiling. Publish
+reviewed public changes and prune new build/duplicate extraction caches after exact
+readback. This repairs a demonstrated callback lifetime failure; it does not prove
+every owner settled or enable v2 admission, paid runs or signing.
+
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
 and a complete startup-owner inventory: catalog/discovery, credential refresh,
