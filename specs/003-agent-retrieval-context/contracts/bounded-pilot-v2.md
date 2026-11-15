@@ -505,6 +505,36 @@ qualification, frozen compatibility and eight gates on `5d9aa0e`. The unsupporte
 configuration is absent from active code; the complete admission boundary below
 remains unimplemented.
 
+**Selected Agent-route refusal, 2026-11-15 — not yet qualified.**
+Native primitive controls on the pinned current artifact observe one accepted
+owned-loopback connection for stock namespace HTTPS and zero for both earlier
+Agent hooks, with identical native model metadata. Select `Agent.addRequest`,
+the earlier boundary. Replace the existing owned qualifier's end observation with
+a metadata-only refusal there; ordinary capture remains unchanged. This removes
+the known SDK route from socket construction without selecting a proxy, changing
+the canonical model or adding a product configuration/transport owner.
+
+First commit a durable native test against the existing observation-only preload.
+Use the actual launcher to obtain its owned configuration, then exercise the same
+embedded preload in pinned SDK controls with an independent raw TCP listener and
+one exact numeric-loopback sandbox exception. Stock HTTPS must connect once;
+guarded namespace HTTPS with a custom Agent must connect zero times. Compare the
+complete native model digests and require normal exit, no prompt and private
+bounded metadata. An explicit raw `Bun.connect` control must still connect once
+without becoming a claimed observed route: this guard cannot grant general
+transport coverage or startup admission. The original preload must fail at the
+guarded connection-count assertion before the implementation changes.
+
+Then require that test, all current-host diagnostics (including the actual capture
+bridge's strict tool conversation, model digest, native usage and trace controls),
+the complete nonignored frozen-host suite, focused lint and all eight local gates.
+Keep primitive controls, red and green evidence. One offline hour covers these
+checks with a 120-second cleanup reserve, one heavy job, a 20 GiB disk floor and
+8 GiB sampled individual RSS ceiling. Publish reviewed public code/records, then
+prune the new build and duplicate SDK extraction caches after evidence readback.
+Full owner inventory, non-Agent routes, settlement and the shared-channel durable
+acknowledgment below remain required. No paid execution, signing or v1 change.
+
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
 and a complete startup-owner inventory: catalog/discovery, credential refresh,

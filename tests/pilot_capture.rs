@@ -15,6 +15,8 @@
 
 #[path = "pilot_capture/fixture.rs"]
 mod fixture;
+#[path = "pilot_capture/startup.rs"]
+mod startup;
 
 use std::path::{Path, PathBuf};
 
@@ -58,6 +60,133 @@ async fn current_host_owned_catalog_preserves_full_history() {
     assert_eq!(
         baseline["native_model_sha256"],
         "53bec6f047bbd7eeab26c93c1a6dd6c0e4ccc30d50a29d79e416c28692d5a027"
+    );
+}
+
+/// The embedded preload must stop the SDK's Agent route before an owned TCP
+/// listener accepts a connection. Raw sockets remain an explicit bypass control.
+#[tokio::test]
+#[ignore = "needs explicit CF_PILOT_CURRENT_OMP; no-provider current-host diagnostic"]
+async fn current_host_agent_refusal_has_independent_tcp_controls() {
+    use pilot_capture::host::{CatalogProfile, Host, HostEvent, HostSpec, RpcEvent};
+    use pilot_capture::protocol::{ChannelIdentity, ChildMessage, CloseReason, ParentMessage};
+    use std::time::Duration;
+    let omp = PathBuf::from(std::env::var_os("CF_PILOT_CURRENT_OMP").expect("explicit owned host"));
+    assert_eq!(
+        pilot_capture::sha256_hex(&std::fs::read(&omp).unwrap()),
+        pilot_capture::host::QUALIFICATION_OMP_SHA256
+    );
+    let e = env();
+    let base = std::fs::canonicalize(e._root.path()).unwrap();
+    // Obtain configuration from its real owner rather than duplicating provider
+    // inventory or adding a test-only network override to the product launcher.
+    let spec = HostSpec {
+        omp: omp.clone(),
+        root: base.join("actual host with spaces"),
+        workspace: e.workspace.clone(),
+        real_home: std::env::var_os("HOME").unwrap().into(),
+        deny: vec![base.clone()],
+        deny_literals: vec![],
+        identity: ChannelIdentity::new("startup-control".into(), "configuration".into()).unwrap(),
+        catalog: CatalogProfile::OwnedQualification,
+    };
+    let (host, mut events) = Host::launch(&spec).unwrap();
+    let config = std::fs::read(host.paths.agent.join("config.yml")).unwrap();
+    let models = std::fs::read(host.paths.agent.join("models.yml")).unwrap();
+    assert!(config.len() <= 16384 && models.len() <= 16384);
+    let ready = tokio::time::timeout(Duration::from_secs(30), async {
+        let (mut rpc, mut bridge) = (false, false);
+        while !(rpc && bridge) {
+            match events.recv().await.ok_or("startup EOF")? {
+                HostEvent::Rpc(RpcEvent::Ready) => rpc = true,
+                HostEvent::Bridge(inbound) if matches!(inbound.msg, ChildMessage::Ready { .. }) => {
+                    bridge = true
+                }
+                HostEvent::Rpc(RpcEvent::Other) => {}
+                _ => return Err("unexpected startup event"),
+            }
+        }
+        Ok(())
+    })
+    .await;
+    let _ = host
+        .send_bridge(
+            ParentMessage::Close {
+                reason: CloseReason::Completed,
+            },
+            vec![],
+        )
+        .await;
+    let (_, exit) = host.finish(events, Duration::from_secs(30)).await;
+    assert!(ready.is_ok_and(|v| v.is_ok()) && exit.normal && !exit.forced && exit.group_gone);
+    let mut reports = Vec::new();
+    for kind in ["stock", "guarded", "raw"] {
+        let root = base.join(format!("{kind} control with spaces"));
+        let report = startup::control(&omp, &root, &e.workspace, &config, &models, kind).await;
+        assert_owned_private_tree(
+            &root,
+            Some(Path::new(
+                "home/.omp/natives/18.18.1/pi_natives.darwin-arm64.node",
+            )),
+        );
+        if let Some(path) = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT") {
+            let path = PathBuf::from(format!(
+                "{}-startup-controls",
+                PathBuf::from(path).display()
+            ));
+            fixture_private_dirs(&path).unwrap();
+            fixture_private_write(
+                path.join(format!("{kind}.json")),
+                serde_json::to_vec_pretty(&report).unwrap(),
+            )
+            .unwrap();
+            if kind != "stock" {
+                fixture_private_write(
+                    path.join(format!("{kind}-startup.jsonl")),
+                    std::fs::read(root.join("startup.jsonl")).unwrap(),
+                )
+                .unwrap();
+            }
+        }
+        reports.push(report);
+    }
+    assert_eq!(
+        reports[0]["native_model_sha256"],
+        reports[1]["native_model_sha256"]
+    );
+    assert_eq!(
+        reports[0]["native_model_sha256"],
+        reports[2]["native_model_sha256"]
+    );
+    assert_eq!(reports[0]["connections"], 1);
+    assert_eq!(reports[0]["witness"]["outcome"], "native_error");
+    assert_eq!(reports[2]["connections"], 1);
+    assert_eq!(reports[2]["witness"]["outcome"], "raw_open");
+    assert_eq!(
+        reports[1]["connections"], 0,
+        "embedded Agent guard: {reports:?}"
+    );
+    assert_eq!(reports[1]["witness"]["outcome"], "owned_refusal");
+    assert_eq!(reports[1]["trace"]["observed_attempts"], 2);
+    assert_eq!(reports[2]["trace"]["observed_attempts"], 1);
+    for report in &reports[1..] {
+        assert!(
+            report["trace"]["rows"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|r| r["kind"] == "attempt")
+                .all(|r| r["transport"] == "agent_add_request")
+        );
+        assert_eq!(
+            report["probe_sha256"],
+            pilot_capture::sha256_hex(pilot_capture::host::QUALIFICATION_STARTUP_PROBE)
+        );
+        assert_eq!(report["trace"]["complete_startup_admission"], false);
+    }
+    assert_eq!(
+        pilot_capture::sha256_hex(&std::fs::read(&omp).unwrap()),
+        pilot_capture::host::QUALIFICATION_OMP_SHA256
     );
 }
 
@@ -819,9 +948,14 @@ fn current_startup_probe(bytes: &[u8]) -> Value {
                 "route",
             ],
         ) || row["kind"] != "attempt"
-            || !["global_fetch", "fetch_preconnect", "client_request_end"]
-                .iter()
-                .any(|x| row["transport"] == *x)
+            || ![
+                "global_fetch",
+                "fetch_preconnect",
+                "client_request_end",
+                "agent_add_request",
+            ]
+            .iter()
+            .any(|x| row["transport"] == *x)
             || !["http:", "https:"].iter().any(|x| row["scheme"] == *x)
             || !["anthropic_connection_prewarm", "shared_catalog", "other"]
                 .iter()
