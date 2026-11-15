@@ -64,11 +64,11 @@ async fn current_host_owned_catalog_preserves_full_history() {
     assert_eq!(baseline["native_warmup_deadline_readback"], true);
 }
 
-/// The embedded preload must stop the SDK's Agent route before an owned TCP
-/// listener accepts a connection. Raw sockets remain an explicit bypass control.
+/// Native controls for the Agent route and the original credential prefetch.
+/// Raw sockets remain a bypass; injected OAuth metadata is not OAuth integration.
 #[tokio::test]
 #[ignore = "needs explicit CF_PILOT_CURRENT_OMP; no-provider current-host diagnostic"]
-async fn current_host_agent_refusal_has_independent_tcp_controls() {
+async fn current_host_startup_owners_have_native_controls() {
     use pilot_capture::host::{CatalogProfile, Host, HostEvent, HostSpec, RpcEvent};
     use pilot_capture::protocol::{ChannelIdentity, ChildMessage, CloseReason, ParentMessage};
     use std::time::Duration;
@@ -192,6 +192,60 @@ async fn current_host_agent_refusal_has_independent_tcp_controls() {
             pilot_capture::sha256_hex(pilot_capture::host::QUALIFICATION_STARTUP_PROBE)
         );
         assert_eq!(report["trace"]["complete_startup_admission"], false);
+    }
+    let mut auth_model = None;
+    for kind in [
+        "auth-success",
+        "auth-late",
+        "auth-oauth",
+        "auth-unknown",
+        "auth-unsettled",
+        "auth-wrong-owner",
+        "auth-duplicate",
+        "auth-restart",
+    ] {
+        let root = base.join(format!("{kind} control with spaces"));
+        let report = startup::control(&omp, &root, &e.workspace, &config, &models, kind).await;
+        assert_owned_private_tree(
+            &root,
+            Some(Path::new(
+                "home/.omp/natives/18.18.1/pi_natives.darwin-arm64.node",
+            )),
+        );
+        assert_eq!(report["connections"], 0);
+        assert_eq!(
+            report["auth_sha256"],
+            pilot_capture::sha256_hex(pilot_capture::host::QUALIFICATION_STARTUP_AUTH)
+        );
+        if let Some(model) = &auth_model {
+            assert_eq!(&report["native_model_sha256"], model);
+        } else {
+            auth_model = Some(report["native_model_sha256"].clone());
+        }
+        let success = matches!(kind, "auth-success" | "auth-restart");
+        assert_eq!(
+            report["witness"]["outcome"],
+            if success { "sealed" } else { "refused" }
+        );
+        if success {
+            assert_eq!(
+                report["witness"]["summary"],
+                json!({"calls":1,"completed":1,"source_checks":1,"non_oauth_checks":1})
+            );
+        }
+        assert_eq!(
+            report["exit_code"],
+            if kind == "auth-restart" { 75 } else { 0 }
+        );
+        if let Some(path) = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT") {
+            let path = PathBuf::from(format!("{}-auth-controls", PathBuf::from(path).display()));
+            fixture_private_dirs(&path).unwrap();
+            fixture_private_write(
+                path.join(format!("{kind}.json")),
+                serde_json::to_vec_pretty(&report).unwrap(),
+            )
+            .unwrap();
+        }
     }
     assert_eq!(
         pilot_capture::sha256_hex(&std::fs::read(&omp).unwrap()),

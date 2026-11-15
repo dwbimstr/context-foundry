@@ -78,6 +78,7 @@ pub(super) async fn control(
     kind: &str,
 ) -> Value {
     use std::os::unix::process::CommandExt;
+    let auth = kind.starts_with("auth-");
     for dir in [
         root.to_path_buf(),
         root.join("home"),
@@ -93,7 +94,11 @@ pub(super) async fn control(
         ("agent/models.yml", models),
         (
             "bridge/witness.mjs",
-            include_bytes!("startup_witness.mjs").as_slice(),
+            if auth {
+                include_bytes!("auth_witness.mjs").as_slice()
+            } else {
+                include_bytes!("startup_witness.mjs").as_slice()
+            },
         ),
     ] {
         super::fixture_private_write(root.join(path), bytes).unwrap();
@@ -104,6 +109,13 @@ pub(super) async fn control(
         host::QUALIFICATION_STARTUP_PROBE
     };
     super::fixture_private_write(root.join("bridge/startup_probe.ts"), probe).unwrap();
+    if auth {
+        super::fixture_private_write(
+            root.join("bridge/startup_auth.ts"),
+            host::QUALIFICATION_STARTUP_AUTH,
+        )
+        .unwrap();
+    }
     let mut counter = TcpCounter::new();
     let policy = host::sandbox_policy(
         omp,
@@ -114,10 +126,14 @@ pub(super) async fn control(
         &[],
     )
     .unwrap()
-        + &format!(
-            "(allow network-outbound (remote ip \"localhost:{}\"))",
-            counter.addr.port()
-        );
+        + &if auth {
+            String::new()
+        } else {
+            format!(
+                "(allow network-outbound (remote ip \"localhost:{}\"))",
+                counter.addr.port()
+            )
+        };
     let mut command = tokio::process::Command::new(host::SANDBOX_EXEC);
     command
         .arg("-p")
@@ -240,10 +256,16 @@ pub(super) async fn control(
         }
     };
     let connections = counter.finish();
+    // SAFETY: signal zero only checks the owned process group after wait/reap.
+    let group_gone = unsafe { libc::kill(-pid, 0) } == -1
+        && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
     let stderr = errors.await.unwrap();
     super::fixture_private_write(root.join("stderr.log"), &stderr).unwrap();
     assert!(
-        !forced && exit.success() && stderr.is_empty(),
+        !forced
+            && group_gone
+            && exit.code() == Some(if kind == "auth-restart" { 75 } else { 0 })
+            && stderr.is_empty(),
         "native startup exit: {exit:?}"
     );
     let state = captured
@@ -264,7 +286,8 @@ pub(super) async fn control(
         trace
     };
     json!({"case":kind,"connections":connections,"witness":witness,
+        "auth_sha256":auth.then(|| pilot_capture::sha256_hex(host::QUALIFICATION_STARTUP_AUTH)),
         "native_model_sha256":pilot_capture::sha256_hex(&serde_json::to_vec(&state["model"]).unwrap()),
         "probe_sha256":pilot_capture::sha256_hex(probe),"trace":trace,
-        "normal_exit":true,"forced":false,"no_prompt":true,"provider_calls":0})
+        "normal_exit":exit.success(),"exit_code":exit.code(),"group_gone":group_gone,"forced":false,"no_prompt":true,"provider_calls":0})
 }
