@@ -109,7 +109,7 @@ pub(super) async fn control(
         omp,
         root,
         workspace,
-        &std::env::var_os("HOME").unwrap().into(),
+        &std::path::PathBuf::from(std::env::var_os("HOME").unwrap()),
         &[],
         &[],
     )
