@@ -431,7 +431,7 @@ records the original cache red, actual-host green, frozen-host compatibility and
 eight gates on `0b19098`. The complete early startup/settlement/parent-acknowledgment
 boundary below remains unimplemented and unfrozen.
 
-**Selected actual-bridge startup diagnostic, 2026-11-15 — implementation pending.**
+**Selected actual-bridge startup diagnostic, 2026-11-15 — implemented and locally qualified.**
 Make startup observation reproducible through the existing explicit owned-catalog
 qualifier on the pinned artifact, using the actual embedded capture bridge, custom
 API, xhigh setting and tool conversation. Install a hash-bound embedded preload
@@ -462,6 +462,12 @@ complete coverage from zero observed calls. Use the shared offline hour, 120-sec
 cleanup reserve, one heavy job, 20 GiB disk floor and 8 GiB sampled individual RSS
 ceiling. Publish reviewed changes, then prune new build intermediates while
 preserving runnable diagnostics and exact evidence. Paid runs and signing stay gated.
+
+The [dated actual-bridge receipt](../../../docs/validation.md#actual-bridge-startup-diagnostic--2026-11-15)
+records the committed missing-trace red, real spaced-root conversation, pre-prompt
+prefix, six trace mutation controls, frozen compatibility and eight gates on
+`1357756`. This accepts the diagnostic only; complete startup admission remains
+unimplemented.
 
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association

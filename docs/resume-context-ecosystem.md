@@ -399,6 +399,16 @@ and dated paragraphs below are history.
     The findings through `0cd6514` are published with full fresh-clone readback.
     Seven redundant native-library copies are removed after byte/open-file checks;
     all other evidence and the retained library remain exact. No Rust cache is built.
+    The existing owned qualifier now installs a hash-bound startup diagnostic through
+    the actual launcher/capture bridge, with relative preloading and workspace
+    restoration for a host root containing spaces. The actual pre-prompt trace
+    contains the classified HTTPS HEAD; strict conversation/native-usage checks,
+    six malformed-trace controls, frozen compatibility and all eight gates pass
+    on `1357756`
+    ([actual-bridge receipt](validation.md#actual-bridge-startup-diagnostic--2026-11-15)).
+    This qualifies observation and an exact pre-prompt prefix, not before-IO
+    enforcement or settlement. The diagnostic file is not the product journal;
+    the shared-channel durable startup acknowledgment still remains to implement.
     The settlement finding/design through `2238253` is published with full fresh-clone
     readback; ten redundant native-library copies are removed after byte/open-file
     checks, preserving all other evidence and the prior retained library.

@@ -1,5 +1,95 @@
 # Validation
 
+## Actual bridge startup diagnostic — 2026-11-15
+
+**Qualified at the selected no-provider diagnostic boundary; full startup admission
+remains HOLD.** Contract/test `404b359` requires the missing trace before launcher
+implementation `8b0d438`; `1357756` adds the pre-prompt prefix check and is the
+source for the complete acceptance run. The current host remains owned OMP
+18.18.1, SHA-256
+`ce80099f10c5ea4367523767230cb5b920f30cc139b9cf8758c1cc4b2f1f9409`.
+
+The existing explicit owned-catalog qualifier now materializes a hash-verified
+embedded preload and binds its SHA in the launch record. It starts from the
+private host root using a fixed relative preload path, then restores the canonical
+workspace. The actual test uses a host root containing spaces. Ordinary capture
+still selects HostDefault, does not materialize a preload or trace and starts in
+the workspace; its frozen compatibility is exercised separately. The bridge
+source, v1 wire/protocol/pin/contract and Cargo dependencies remain unchanged.
+No proxy setting or startup admission mode is enabled.
+
+The preload records at most 20 attempts and 8 KiB of metadata in the owned host
+root: installation/runtime/workspace restoration, normalized destination/method/
+route observations and normal exit. Global fetch/preconnect are refused locally;
+ClientRequest.end is observed and delegated under the existing network denial.
+This observation is not a before-IO guard. Only the Host destination is read from
+headers; bodies, other headers, query strings, credentials and exception text are
+absent from the trace. The explicit diagnostic file is not the product journal
+and grants no readiness, budget or provider authority. A product observer still
+needs the proposed shared channel/sequence owner and durable parent acknowledgment.
+
+The freshly pinned actual-host red completes two generations, all four owned TLS
+fixture POSTs, the authoritative one-model cache and all 29 native-usage mutation
+controls, then fails solely for the missing trace in **6.943 seconds**. An earlier
+wrapper captured its source pin before the test commit finished; its final
+source-binding check rejects that attempt. The original receipt is retained and
+the red rerun uses the committed pin without resetting the shared deadline.
+
+All **three** current-host diagnostics pass on `1357756`. In the owned qualifier,
+the actual embedded bridge, custom API, xhigh setting, read tool and complete
+two-generation conversation pass unchanged strict request validation. Both native
+assistant entries reconcile the four scripted usage categories/totals and reject
+all 29 corruptions. These are fixture counters, not provider economics. The SDK
+cache remains authoritative with one canonical model. The launch record binds
+preload SHA-256 `f0f81928c6bb8d2b5ca22eaf71c31b7f0a2cc373b7adcdeabfb3c1eba8251754`.
+
+The actual-profile trace contains installation, one classified Anthropic `HEAD`
+through ClientRequest.end and exit 0. A complete byte prefix saved before the
+first user prompt contains that HEAD, and the final trace starts with those exact
+bytes. No later attempts are observed during this fixture conversation. Six
+malformed/partial trace controls reject: absent exit, wrong exit code, sequence
+gap, forbidden body field, wrong runtime and duplicate terminal row. The final
+trace is **291 bytes**, SHA-256
+`d415a72846a7abb66e111e6ad3ba990b51c3133c4d7fdbaf0277f6ef4619393f`;
+the pre-prompt prefix is **253 bytes**, SHA-256
+`a2f4326449f9a81f90d5dbc7886ec7f935d5685294bff8c209ec6b73dd48b436`.
+The initial three-test check precedes the prefix assertion; the strengthened
+check reruns the actual consumer after that test change. Both are retained.
+
+The complete nonignored frozen-host suite passes **33/0/5 ignored** in **312.638
+seconds**, and focused lint passes. All **eight gates pass** on `1357756` in
+**844.048 seconds**: default outer harness totals are **1,319 passed, 0 failed,
+35 ignored**; pilot unit totals are **102 passed, 0 failed, 1 ignored**.
+Child-process summaries remain separate in the readback.
+
+Implementation is [`Host::launch`](../src/pilot_capture/host.rs), the embedded
+[`startup probe`](../src/pilot_capture/startup_probe.ts) and the native
+[`qualification`](../tests/pilot_capture.rs), owned by 003 T006. The previous
+[HTTPS controls](#native-https-startup-boundaries--2026-11-15) establish why end
+observation cannot grant admission. Unlike that trusted-observer experiment,
+this check runs through the actual Rust launcher and capture bridge/profile.
+It still observes only the named hooks after their installation, not every owner,
+non-fetch route, callback or timer. Zero observed later calls does not establish
+permanent silence or settlement. The registry-wait counterexample and full
+before-IO/settlement/durable-prefix acknowledgment requirements remain open.
+
+Private evidence: `runs/pilot-bridge-startup-2026-11-15/`, with source/host pins,
+red and green raw requests, native sessions/usage/cache readback, pre-prompt and
+final trace bytes, resource/lifecycle receipts and the in-session readback.
+The quoted-path and file-URI preflights fail to execute the spaced-path sentinel;
+the relative-path sentinel exits 73 and proves workspace restoration. Original
+failures remain. The shared offline hour includes 120 seconds reserved for cleanup,
+one heavy job, a 20 GiB disk floor and an 8 GiB sampled individual RSS ceiling.
+Qualification/readback finishes at **2309.363 seconds**. Across all monitored
+commands, maximum sampled individual RSS is **2029.094 MiB** and minimum observed
+free disk is **62.674 GiB**. Argument-preflight resource peaks are not measured.
+Samples are lower bounds on actual peaks, not global/GPU memory measurements.
+All qualified commands exit naturally with observed processes gone. External
+networking is denied; all Count/Messages traffic uses the owned numeric-loopback
+TLS fixture and synthetic key. No real credential access, model download,
+training, provider spend, owner signing identity, tags or release publication is
+used. V2 remains unfunded/unfrozen; paid runs, signing and release remain gated.
+
 ## Native HTTPS startup boundaries — 2026-11-15
 
 **Qualified counterexamples and one narrow routing control; complete startup
