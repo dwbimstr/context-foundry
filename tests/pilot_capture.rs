@@ -487,6 +487,8 @@ async fn qualify_current_host_history(tool_followup: bool) {
         "validator_fault":admitted.as_ref().and_then(|r|r.as_ref().err()).map(ToString::to_string),
         "qualified_requests":if tool_followup {requests.len()} else {1},"missing_completion_control_rejected":negative_control,
         "synthetic_observations":observations,"synthetic_usage_is_not_provider_usage":tool_followup,
+        "owned_fixture_http_requests":fixture.as_ref().map_or(0,|fx|fx.seen().len()),
+        "external_provider_calls":0,
         "normal_exit":exit.normal, "forced":exit.forced, "group_gone":exit.group_gone,
         "stderr_bytes":exit.stderr_bytes, "provider_calls":0, "v1_host_admission":false});
     if let Some(out) = evidence_root {
