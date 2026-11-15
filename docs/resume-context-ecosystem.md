@@ -470,6 +470,15 @@ and dated paragraphs below are history.
     are pruned after exact checks, retaining runnable red/green diagnostics and
     all other evidence. All five current native diagnostics pass directly after
     cleanup without Cargo; the lifetime receipt owns counts and retention details.
+    The fixed read/edit qualifier now disables project MCP discovery before SDK
+    construction, excluding unadmitted project commands. An actual-launcher marker
+    control changes from both profiles executing to ordinary-only execution;
+    existing disk-edit/model checks, all five current consumers, frozen compatibility
+    and eight gates pass on `ecdf962`
+    ([MCP exclusion receipt](validation.md#fixed-qualifier-project-mcp-exclusion--2026-11-15)).
+    Future admitted MCP/task-context integration remains required. General MCP drain,
+    other startup owners and durable acknowledgment are still open; v2 remains
+    unfunded/unfrozen and paid runs/signing stay gated.
     The settlement finding/design through `2238253` is published with full fresh-clone
     readback; ten redundant native-library copies are removed after byte/open-file
     checks, preserving all other evidence and the prior retained library.

@@ -615,7 +615,7 @@ The [dated lifetime receipt](../../../docs/validation.md#native-warm-up-refusal-
 records the actual-bridge red on `91d0c34`, rejected destruction candidate, native
 listener removal, all current/frozen consumers and eight gates on `61a286f`.
 
-**Selected project MCP exclusion for the fixed qualifier, 2026-11-15 — implementation pending.**
+**Selected project MCP exclusion for the fixed qualifier, 2026-11-15 — implemented and locally qualified.**
 The selected diagnostic profile exposes only read/edit tools and has no admitted
 project MCP server. Actual SDK controls nevertheless execute an owned project
 MCP command with those tool names; disabling the existing
@@ -648,6 +648,10 @@ This does not remove the pilot's future admitted MCP/task-context integrations o
 accept their outcomes. Those require an explicit server/tool inventory and fresh
 qualification; no general MCP cancellation, transport coverage, complete startup
 settlement or parent acknowledgment is claimed. V2 remains unfunded/unfrozen.
+
+The [dated exclusion receipt](../../../docs/validation.md#fixed-qualifier-project-mcp-exclusion--2026-11-15)
+records the actual marker red on `b83a696`, native setting controls, all current/
+frozen consumers and eight gates on `ecdf962`.
 
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association

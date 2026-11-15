@@ -1,5 +1,92 @@
 # Validation
 
+## Fixed qualifier project MCP exclusion — 2026-11-15
+
+**The fixed read/edit qualifier excludes project MCP commands before SDK
+construction; full startup admission remains HOLD.** Source is `ecdf962` under
+003 T006's existing [startup contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission).
+Ordinary capture, frozen v1 and future admitted MCP/task-context integrations
+retain their separate contracts. This is not a general MCP-disable policy.
+
+The pinned current artifact exposes the actual MCPManager singleton, its settings
+owner and the AuthStorage class via the public AI entry point. The inventory's
+class identity/private-agent-directory checks pass in **3.356 seconds**; the narrow
+auth-storage import is unavailable, and the supported root export matches the
+actual instance. The observer inspects namespace/method metadata without invoking
+key lookup APIs. Credential prefetch lifetime is still unqualified. The default RPC
+profile has project MCP enabled and a 250-ms startup window; active read/edit tool
+names do not exclude that startup owner.
+
+A native configuration pair completes in **6.647 seconds** with no prompt or
+provider request. Its private project .mcp.json names an owned /usr/bin/touch
+command whose only effect is a marker inside its own workspace. With the flag
+enabled the marker exists and the actual manager knows one server; with
+`mcp.enableProjectConfig=false` no marker exists and it knows zero. Both exits are
+normal with empty stderr and the same complete model. The witness does not
+implement an MCP handshake: connected-server counts are zero in both cases.
+This demonstrates command execution/exclusion, not successful MCP integration.
+
+The source basis is oh-my-pi `24439066040e006eb08da7b204f0ac41c79d2de9`:
+[`cfgMcpEnableProjectConfig`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/mcp/settings.ts#L9)
+(blob `23e41ba77c247256287ec38a0c46e53ff5dfaa45`) and
+[`loadAllMCPConfigs`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/mcp/config.ts#L103)
+(blob `1e4f839bd63c630e8d7fa79dbb58bc6de881c50a`). Project entries are filtered
+before deduplication/connection; user-level entries retain their own eligibility.
+The related [scope/dedup tests](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/test/mcp-config-scope-dedup.test.ts#L67)
+were inspected, not run. Source association is not reproducible-build proof.
+`MCPManager.disconnectAll` aborts and clears pending maps; that source alone does
+not prove every outstanding promise/callback joined. No empty snapshot or late
+disconnect is used as settlement evidence.
+
+The [actual-launcher settings regression](../tests/pilot_capture.rs) is extended
+with this project-command witness. Source `b83a696` first fails solely at the
+owned exclusion assertion in **93.295 seconds**, including its offline
+build: both ordinary and owned profiles execute the marker. The existing disk-edit
+controls still report **[true, false]**, complete model digests remain exact and
+both process groups are normally reaped with empty stderr. No prompt is sent.
+Workspace private-mode checks pass, including the actual command's output.
+The expected-red executable and native reports remain retained.
+
+The repair changes one owned-configuration format string in
+[`Host::launch`](../src/pilot_capture/host.rs), setting the existing project MCP
+flag before construction. HostDefault's configuration/digest stays identical;
+the owned launch digest becomes
+`438b16919108fe971ffb7439c040be5baf4b77670800efa5400f300db2e8a2e2`.
+Both materialized configuration checks and actual consumers bind those bytes. No new protocol,
+module, server implementation, subprocess wrapper or configuration owner is added.
+
+All **five current-host diagnostics pass** on `ecdf962` in **82.309 seconds**.
+The launcher witness now reports **[true, false]** for ordinary/owned. Later
+disk-edit assertions, complete native model identities and the post-deadline
+two-generation tool conversation remain green. All four owned fixture POSTs,
+synthetic native usage totals and 29 corruptions, authoritative one-model cache,
+six trace mutations and stock/guard/raw TCP counts **[1, 0, 1]** pass. Synthetic
+usage counters do not establish provider economics.
+
+Frozen compatibility passes **33/0/7 ignored** in **287.474 seconds**;
+focused lint passes. All **eight local gates pass** on `ecdf962` in
+**808.180 seconds**, including actual Rust **1.90.0**. Default outer totals
+are **1,319/0/35 ignored**; pilot units are **102/0/1 ignored**. The 21 custom recovery
+successes and nested child summaries stay separate. This extends the existing
+profile regression; no existing assertion/deadline is relaxed or ignore added.
+
+Private evidence is `runs/pilot-startup-owners-2026-11-15/` and
+`runs/pilot-project-mcp-2026-11-15/`, including the owner API inventory, native
+configuration controls, actual-launcher red/green, source blobs and command/resource
+receipts. The in-session qualification readback finishes at
+**1463.411 seconds** within its offline hour, with one heavy
+job, 120-second cleanup reserve, 20 GiB disk floor and 8 GiB sampled individual
+RSS ceiling. Maximum sampled individual RSS is **2042.531 MiB**;
+minimum observed free disk is **46.800 GiB**. These samples
+do not establish global/GPU memory or hard resource enforcement.
+
+The qualifier has no admitted project MCP server. Future declared MCP/task-context
+integration remains required and needs an explicit server/tool inventory and fresh
+qualification. General MCP cancellation, other startup owners, native-timer and
+callback settlement, transport coverage and durable parent acknowledgment remain
+open. V2 stays unfunded/unfrozen; paid runs, signing and release remain gated.
+No provider spend, real provider credential or model download is used.
+
 ## Native warm-up refusal lifetime repair — 2026-11-15
 
 **The known Agent refusal now completes through the SDK's request error path;
