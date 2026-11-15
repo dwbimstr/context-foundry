@@ -75,7 +75,8 @@ interface RequestMetadata {
 	path?: string;
 	method?: string;
 	getHeader(name: string): unknown;
-	destroy(error: Error): unknown;
+	destroy(): unknown;
+	emit(event: "error", error: Error): unknown;
 }
 for (const prototype of new Set([http.Agent.prototype, https.Agent.prototype])) {
 	if (typeof prototype.addRequest !== "function") fail();
@@ -88,10 +89,14 @@ for (const prototype of new Set([http.Agent.prototype, https.Agent.prototype])) 
 			if ((scheme !== "http:" && scheme !== "https:") || typeof host !== "string") fail();
 			const port = header === undefined && options.port !== undefined ? `:${options.port}` : "";
 			observe("agent_add_request", `${scheme}//${host}${port}${request.path ?? "/"}`, request.method);
-			if (typeof request.destroy !== "function") fail();
-			// Let request construction finish so the SDK can attach its error
-			// handler and release its preinstalled abort listener. Never queue IO.
-			request.destroy(new Error("CF_QUALIFICATION_STARTUP_REFUSED"));
+			if (typeof request.destroy !== "function" || typeof request.emit !== "function") fail();
+			// Bun's socketless request does not surface destroy(error). After
+			// construction, retire it and deliver the refusal to the SDK's error
+			// handler so it releases its abort listener. Never queue network IO.
+			queueMicrotask(() => {
+				request.destroy();
+				request.emit("error", new Error("CF_QUALIFICATION_STARTUP_REFUSED"));
+			});
 		},
 	});
 }
