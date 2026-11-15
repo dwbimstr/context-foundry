@@ -281,7 +281,17 @@ pub(super) async fn control(
         Value::Null
     } else {
         let bytes = std::fs::read(root.join("startup.jsonl")).unwrap();
-        let trace = super::current_startup_probe(&bytes);
+        if auth && let Some(path) = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT") {
+            let path = std::path::PathBuf::from(format!(
+                "{}-auth-controls",
+                std::path::PathBuf::from(path).display()
+            ));
+            super::fixture_private_dirs(&path).unwrap();
+            super::fixture_private_write(path.join(format!("{kind}-startup.jsonl")), &bytes)
+                .unwrap();
+        }
+        let trace =
+            super::current_startup_probe_exit(&bytes, if kind == "auth-restart" { 75 } else { 0 });
         assert_eq!(trace["valid"], true);
         trace
     };

@@ -1164,6 +1164,11 @@ async fn qualify_current_host_history(
 
 /// Diagnostic-format validation only; this never establishes owner coverage or admission.
 fn current_startup_probe(bytes: &[u8]) -> Value {
+    current_startup_probe_exit(bytes, 0)
+}
+
+/// Negative native controls name their expected exit; ordinary capture keeps zero.
+fn current_startup_probe_exit(bytes: &[u8], expected_exit: u8) -> Value {
     let invalid = || json!({"valid":false});
     if bytes.len() > 8192 || bytes.last() != Some(&b'\n') {
         return invalid();
@@ -1188,7 +1193,7 @@ fn current_startup_probe(bytes: &[u8]) -> Value {
         || rows[0]["workspace_restored"] != true
         || !keys(rows.last().unwrap(), &["sequence", "kind", "code"])
         || rows.last().unwrap()["kind"] != "exit"
-        || rows.last().unwrap()["code"] != 0
+        || rows.last().unwrap()["code"] != expected_exit
     {
         return invalid();
     }
