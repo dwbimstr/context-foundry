@@ -651,6 +651,9 @@ and dated paragraphs below are history.
     now joins original reload/rescope/save work and the original CLI auth/settings
     link before the startup HOLD record. Native held/error/late-start controls and
     all five persistence cases pass; the receipt separates fresh gates and exact reuse.
+    The settings fix/records are published with full fresh-clone readback. New
+    build/MSRV/SDK caches are pruned; retained units, channel/startup cases and
+    both legacy-source consumers pass directly afterward. Restoration inputs remain.
     Auth-store/OAuth lifetime, telemetry/update/logging, trusted-extension and
     daemon-presence ownership still need complete integration before the full
     inventory and prefix acknowledgment/Ready echo. Admission remains HOLD.

@@ -33,8 +33,9 @@ send no prompt, exit normally and leave no owned group. The watching positive
 control changes only its synthetic retry setting; it is not the selected profile.
 
 The separate startup-only host is pinned at `bd77411fd9dc4385f4b4e5674f6c593ab44e997780c1eb474be18a1c1dad071c`. All **10,329**
-source/native inputs are hashed before and after compilation, and exact restoration
-from the retained B5 master, overlays and native master is verified. Applying the
+source/native inputs are hashed before and after compilation. Every restoration
+input in the retained B5 master, overlays and native master is hash-verified;
+reconstruction/reinstallation has not been rerun after pruning. Applying the
 public patch reproduces its **four** changed/new files byte for byte. The three
 capture host pins remain unchanged. SDK evidence is **247/0** across nine files;
 the final formatted five-test owner suite passes again with type checking across
@@ -90,8 +91,24 @@ remain exact. No rejected candidate is executed, selected or published.
 Their stores, models, source and raw evidence remain intact. This is not a
 physical-reclamation claim. The source/dependency tree and **five** duplicate native
 libraries are also pruned after exact restoration/open-file checks; **249** other
-stage files remain exact. New Rust-cache cleanup and retained replay are recorded
-below when completed. Original user untracked files remain byte-identical.
+stage files were exact at that checkpoint; the later native-reference repair above
+has its own before/after manifest receipt. Original user untracked files remain
+byte-identical.
+
+Publication through `dc9720743530aa7d50f5a2cb9cd239304970b575` passes remote-head/main checks and full fresh
+HTTPS clone readback of **431** tracked files, including type, executable mode
+and bytes. No CI run is observed for that head; main remains
+`d94b013e3c638276f6afba49f80194776e294fbb`. The final record-only update is checked
+separately in the private publication receipt. New Rust build/MSRV trees are then
+removed after open-file/retained-executable checks, reducing directory allocation by
+**3,485,552,640 bytes**; **499** other stage files remain exact.
+Direct replay without Cargo/build caches passes **112/0** units (**1** ignored),
+seven channel cases, all five startup persistence cases and both legacy-source
+consumers. The normal nine-record journal still ends in HOLD. Every replay command
+exits 0 with no owned process remaining. The replay cleanup verifies **553** other
+files exactly. `retained-green.json`, `retained-unit.json`, `cleanup-build-result.json`
+and `retained-execution.json` bind this later runnable evidence. SDK checks were
+run before pruning; the source restoration recipe and its verified inputs remain.
 
 Private evidence/restoration: `runs/pilot-settings-lifecycle-2026-11-16/`, including
 `protocol.json`, guarded command receipts, `native-settings-readback.json`,
