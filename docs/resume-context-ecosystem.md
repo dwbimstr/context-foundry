@@ -643,6 +643,10 @@ and dated paragraphs below are history.
     pass; the receipt separates exact-input default-gate reuse and the disk-guard stop.
     Complete catalog/discovery ownership, daemon-presence classification and remaining
     lifecycle owners still need integration before the full prefix acknowledgment.
+    The restricted-owner fix/records are published with full fresh-clone readback.
+    New build/MSRV trees and duplicate native libraries are pruned; units, channel,
+    startup persistence controls and both legacy-source consumers pass directly
+    from retained binaries afterward. Exact source restoration inputs remain.
     Complete inventory/lifecycle evidence
     and the full prefix acknowledgment/Ready echo remain open; admission stays HOLD.
     Refusal integration/records are published with full fresh-clone readback after

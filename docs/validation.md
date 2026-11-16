@@ -103,7 +103,35 @@ the stopped attempt is reported separately above. Sampling is not a global/GPU q
 Review is in-session. No provider call, spend, model acquisition, release signing,
 workflow dispatch or main/release change occurs.
 
-Publication, final cache retirement and retained replay are recorded below when finished.
+Implementation and acceptance records are pushed through `633fc9b` to
+`experimental/context-ecosystem`. A fresh HTTPS clone passes full type/mode/byte
+readback of all **429** tracked files; zero CI runs are observed. Eight public
+code/test/reference/record paths are included. Main remains `d94b013`; private
+corpora, tasks, models, credentials and evidence are not published.
+
+After publication, open-file and exact-retention checks remove this round's Rust
+build/MSRV trees and **7** redundant native-module copies;
+**615** other files remain exact. Allocation falls from
+**4,745,904,128** to **459,657,216 bytes** at this phase.
+The source artifact, original master, exact restoration inputs, runnable unit and
+integration executables, licenses and raw successful/failed receipts remain.
+Direct replay without Cargo, SDK dependencies or either build tree passes all
+**109** pilot units (**1** ignored), all seven channel cases, the three startup/HOLD/
+persistence cases and **both** legacy-source consumers. The source conversation
+still rejects **29** usage and **25** trace mutations. SDK tests/type checks are
+pre-prune evidence; they are not claimed as rerun after dependency retirement.
+
+Post-replay cleanup verifies **667** other files exactly and
+removes **0** new duplicate native libraries. Combined directory-allocation
+reduction across the three cleanup phases is **5,868,351,488 bytes**; physical APFS
+reclamation is not inferred. Target/runs/datasets allocations are now
+**3,641,344 / 11,297,955,840 / 34,715,725,824 bytes**.
+The original three user files and required data/model/backup inputs remain.
+Post-cleanup readback finishes at **4635.463 s** within the same 90-minute round.
+Private receipts include `publication-fix.json`, `cleanup-build-result.json`,
+`retained-execution.json`, `cleanup-replay-result.json` and
+`post-cleanup-readback.json`. The wrap-up goal remains active; complete startup
+admission, paid runs and signing retain their existing gates.
 
 ## Source-owned durable startup refusal — 2026-11-16
 
