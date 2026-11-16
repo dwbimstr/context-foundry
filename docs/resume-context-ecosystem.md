@@ -591,6 +591,10 @@ and dated paragraphs below are history.
     original SQLite wrapper to close synchronously. Actual-bridge red/green,
     active/retired/queued controls, all current native consumers and frozen33/0/7
     pass on `3f972c9` ([retirement receipt](validation.md#fixed-profile-original-auth-retirement--2026-11-16)).
+    Retirement repair/tests/records through `34c574c` are published with
+    full fresh-clone readback. Generated build/MSRV and five duplicate libraries
+    are pruned; all five current native consumers pass directly from the retained
+    executable. The retirement receipt owns cache/evidence and reuse scope.
     Four affected checks are fresh, with four unchanged default-feature gates reused
     on exact inputs. This excludes unused native credential reconfiguration only
     for this fixed profile; physical FD release and general OAuth drain are not

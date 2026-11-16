@@ -74,6 +74,37 @@ parent acknowledgment remain open. No real provider request, model download or
 spend; paid trials, release signing and release publication remain gated.
 v2/T006 stays unfunded/unfrozen and execution locked.
 
+The qualified repair/tests/records through `34c574c` are published to
+experimental; a fresh clone matches all **420 tracked paths** by type, executable
+mode and bytes. Main remains `d94b013`; head uses `[skip ci]`, with no workflow
+dispatch, release signing, release/tag or paid run. Verified generated build/MSRV
+allocation falls from **3,480,743,936** to **35,651,584 bytes**, removing
+**10,430 generated files** while retaining one
+private runnable 40-test executable and exact hashes of **223
+other stage files**. Red source and raw receipts remain; no dedicated red executable
+is claimed. Five completed probe-library copies are removed after exact master
+comparison and open/mapped-use checks; **179 other
+preflight files** stay exact. Combined reported allocation reduction is
+**4,000,653,312 bytes (3.726 GiB)**;
+physical APFS reclamation is not inferred.
+
+All five current native consumers pass **directly without Cargo after cleanup** in
+**580.219 seconds**: first request, owned two-generation
+conversation/native usage, settings/MCP isolation, all owner controls and tool
+follow-up. The actual bridge still retires auth before Ready; active/retired/queued
+controls, initial/queued joins, future exclusion, model identity, **23** diagnostic
+mutations and **29** native usage mutations remain checked. The owner cases retire
+**47** verified per-case libraries after reaping. Executable digest and 40-test
+inventory match; source, earlier evidence and user-owned untracked bytes stay exact.
+Final allocation readback: target **92,450,816**,
+runs **7,686,852,608**, datasets
+**34,715,725,824 bytes**. Private evidence,
+archives, models, native masters, prepared stores and corpus/oracle/holdout inputs
+remain local. Qualification, publication, cleanup and replay remain within the
+stated hour. Remaining startup/transport/acknowledgment gates stay open; no physical
+FD-release, general OAuth-drain or full admission claim. Paid runs and release
+signing remain gated.
+
 ## Original native settings-policy chain — 2026-11-16
 
 **The CLI's original reserve-policy continuations are identified and joined on
