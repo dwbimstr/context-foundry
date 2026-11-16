@@ -57,6 +57,27 @@ Samples are not global/GPU quotas. Private evidence is
 change or fresh Rust-gate run is claimed. Paid runs, release signing and T006/v2
 execution remain gated; complete startup admission stays HOLD.
 
+Feasibility records are published first as `7a94eaf`, with full fresh-clone
+type/mode/byte readback of all **420** tracked paths. Two generated dependency
+cache trees, the download ZIP, one byte-identical unqualified build and four
+duplicate native libraries are then pruned after exact/open-file checks.
+**10,617** other retained files remain exact, including source inputs and both
+runnable builds; the owned-directory allocation reduction is **1,981,460,480
+bytes**. Required models, datasets and the canonical native library are untouched.
+
+All three controls pass directly from the retained artifacts after cleanup in
+**40.647 seconds** of command receipts. These stricter replays wait at least eleven
+seconds after observing the original request before their second equal-model
+readback, so they cross its native ten-second deadline. Baselines still enter
+early and the candidate still waits. Three newly extracted library copies are
+then removed after exact/open-file checks; **10,709** other retained files remain
+exact. No Cargo build or provider call is involved. The readback completes at
+**1763.175 seconds** within the original 45-minute bound. Target/runs/datasets
+allocations are **3,641,344 / 8,551,362,560 / 34,715,725,824 bytes**. Directory
+allocation reductions are not physical APFS reclamation measurements. Detailed
+plans, resource receipts, `REBUILD.md` and `post-cleanup-readback.json` remain in
+the private feasibility root.
+
 ## Wrap-up gate and cache readback — 2026-11-16
 
 **The requested stateless-host repair and subsequent qualified fixes are already

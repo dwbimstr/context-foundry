@@ -612,6 +612,10 @@ and dated paragraphs below are history.
     different artifact before launch. The next investigation is ownership across
     all five SDK warm-up sites and success/error exits, followed by a separately
     bound profile's real consumers. Current/frozen pins and paid/signing gates remain.
+    Feasibility records are published with full fresh-clone readback. Generated
+    dependency and duplicate extraction caches are pruned, preserving source and
+    both runnable builds; all three stricter native-deadline controls pass after
+    cleanup. The linked receipt owns limits, corrected clock and retention details.
     Marketplace repair/records through `467bd45` are published
     with full fresh-clone readback. New build/MSRV cache is pruned after exact and
     open-file checks; runnable red/green and other evidence remain. All five current
