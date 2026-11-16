@@ -1,5 +1,118 @@
 # Validation
 
+## Fixed-profile native logging quiescence — 2026-11-15
+
+**The owned qualifier retires the native buffered logger and joins its queued
+retention callback before capture Ready; full startup admission remains HOLD.**
+Qualified source `a989a1f` implements the selected
+[startup-owner contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission).
+Ordinary capture/frozen v1 retain their logging. No provider, signing or release
+permission is added.
+
+The associated native logger owns a one-second unref'd file-flush timer and a
+separate unref'd retention immediate. Three no-prompt native controls establish
+actual handles and bytes. Enabled logging writes both synthetic markers and the
+scoped timer fires. Native setTransports(false/false) flushes the first marker and
+cancels that exact timer, but returns with retention still pending. After one
+native immediate turn, retention has actually run and the observer sees no pending
+handle. Later SDK logging writes no second marker in either disabled case. The
+complete native model matches across cases, both state readbacks succeed, stderr
+is empty and all hosts exit normally. Console was already off in these RPC cases;
+this is not console-on transition evidence. A first observer missed the lazy
+constructor because it watched only the setter; its rejected run is retained.
+The corrected observer includes construction on the first record.
+
+A source census verifies **6,816 regular program/manifest Git blobs** (83,915,886
+bytes) at oh-my-pi **24439066040e006eb08da7b204f0ac41c79d2de9**. The literal
+production reconfiguration reference is the separate auth-broker CLI's runServe;
+this RPC profile does not run it. Literal-reference census is not whole-program
+absence proof. A bounded full-archive transfer stopped at 64 MiB; the incomplete
+cache was removed after its digest/limit record. A filtered Git fetch and sparse
+program checkout avoid asset blobs, with hooks, filters and submodule recursion
+disabled. No source from this checkout was executed.
+
+Source owners are
+[logger.ts::setTransports/schedulePruneStaleProcessLogs](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/utils/src/logger.ts#L544)
+(blob **22c731efb1939c584f091d943338f31db3083071**),
+[RotatingFileSink::flush/close](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/utils/src/logger/rotating-file.ts#L133)
+(blob **a927106076e5afa3ac89d983f5b375c1e1382649**). The upstream
+[logger-contract-probe.ts](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/utils/test/fixtures/logger-contract-probe.ts#L192)
+is a source test reference, not executed here. The retirement callback uses synchronous file
+operations; close is best-effort and these healthy marker writes are not log
+durability/power-loss proof. Source association is not reproducible-build proof.
+Native evidence uses the pinned OMP 18.18.1 / Bun 1.4.4 artifact.
+
+The actual artifact rejects reassignment of read-only/non-configurable Bun.plugin
+and redefinition of the warm-up module export. Their initial failure and normal
+readback remain private. The supported logger sink does observe the original
+warm-up catch, its next microtask and disposer even with file logging disabled.
+This demonstrates a useful native observation seam, **not original promise identity
+or a join of the discarded warm-up promise**. No replacement of those exports or
+new promise-inspection platform is introduced.
+
+On committed red source `4ed5d01`, actual capture Ready lacks logging completion.
+The consumer fails before any fixture POST, with normal zero host exit and reaped
+group, in **101.065 seconds** including offline compilation. The original native
+warm-up's three deadline states are already present; this is a separate logging
+requirement. The runnable red remains retained. The first repair build then failed
+on a test-only module shorthand before any host launched; `a989a1f` qualifies that
+path and the original compile receipt remains excluded from green qualification.
+
+The [Rust launcher](../src/pilot_capture/host.rs) materializes/hash-binds the small
+[startup_logging.ts](../src/pilot_capture/startup_logging.ts) extension helper only
+for OwnedQualification. It calls the native setter and awaits one immediate turn;
+it adds no logging implementation, background loop, worker or dependency. The
+trusted [bridge](../src/pilot_capture/bridge.ts) invokes it before SDK construction.
+The existing preload metadata owner records one closed logging/quiesced row and
+requires completion before final seal/Ready. Bounds are 26 rows, 20 attempts and
+8192 bytes; all **16** corruptions reject. Missing/duplicate completion refuses.
+Default profile has neither helper file nor helper hash. Actual SDK controls import
+the exact same helper and independently observe timer cancellation, the queued
+callback and marker bytes. Disabling file logging does not disable native log sinks.
+No product timer monkeypatch, alternate channel, independent log or wire revision
+is added. Arbitrary injected reconfiguration and every host logging backend remain
+outside this selected proof.
+
+All **five current diagnostics pass** in **319.212 seconds**. The complete model,
+actual two-generation tool conversation, four owned TLS POSTs, synthetic native
+usage/29 mutations, catalog identity, five warm-up controls, eight prefetch controls,
+nine off-memory controls, three telemetry controls, stock/guard/raw [1,0,1], MCP
+exclusion and disk-edit checks remain green. New logging controls distinguish
+active logging, stop-only with pending retention, and the actual drained helper.
+Every owned control is reaped without forced cleanup. Synthetic counters and
+markers establish no real-provider economics or task benefit.
+
+Frozen compatibility passes **33/0/7 ignored** in **299.638 seconds**, focused
+lint passes and all **eight gates pass** in **867.250 seconds**, including actual
+Rust **1.90.0**. Default outer totals are **1,319/0/35 ignored**; pilot units are
+**102/0/1 ignored**. No assertion/deadline is relaxed or ignore added. Review is
+in-session.
+
+Private evidence lives in runs/pilot-startup-entry-seams-2026-11-15/,
+runs/pilot-logging-feasibility-2026-11-15/, runs/pilot-startup-source-census-2026-11-15/
+and runs/pilot-logging-owner-2026-11-15/: primary blobs/complete program manifest,
+failed/corrected probes, real-bridge red/green, timer/immediate/marker controls and
+command/resource receipts. The initial gate run stopped at the 20 GiB disk reserve;
+its interrupt grace
+expired and forced cleanup removed every observed owned process. That interrupted
+run is not accepted. Native/frozen/lint evidence on unchanged bytes remains valid.
+After exact/open-file checked removal of five duplicate native libraries and 37
+unchanged published-source readback checkouts (all receipts/manifests retained),
+the same eight gates run with **RUST_TEST_THREADS=4** to bound concurrent temporary
+fixtures. Explicit concurrency tests retain their own internal concurrency. No
+test body, assertion, count or per-test deadline changes. A fresh offline hour
+covers that continuation and final direct native readback; the original partial
+stage stays separate. Continuation qualification completes in
+**930.540 seconds**, with one heavy job, 120-second cleanup
+reserve, the same 20 GiB disk floor and 8 GiB sampled individual RSS ceiling.
+Maximum sampled
+individual RSS is **2027.641 MiB**; minimum observed free disk
+is **22.372 GiB**. These are samples, not hard global/GPU
+resource enforcement. No real credential, model download or provider spend is used.
+Credential lifetimes, remaining startup owners, complete timer/transport coverage
+and durable parent acknowledgment remain open. V2 stays unfunded/unfrozen; paid
+runs, signing and release remain gated.
+
 ## Known native warm-up deadline before capture Ready — 2026-11-15
 
 **Capture Ready now waits for the identified native warm-up deadline and detached

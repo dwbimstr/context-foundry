@@ -839,7 +839,7 @@ The [dated telemetry receipt](../../../docs/validation.md#fixed-profile-telemetr
 records successful native trace/log/metric deliveries, actual-launcher red/green,
 all current/frozen consumers and eight gates on `2bc27c0`.
 
-**Selected fixed-profile logging quiescence, 2026-11-15 — implementation pending.**
+**Selected fixed-profile logging quiescence, 2026-11-15 — implemented and locally qualified.**
 The associated native logger owns a one-second buffered-file timer and an unref'd
 retention immediate. A native scoped observer establishes actual pending handles:
 enabled logging writes both synthetic markers; setTransports(false/false) flushes
@@ -885,6 +885,14 @@ microtask, but original promise identity remains unobserved; do not claim it joi
 Bun.plugin is non-writable/non-configurable and redefining the native warm-up export
 is rejected; do not replace either. Complete startup/transport admission, paid
 runs, signing and release remain gated.
+
+The [dated logging receipt](../../../docs/validation.md#fixed-profile-native-logging-quiescence--2026-11-15) records actual capture-Ready red/green, native timer/retention/marker controls, all current/frozen consumers and eight gates on `a989a1f`. The [Rust host](../../../src/pilot_capture/host.rs) binds the [helper](../../../src/pilot_capture/startup_logging.ts); the [native consumer](../../../tests/pilot_capture.rs) checks its actual effect.
+
+The first gates stop at the disk reserve and are not accepted. Unchanged native,
+frozen and lint evidence is reused; after verified cache recovery, all eight gates
+pass in a fresh offline-hour continuation with RUST_TEST_THREADS=4. Explicit
+concurrency tests and all assertions/deadlines remain intact. The receipt keeps
+both stages separate and records the forced cleanup of the interrupted run.
 
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association

@@ -538,6 +538,18 @@ and dated paragraphs below are history.
     pruned after exact/open-file checks; runnable red/green and all other evidence
     remain. All five current diagnostics pass directly after cleanup without Cargo;
     the native-deadline receipt owns counts and retention details.
+    The fixed qualifier now retires native buffered logging and joins its queued
+    retention callback before capture Ready, through the existing native setter
+    and one immediate turn. Actual-bridge red/green, independent timer/callback/
+    marker controls, all current/frozen consumers and eight gates pass on `a989a1f`
+    ([logging receipt](validation.md#fixed-profile-native-logging-quiescence--2026-11-15)).
+    Native sinks still receive the original warm-up terminal event; original promise
+    identity/join remains unproved. Credential lifetimes, other owners, complete
+    transport/timer coverage and durable acknowledgment stay open. Paid runs and
+    signing remain gated.
+    Next, qualify initial marketplace autoUpdate=off: associated source defaults to
+    notify and captures it before trusted factories. The source notes are retained;
+    actual marketplace owner exclusion has not been demonstrated.
     The settlement finding/design through `2238253` is published with full fresh-clone
     readback; ten redundant native-library copies are removed after byte/open-file
     checks, preserving all other evidence and the prior retained library.
