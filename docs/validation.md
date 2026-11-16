@@ -1,5 +1,105 @@
 # Validation
 
+## Fixed-profile telemetry exporter exclusion — 2026-11-15
+
+**The owned qualifier excludes trace, metric and log exporter registration before
+main initializes telemetry; full startup admission stays HOLD.** Code/test source
+`2bc27c0` implements the selected
+[startup-owner contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission).
+Ordinary capture and frozen v1 retain their settings. This qualifies exporter
+exclusion in the fixed profile, not draining a graph that was already active.
+
+The late import finding is now explained at its observed boundary. Native import
+returns `ERR_MODULE_NOT_FOUND` for the coding-agent package; it does not report a
+false exporter state. The associated build
+[`BUNDLED_PACKAGES`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/scripts/legacy-pi-virtual-module.ts#L27)
+sets coding-agent's root catch-all to null (blob
+`46e636cfcf05c365e93955b4a08346d161cd8378`), while explicitly exported directories
+remain available. Main awaits telemetry initialization before trusted factories,
+so late module import is not an early observation seam. This is source association
+with the pinned artifact, not reproducible-build proof.
+
+The actual native registration globals provide another readback: trace/metrics
+use API **1.9.1**; logs use a function-valued global with numeric API selector **1**.
+Other selector inputs remain unqualified. These are artifact-specific
+fixture coordinates, not a new product API or a general compatibility claim.
+Actual native tracer, meter and logger calls produce owned synthetic markers.
+Metrics/logs are explicitly flushed through their real provider methods, and an
+independent plain-HTTP Hyper collector verifies all three paths and markers in
+bounded, chunk-decoded bytes. It retains only method/path, framing, size, digest
+and marker presence; no payload or headers are retained. No prompt, provider
+request or real credential is used.
+
+The final native on/off pair passes in **7.068 seconds**. Enabled
+startup registers all three providers and delivers the trace/log/metric markers;
+disabled startup registers none and produces zero collector connections/requests.
+Complete native model objects match; both exits are normal with empty stderr and
+two state readbacks. Original private controls remain: initial authority matching
+and Content-Length-only reception did not establish collector delivery; the real
+exporter uses chunked framing. Early schema assumptions missed the function-valued
+logs registration; a repeated exclusive diagnostic write also interrupted a later
+readback. Partial/failed controls are retained and excluded from complete three-
+signal evidence. The successful collector handles real framing and the native ABI.
+
+The repair changes OwnedQualification's existing configuration before launch:
+`telemetry.otlpExportEnabled=false`. The bridge requires the actual registered
+setting to be false after settings quiescence and before Ready; missing/unknown
+readback refuses the existing settings stage. Its config digest is
+`f9e188517ace05dca14633dcbd2a8ebbab704c07acf8204a35579978184bdde2`. The initial environment remains cleared; no test-only
+endpoint or network override enters the product launcher. No exporter, startup
+module, protocol, runtime worker or dependency is added.
+
+The source owner is oh-my-pi `24439066040e006eb08da7b204f0ac41c79d2de9`:
+[`main.ts::initTelemetryExport`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/main.ts#L2404),
+[`initTelemetryExport`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/telemetry-export.ts#L79)
+(blob `2b14605ed5ca47c66300fe787ba35b4e89ba03c3`) returns before loading/registering
+the OTLP graph when the flag is false; otherwise
+[`registerProviders`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/telemetry-export-otlp.ts#L152)
+(blob `4ab4a333b868fca4ac9d2c24d2a1189566e86831`) constructs providers, listeners
+and a periodic flush timer. The controlled native deliveries establish the actual
+consumer difference, beyond a source-only inference or empty trace.
+
+The permanent SDK regression obtains configuration bytes from the actual Host
+launcher. Explicitly enabled, unmodified owned and explicitly disabled cases use
+owned equivalent endpoints and the same native model. Its test-only preload
+admits only HTTP POSTs to that exact numeric loopback address and the three OTLP
+paths; provider warm-up stays refused. On red source `357b815`, the unmodified
+owned case still registers all three providers and delivers all markers. Both
+exporter controls are valid, every prior owner control passes, and only exclusion
+fails in **236.296 seconds** including offline compilation. The red executable
+and all three rows remain retained.
+
+On `2bc27c0`, all **five current-host diagnostics pass** in **212.858 seconds**.
+The three exporter settings/registration outcomes change from **[true, true, false]**
+to **[true, false, false]**; enabled still delivers all three markers and the two
+disabled cases deliver nothing. All models match, globals remain stable across
+SDK construction, and all process groups exit normally without forced cleanup.
+The actual owned post-warm-up-deadline two-generation conversation, four owned
+TLS POSTs, native synthetic usage/29 corruptions, model/cache identity, six trace
+mutations, Agent stock/guard/raw counts **[1, 0, 1]**, eight prefetch controls, nine
+memory controls, MCP exclusion and disk-edit checks remain green. Synthetic usage
+and telemetry markers establish no provider economics or task benefit.
+
+Frozen compatibility passes **33/0/7 ignored** in **288.842 seconds**, focused
+lint passes, and all **eight gates pass** in **867.373 seconds**, including actual
+Rust **1.90.0**. Default outer totals are **1,319/0/35 ignored**; pilot units are
+**102/0/1 ignored**. Custom recovery and nested child summaries stay separate.
+No existing assertion/deadline is relaxed or ignore added. Review is in-session.
+
+Private evidence is `runs/pilot-telemetry-feasibility-2026-11-15/` and
+`runs/pilot-telemetry-owner-2026-11-15/`: bounded diagnostics, partial/rejected
+controls, successful three-signal pair, source blobs, actual-launcher red/green,
+current/frozen consumers and command/resource receipts. Qualification readback
+finishes at **1842.499 seconds** inside its stated offline hour, with
+one heavy job, 120-second cleanup reserve, 20 GiB disk floor and 8 GiB sampled
+individual RSS ceiling. Maximum sampled individual RSS is
+**1892.703 MiB**, minimum observed free disk is
+**41.174 GiB**. Samples are not hard global/GPU resource enforcement.
+No provider spend, real credential or model download is used. Credential lifetimes,
+other startup owners, native timers, complete transport coverage and durable parent
+acknowledgment remain open. V2 stays unfunded/unfrozen; paid runs, signing and
+release remain gated.
+
 ## Fixed off-memory startup owner qualification — 2026-11-15
 
 **The fixed read/edit qualifier now checks its actual off-memory startup owner

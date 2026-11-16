@@ -749,7 +749,7 @@ records native baseline/observer, actual-bridge expected red, nine SDK memory
 controls and all current/frozen consumers plus eight gates on `48822e9`.
 V2 remains unfunded/unfrozen; paid runs and signing remain gated.
 
-**Selected fixed-profile telemetry exclusion, 2026-11-15 — implementation pending.**
+**Selected fixed-profile telemetry exclusion, 2026-11-15 — implemented and locally qualified.**
 The native on/off control now proves the existing `telemetry.otlpExportEnabled`
 setting before initialization. With the same owned OTLP endpoint supplied, enabled
 startup registers real trace, metric and log providers and delivers three synthetic
@@ -758,8 +758,8 @@ registers none and sends nothing. Complete native models match; no prompt, provi
 request or real credential is used. Earlier address/framing/schema controls remain
 retained and are not full three-signal evidence. Late telemetry-module import is
 not the observation seam: the compiled registry omits coding-agent's root catch-all
-exports. Read actual versioned globals; logs use a numeric API selector of 1,
-not the npm version string. The owned collector must handle chunked requests.
+exports. Read actual versioned globals; the qualified logs API selector is numeric
+1. Other selector inputs remain unqualified. The collector must handle chunked requests.
 
 Set the existing export flag false in OwnedQualification's private configuration
 before host construction, and require its actual native Settings readback to remain
@@ -795,6 +795,9 @@ Source association: oh-my-pi `24439066040e006eb08da7b204f0ac41c79d2de9`,
 proof or complete startup/transport settlement. Credential lifetimes, other owners,
 native timers and durable parent acknowledgment remain open; v2 stays unfunded/
 unfrozen and execution locked.
+The [dated telemetry receipt](../../../docs/validation.md#fixed-profile-telemetry-exporter-exclusion--2026-11-15)
+records successful native trace/log/metric deliveries, actual-launcher red/green,
+all current/frozen consumers and eight gates on `2bc27c0`.
 
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association

@@ -512,6 +512,15 @@ and dated paragraphs below are history.
     after exact/open-file checks; runnable red/green diagnostics and all other
     evidence remain. All five current native diagnostics pass directly after cleanup
     without Cargo; the off-memory receipt owns counts and retention details.
+    The owned qualifier now disables telemetry export in its initial configuration
+    and checks the actual false setting before Ready. Native trace/log/metric
+    markers reach an owned collector only in the enabled control; the launcher
+    regression changes from exporting to excluding all three in the owned case.
+    All five current diagnostics, frozen compatibility and eight gates pass on
+    `2bc27c0` ([telemetry receipt](validation.md#fixed-profile-telemetry-exporter-exclusion--2026-11-15)).
+    This excludes exporters in the fixed profile; active-graph drain remains
+    unqualified. Credential lifetimes, remaining owners, native timers/transport
+    coverage and durable acknowledgment stay open. Paid runs/signing remain gated.
     The settlement finding/design through `2238253` is published with full fresh-clone
     readback; ten redundant native-library copies are removed after byte/open-file
     checks, preserving all other evidence and the prior retained library.
