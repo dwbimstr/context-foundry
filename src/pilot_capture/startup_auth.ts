@@ -4,11 +4,29 @@
 // No credential values are read; physical FD release/general OAuth drain are not claimed.
 export async function installOwnedPrefetchGuard() {
 	const { AuthStorage, SqliteAuthCredentialStore } = await import("@oh-my-pi/pi-ai");
-	const lifecycle = (globalThis as unknown as Record<symbol, {
-		bind(): void; retire(closeOriginal: () => void): Promise<unknown>;
-	}>)[Symbol.for("context-foundry.qualification.auth")];
-	if (!lifecycle || typeof lifecycle.bind !== "function" || typeof lifecycle.retire !== "function") throw new Error("owned auth lifecycle unavailable");
-	lifecycle.bind();
+	const sourceProfile = process.env.CF_PILOT_CATALOG === "owned-source-fixed-v1";
+	let retireOwner: (auth: unknown, closeOriginal: () => void) => Promise<unknown>;
+	if (sourceProfile) {
+		const { bindCliAuthStorageSettingsSync } = await import("@oh-my-pi/pi-coding-agent/session/auth-broker-config");
+		const { Settings } = await import("@oh-my-pi/pi-coding-agent/config/settings");
+		const owner = bindCliAuthStorageSettingsSync(Settings.instance);
+		const trace = (globalThis as unknown as Record<symbol, { sourceAuthBound(): void; sourceAuthRetired(): void }>)[Symbol.for("context-foundry.qualification.warmup")];
+		if (!owner || typeof owner.retire !== "function" || typeof trace?.sourceAuthBound !== "function" || typeof trace?.sourceAuthRetired !== "function") throw new Error("source auth lifecycle unavailable");
+		trace.sourceAuthBound();
+		retireOwner = async (auth, closeOriginal) => {
+			const proof = await owner.retire(auth);
+			if (proof?.initial_resolver_joined !== true || proof?.chain_joined !== true) throw new Error("source auth retirement incomplete");
+			closeOriginal();
+			trace.sourceAuthRetired();
+		};
+	} else {
+		const lifecycle = (globalThis as unknown as Record<symbol, {
+			bind(): void; retire(closeOriginal: () => void): Promise<unknown>;
+		}>)[Symbol.for("context-foundry.qualification.auth")];
+		if (!lifecycle || typeof lifecycle.bind !== "function" || typeof lifecycle.retire !== "function") throw new Error("owned auth lifecycle unavailable");
+		lifecycle.bind();
+		retireOwner = async (_auth, closeOriginal) => lifecycle.retire(closeOriginal);
+	}
 	const descriptor = Object.getOwnPropertyDescriptor(AuthStorage.prototype, "keys");
 	if (typeof descriptor?.get !== "function") throw new Error("owned prefetch getter unavailable");
 	const originalGet = descriptor.get;
@@ -91,7 +109,7 @@ export async function installOwnedPrefetchGuard() {
 		async retire(auth: unknown) {
 			if (!sealed || failed || retirementStarted || !(auth instanceof AuthStorage) || auth.keys !== receiver) return refuse();
 			retirementStarted = true;
-			return lifecycle.retire(() => {
+			return retireOwner(auth, () => {
 				const close = Object.getOwnPropertyDescriptor(SqliteAuthCredentialStore.prototype, "close");
 				const poll = Object.getOwnPropertyDescriptor(SqliteAuthCredentialStore.prototype, "pollExternalChanges");
 				const authClose = Object.getOwnPropertyDescriptor(AuthStorage.prototype, "close");

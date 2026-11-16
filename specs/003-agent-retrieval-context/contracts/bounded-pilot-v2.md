@@ -1229,6 +1229,47 @@ controls cover the initial normal/error paths; other model-selection branches ar
 not separately live-exercised. The separate capture profile and its real consumers,
 complete owner/transport inventory and durable acknowledgment remain required.
 
+**Selected source-built capture profile, 2026-11-16 — implementation/qualification pending.**
+Add an explicit diagnostic catalog profile with its own exact artifact pin; current
+OwnedQualification and frozen HostDefault keep their pins and behavior. Bind the
+source/patch/lock/Bun/native-addon/binary identities in the receipt. This profile
+cannot grant Live/v2 execution or paid authority.
+
+The source CLI retains its actual auth-settings sync through its existing owning
+module. A one-process CLI owner exposes a one-use binding to the actual Settings
+instance and retires only the matching AuthStorage. Extend that original sync with
+retirement that stops its real subscriptions, crosses the known queued-listener
+turn and joins the original initial resolver, catch return and current pending
+chain. Require chain stability and successful originals; reject duplicate/missing,
+wrong-identity, rejected and changing work. Do not replay another sync, read
+credential values or retain unbounded change history. Preserve the existing stop/
+settled API. Already queued callbacks may finish; callbacks after retirement refuse
+before reconfiguration. General OAuth/broker-drain and physical FD release remain
+outside this fixed empty-auth profile.
+
+The existing prefetch helper selects this source binding for the new profile and
+keeps its original-call, namespace and nested-store-close checks. It reuses the
+existing diagnostic trace for source-auth bound/retired metadata, without claiming
+an observed four-Set count. The preload skips frame-dependent Promise/Set hooks
+only for this source profile; its transport/refusal, logging and native-deadline
+checks remain. The source SDK's already-qualified caller owns the warm-up join.
+Settings, off-memory, telemetry, marketplace, model/tool/usage and final Ready
+checks remain required. No extra worker, channel, journal or generic tracker is
+introduced. The proposed shared-channel durable startup acknowledgment remains
+separate and unimplemented.
+
+First require the actual source-profile capture consumer to fail before prompting
+when the native auth binding is absent. Keep that artifact/red result. Then require
+the original-sync retirement source tests, native identity/queued-policy controls,
+the full two-generation actual capture conversation, unchanged full model and
+usage/mutation checks, current-artifact consumers and frozen compatibility. Run
+affected Rust formatting/pilot Clippy/unit/MSRV gates; reuse default-feature gates
+only on exact effective inputs and explicit feature exclusion. Use the stated
+no-provider hour, cleanup reserve and resource bounds; publish reviewed changes,
+then prune verified new caches and replay retained consumers. No missing proof
+becomes a permissive default. Paid runs, release signing, full startup admission
+and v2/T006 execution remain gated.
+
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
 and a complete startup-owner inventory: catalog/discovery, credential refresh,

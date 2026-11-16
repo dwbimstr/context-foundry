@@ -66,6 +66,22 @@ async fn current_host_owned_catalog_preserves_full_history() {
     assert_eq!(baseline["native_warmup_deadline_readback"], true);
 }
 
+/// Source-built diagnostic only; current/frozen host pins are unchanged.
+#[tokio::test]
+#[ignore = "needs explicit CF_PILOT_SOURCE_OMP; no-provider source-host diagnostic"]
+async fn source_host_owned_catalog_preserves_full_history() {
+    let report = qualify_current_host_history(
+        true,
+        pilot_capture::host::CatalogProfile::SourceQualification,
+    )
+    .await;
+    assert_eq!(
+        report["native_model_sha256"],
+        "53bec6f047bbd7eeab26c93c1a6dd6c0e4ccc30d50a29d79e416c28692d5a027"
+    );
+    assert_eq!(report["native_warmup_deadline_readback"], true);
+}
+
 /// Native controls for the Agent route, credential prefetch and off-memory start.
 /// Raw sockets remain a bypass; injected OAuth metadata is not OAuth integration.
 #[tokio::test]
@@ -1004,8 +1020,16 @@ async fn qualify_current_host_history(
     use std::collections::BTreeSet;
     use std::time::Duration;
 
-    const SHA: &str = pilot_capture::host::QUALIFICATION_OMP_SHA256;
-    let owned_catalog = catalog == pilot_capture::host::CatalogProfile::OwnedQualification;
+    let source_catalog = catalog == pilot_capture::host::CatalogProfile::SourceQualification;
+    let sha = if source_catalog {
+        pilot_capture::host::SOURCE_QUALIFICATION_OMP_SHA256
+    } else {
+        pilot_capture::host::QUALIFICATION_OMP_SHA256
+    };
+    let owned_catalog = catalog.is_owned();
+    let parse_probe_rows =
+        |bytes: &[u8], expected_exit| startup_probe_rows(bytes, expected_exit, source_catalog);
+    let parse_probe = |bytes: &[u8]| startup_probe_rows(bytes, Some(0), source_catalog);
     let prompt = if tool_followup {
         "Read src/lib.rs once, then state the function name."
     } else {
@@ -1034,10 +1058,17 @@ async fn qualify_current_host_history(
         )
         .unwrap()
     });
-    let omp = PathBuf::from(std::env::var_os("CF_PILOT_CURRENT_OMP").expect("explicit owned host"));
+    let omp = PathBuf::from(
+        std::env::var_os(if source_catalog {
+            "CF_PILOT_SOURCE_OMP"
+        } else {
+            "CF_PILOT_CURRENT_OMP"
+        })
+        .expect("explicit owned host"),
+    );
     assert_eq!(
         pilot_capture::sha256_hex(&std::fs::read(&omp).unwrap()),
-        SHA
+        sha
     );
     let e = env();
     let root = std::fs::canonicalize(e._root.path()).unwrap();
@@ -1184,9 +1215,9 @@ async fn qualify_current_host_history(
                         }
                         if owned_catalog {
                             startup_at_ready = std::fs::read(host_root.join("startup.jsonl")).ok();
-                            let ready = startup_at_ready.as_deref().map_or(Value::Null, |bytes| {
-                                current_startup_probe_rows(bytes, None)
-                            });
+                            let ready = startup_at_ready
+                                .as_deref()
+                                .map_or(Value::Null, |bytes| parse_probe_rows(bytes, None));
                             if ready["valid"] != true
                                 || ready["warmup_settled"] != true
                                 || ready["logging_quiesced"] != true
@@ -1516,8 +1547,8 @@ async fn qualify_current_host_history(
         fixture_private_write(out.join("capture-result.json"),serde_json::to_vec_pretty(&json!({"capture_error":failure,"bridge_fault":bridge_fault,
             "captured_requests":requests.len(),"owned_fixture_http_requests":fixture.as_ref().map_or(0,|fx|fx.seen().len()),
             "native_model_sha256":native_model_sha,"native_warmup_deadline_readback":native_warmup_deadline_readback,
-            "native_warmup_settled_at_ready":startup_at_ready.as_deref().is_some_and(|bytes| current_startup_probe_rows(bytes,None)["warmup_settled"]==true),
-            "native_logging_quiesced_at_ready":startup_at_ready.as_deref().is_some_and(|bytes| current_startup_probe_rows(bytes,None)["logging_quiesced"]==true),
+            "native_warmup_settled_at_ready":startup_at_ready.as_deref().is_some_and(|bytes| parse_probe_rows(bytes,None)["warmup_settled"]==true),
+            "native_logging_quiesced_at_ready":startup_at_ready.as_deref().is_some_and(|bytes| parse_probe_rows(bytes,None)["logging_quiesced"]==true),
             "normal_exit":exit.normal,"exit_code":exit.code,"stderr_bytes":exit.stderr_bytes,"stderr_sha256":exit.stderr_sha256,
             "forced":exit.forced,"group_gone":exit.group_gone})).unwrap()).unwrap();
         if let Some(bytes) = &startup_at_ready {
@@ -1552,20 +1583,20 @@ async fn qualify_current_host_history(
             .and_then(|_| std::fs::read(&path).ok());
         let mut observed = bytes.as_ref().map_or_else(
             || json!({"valid":false,"fault":"missing_or_oversized_trace"}),
-            |b| current_startup_probe(b),
+            |b| parse_probe(b),
         );
         if let Some(bytes) = bytes.filter(|_| observed["valid"] == true) {
             let prefix = startup_before_prompt.as_deref().unwrap_or_default();
             let prefix_matches = !prefix.is_empty() && bytes.starts_with(prefix);
-            let before = current_startup_probe_rows(prefix, None)["observed_attempts"]
+            let before = parse_probe_rows(prefix, None)["observed_attempts"]
                 .as_u64()
                 .unwrap_or_default();
             let ready = startup_at_ready.as_deref().unwrap_or_default();
             observed["settled_at_ready"] = json!(
                 bytes.starts_with(ready)
-                    && current_startup_probe_rows(ready, None)["warmup_settled"] == true
-                    && current_startup_probe_rows(ready, None)["logging_quiesced"] == true
-                    && current_startup_probe_rows(ready, None)["auth_retired"] == true
+                    && parse_probe_rows(ready, None)["warmup_settled"] == true
+                    && parse_probe_rows(ready, None)["logging_quiesced"] == true
+                    && parse_probe_rows(ready, None)["auth_retired"] == true
             );
             observed["before_prompt_prefix_matches"] = json!(prefix_matches);
             observed["observed_before_prompt_attempts"] = json!(before);
@@ -1582,9 +1613,8 @@ async fn qualify_current_host_history(
                     .map(|row| format!("{row}\n"))
                     .collect::<String>()
             };
-            controls.push(
-                current_startup_probe(encode(&rows[..rows.len() - 1]).as_bytes())["valid"] == false,
-            );
+            controls
+                .push(parse_probe(encode(&rows[..rows.len() - 1]).as_bytes())["valid"] == false);
             for (key, value) in [
                 ("code", json!(1)),
                 ("sequence", json!(rows.len())),
@@ -1592,14 +1622,14 @@ async fn qualify_current_host_history(
             ] {
                 let mut changed = rows.clone();
                 changed.last_mut().unwrap()[key] = value;
-                controls.push(current_startup_probe(encode(&changed).as_bytes())["valid"] == false);
+                controls.push(parse_probe(encode(&changed).as_bytes())["valid"] == false);
             }
             let mut changed = rows.clone();
             changed[0]["runtime"] = json!("unqualified");
-            controls.push(current_startup_probe(encode(&changed).as_bytes())["valid"] == false);
+            controls.push(parse_probe(encode(&changed).as_bytes())["valid"] == false);
             let mut changed = rows.clone();
             changed.push(rows.last().unwrap().clone());
-            controls.push(current_startup_probe(encode(&changed).as_bytes())["valid"] == false);
+            controls.push(parse_probe(encode(&changed).as_bytes())["valid"] == false);
             let states: Vec<_> = rows
                 .iter()
                 .enumerate()
@@ -1611,8 +1641,7 @@ async fn qualify_current_host_history(
                 {
                     let mut changed = rows.clone();
                     changed[states[1]][state] = value;
-                    controls
-                        .push(current_startup_probe(encode(&changed).as_bytes())["valid"] == false);
+                    controls.push(parse_probe(encode(&changed).as_bytes())["valid"] == false);
                 }
                 for (target, source) in [
                     (states[0], states[1]),
@@ -1621,19 +1650,17 @@ async fn qualify_current_host_history(
                 ] {
                     let mut changed = rows.clone();
                     changed[target]["state"] = rows[source]["state"].clone();
-                    controls
-                        .push(current_startup_probe(encode(&changed).as_bytes())["valid"] == false);
+                    controls.push(parse_probe(encode(&changed).as_bytes())["valid"] == false);
                 }
                 let mut changed = rows.clone();
                 changed[states[0]]["body"] = json!("forbidden");
-                controls.push(current_startup_probe(encode(&changed).as_bytes())["valid"] == false);
+                controls.push(parse_probe(encode(&changed).as_bytes())["valid"] == false);
             }
             if let Some(logging) = rows.iter().position(|row| row["kind"] == "logging") {
                 for (key, value) in [("state", json!("unknown")), ("body", json!("forbidden"))] {
                     let mut changed = rows.clone();
                     changed[logging][key] = value;
-                    controls
-                        .push(current_startup_probe(encode(&changed).as_bytes())["valid"] == false);
+                    controls.push(parse_probe(encode(&changed).as_bytes())["valid"] == false);
                 }
                 for duplicate in [false, true] {
                     let mut changed = rows.clone();
@@ -1645,8 +1672,7 @@ async fn qualify_current_host_history(
                     for (i, row) in changed.iter_mut().enumerate() {
                         row["sequence"] = json!(i);
                     }
-                    controls
-                        .push(current_startup_probe(encode(&changed).as_bytes())["valid"] == false);
+                    controls.push(parse_probe(encode(&changed).as_bytes())["valid"] == false);
                 }
             }
             let auth: Vec<_> = rows
@@ -1665,8 +1691,7 @@ async fn qualify_current_host_history(
                 ] {
                     let mut changed = rows.clone();
                     changed[position][key] = value;
-                    controls
-                        .push(current_startup_probe(encode(&changed).as_bytes())["valid"] == false);
+                    controls.push(parse_probe(encode(&changed).as_bytes())["valid"] == false);
                 }
                 for duplicate in [false, true] {
                     let mut changed = rows.clone();
@@ -1678,15 +1703,24 @@ async fn qualify_current_host_history(
                     for (i, row) in changed.iter_mut().enumerate() {
                         row["sequence"] = json!(i);
                     }
-                    controls
-                        .push(current_startup_probe(encode(&changed).as_bytes())["valid"] == false);
+                    controls.push(parse_probe(encode(&changed).as_bytes())["valid"] == false);
+                }
+            }
+            if source_catalog && auth.len() == 2 {
+                for (key, value) in [
+                    ("binding", json!("unknown")),
+                    ("chain_joined", json!(false)),
+                ] {
+                    let mut changed = rows.clone();
+                    changed[auth[1]][key] = value;
+                    controls.push(parse_probe(encode(&changed).as_bytes())["valid"] == false);
                 }
             }
             observed["mutation_controls_rejected"] = json!(controls.iter().filter(|x| **x).count());
             observed["valid"] = json!(
                 prefix_matches
                     && observed["settled_at_ready"] == true
-                    && controls.len() == 23
+                    && controls.len() == if source_catalog { 25 } else { 23 }
                     && controls.iter().all(|x| *x)
             );
             if let Some(out) = &evidence_root {
@@ -1839,7 +1873,7 @@ async fn qualify_current_host_history(
     } else {
         admitted.as_ref().is_some_and(Result::is_ok)
     };
-    let report = json!({"host_sha256": SHA, "bridge_sha256": bridge_sha,
+    let report = json!({"host_sha256": sha, "bridge_sha256": bridge_sha,
         "body_sha256": pilot_capture::sha256_hex(&body), "body_bytes":body.len(),
         "config_yml_sha256":config_sha,"models_yml_sha256":models_sha,
         "native_model_sha256":native_model_sha,
@@ -1853,7 +1887,7 @@ async fn qualify_current_host_history(
         "qualified_requests":if tool_followup {requests.len()} else {1},"missing_completion_control_rejected":negative_control,
         "synthetic_observations":observations,"synthetic_usage_is_not_provider_usage":tool_followup,
         "native_usage_readback":native_report,
-        "owned_catalog_profile":owned_catalog,"native_catalog_cache":catalog_cache,
+        "owned_catalog_profile":owned_catalog,"source_built_profile":source_catalog,"native_catalog_cache":catalog_cache,
         "native_startup_probe":startup_probe,
         "owned_fixture_http_requests":fixture.as_ref().map_or(0,|fx|fx.seen().len()),
         "external_provider_calls":0,
@@ -1880,7 +1914,7 @@ async fn qualify_current_host_history(
     );
     assert_eq!(
         pilot_capture::sha256_hex(&std::fs::read(&omp).unwrap()),
-        SHA
+        sha
     );
     assert!(
         no_thread && request_passed && exit.normal && !exit.forced && exit.group_gone,
@@ -1901,6 +1935,10 @@ fn current_startup_probe_exit(bytes: &[u8], expected_exit: u8) -> Value {
 
 // None validates a live prefix; only the capture consumer requires sealed warmup.
 fn current_startup_probe_rows(bytes: &[u8], expected_exit: Option<u8>) -> Value {
+    startup_probe_rows(bytes, expected_exit, false)
+}
+
+fn startup_probe_rows(bytes: &[u8], expected_exit: Option<u8>, source_profile: bool) -> Value {
     let invalid = || json!({"valid":false});
     if bytes.len() > 8192 || bytes.last() != Some(&b'\n') {
         return invalid();
@@ -1954,6 +1992,40 @@ fn current_startup_probe_rows(bytes: &[u8], expected_exit: Option<u8>) -> Value 
             continue;
         }
         if row["kind"] == "auth" {
+            if source_profile {
+                if row["binding"] != "cli_source" {
+                    return invalid();
+                }
+                match row["state"].as_str() {
+                    Some("registered")
+                        if auth == 0 && keys(row, &["sequence", "kind", "state", "binding"]) =>
+                    {
+                        auth = 1
+                    }
+                    Some("retired")
+                        if auth == 1
+                            && keys(
+                                row,
+                                &[
+                                    "sequence",
+                                    "kind",
+                                    "state",
+                                    "binding",
+                                    "initial_resolver_joined",
+                                    "chain_joined",
+                                    "store_closed",
+                                ],
+                            )
+                            && row["initial_resolver_joined"] == true
+                            && row["chain_joined"] == true
+                            && row["store_closed"] == true =>
+                    {
+                        auth = 2
+                    }
+                    _ => return invalid(),
+                }
+                continue;
+            }
             if row["subscriptions"] != 4 {
                 return invalid();
             }
@@ -5157,4 +5229,41 @@ fn assert_owned_private_tree_in_run(root: &Path, executable: Option<&Path>, run:
             assert_eq!(meta.mode() & 0o7777, expected, "owned file mode");
         }
     }
+}
+
+#[test]
+fn startup_auth_trace_profiles_are_closed() {
+    let encode = |rows: Vec<Value>| {
+        rows.iter()
+            .map(|row| format!("{row}\n"))
+            .collect::<String>()
+    };
+    let installed =
+        json!({"sequence":0,"kind":"installed","runtime":"1.4.4","workspace_restored":true});
+    let source = encode(vec![
+        installed.clone(),
+        json!({"sequence":1,"kind":"auth","state":"registered","binding":"cli_source"}),
+        json!({"sequence":2,"kind":"auth","state":"retired","binding":"cli_source","initial_resolver_joined":true,"chain_joined":true,"store_closed":true}),
+    ]);
+    let legacy = encode(vec![
+        installed,
+        json!({"sequence":1,"kind":"auth","state":"registered","subscriptions":4}),
+        json!({"sequence":2,"kind":"auth","state":"retired","subscriptions":4,"continuations":0,"initial_resolver_joined":true,"store_closed":true}),
+    ]);
+    assert_eq!(
+        startup_probe_rows(source.as_bytes(), None, true)["auth_retired"],
+        true
+    );
+    assert_eq!(
+        startup_probe_rows(source.as_bytes(), None, false)["valid"],
+        false
+    );
+    assert_eq!(
+        startup_probe_rows(legacy.as_bytes(), None, false)["auth_retired"],
+        true
+    );
+    assert_eq!(
+        startup_probe_rows(legacy.as_bytes(), None, true)["valid"],
+        false
+    );
 }

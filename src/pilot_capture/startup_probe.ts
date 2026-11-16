@@ -69,6 +69,8 @@ let elapsed = false;
 let observerRemoved = false;
 let sealing = false;
 let loggingDone = false;
+const sourceProfile = process.env.CF_PILOT_CATALOG === "owned-source-fixed-v1";
+let sourceAuthBound = false, sourceAuthRetired = false;
 let sealed = false;
 let failed = false;
 let resolveDeadline!: () => void;
@@ -135,8 +137,18 @@ Object.defineProperty(globalThis, Symbol.for("context-foundry.qualification.warm
    loggingDone = true;
    record({ kind: "logging", state: "quiesced" });
   },
+  sourceAuthBound() {
+   if (!sourceProfile || sourceAuthBound || sealed || failed) return refuseWarmup();
+   sourceAuthBound = true;
+   record({ kind: "auth", state: "registered", binding: "cli_source" });
+  },
+  sourceAuthRetired() {
+   if (!sourceProfile || !sourceAuthBound || sourceAuthRetired || sealed || failed) return refuseWarmup();
+   sourceAuthRetired = true;
+   record({ kind: "auth", state: "retired", binding: "cli_source", initial_resolver_joined: true, chain_joined: true, store_closed: true });
+  },
   async seal() {
-   if (failed || sealing || sealed || !loggingDone || knownRequests !== 1 || !bound || !signals.get(bound)?.removed) return refuseWarmup();
+   if ((sourceProfile && !sourceAuthRetired) || failed || sealing || sealed || !loggingDone || knownRequests !== 1 || !bound || !signals.get(bound)?.removed) return refuseWarmup();
    sealing = true;
    let timer: ReturnType<typeof setTimeout> | undefined;
    try {
@@ -214,6 +226,7 @@ process.on("exit", code => {
 });
 
 // Original CLI auth owner only. No credential values or replacement sync handle.
+if (!sourceProfile) {
 type AuthPair = { source: Promise<unknown>; returned: Promise<unknown>; done: boolean; rejected: boolean };
 const authAddDescriptor = Object.getOwnPropertyDescriptor(Set.prototype, "add")!;
 const authCatchDescriptor = Object.getOwnPropertyDescriptor(Promise.prototype, "catch")!;
@@ -296,3 +309,5 @@ Object.defineProperty(globalThis, Symbol.for("context-foundry.qualification.auth
   return Object.freeze({ subscriptions: 4, continuations: count, initial_resolver_joined: true, store_closed: true });
  },
 }) });
+
+}

@@ -640,7 +640,7 @@ async function onSessionStart(pi: PiApi, ctxValue: unknown): Promise<void> {
 		pi.setThinkingLevel(THINKING_LEVEL);
 		await pi.setActiveTools([...TOOL_NAMES]);
 		if (typeof pi.setServiceTier === "function") pi.setServiceTier(PROVIDER, undefined);
-		if (process.env.CF_PILOT_CATALOG === "owned-bundled-fixed-v1") {
+		if (["owned-bundled-fixed-v1", "owned-source-fixed-v1"].includes(process.env.CF_PILOT_CATALOG ?? "")) {
 			const { Settings } = await import("@oh-my-pi/pi-coding-agent/config/settings");
 			const settings = Settings.instance;
 			if (settings.getAgentDir() !== process.env.PI_CODING_AGENT_DIR) throw new Error("owned settings identity");
@@ -798,7 +798,7 @@ export default async function capture(pi: PiApi): Promise<void> {
 	}
 	let fetchDynamicModels: (() => Promise<Obj[]>) | undefined;
 	if (env.CF_PILOT_CATALOG !== undefined) {
-		if (env.CF_PILOT_CATALOG !== "owned-bundled-fixed-v1") {
+		if (!["owned-bundled-fixed-v1", "owned-source-fixed-v1"].includes(env.CF_PILOT_CATALOG)) {
 			fault("config");
 			throw new Error("pilot capture bridge: unknown catalog profile");
 		}

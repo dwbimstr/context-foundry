@@ -105,12 +105,32 @@ pub enum CatalogProfile {
     HostDefault,
     /// Current-artifact, no-provider qualification; never selected by Live admission.
     OwnedQualification,
+    /// Source-built SDK diagnostic; never selected by Live admission.
+    SourceQualification,
 }
 
 /// Artifact whose catalog API and inventory this qualification profile exercises.
 /// This is separate from the frozen live host pin in `policy`.
 pub const QUALIFICATION_OMP_SHA256: &str =
     "ce80099f10c5ea4367523767230cb5b920f30cc139b9cf8758c1cc4b2f1f9409";
+
+/// Separate source-built diagnostic pin; source/patch identities are in validation.
+pub const SOURCE_QUALIFICATION_OMP_SHA256: &str =
+    "cd59e86cc512f27d6782c2f2c50b936ec3a47792e52e27695af1271220a6ea07";
+
+impl CatalogProfile {
+    pub fn is_owned(self) -> bool {
+        matches!(self, Self::OwnedQualification | Self::SourceQualification)
+    }
+
+    fn artifact_pin(self) -> Option<&'static str> {
+        match self {
+            Self::HostDefault => None,
+            Self::OwnedQualification => Some(QUALIFICATION_OMP_SHA256),
+            Self::SourceQualification => Some(SOURCE_QUALIFICATION_OMP_SHA256),
+        }
+    }
+}
 
 // Shipped catalog union enumerated on the artifact above (bundled, shared,
 // descriptors, implicit and special managers); includes legacy minimax-cn.
@@ -460,10 +480,10 @@ impl Host {
     /// Returns the host and the receiver of its events (kept separate so
     /// the driver can await events while sending frames).
     pub fn launch(spec: &HostSpec) -> Result<(Host, mpsc::Receiver<HostEvent>), CaptureFault> {
-        if spec.catalog == CatalogProfile::OwnedQualification {
+        if let Some(pin) = spec.catalog.artifact_pin() {
             let bytes = fs::read(&spec.omp)
                 .map_err(|_| fault(FaultClass::Pins, "qualification_host_unreadable"))?;
-            if sha256_hex(&bytes) != QUALIFICATION_OMP_SHA256 {
+            if sha256_hex(&bytes) != pin {
                 return Err(fault(FaultClass::Pins, "qualification_host_pin_mismatch"));
             }
         }
@@ -502,7 +522,7 @@ impl Host {
         write_private_new(&paths.agent.join("models.yml"), MODELS_YML.as_bytes())?;
         let config = match spec.catalog {
             CatalogProfile::HostDefault => CONFIG_YML.to_owned(),
-            CatalogProfile::OwnedQualification => format!(
+            CatalogProfile::OwnedQualification | CatalogProfile::SourceQualification => format!(
                 "{CONFIG_YML}\ndisabledProviders: {}\nmcp:\n  enableProjectConfig: false\n\ntelemetry:\n  otlpExportEnabled: false\n\nmarketplace:\n  autoUpdate: off\n",
                 serde_json::to_string(QUALIFICATION_DISABLED_PROVIDERS)
                     .expect("literal provider inventory")
@@ -515,7 +535,7 @@ impl Host {
             "bridge_unreadable",
             "bridge_bytes_mismatch",
         )?;
-        let startup_probe_sha256 = if spec.catalog == CatalogProfile::OwnedQualification {
+        let startup_probe_sha256 = if spec.catalog.is_owned() {
             Some(materialize_source(
                 &root.join("bridge/startup_probe.ts"),
                 QUALIFICATION_STARTUP_PROBE,
@@ -526,7 +546,7 @@ impl Host {
             None
         };
 
-        let startup_auth_sha256 = if spec.catalog == CatalogProfile::OwnedQualification {
+        let startup_auth_sha256 = if spec.catalog.is_owned() {
             Some(materialize_source(
                 &root.join("bridge/startup_auth.ts"),
                 QUALIFICATION_STARTUP_AUTH,
@@ -536,7 +556,7 @@ impl Host {
         } else {
             None
         };
-        let startup_memory_sha256 = if spec.catalog == CatalogProfile::OwnedQualification {
+        let startup_memory_sha256 = if spec.catalog.is_owned() {
             Some(materialize_source(
                 &root.join("bridge/startup_memory.ts"),
                 QUALIFICATION_STARTUP_MEMORY,
@@ -547,7 +567,7 @@ impl Host {
             None
         };
 
-        let startup_logging_sha256 = if spec.catalog == CatalogProfile::OwnedQualification {
+        let startup_logging_sha256 = if spec.catalog.is_owned() {
             Some(materialize_source(
                 &root.join("bridge/startup_logging.ts"),
                 QUALIFICATION_STARTUP_LOGGING,
@@ -577,8 +597,16 @@ impl Host {
         let tx_ino = fstat_ino(c2r_write.as_raw_fd())?;
         let rx_ino = fstat_ino(r2c_read.as_raw_fd())?;
         let mut env = host_env(&paths, &spec.identity, tx_ino, rx_ino);
-        if spec.catalog == CatalogProfile::OwnedQualification {
-            env.push(("CF_PILOT_CATALOG".into(), "owned-bundled-fixed-v1".into()));
+        if spec.catalog.is_owned() {
+            env.push((
+                "CF_PILOT_CATALOG".into(),
+                if spec.catalog == CatalogProfile::SourceQualification {
+                    "owned-source-fixed-v1"
+                } else {
+                    "owned-bundled-fixed-v1"
+                }
+                .into(),
+            ));
             env.push((
                 "BUN_OPTIONS".into(),
                 "--preload ./bridge/startup_probe.ts".into(),
