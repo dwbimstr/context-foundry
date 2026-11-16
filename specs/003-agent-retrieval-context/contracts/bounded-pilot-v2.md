@@ -950,6 +950,55 @@ The [launcher](../../../src/pilot_capture/host.rs) owns the initial setting; the
 This excludes the fixed qualifier's task; it does not drain an active marketplace
 or establish full startup admission.
 
+**Selected native startup watchdog qualification, 2026-11-15 — tests implemented; qualification pending.**
+The actual pinned host's original 10,000 ms interval is pending in the early
+trusted factory and its exact handle is cleared before session_start. The callback
+and timer arguments are passed unchanged. Holding that factory for eleven seconds
+lets the actual callback print its startup notice before ordinary cancellation;
+two native state readbacks and normal exit still succeed. Source already stops
+the watchdog before entering RPC; no runtime repair is selected.
+
+Add test-only preload/witness controls to the existing native owner regression:
+ordinary startup, delayed factory and deliberately suppressed native cancellation
+for this exact identified handle. The last must keep its real interval pending
+and emit at least a second notice. Require the callback's observed fingerprint,
+initial pending handle, one cancellation attempt, actual cancellation only in the
+healthy cases, session_start snapshots and a second equal native model readback
+after a 22-second hold. Keep all existing deadlines; these new cases have their
+own 45-second bound. Parse only the exact paired native notice/log-path format;
+other controls still require empty stderr. No callback is invoked manually or
+replaced, no successful connection is added, and no product timer hook or protocol
+is introduced. This qualifies one original owner, not the complete inventory.
+
+Run the complete current native owner controls, focused lint and eight gates.
+Reuse the existing conversation/settings/native-usage and frozen33/0/7 evidence
+only after checking all application/bridge/launcher/gate inputs and every other
+consumer body are byte-identical; the changed helper is called only by the owner
+test. State reused evidence explicitly. Use an offline hour, 120-second cleanup
+reserve, one heavy job, two outer harness threads, 20 GiB disk floor and 8 GiB
+sampled individual RSS ceiling. Internal concurrency assertions remain intact.
+Publish reviewed public tests/records to experimental, then prune only verified
+new build/extraction caches and rerun the owner controls directly from the retained
+executable. Preserve all evidence; paid runs and release signing remain gated.
+
+Source association is oh-my-pi 24439066040e006eb08da7b204f0ac41c79d2de9,
+main.ts::{startStartupWatchdog,armStartupWatchdog,stopStartupWatchdog,runRootCommand}
+(blob 2bfe0b7230e9b3e30aebfd493a03bffb652cdfb3). The native callback fingerprint is
+749865907ec3a454d6eadc0146e603c933a980d0863ae36cd253682f311bcccc.
+The [Foundry native consumer](../../../tests/pilot_capture.rs) owns the durable
+test; no directly named watchdog test was found by the bounded literal search of
+the retained coding-agent test sources, and no upstream test was run. Source
+association remains separate from reproducible-build proof.
+
+The promise-hook feasibility control cannot identify original promises on this
+artifact. node:async_hooks.createHook enables but emits no init/resolve events even
+for the controlled Promise; node:v8.promiseHooks.createHook throws
+NotImplementedError. Neither API presence nor zero events proves no original
+work. Do not introduce a generic promise tracker or claim a join. The original
+credential resolver/settings-sync/refresh lifetimes, discarded warm-up promise,
+full transport coverage and durable parent acknowledgment remain open; v2 stays
+unfunded/unfrozen and execution locked.
+
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
 and a complete startup-owner inventory: catalog/discovery, credential refresh,

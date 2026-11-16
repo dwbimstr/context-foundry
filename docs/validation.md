@@ -1,5 +1,44 @@
 # Validation
 
+## Native startup watchdog and promise-hook limits — 2026-11-15
+
+**Native feasibility observes the real watchdog's cancellation; durable test
+qualification is pending.** In pinned OMP18.18.1 / Bun1.4.4, its original 10-second
+handle is pending in the early trusted factory and cancelled once before
+session_start. Holding that factory eleven seconds makes the actual callback emit
+one notice, after which normal cancellation prevents the later notice. The three
+native cases return two equal complete models, cross the original warm-up deadline
+and exit normally without a prompt or provider call. Callback and timer arguments
+are passed unchanged; no callback is invoked manually. Application source is unchanged.
+
+The same actual-artifact probe tests promise-hook functionality with a controlled
+Promise. node:async_hooks.createHook enables without throwing but emits no events,
+including for that control; node:v8.promiseHooks.createHook throws
+NotImplementedError. Empty observations therefore cannot prove owner absence or
+the original discarded promise's identity/settlement. This closes that observation
+candidate; original credential and warm-up lifetimes remain unqualified.
+
+The [existing contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission)
+selects real normal/delayed/cancellation-suppressed watchdog controls in the
+existing [native consumer](../tests/pilot_capture.rs). No runtime repair, product
+timer wrapper, channel or worker is selected. Associated
+[main.ts::armStartupWatchdog/stopStartupWatchdog](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/main.ts#L360)
+already cancels before runRpcMode. The native callback hash is
+749865907ec3a454d6eadc0146e603c933a980d0863ae36cd253682f311bcccc. Source association
+is not reproducible-build proof. No directly named watchdog test was found by the
+bounded literal search of retained coding-agent test sources; no upstream tests
+were executed. Private probes/receipts live in
+runs/pilot-native-lifetime-seams-2026-11-15/ and
+runs/pilot-watchdog-owner-2026-11-15/.
+
+Three completed preflight native-library extractions match the retained master
+byte-for-byte and by digest and have no open/mapped use; only these duplicates are
+removed after preserving every other preflight file. Fresh full owner controls,
+lint and eight gates are pending, with the stated one-hour resource bounds and two
+outer test threads. Existing conversation/settings/usage and frozen evidence are
+reused only with exact unchanged-input checks. Complete startup admission remains
+HOLD; paid runs and release signing remain gated.
+
 ## Fixed-profile marketplace update exclusion — 2026-11-15
 
 **The owned qualifier excludes the native marketplace task before capture Ready;

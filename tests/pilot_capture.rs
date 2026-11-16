@@ -193,6 +193,65 @@ async fn current_host_startup_owners_have_native_controls() {
                 && call["rejected"] == false));
         }
     }
+    let mut watchdog_reports = Vec::new();
+    for kind in ["watchdog-baseline", "watchdog-active", "watchdog-uncleared"] {
+        let root = base.join(format!("{kind} control with spaces"));
+        let report = startup::control(&omp, &root, &e.workspace, &config, &models, kind).await;
+        assert_owned_private_tree(
+            &root,
+            Some(Path::new(
+                "home/.omp/natives/18.18.1/pi_natives.darwin-arm64.node",
+            )),
+        );
+        if let Some(path) = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT") {
+            let out = PathBuf::from(format!(
+                "{}-watchdog-controls",
+                PathBuf::from(path).display()
+            ));
+            fixture_private_dirs(&out).unwrap();
+            fixture_private_write(
+                out.join(format!("{kind}.json")),
+                serde_json::to_vec_pretty(&report).unwrap(),
+            )
+            .unwrap();
+        }
+        watchdog_reports.push(report);
+    }
+    for (index, report) in watchdog_reports.iter().enumerate() {
+        assert_eq!(report["connections"], 0);
+        assert_eq!(report["watchdog_second_state"], true);
+        assert_eq!(
+            report["native_model_sha256"],
+            marketplace_reports[0]["native_model_sha256"]
+        );
+        let witness = &report["witness"];
+        assert_eq!(witness["other_ten_second_intervals"], 0);
+        assert_eq!(
+            witness["factory"],
+            json!([{"pending":true,"clear_attempts":0,"native_clears":0}])
+        );
+        assert_eq!(
+            witness["session"],
+            json!([{"pending":index == 2,"clear_attempts":1,"native_clears":if index == 2 { 0 } else { 1 }}])
+        );
+        let rows = witness["rows"].as_array().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0]["source_sha256"],
+            "749865907ec3a454d6eadc0146e603c933a980d0863ae36cd253682f311bcccc"
+        );
+        assert_eq!(rows[0]["callback_preserved"], true);
+        assert_eq!(rows[0]["arguments_preserved"], true);
+        assert_eq!(rows[0]["native_ms"], 10000);
+        assert_eq!(rows[0]["clear_attempts"], 1);
+        assert_eq!(rows[0]["native_clears"], if index == 2 { 0 } else { 1 });
+        assert_eq!(rows[0]["pending"], index == 2);
+        if index < 2 {
+            assert_eq!(report["watchdog_notices"], index);
+        } else {
+            assert!((2..=4).contains(&report["watchdog_notices"].as_u64().unwrap()));
+        }
+    }
     let mut reports = Vec::new();
     for kind in ["stock", "guarded", "raw"] {
         let root = base.join(format!("{kind} control with spaces"));

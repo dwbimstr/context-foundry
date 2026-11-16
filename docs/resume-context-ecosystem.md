@@ -554,8 +554,14 @@ and dated paragraphs below are history.
     ([marketplace receipt](validation.md#fixed-profile-marketplace-update-exclusion--2026-11-15)).
     All current/frozen consumers and eight gates pass on `7863a44`;
     the marketplace receipt owns the green and resource-recovery evidence.
-    Next qualify original credential settings/resolver/refresh lifetimes and the
-    actual startup watchdog handle. Source inspection finds a discarded original
+    The actual startup watchdog handle is observed pending early and cancelled
+    before session_start, with a native callback positive control. Durable normal,
+    delayed and cancellation-suppressed test qualification is pending
+    ([watchdog receipt](validation.md#native-startup-watchdog-and-promise-hook-limits--2026-11-15)).
+    Native promise hooks cannot observe even the synthetic control on this artifact;
+    the V8 hook throws NotImplementedError. Original promise work remains unqualified.
+    Next qualify original credential settings/resolver/refresh lifetimes.
+    Source inspection finds a discarded original
     settings-sync handle, demand-driven pool polling and void asynchronous close;
     neither a second sync nor an empty snapshot can prove original work joined.
     Those source pins are retained; native completion remains unqualified.

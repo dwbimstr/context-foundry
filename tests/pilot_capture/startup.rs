@@ -84,6 +84,7 @@ pub(super) async fn control(
     let warmup = kind.starts_with("warmup-");
     let logging = kind.starts_with("logging-");
     let marketplace = kind.starts_with("marketplace-");
+    let watchdog = kind.starts_with("watchdog-");
     let config = if telemetry {
         super::telemetry::configuration(config, kind)
     } else if marketplace && kind != "marketplace-owned" {
@@ -132,6 +133,8 @@ pub(super) async fn control(
                 include_bytes!("logging_witness.mjs").as_slice()
             } else if marketplace {
                 include_bytes!("marketplace_witness.mjs").as_slice()
+            } else if watchdog {
+                include_bytes!("watchdog_witness.mjs").as_slice()
             } else if warmup {
                 include_bytes!("warmup_witness.mjs").as_slice()
             } else if telemetry {
@@ -143,7 +146,11 @@ pub(super) async fn control(
     ] {
         super::fixture_private_write(root.join(path), bytes).unwrap();
     }
-    let probe = if logging {
+    let probe = if watchdog {
+        let mut source = host::QUALIFICATION_STARTUP_PROBE.to_vec();
+        source.extend_from_slice(include_bytes!("watchdog_probe.ts"));
+        source
+    } else if logging {
         let mut source = host::QUALIFICATION_STARTUP_PROBE.to_vec();
         source.extend_from_slice(include_bytes!("logging_probe.ts"));
         source
@@ -206,7 +213,7 @@ pub(super) async fn control(
         &[],
     )
     .unwrap()
-        + &if auth || memory || warmup || logging || marketplace {
+        + &if auth || memory || warmup || logging || marketplace || watchdog {
             String::new()
         } else {
             format!(
@@ -296,7 +303,9 @@ pub(super) async fn control(
     });
     let mut lines = BufReader::new(child.stdout.take().unwrap().take(1024 * 1024 + 1)).lines();
     let started = tokio::time::Instant::now();
-    let captured = tokio::time::timeout(Duration::from_secs(20), async {
+    let mut watchdog_initial = None;
+    let state_timeout = Duration::from_secs(if watchdog { 45 } else { 20 });
+    let captured = tokio::time::timeout(state_timeout, async {
         let mut ready = false;
         let mut total = 0;
         loop {
@@ -327,6 +336,18 @@ pub(super) async fn control(
                 if !ready || value["success"] != true {
                     return Err("state refused");
                 }
+                if watchdog {
+                    watchdog_initial = Some(value["data"].clone());
+                    tokio::time::sleep(Duration::from_secs(22)).await;
+                    child
+                        .stdin
+                        .as_mut()
+                        .unwrap()
+                        .write_all(b"{\"id\":\"watchdog-after\",\"type\":\"get_state\"}\n")
+                        .await
+                        .map_err(|_| "RPC write")?;
+                    continue;
+                }
                 if warmup {
                     while !root.join("witness.json").is_file() {
                         tokio::time::sleep(Duration::from_millis(20)).await;
@@ -343,6 +364,15 @@ pub(super) async fn control(
                         }),
                 )
                 .await;
+                return Ok(value["data"].clone());
+            }
+            if watchdog && value["type"] == "response" && value["id"] == "watchdog-after" {
+                if value["success"] != true
+                    || watchdog_initial.as_ref().map(|state| &state["model"])
+                        != Some(&value["data"]["model"])
+                {
+                    return Err("watchdog state changed");
+                }
                 return Ok(value["data"].clone());
             }
         }
@@ -374,11 +404,39 @@ pub(super) async fn control(
         && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
     let stderr = errors.await.unwrap();
     super::fixture_private_write(root.join("stderr.log"), &stderr).unwrap();
+    let watchdog_notices = if watchdog {
+        assert!(stderr.len() <= 65536);
+        let text = std::str::from_utf8(&stderr).unwrap();
+        let lines: Vec<_> = text.lines().collect();
+        assert_eq!(lines.len() % 2, 0);
+        let log_prefix = format!("  logs: {}/omp.", root.join("home/.omp/logs").display());
+        for pair in lines.chunks_exact(2) {
+            let (seconds, phase) = pair[0]
+                .strip_prefix("Still starting after ")
+                .unwrap()
+                .split_once("s — phase: ")
+                .unwrap();
+            assert!(
+                (10..=44).contains(&seconds.parse::<u64>().unwrap())
+                    && !phase.is_empty()
+                    && phase.len() <= 512
+            );
+            assert!(
+                pair[1].starts_with(&log_prefix)
+                    && pair[1].ends_with(
+                        ".log · re-run with PI_DEBUG_STARTUP=1 for streaming phase markers"
+                    )
+            );
+        }
+        lines.len() / 2
+    } else {
+        0
+    };
     assert!(
         !forced
             && group_gone
             && exit.code() == Some(if restart { 75 } else { 0 })
-            && stderr.is_empty(),
+            && (watchdog || stderr.is_empty()),
         "native startup exit: {exit:?}"
     );
     let state = captured
@@ -394,7 +452,7 @@ pub(super) async fn control(
         Value::Null
     } else {
         let bytes = std::fs::read(root.join("startup.jsonl")).unwrap();
-        if (auth || memory || telemetry || warmup || logging || marketplace)
+        if (auth || memory || telemetry || warmup || logging || marketplace || watchdog)
             && let Some(path) = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT")
         {
             let path = std::path::PathBuf::from(format!(
@@ -410,11 +468,17 @@ pub(super) async fn control(
                     "logging"
                 } else if marketplace {
                     "marketplace"
+                } else if watchdog {
+                    "watchdog"
                 } else {
                     "telemetry"
                 }
             ));
             super::fixture_private_dirs(&path).unwrap();
+            if watchdog {
+                super::fixture_private_write(path.join(format!("{kind}-stderr.log")), &stderr)
+                    .unwrap();
+            }
             super::fixture_private_write(path.join(format!("{kind}-startup.jsonl")), &bytes)
                 .unwrap();
         }
@@ -439,7 +503,9 @@ pub(super) async fn control(
         Value::Null
     };
     json!({"case":kind,"connections":connections,"witness":witness,
-        "otlp":otlp,"logging_io":logging_io,"config_sha256":pilot_capture::sha256_hex(&config),
+        "otlp":otlp,"logging_io":logging_io,"watchdog_notices":watchdog_notices,"watchdog_second_state":watchdog_initial.is_some(),
+        "watchdog_stderr_bytes":watchdog.then_some(stderr.len()),"watchdog_stderr_sha256":watchdog.then(|| pilot_capture::sha256_hex(&stderr)),
+        "config_sha256":pilot_capture::sha256_hex(&config),
         "auth_sha256":auth.then(|| pilot_capture::sha256_hex(host::QUALIFICATION_STARTUP_AUTH)),
         "memory_sha256":memory.then(|| pilot_capture::sha256_hex(host::QUALIFICATION_STARTUP_MEMORY)),
         "logging_sha256":(warmup || logging).then(|| pilot_capture::sha256_hex(host::QUALIFICATION_STARTUP_LOGGING)),
