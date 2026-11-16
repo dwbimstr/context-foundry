@@ -1,0 +1,1346 @@
+Experimental source-owned startup discovery retirement; not applied by Context Foundry.
+Target: can1357/oh-my-pi @ 24439066040e006eb08da7b204f0ac41c79d2de9
+Owner: 003 T006, bounded-pilot-v2 startup observation and admission.
+Requires the existing caller/auth/refusal patches and omp-restricted-startup.patch.
+Modules: ModelRegistry::retireStartupDiscovery and public/private discovery callers;
+model-provider-discovery::withModelDiscoveryTimeout; model-discovery::withTimeoutSignal;
+provider-models/openai-compat shared catalog request; sdk::retireRestrictedStartupCatalog.
+Tests: startup-discovery-owner.test.ts and cli-restricted-startup.test.ts, existing
+registry/discovery suites and opencode-provider.test.ts. Native controls are dated in
+validation: original operations outlive timeouts; retirement joins their actual IO.
+Difference: one opt-in owner established at registry construction. It closes public
+discovery admission and joins original operations plus their completion observers,
+including response bodies, nested timeout races and detached shared catalog requests.
+Ordinary discovery timeout behavior remains. At most 4096 owned operation starts.
+Mirrored/unknown/repeated identities and unqualified Cursor native transport refuse.
+The fixed qualification profile retains its preceding model/configuration identity.
+No complete startup inventory, Ready, transport permission, paid execution, signing,
+or physical descriptor shutdown is established by this catalog receipt.
+
+MIT License
+
+Copyright (c) 2025 Mario Zechner
+Copyright (c) 2025-2026 Can Bölük
+Copyright (c) 2026 Stencil Labs, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+diff --git a/packages/catalog/src/provider-models/openai-compat.ts b/packages/catalog/src/provider-models/openai-compat.ts
+--- a/packages/catalog/src/provider-models/openai-compat.ts
++++ b/packages/catalog/src/provider-models/openai-compat.ts
+@@ -1,3 +1,4 @@
++import { ownDiscovery } from "./startup-discovery";
+ import { USER_AGENT, getInstallId } from "@oh-my-pi/pi-utils";
+ import * as logger from "@oh-my-pi/pi-utils/logger";
+ import { toClinePassPublicModelId } from "../cline-pass-model-id";
+@@ -192,14 +193,15 @@
+ function fetchRevalidatedWellKnownModels(fetchImpl?: FetchImpl, signal?: AbortSignal): Promise<unknown> {
+ 	const session = getCatalogSession(fetchImpl);
+ 	if (!session.inflight) {
+-		session.inflight = withOpenAICompatibleDiscoveryTimeout(
+-			DEFAULT_OPENAI_COMPATIBLE_DISCOVERY_TIMEOUT_MS,
+-			transportSignal => fetchCatalogPayload(fetchImpl ?? discoveryFetch(), session, transportSignal),
+-		).finally(() => {
+-			session.inflight = null;
+-		});
+-	}
+-	return waitForCatalogRequest(session.inflight, signal);
++		session.inflight = ownDiscovery(fetchImpl, () =>
++			withOpenAICompatibleDiscoveryTimeout(DEFAULT_OPENAI_COMPATIBLE_DISCOVERY_TIMEOUT_MS, transportSignal =>
++				ownDiscovery(fetchImpl, () => fetchCatalogPayload(fetchImpl ?? discoveryFetch(), session, transportSignal)),
++			).finally(() => {
++				session.inflight = null;
++			}),
++		);
++	}
++	return ownDiscovery(fetchImpl, () => waitForCatalogRequest(session.inflight!, signal));
+ }
+ 
+ function fetchRevalidatedWellKnownModelsWithTimeout(
+diff --git a/packages/catalog/src/provider-models/startup-discovery.ts b/packages/catalog/src/provider-models/startup-discovery.ts
+new file mode 100644
+--- /dev/null
++++ b/packages/catalog/src/provider-models/startup-discovery.ts
+@@ -0,0 +1,81 @@
++import type { FetchImpl } from "../types";
++
++export type DiscoveryOperationOwner = <T>(operation: () => Promise<T>) => Promise<T>;
++export interface StartupDiscoveryReceipt {
++	readonly discovery_retired: true;
++	readonly originals_joined: true;
++	readonly callbacks_joined: true;
++	readonly timers_retired: true;
++	readonly operations: number;
++	readonly rejections: number;
++}
++
++/** One opt-in registry's concrete discovery calls; never a transport permission. */
++export class StartupDiscovery {
++	#state: "open" | "closing" | "closed" = "open";
++	#pending = new Set<Promise<void>>();
++	#operations = 0;
++	#rejections = 0;
++	#overflow = false;
++	assertOpen(): void {
++		if (this.#state !== "open") throw new Error("Startup discovery admission closed");
++	}
++	/** Internal continuations of admitted work may finish while retirement joins them. */
++	own: DiscoveryOperationOwner = <T>(operation: () => Promise<T>): Promise<T> => {
++		if (this.#state === "closed") throw new Error("Startup discovery retired");
++		if (this.#operations === 4096) {
++			this.#overflow = true;
++			throw new Error("Startup discovery operation bound exceeded");
++		}
++		this.#operations++;
++		let original: Promise<T>;
++		try {
++			original = operation();
++		} catch (error) {
++			this.#rejections++;
++			throw error;
++		}
++		const observer = original.then(
++			() => {},
++			() => {
++				this.#rejections++;
++			},
++		);
++		const joined = Promise.allSettled([original, observer]).then(() => {
++			this.#pending.delete(joined);
++		});
++		this.#pending.add(joined);
++		return original;
++	};
++	async retire(): Promise<StartupDiscoveryReceipt> {
++		this.assertOpen();
++		this.#state = "closing";
++		// A synchronous factory may request retirement reentrantly before returning
++		// its original promise; let that stack register it before the first join.
++		await Promise.resolve();
++		while (this.#pending.size) await Promise.allSettled([...this.#pending]);
++		this.#state = "closed";
++		if (this.#overflow) throw new Error("Startup discovery ownership unqualified");
++		return Object.freeze({
++			discovery_retired: true,
++			originals_joined: true,
++			callbacks_joined: true,
++			timers_retired: true,
++			operations: this.#operations,
++			rejections: this.#rejections,
++		});
++	}
++}
++
++// Existing catalog sessions are already scoped by fetch identity. Carry this
++// registry's owner through those same concrete source calls, without global hooks.
++const owners = new WeakMap<FetchImpl, StartupDiscovery>();
++export function startupDiscoveryFetch(fetchImpl: FetchImpl, owner: StartupDiscovery): FetchImpl {
++	const wrapped: FetchImpl = (...args) => owner.own(() => fetchImpl(...args));
++	owners.set(wrapped, owner);
++	return wrapped;
++}
++export function ownDiscovery<T>(fetchImpl: FetchImpl | undefined, operation: () => Promise<T>): Promise<T> {
++	const owner = fetchImpl && owners.get(fetchImpl);
++	return owner ? owner.own(operation) : operation();
++}
+diff --git a/packages/coding-agent/src/config/model-discovery.ts b/packages/coding-agent/src/config/model-discovery.ts
+--- a/packages/coding-agent/src/config/model-discovery.ts
++++ b/packages/coding-agent/src/config/model-discovery.ts
+@@ -1,3 +1,4 @@
++import { ownDiscovery } from "@oh-my-pi/pi-catalog/provider-models/startup-discovery";
+ /**
+  * HTTP discovery protocols for configured and implicit providers — ollama,
+  * llama.cpp, lm-studio, openai-models-list, and new-api/one-api-style proxies.
+@@ -87,19 +88,25 @@
+  * `AbortSignal.timeout()`, whose delayed reason previously crashed Bun's
+  * concurrent GC during an unrelated allocation.
+  */
+-async function withTimeoutSignal<T>(timeoutMs: number, fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
+-	const controller = new AbortController();
+-	const timeout = Promise.withResolvers<never>();
+-	const timer = setTimeout(() => {
+-		const error = new DOMException("The operation timed out.", "TimeoutError");
+-		controller.abort(error);
+-		timeout.reject(error);
+-	}, timeoutMs);
+-	try {
+-		return await Promise.race([fn(controller.signal), timeout.promise]);
+-	} finally {
+-		clearTimeout(timer);
+-	}
++function withTimeoutSignal<T>(
++	timeoutMs: number,
++	fn: (signal: AbortSignal) => Promise<T>,
++	fetchImpl?: FetchImpl,
++): Promise<T> {
++	return ownDiscovery(fetchImpl, async () => {
++		const controller = new AbortController();
++		const timeout = Promise.withResolvers<never>();
++		const timer = setTimeout(() => {
++			const error = new DOMException("The operation timed out.", "TimeoutError");
++			controller.abort(error);
++			timeout.reject(error);
++		}, timeoutMs);
++		try {
++			return await Promise.race([ownDiscovery(fetchImpl, () => fn(controller.signal)), timeout.promise]);
++		} finally {
++			clearTimeout(timer);
++		}
++	});
+ }
+ 
+ /** Generous discovery budget for a non-loopback (remote / LAN) inference host. */
+@@ -505,18 +512,22 @@
+ ): Promise<OllamaDiscoveredModelMetadata | null> {
+ 	const showUrl = `${endpoint}/api/show`;
+ 	try {
+-		const payload = await withTimeoutSignal(discoveryProbeTimeoutMs(endpoint, 150, customTimeoutMs), async signal => {
+-			const response = await ctx.fetch(showUrl, {
+-				method: "POST",
+-				headers: { ...headers, "Content-Type": "application/json" },
+-				body: JSON.stringify({ model: modelId }),
+-				signal,
+-			});
+-			if (!response.ok) {
+-				return null;
+-			}
+-			return (await response.json()) as unknown;
+-		});
++		const payload = await withTimeoutSignal(
++			discoveryProbeTimeoutMs(endpoint, 150, customTimeoutMs),
++			async signal => {
++				const response = await ctx.fetch(showUrl, {
++					method: "POST",
++					headers: { ...headers, "Content-Type": "application/json" },
++					body: JSON.stringify({ model: modelId }),
++					signal,
++				});
++				if (!response.ok) {
++					return null;
++				}
++				return (await response.json()) as unknown;
++			},
++			ctx.fetch,
++		);
+ 		if (!isRecord(payload)) {
+ 			return null;
+ 		}
+@@ -559,16 +570,20 @@
+ 	const tagsUrl = `${endpoint}/api/tags`;
+ 	const headers = { ...providerConfig.headers };
+ 	const customTimeoutMs = providerConfig.discovery.timeoutMs;
+-	const payload = await withTimeoutSignal(discoveryProbeTimeoutMs(endpoint, 250, customTimeoutMs), async signal => {
+-		const response = await ctx.fetch(tagsUrl, {
+-			headers,
+-			signal,
+-		});
+-		if (!response.ok) {
+-			throw new DiscoveryHttpError(response.status, tagsUrl);
+-		}
+-		return (await response.json()) as { models?: Array<{ name?: string; model?: string }> };
+-	});
++	const payload = await withTimeoutSignal(
++		discoveryProbeTimeoutMs(endpoint, 250, customTimeoutMs),
++		async signal => {
++			const response = await ctx.fetch(tagsUrl, {
++				headers,
++				signal,
++			});
++			if (!response.ok) {
++				throw new DiscoveryHttpError(response.status, tagsUrl);
++			}
++			return (await response.json()) as { models?: Array<{ name?: string; model?: string }> };
++		},
++		ctx.fetch,
++	);
+ 	const entries = (payload.models ?? []).flatMap(item => {
+ 		const id = item.model || item.name;
+ 		return id ? [{ id, name: item.name || id }] : [];
+@@ -611,16 +626,20 @@
+ ): Promise<LlamaCppDiscoveredServerMetadata | null> {
+ 	const propsUrl = `${toLlamaCppNativeBaseUrl(baseUrl)}/props`;
+ 	try {
+-		const payload = await withTimeoutSignal(discoveryProbeTimeoutMs(baseUrl, 150, customTimeoutMs), async signal => {
+-			const response = await ctx.fetch(propsUrl, {
+-				headers,
+-				signal,
+-			});
+-			if (!response.ok) {
+-				return null;
+-			}
+-			return (await response.json()) as unknown;
+-		});
++		const payload = await withTimeoutSignal(
++			discoveryProbeTimeoutMs(baseUrl, 150, customTimeoutMs),
++			async signal => {
++				const response = await ctx.fetch(propsUrl, {
++					headers,
++					signal,
++				});
++				if (!response.ok) {
++					return null;
++				}
++				return (await response.json()) as unknown;
++			},
++			ctx.fetch,
++		);
+ 		if (!isRecord(payload)) {
+ 			return null;
+ 		}
+@@ -673,16 +692,20 @@
+ 	const customTimeoutMs = providerConfig.discovery.timeoutMs;
+ 	const attempt = async (h: Record<string, string>) => {
+ 		const [payload, metadata] = await Promise.all([
+-			withTimeoutSignal(discoveryProbeTimeoutMs(baseUrl, 250, customTimeoutMs), async signal => {
+-				const response = await ctx.fetch(modelsUrl, {
+-					headers: h,
+-					signal,
+-				});
+-				if (!response.ok) {
+-					throw new DiscoveryHttpError(response.status, modelsUrl);
+-				}
+-				return (await response.json()) as unknown;
+-			}),
++			withTimeoutSignal(
++				discoveryProbeTimeoutMs(baseUrl, 250, customTimeoutMs),
++				async signal => {
++					const response = await ctx.fetch(modelsUrl, {
++						headers: h,
++						signal,
++					});
++					if (!response.ok) {
++						throw new DiscoveryHttpError(response.status, modelsUrl);
++					}
++					return (await response.json()) as unknown;
++				},
++				ctx.fetch,
++			),
+ 			discoverLlamaCppServerMetadata(ctx, baseUrl, h, customTimeoutMs),
+ 		]);
+ 		return [payload, metadata] as const;
+@@ -740,16 +763,20 @@
+ 	const baseHeaders: Record<string, string> = { ...model.headers };
+ 	const attempt = async (headers: Record<string, string>) => {
+ 		const [entries, serverMetadata] = await Promise.all([
+-			withTimeoutSignal(discoveryProbeTimeoutMs(nativeBaseUrl, 250, customTimeoutMs), async signal => {
+-				const response = await ctx.fetch(modelsUrl, {
+-					headers,
+-					signal,
+-				});
+-				if (!response.ok) {
+-					return undefined;
+-				}
+-				return parseLlamaCppModelList(await response.json());
+-			}),
++			withTimeoutSignal(
++				discoveryProbeTimeoutMs(nativeBaseUrl, 250, customTimeoutMs),
++				async signal => {
++					const response = await ctx.fetch(modelsUrl, {
++						headers,
++						signal,
++					});
++					if (!response.ok) {
++						return undefined;
++					}
++					return parseLlamaCppModelList(await response.json());
++				},
++				ctx.fetch,
++			),
+ 			discoverLlamaCppServerMetadata(ctx, nativeBaseUrl, headers, customTimeoutMs),
+ 		]);
+ 		if (!entries) {
+@@ -814,8 +841,10 @@
+ 	const timeoutMs = discoveryProbeTimeoutMs(baseUrl, 250, customTimeoutMs);
+ 	const baseHeaders: Record<string, string> = { ...model.headers };
+ 	const attempt = async (headers: Record<string, string>) => {
+-		const metadata = await withTimeoutSignal(timeoutMs, signal =>
+-			fetchLmStudioNativeModelMetadata(baseUrl, ctx.fetch, { headers, signal }),
++		const metadata = await withTimeoutSignal(
++			timeoutMs,
++			signal => fetchLmStudioNativeModelMetadata(baseUrl, ctx.fetch, { headers, signal }),
++			ctx.fetch,
+ 		);
+ 		const entry = metadata?.get(model.id);
+ 		if (!entry) {
+@@ -1164,45 +1193,51 @@
+ 	const attempt = async (h: Record<string, string>) => {
+ 		const nativeMetadataPromise =
+ 			providerConfig.discovery.type === "lm-studio"
+-				? withTimeoutSignal(timeoutMs, signal =>
+-						fetchLmStudioNativeModelMetadata(baseUrl, ctx.fetch, { headers: h, signal }),
++				? withTimeoutSignal(
++						timeoutMs,
++						signal => fetchLmStudioNativeModelMetadata(baseUrl, ctx.fetch, { headers: h, signal }),
++						ctx.fetch,
+ 					)
+ 				: Promise.resolve(null);
+ 		const [payload, nativeMetadata] = await Promise.all([
+-			withTimeoutSignal(timeoutMs, async signal => {
+-				const res = await ctx.fetch(modelsUrl, {
+-					headers: h,
+-					signal,
+-				});
+-				if (!res.ok) {
+-					throw new DiscoveryHttpError(res.status, modelsUrl);
+-				}
+-				return (await res.json()) as {
+-					data?: Array<{
+-						id?: string;
+-						max_model_len?: unknown;
+-						context_length?: unknown;
+-						max_output_tokens?: unknown;
+-						max_completion_tokens?: unknown;
+-						max_tokens?: unknown;
+-						limits?: unknown;
+-						top_provider?: unknown;
+-						input?: unknown;
+-						input_modalities?: unknown;
+-						output?: unknown;
+-						output_modalities?: unknown;
+-						architecture?: unknown;
+-						mode?: unknown;
+-						metadata?: unknown;
+-						supported_reasoning_levels?: unknown;
+-						default_reasoning_level?: unknown;
+-						reasoning?: unknown;
+-						reasoning_effort_map?: unknown;
+-						reasoning_required?: unknown;
+-						service_tiers?: unknown;
+-					}>;
+-				};
+-			}),
++			withTimeoutSignal(
++				timeoutMs,
++				async signal => {
++					const res = await ctx.fetch(modelsUrl, {
++						headers: h,
++						signal,
++					});
++					if (!res.ok) {
++						throw new DiscoveryHttpError(res.status, modelsUrl);
++					}
++					return (await res.json()) as {
++						data?: Array<{
++							id?: string;
++							max_model_len?: unknown;
++							context_length?: unknown;
++							max_output_tokens?: unknown;
++							max_completion_tokens?: unknown;
++							max_tokens?: unknown;
++							limits?: unknown;
++							top_provider?: unknown;
++							input?: unknown;
++							input_modalities?: unknown;
++							output?: unknown;
++							output_modalities?: unknown;
++							architecture?: unknown;
++							mode?: unknown;
++							metadata?: unknown;
++							supported_reasoning_levels?: unknown;
++							default_reasoning_level?: unknown;
++							reasoning?: unknown;
++							reasoning_effort_map?: unknown;
++							reasoning_required?: unknown;
++							service_tiers?: unknown;
++						}>;
++					};
++				},
++				ctx.fetch,
++			),
+ 			nativeMetadataPromise,
+ 		]);
+ 		return [payload, nativeMetadata] as const;
+@@ -1375,17 +1410,20 @@
+ 			}
+ 			return response;
+ 		};
+-		const models = await withTimeoutSignal(timeoutMs, signal =>
+-			fetchLiteLLMRichModels<Api>({
+-				api: providerConfig.api,
+-				provider: providerConfig.provider,
+-				baseUrl,
+-				headers: h,
+-				fetch: authAwareFetch,
+-				referenceResolver: resolveReference,
+-				resolveApi: (entry, id) => resolveLiteLLMApi(entry, id, providerConfig.api),
+-				signal,
+-			}),
++		const models = await withTimeoutSignal(
++			timeoutMs,
++			signal =>
++				fetchLiteLLMRichModels<Api>({
++					api: providerConfig.api,
++					provider: providerConfig.provider,
++					baseUrl,
++					headers: h,
++					fetch: authAwareFetch,
++					referenceResolver: resolveReference,
++					resolveApi: (entry, id) => resolveLiteLLMApi(entry, id, providerConfig.api),
++					signal,
++				}),
++			ctx.fetch,
+ 		);
+ 		if (authError && models === null) {
+ 			throw authError;
+@@ -1437,29 +1475,33 @@
+ 	const baseHeaders: Record<string, string> = { ...providerConfig.headers };
+ 	const timeoutMs = providerConfig.discovery.timeoutMs ?? 10_000;
+ 	const attempt = async (h: Record<string, string>) =>
+-		withTimeoutSignal(timeoutMs, async signal => {
+-			const res = await ctx.fetch(modelsUrl, {
+-				headers: h,
+-				signal,
+-			});
+-			if (!res.ok) {
+-				throw new DiscoveryHttpError(res.status, modelsUrl);
+-			}
+-			return (await res.json()) as {
+-				data?: Array<{
+-					id?: string;
+-					name?: string;
+-					supported_endpoint_types?: string[];
+-					context_length?: number;
+-					metadata?: unknown;
+-					supported_reasoning_levels?: unknown;
+-					default_reasoning_level?: unknown;
+-					reasoning?: unknown;
+-					reasoning_effort_map?: unknown;
+-					reasoning_required?: unknown;
+-				}>;
+-			};
+-		});
++		withTimeoutSignal(
++			timeoutMs,
++			async signal => {
++				const res = await ctx.fetch(modelsUrl, {
++					headers: h,
++					signal,
++				});
++				if (!res.ok) {
++					throw new DiscoveryHttpError(res.status, modelsUrl);
++				}
++				return (await res.json()) as {
++					data?: Array<{
++						id?: string;
++						name?: string;
++						supported_endpoint_types?: string[];
++						context_length?: number;
++						metadata?: unknown;
++						supported_reasoning_levels?: unknown;
++						default_reasoning_level?: unknown;
++						reasoning?: unknown;
++						reasoning_effort_map?: unknown;
++						reasoning_required?: unknown;
++					}>;
++				};
++			},
++			ctx.fetch,
++		);
+ 	const apiKey = await ctx.getBearerApiKeyResolver(providerConfig.provider);
+ 	const payload = apiKey
+ 		? await withAuth(apiKey, key => attempt({ ...baseHeaders, Authorization: `Bearer ${key}` }))
+diff --git a/packages/coding-agent/src/config/model-provider-discovery.ts b/packages/coding-agent/src/config/model-provider-discovery.ts
+--- a/packages/coding-agent/src/config/model-provider-discovery.ts
++++ b/packages/coding-agent/src/config/model-provider-discovery.ts
+@@ -1,3 +1,4 @@
++import type { DiscoveryOperationOwner } from "@oh-my-pi/pi-catalog/provider-models/startup-discovery";
+ import type { OAuthAccess } from "@oh-my-pi/pi-ai";
+ import type { Api, Model } from "@oh-my-pi/pi-ai/types";
+ import { authProviders } from "@oh-my-pi/pi-catalog/compat/auth";
+@@ -62,16 +63,23 @@
+  * not leave an armed timeout signal for concurrent GC. The inner operation
+  * does not receive a signal because not every discovery contract accepts one.
+  */
+-export async function withModelDiscoveryTimeout<T>(timeoutMs: number, run: () => Promise<T>): Promise<T> {
+-	const { promise: timeoutPromise, reject: timeoutReject } = Promise.withResolvers<never>();
+-	const timer = setTimeout(() => {
+-		timeoutReject(new Error(`model discovery timed out after ${timeoutMs}ms`));
+-	}, timeoutMs);
+-	try {
+-		return await Promise.race([run(), timeoutPromise]);
+-	} finally {
+-		clearTimeout(timer);
+-	}
++export function withModelDiscoveryTimeout<T>(
++	timeoutMs: number,
++	run: () => Promise<T>,
++	own?: DiscoveryOperationOwner,
++): Promise<T> {
++	const timed = async (): Promise<T> => {
++		const { promise: timeoutPromise, reject: timeoutReject } = Promise.withResolvers<never>();
++		const timer = setTimeout(() => {
++			timeoutReject(new Error(`model discovery timed out after ${timeoutMs}ms`));
++		}, timeoutMs);
++		try {
++			return await Promise.race([own ? own(run) : run(), timeoutPromise]);
++		} finally {
++			clearTimeout(timer);
++		}
++	};
++	return own ? own(timed) : timed();
+ }
+ 
+ export interface BuiltInDiscoveryResult {
+diff --git a/packages/coding-agent/src/config/model-registry.ts b/packages/coding-agent/src/config/model-registry.ts
+--- a/packages/coding-agent/src/config/model-registry.ts
++++ b/packages/coding-agent/src/config/model-registry.ts
+@@ -1,3 +1,8 @@
++import {
++	StartupDiscovery,
++	startupDiscoveryFetch,
++	type StartupDiscoveryReceipt,
++} from "@oh-my-pi/pi-catalog/provider-models/startup-discovery";
+ import * as path from "node:path";
+ import type { ApiKeyResolver, FetchImpl, ResolvedApiKey, UsageProvider } from "@oh-my-pi/pi-ai";
+ import { type AuthApiKeyOptions, type AuthPeekOptions, oauthAccountKey } from "@oh-my-pi/pi-ai/auth-storage";
+@@ -299,6 +304,18 @@
+  * Model registry - loads and manages models, resolves API keys via AuthStorage.
+  */
+ export class ModelRegistry {
++	#startupDiscovery?: StartupDiscovery;
++	#unsupportedStartupDiscovery = false;
++	#ownStartupDiscovery = <T>(operation: () => Promise<T>): Promise<T> =>
++		this.#startupDiscovery ? this.#startupDiscovery.own(operation) : operation();
++	async retireStartupDiscovery(): Promise<StartupDiscoveryReceipt> {
++		if (!this.#startupDiscovery || this.#owner || this.#mirrorListeners.size)
++			throw new Error("Startup discovery owner unqualified");
++		const receipt = await this.#startupDiscovery.retire();
++		if (this.#unsupportedStartupDiscovery) throw new Error("Startup discovery native owner unqualified");
++		return receipt;
++	}
++
+ 	#models: Model<Api>[] = [];
+ 	#unprojectedModels: Model<Api>[] = [];
+ 	/**
+@@ -606,6 +623,7 @@
+ 			 * must never apply client-side credential or routing overrides.
+ 			 */
+ 			ignoreLocalModelConfig?: boolean;
++			ownStartupDiscovery?: boolean;
+ 			/** Settings source for availability and context-window policies. */
+ 			settings?: Settings;
+ 			/** Model discovery cache database. Defaults beside an explicit models config. */
+@@ -624,6 +642,8 @@
+ 			owner?: ModelRegistryOwner;
+ 		},
+ 	) {
++		if (options?.ownStartupDiscovery && options.owner) throw new Error("Startup discovery mirrors unsupported");
++		if (options?.ownStartupDiscovery) this.#startupDiscovery = new StartupDiscovery();
+ 		this.#ignoreLocalModelConfig = options?.ignoreLocalModelConfig ?? false;
+ 		this.#owner = options?.owner;
+ 		this.#mirrorInputs = {
+@@ -638,6 +658,7 @@
+ 			(isBunTestRuntime()
+ 				? () => Promise.reject(new Error("network disabled in model-registry runtime test"))
+ 				: wrapFetchForExtraCa(fetch));
++		if (this.#startupDiscovery) this.#fetch = startupDiscoveryFetch(this.#fetch, this.#startupDiscovery);
+ 		this.#modelsConfigFile = ModelsConfigFile.relocate(modelsPath ?? path.join(getAgentDir(), "models.yml"));
+ 		this.#cacheDbPath =
+ 			options?.cacheDbPath ?? (modelsPath ? path.join(path.dirname(modelsPath), "models.db") : undefined);
+@@ -664,6 +685,8 @@
+ 		snapshot: ModelRegistryMirrorBatch;
+ 		unsubscribe: () => void;
+ 	} {
++		this.#startupDiscovery?.assertOpen();
++		if (this.#startupDiscovery) this.#unsupportedStartupDiscovery = true;
+ 		const discovery = this.#discoveryLayer();
+ 		if (this.#mirrorListeners.size === 0) this.#mirroredDiscovery = discovery;
+ 		this.#mirrorListeners.add(listener);
+@@ -835,7 +858,14 @@
+ 	/**
+ 	 * Reload models from disk (built-in + custom config).
+ 	 */
+-	async refresh(
++	refresh(
++		strategy: ModelRefreshStrategy = "online-if-uncached",
++		options?: ModelRegistryRefreshOptions,
++	): Promise<void> {
++		this.#startupDiscovery?.assertOpen();
++		return this.#ownStartupDiscovery(() => this.#refreshStartupBody(strategy, options));
++	}
++	async #refreshStartupBody(
+ 		strategy: ModelRefreshStrategy = "online-if-uncached",
+ 		options?: ModelRegistryRefreshOptions,
+ 	): Promise<void> {
+@@ -854,7 +884,11 @@
+ 	 * The synchronous constructor cannot resolve credentials, so session startup
+ 	 * awaits this local-only, best-effort pass before validating model selectors.
+ 	 */
+-	async hydrateCredentialScopedModelCaches(): Promise<void> {
++	hydrateCredentialScopedModelCaches(): Promise<void> {
++		this.#startupDiscovery?.assertOpen();
++		return this.#ownStartupDiscovery(() => this.#hydrateCredentialScopedModelCachesStartupBody());
++	}
++	async #hydrateCredentialScopedModelCachesStartupBody(): Promise<void> {
+ 		if (this.#owner) return this.#owner.hydrateCredentialScopedModelCaches();
+ 		if (!this.#credentialScopedCacheHydration) {
+ 			const providerIds = new Set<string>();
+@@ -885,6 +919,10 @@
+ 	 * coalesce onto one rebuild.
+ 	 */
+ 	reapplyModelPolicies(): Promise<void> {
++		this.#startupDiscovery?.assertOpen();
++		return this.#ownStartupDiscovery(() => this.#reapplyModelPoliciesStartupBody());
++	}
++	#reapplyModelPoliciesStartupBody(): Promise<void> {
+ 		if (this.#owner) return this.#owner.reapplyModelPolicies();
+ 		this.#policyReapply ??= this.#runPolicyReapply();
+ 		return this.#policyReapply;
+@@ -893,13 +931,14 @@
+ 	async #runPolicyReapply(): Promise<void> {
+ 		try {
+ 			this.#lastStaticLoadMtime = null;
+-			await this.refresh("offline");
++			await this.#refreshStartupBody("offline");
+ 		} finally {
+ 			this.#policyReapply = undefined;
+ 		}
+ 	}
+ 
+ 	refreshInBackground(strategy: ModelRefreshStrategy = "online-if-uncached"): void {
++		this.#startupDiscovery?.assertOpen();
+ 		if (this.#owner) {
+ 			this.#owner.refreshInBackground(strategy);
+ 			return;
+@@ -910,8 +949,10 @@
+ 		// `refresh()` synchronously reloads static config, which can reset startup
+ 		// discovery states. Start it on a microtask so a caller can validate
+ 		// against the hydrated startup catalog right after kicking the refresh off.
+-		const refreshPromise = Promise.resolve()
+-			.then(() => this.refresh(strategy))
++		const original = this.#ownStartupDiscovery(() =>
++			Promise.resolve().then(() => this.#refreshStartupBody(strategy)),
++		);
++		const refreshPromise = original
+ 			.catch(error => {
+ 				logger.warn("background model refresh failed", {
+ 					error: error instanceof Error ? error.message : String(error),
+@@ -923,7 +964,7 @@
+ 				}
+ 				this.#markInitialRefreshSettled();
+ 			});
+-		this.#backgroundRefresh = refreshPromise;
++		this.#backgroundRefresh = this.#ownStartupDiscovery(() => refreshPromise);
+ 	}
+ 
+ 	/** Whether background discovery started by {@link refreshInBackground} is still running and may add models. */
+@@ -963,7 +1004,11 @@
+ 	 * re-read it), `false` without any rebuild when the in-memory catalog is
+ 	 * already current. Rejects when the offline rebuild fails.
+ 	 */
+-	async refreshIfStale(): Promise<boolean> {
++	refreshIfStale(): Promise<boolean> {
++		this.#startupDiscovery?.assertOpen();
++		return this.#ownStartupDiscovery(() => this.#refreshIfStaleStartupBody());
++	}
++	async #refreshIfStaleStartupBody(): Promise<boolean> {
+ 		if (this.#owner) return this.#owner.refreshIfStale();
+ 		let changed = false;
+ 		if (this.#backgroundRefresh) {
+@@ -971,7 +1016,7 @@
+ 			changed = true;
+ 		}
+ 		if (this.#modelsConfigFile.getMtimeMs() !== this.#lastStaticLoadMtime) {
+-			await this.refresh("offline");
++			await this.#refreshStartupBody("offline");
+ 			changed = true;
+ 		}
+ 		return changed;
+@@ -1015,7 +1060,15 @@
+ 		for (const settle of this.#initialRefreshWaiters) settle();
+ 	}
+ 
+-	async refreshProvider(
++	refreshProvider(
++		providerId: string,
++		strategy: ModelRefreshStrategy = "online",
++		options?: ModelRegistryRefreshOptions,
++	): Promise<void> {
++		this.#startupDiscovery?.assertOpen();
++		return this.#ownStartupDiscovery(() => this.#refreshProviderStartupBody(providerId, strategy, options));
++	}
++	async #refreshProviderStartupBody(
+ 		providerId: string,
+ 		strategy: ModelRefreshStrategy = "online",
+ 		options?: ModelRegistryRefreshOptions,
+@@ -1051,7 +1104,14 @@
+ 	 * this avoids a static reload and leaves unrelated runtime discovery alone.
+ 	 * Unknown ids have no effect.
+ 	 */
+-	async refreshDiscoverableProviders(
++	refreshDiscoverableProviders(
++		providerIds: Iterable<string>,
++		strategy: ModelRefreshStrategy = "online-if-uncached",
++	): Promise<void> {
++		this.#startupDiscovery?.assertOpen();
++		return this.#ownStartupDiscovery(() => this.#refreshDiscoverableProvidersStartupBody(providerIds, strategy));
++	}
++	async #refreshDiscoverableProvidersStartupBody(
+ 		providerIds: Iterable<string>,
+ 		strategy: ModelRefreshStrategy = "online-if-uncached",
+ 	): Promise<void> {
+@@ -1186,7 +1246,11 @@
+ 	 * Drives the same SQLite model cache as built-in providers, so the default
+ 	 * `online-if-uncached` strategy fetches at most once per cache TTL (24 h).
+ 	 */
+-	async refreshRuntimeProviders(strategy: ModelRefreshStrategy = "online-if-uncached"): Promise<void> {
++	refreshRuntimeProviders(strategy: ModelRefreshStrategy = "online-if-uncached"): Promise<void> {
++		this.#startupDiscovery?.assertOpen();
++		return this.#ownStartupDiscovery(() => this.#refreshRuntimeProvidersStartupBody(strategy));
++	}
++	async #refreshRuntimeProvidersStartupBody(strategy: ModelRefreshStrategy = "online-if-uncached"): Promise<void> {
+ 		if (this.#owner) return this.#owner.refreshRuntimeProviders(strategy);
+ 		if (this.#runtimeModelManagers.size === 0) {
+ 			return;
+@@ -2182,7 +2246,10 @@
+ 		};
+ 	}
+ 
+-	async #refreshRuntimeDiscoveries(
++	#refreshRuntimeDiscoveries(strategy: ModelRefreshStrategy, providerFilter?: ReadonlySet<string>): Promise<void> {
++		return this.#ownStartupDiscovery(() => this.#refreshRuntimeDiscoveriesStartupBody(strategy, providerFilter));
++	}
++	async #refreshRuntimeDiscoveriesStartupBody(
+ 		strategy: ModelRefreshStrategy,
+ 		providerFilter?: ReadonlySet<string>,
+ 	): Promise<void> {
+@@ -2321,6 +2388,14 @@
+ 		providerConfig: DiscoveryProviderConfig,
+ 		strategy: ModelRefreshStrategy,
+ 	): Promise<ConfiguredModelDiscoveryResult> {
++		return this.#ownStartupDiscovery(() =>
++			this.#discoverProviderModelsCoalescedStartupBody(providerConfig, strategy),
++		);
++	}
++	#discoverProviderModelsCoalescedStartupBody(
++		providerConfig: DiscoveryProviderConfig,
++		strategy: ModelRefreshStrategy,
++	): Promise<ConfiguredModelDiscoveryResult> {
+ 		let providerInFlight = this.#configuredDiscoveryInFlight.get(providerConfig);
+ 		const inFlight = providerInFlight?.get(strategy);
+ 		if (inFlight) return inFlight;
+@@ -2400,7 +2475,13 @@
+ 		return configMtime !== null && cacheUpdatedAt < Math.floor(configMtime);
+ 	}
+ 
+-	async #discoverProviderModels(
++	#discoverProviderModels(
++		providerConfig: DiscoveryProviderConfig,
++		strategy: ModelRefreshStrategy,
++	): Promise<ConfiguredModelDiscoveryResult> {
++		return this.#ownStartupDiscovery(() => this.#discoverProviderModelsStartupBody(providerConfig, strategy));
++	}
++	async #discoverProviderModelsStartupBody(
+ 		providerConfig: DiscoveryProviderConfig,
+ 		strategy: ModelRefreshStrategy,
+ 	): Promise<ConfiguredModelDiscoveryResult> {
+@@ -2556,7 +2637,13 @@
+ 		}
+ 	}
+ 
+-	async #discoverBuiltInProviderModels(
++	#discoverBuiltInProviderModels(
++		strategy: ModelRefreshStrategy,
++		providerFilter?: ReadonlySet<string>,
++	): Promise<BuiltInDiscoveryResult> {
++		return this.#ownStartupDiscovery(() => this.#discoverBuiltInProviderModelsStartupBody(strategy, providerFilter));
++	}
++	async #discoverBuiltInProviderModelsStartupBody(
+ 		strategy: ModelRefreshStrategy,
+ 		providerFilter?: ReadonlySet<string>,
+ 	): Promise<BuiltInDiscoveryResult> {
+@@ -2608,7 +2695,17 @@
+ 	 * `undefined` for a credential-scoped catalog, whose namespace only the
+ 	 * account's credential determines (the write side hashes it in).
+ 	 */
+-	async #resolveBuiltInDiscoveryApiKey(
++	#resolveBuiltInDiscoveryApiKey(
++		providerId: string,
++		strategy: ModelRefreshStrategy,
++		cacheProviderId: string | undefined,
++		authoritative: boolean,
++	): Promise<string | undefined> {
++		return this.#ownStartupDiscovery(() =>
++			this.#resolveBuiltInDiscoveryApiKeyStartupBody(providerId, strategy, cacheProviderId, authoritative),
++		);
++	}
++	async #resolveBuiltInDiscoveryApiKeyStartupBody(
+ 		providerId: string,
+ 		strategy: ModelRefreshStrategy,
+ 		cacheProviderId: string | undefined,
+@@ -2870,15 +2967,27 @@
+ 		return options;
+ 	}
+ 
+-	async #discoverWithModelManager(
++	#discoverWithModelManager(
+ 		options: ModelManagerOptions<Api>,
+ 		strategy: ModelRefreshStrategy,
+ 	): Promise<BuiltInDiscoveryResult> {
++		return this.#ownStartupDiscovery(() => this.#discoverWithModelManagerStartupBody(options, strategy));
++	}
++	async #discoverWithModelManagerStartupBody(
++		options: ModelManagerOptions<Api>,
++		strategy: ModelRefreshStrategy,
++	): Promise<BuiltInDiscoveryResult> {
++		if (this.#startupDiscovery && options.providerId === "cursor") {
++			this.#unsupportedStartupDiscovery = true;
++			throw new Error("Startup discovery native owner unsupported");
++		}
+ 		let failure: string | undefined;
+ 		try {
+ 			const manager = createModelManager({ ...options, cacheDbPath: this.#cacheDbPath });
+-			const result = await withModelDiscoveryTimeout(RUNTIME_DYNAMIC_MODEL_FETCH_TIMEOUT_MS, () =>
+-				manager.refresh(strategy),
++			const result = await withModelDiscoveryTimeout(
++				RUNTIME_DYNAMIC_MODEL_FETCH_TIMEOUT_MS,
++				() => manager.refresh(strategy),
++				this.#ownStartupDiscovery,
+ 			);
+ 			const models = result.models.map(model =>
+ 				model.provider === options.providerId ? model : { ...model, provider: options.providerId },
+@@ -3902,6 +4011,7 @@
+ 	 * If provider has oauth: registers OAuth provider for /login support.
+ 	 */
+ 	registerProvider(providerName: string, config: ProviderConfigInput, sourceId?: string): void {
++		this.#startupDiscovery?.assertOpen();
+ 		if (this.#ignoreMirrorLocalChange("registerProvider")) return;
+ 		this.#runtimeChange({ kind: "register", name: providerName, config, sourceId }, () =>
+ 			this.#registerProvider(providerName, config, sourceId),
+@@ -4081,8 +4191,10 @@
+ 				fetchDynamicModels: async () => {
+ 					const apiKey = await this.#peekApiKeyForProvider(providerName);
+ 					const resolvedKey = isAuthenticated(apiKey) ? apiKey : undefined;
+-					const modelDefs = await withModelDiscoveryTimeout(RUNTIME_DYNAMIC_MODEL_FETCH_TIMEOUT_MS, () =>
+-						fetcher(resolvedKey),
++					const modelDefs = await withModelDiscoveryTimeout(
++						RUNTIME_DYNAMIC_MODEL_FETCH_TIMEOUT_MS,
++						() => fetcher(resolvedKey),
++						this.#ownStartupDiscovery,
+ 					);
+ 					// Dynamic rows can carry `!command` headers that are not on the
+ 					// registerProvider() config; track them so F5 / 401 can evict the cache.
+diff --git a/packages/coding-agent/src/main.ts b/packages/coding-agent/src/main.ts
+--- a/packages/coding-agent/src/main.ts
++++ b/packages/coding-agent/src/main.ts
+@@ -2014,7 +2014,11 @@
+ 		// extended-context window caps, so it must receive the finalized settings.
+ 		const modelRegistry = logger.time(
+ 			"modelRegistry:init",
+-			() => new ModelRegistry(authStorage, undefined, { settings: settingsInstance }),
++			() =>
++				new ModelRegistry(authStorage, undefined, {
++					settings: settingsInstance,
++					ownStartupDiscovery: parsedArgs.restrictTools === true,
++				}),
+ 		);
+ 		// Credential-scoped catalogs (e.g. GitHub Copilot) load from their cache
+ 		// rows only after credentials resolve. `--model` and `enabledModels` below
+diff --git a/packages/coding-agent/src/sdk.ts b/packages/coding-agent/src/sdk.ts
+--- a/packages/coding-agent/src/sdk.ts
++++ b/packages/coding-agent/src/sdk.ts
+@@ -1063,6 +1063,24 @@
+ 	return owner.receipt;
+ }
+ 
++/** Retire discovery only for the already sealed, exact restricted session. */
++export async function retireRestrictedStartupCatalog(sessionManager: unknown, modelRegistry: unknown) {
++	const owner = restrictedOwner,
++		session = owner?.session.deref(),
++		registry = owner?.registry.deref();
++	if (
++		!restrictedSealed ||
++		restrictedStarts !== 1 ||
++		!session ||
++		session.isDisposed ||
++		session.sessionManager !== sessionManager ||
++		!registry ||
++		registry !== modelRegistry
++	)
++		throw new Error("Restricted catalog owner identity mismatch");
++	return await registry.retireStartupDiscovery();
++}
++
+ /** Result from createAgentSession */
+ export interface CreateAgentSessionResult {
+ 	/** The created session */
+@@ -2063,6 +2081,7 @@
+ 			{
+ 				settings,
+ 				cacheDbPath: getModelDbPath(agentDir),
++				ownStartupDiscovery: options.restrictToolNames === true,
+ 			},
+ 		);
+ 	let prewalk = options.prewalk;
+diff --git a/packages/coding-agent/test/cli-restricted-startup.test.ts b/packages/coding-agent/test/cli-restricted-startup.test.ts
+--- a/packages/coding-agent/test/cli-restricted-startup.test.ts
++++ b/packages/coding-agent/test/cli-restricted-startup.test.ts
+@@ -8,7 +8,7 @@
+ import { parseArgs } from ${JSON.stringify(base + "cli/args.ts")};
+ import { VALUELESS_FLAGS } from ${JSON.stringify(base + "cli/flag-tables.ts")};
+ import { buildSessionOptions } from ${JSON.stringify(base + "main.ts")};
+-import { createAgentSession, sealRestrictedStartup } from ${JSON.stringify(base + "sdk.ts")};
++import { createAgentSession, sealRestrictedStartup, retireRestrictedStartupCatalog } from ${JSON.stringify(base + "sdk.ts")};
+ import { ModelRegistry } from ${JSON.stringify(base + "config/model-registry.ts")};
+ import { Settings } from ${JSON.stringify(base + "config/settings.ts")};
+ import { SessionManager } from ${JSON.stringify(base + "session/session-manager.ts")};
+@@ -16,7 +16,7 @@
+ const mode=process.argv[1], cwd=process.env.CF_RESTRICTED_WORKSPACE;
+ process.chdir(cwd);
+ const auth=createInMemoryAuthStorage();
+-const registry=new ModelRegistry(auth,cwd+'/models.yml');
++const registry=new ModelRegistry(auth,cwd+'/models.yml',{ownStartupDiscovery:mode.startsWith('catalog')});
+ registry.registerProvider('restriction-fixture',{baseUrl:'http://127.0.0.1:9',api:'openai-completions',apiKey:'synthetic-local-only',models:[{id:'synthetic',name:'Synthetic',reasoning:false,input:['text'],cost:{input:0,output:0,cacheRead:0,cacheWrite:0},contextWindow:8192,maxTokens:1024}]},'<restriction-fixture>');
+ const settings=Settings.isolated();settings.setModelRole('default','restriction-fixture/synthetic');
+ const manager=SessionManager.inMemory(cwd);
+@@ -43,7 +43,13 @@
+  try{sealRestrictedStartup(manager,registry);}catch{duplicate=true;}
+  if(mode==='late') {try{await createAgentSession(options);}catch{late=true;}}
+ }
+-const output={mode,flagClassified:VALUELESS_FLAGS.has('--restrict-tools'),restrict:options.restrictToolNames===true,memoryEnabled:result.session.memoryEnabled,receipt:result.startupRestrictions??null,sealed:sealed??null,inheritedReads,wrongManager,wrongRegistry,duplicate,late,ambiguous,disposedRefused};
++let catalog=null,catalogWrongManager=false,catalogWrongRegistry=false,catalogRepeated=false;
++if(mode.startsWith('catalog')) {
++ if(mode==='catalog-identity') {try{await retireRestrictedStartupCatalog({},registry);}catch{catalogWrongManager=true;}try{await retireRestrictedStartupCatalog(manager,{});}catch{catalogWrongRegistry=true;}}
++ catalog=await retireRestrictedStartupCatalog(manager,registry);
++ try{await retireRestrictedStartupCatalog(manager,registry);}catch{catalogRepeated=true;}
++}
++const output={catalog,catalogWrongManager,catalogWrongRegistry,catalogRepeated,mode,flagClassified:VALUELESS_FLAGS.has('--restrict-tools'),restrict:options.restrictToolNames===true,memoryEnabled:result.session.memoryEnabled,receipt:result.startupRestrictions??null,sealed:sealed??null,inheritedReads,wrongManager,wrongRegistry,duplicate,late,ambiguous,disposedRefused};
+ if(second) await second.session.dispose();
+ await result.session.dispose();registry.clearSourceRegistrations('<restriction-fixture>');auth.close();
+ console.log(JSON.stringify(output));
+@@ -57,6 +63,8 @@
+ 	"ambiguous",
+ 	"missing-tools",
+ 	"disposed",
++	"catalog",
++	"catalog-identity",
+ ]) {
+ 	test(`CLI restriction reaches real SDK session: ${mode}`, async () => {
+ 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cli-restricted-startup-"));
+@@ -96,6 +104,16 @@
+ 			expect(value.late).toBe(mode === "late");
+ 			expect(value.wrongManager).toBe(mode === "identity");
+ 			expect(value.wrongRegistry).toBe(mode === "identity");
++			expect(value.catalogWrongManager).toBe(mode === "catalog-identity");
++			expect(value.catalogWrongRegistry).toBe(mode === "catalog-identity");
++			expect(value.catalogRepeated).toBe(mode.startsWith("catalog"));
++			if (mode.startsWith("catalog")) {
++				expect(value.catalog.discovery_retired).toBe(true);
++				expect(value.catalog.originals_joined).toBe(true);
++				expect(value.catalog.callbacks_joined).toBe(true);
++				expect(value.catalog.timers_retired).toBe(true);
++				expect(value.catalog.operations).toBeGreaterThan(0);
++			} else expect(value.catalog).toBeNull();
+ 		} finally {
+ 			fs.rmSync(dir, { recursive: true, force: true });
+ 		}
+diff --git a/packages/coding-agent/test/startup-discovery-owner.test.ts b/packages/coding-agent/test/startup-discovery-owner.test.ts
+new file mode 100644
+--- /dev/null
++++ b/packages/coding-agent/test/startup-discovery-owner.test.ts
+@@ -0,0 +1,289 @@
++import { expect, test } from "bun:test";
++import fs from "node:fs";
++import os from "node:os";
++import path from "node:path";
++import { StartupDiscovery, startupDiscoveryFetch } from "@oh-my-pi/pi-catalog/provider-models/startup-discovery";
++import { fetchWellKnownModels } from "@oh-my-pi/pi-catalog/provider-models/openai-compat";
++import { withModelDiscoveryTimeout } from "../src/config/model-provider-discovery";
++import { discoverModelsByProviderType } from "../src/config/model-discovery";
++import { ModelRegistry } from "../src/config/model-registry";
++import { createInMemoryAuthStorage } from "./helpers/agent-session-setup";
++
++async function turns() {
++	for (let i = 0; i < 12; i++) await Promise.resolve();
++}
++
++test("retirement joins the exact original after its timeout returns", async () => {
++	const owner = new StartupDiscovery(),
++		gate = Promise.withResolvers<number>();
++	const identity = Promise.resolve(7);
++	const direct = owner.own(() => identity);
++	expect(direct).toBe(identity);
++	const timed = withModelDiscoveryTimeout(5, () => gate.promise, owner.own);
++	await expect(timed).rejects.toThrow("model discovery timed out");
++	let retired = false;
++	const retirement = owner.retire().then(r => {
++		retired = true;
++		return r;
++	});
++	await turns();
++	expect(retired).toBe(false);
++	gate.resolve(7);
++	expect(await direct).toBe(7);
++	const receipt = await retirement;
++	expect(receipt.originals_joined).toBe(true);
++	expect(retired).toBe(true);
++	expect(() => owner.own(() => Promise.resolve(1))).toThrow("retired");
++	await expect(owner.retire()).rejects.toThrow("closed");
++});
++
++test("primary failure does not discard an admitted original or its error identity", async () => {
++	const owner = new StartupDiscovery(),
++		gate = Promise.withResolvers<void>(),
++		primary = new Error("primary");
++	const body = owner.own(async () => {
++		owner.own(() => gate.promise);
++		throw primary;
++	});
++	try {
++		await body;
++		throw Error("expected primary");
++	} catch (error) {
++		expect(error).toBe(primary);
++	}
++	let retired = false;
++	const retirement = owner.retire().then(r => {
++		retired = true;
++		return r;
++	});
++	await turns();
++	expect(retired).toBe(false);
++	gate.resolve();
++	const r = await retirement;
++	expect(r.rejections).toBe(1);
++});
++
++test("a reentrant retirement waits for its original factory to register", async () => {
++	const owner = new StartupDiscovery(),
++		gate = Promise.withResolvers<void>();
++	let retirement: Promise<unknown> | undefined;
++	owner.own(() => {
++		retirement = owner.retire();
++		return gate.promise;
++	});
++	let done = false;
++	retirement!.then(() => {
++		done = true;
++	});
++	await turns();
++	expect(done).toBe(false);
++	gate.resolve();
++	await retirement;
++	expect(done).toBe(true);
++});
++
++test("original rejection remains visible despite a fulfilled completion observer", async () => {
++	const owner = new StartupDiscovery(),
++		failure = new Error("original");
++	const p = owner.own(() => Promise.reject(failure));
++	try {
++		await p;
++		throw Error("expected original");
++	} catch (error) {
++		expect(error).toBe(failure);
++	}
++	expect((await owner.retire()).rejections).toBe(1);
++});
++
++test("an exhausted owner drains admitted work and publishes no retirement receipt", async () => {
++	const owner = new StartupDiscovery(),
++		gate = Promise.withResolvers<void>();
++	owner.own(() => gate.promise);
++	for (let i = 1; i < 4096; i++) owner.own(() => Promise.resolve());
++	let invoked = false;
++	expect(() =>
++		owner.own(() => {
++			invoked = true;
++			return Promise.resolve();
++		}),
++	).toThrow("bound");
++	expect(invoked).toBe(false);
++	const retirement = owner.retire();
++	gate.resolve();
++	await expect(retirement).rejects.toThrow("unqualified");
++	expect(() => owner.own(() => Promise.resolve())).toThrow("retired");
++});
++
++test("configured discovery retains a response body that ignores its abort", async () => {
++	const owner = new StartupDiscovery(),
++		gate = Promise.withResolvers<{ data: unknown[] }>();
++	let signal: AbortSignal | undefined;
++	const response = Response.json({});
++	Object.defineProperty(response, "json", { value: () => gate.promise });
++	const fetchImpl = startupDiscoveryFetch((_input, init) => {
++		signal = init?.signal as AbortSignal;
++		return Promise.resolve(response);
++	}, owner);
++	const discovery = discoverModelsByProviderType(
++		{
++			provider: "owned-fixture",
++			api: "openai-completions",
++			baseUrl: "http://127.0.0.1:9",
++			discovery: { type: "openai-models-list", timeoutMs: 5 },
++		},
++		{ fetch: fetchImpl, getBearerApiKeyResolver: async () => undefined },
++	);
++	await expect(discovery).rejects.toThrow();
++	expect(signal?.aborted).toBe(true);
++	let done = false;
++	const retirement = owner.retire().then(r => {
++		done = true;
++		return r;
++	});
++	await turns();
++	expect(done).toBe(false);
++	gate.resolve({ data: [] });
++	await retirement;
++	expect(done).toBe(true);
++});
++
++test("a detached catalog subscriber cannot retire the shared original payload", async () => {
++	const owner = new StartupDiscovery(),
++		gate = Promise.withResolvers<Response>(),
++		controller = new AbortController();
++	let called = false;
++	const fetchImpl = startupDiscoveryFetch(() => {
++		called = true;
++		return gate.promise;
++	}, owner);
++	const request = fetchWellKnownModels(fetchImpl, controller.signal);
++	expect(called).toBe(true);
++	controller.abort(new Error("owned subscriber aborted"));
++	await expect(request).rejects.toThrow("subscriber aborted");
++	let retired = false;
++	const retirement = owner.retire().then(r => {
++		retired = true;
++		return r;
++	});
++	await turns();
++	expect(retired).toBe(false);
++	gate.resolve(Response.json({}));
++	await retirement;
++	expect(retired).toBe(true);
++});
++
++function fixture(owned = true) {
++	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "startup-registry-owner-")),
++		auth = createInMemoryAuthStorage();
++	let fetches = 0;
++	const registry = new ModelRegistry(auth, path.join(dir, "models.yml"), {
++		ownStartupDiscovery: owned,
++		fetch: () => {
++			fetches++;
++			return Promise.reject(Error("synthetic transport refusal"));
++		},
++	});
++	return {
++		registry,
++		auth,
++		dir,
++		fetches: () => fetches,
++		close() {
++			auth.close();
++			fs.rmSync(dir, { recursive: true, force: true });
++		},
++	};
++}
++
++test("real registry retirement rejects every public discovery restart before work", async () => {
++	const f = fixture();
++	try {
++		await f.registry.hydrateCredentialScopedModelCaches();
++		await f.registry.refreshRuntimeProviders("offline");
++		await f.registry.reapplyModelPolicies();
++		f.registry.refreshInBackground("offline");
++		const receipt = await f.registry.retireStartupDiscovery();
++		expect(receipt.operations).toBeGreaterThan(0);
++		expect(receipt.timers_retired).toBe(true);
++		const before = f.fetches();
++		for (const restart of [
++			() => f.registry.refresh("online"),
++			() => f.registry.refreshIfStale(),
++			() => f.registry.hydrateCredentialScopedModelCaches(),
++			() => f.registry.reapplyModelPolicies(),
++			() => f.registry.refreshProvider("owned-fixture", "online"),
++			() => f.registry.refreshDiscoverableProviders(["owned-fixture"], "online"),
++			() => f.registry.refreshRuntimeProviders("online"),
++			() => f.registry.refreshInBackground("online"),
++		])
++			expect(restart).toThrow("admission closed");
++		expect(() => f.registry.subscribeMirror(() => {})).toThrow("admission closed");
++		expect(f.fetches()).toBe(before);
++		await expect(f.registry.retireStartupDiscovery()).rejects.toThrow("admission closed");
++	} finally {
++		f.close();
++	}
++});
++
++test("unknown and previously mirrored ownership cannot publish retirement", async () => {
++	const f = fixture(false),
++		m = fixture();
++	try {
++		await expect(f.registry.retireStartupDiscovery()).rejects.toThrow("unqualified");
++		const sub = m.registry.subscribeMirror(() => {});
++		sub.unsubscribe();
++		await expect(m.registry.retireStartupDiscovery()).rejects.toThrow("unqualified");
++	} finally {
++		f.close();
++		m.close();
++	}
++});
++
++test("an unqualified native-capable provider refuses before its callback", async () => {
++	const f = fixture();
++	let calls = 0;
++	try {
++		f.registry.registerProvider("cursor", {
++			baseUrl: "http://127.0.0.1:9",
++			api: "openai-completions",
++			fetchDynamicModels: async () => {
++				calls++;
++				return [];
++			},
++		});
++		await expect(f.registry.refreshRuntimeProviders("online")).rejects.toThrow("native owner unsupported");
++		expect(calls).toBe(0);
++		await expect(f.registry.retireStartupDiscovery()).rejects.toThrow("native owner unqualified");
++	} finally {
++		f.close();
++	}
++});
++
++test("real registry closes admission while original provider work is still held", async () => {
++	const f = fixture(),
++		entered = Promise.withResolvers<void>(),
++		gate = Promise.withResolvers<[]>();
++	let work: Promise<void> | undefined, retirement: Promise<unknown> | undefined;
++	try {
++		f.registry.registerProvider("closing-fixture", {
++			baseUrl: "http://127.0.0.1:9",
++			api: "openai-completions",
++			fetchDynamicModels: async () => {
++				entered.resolve();
++				return gate.promise;
++			},
++		});
++		work = f.registry.refreshRuntimeProviders("online");
++		await entered.promise;
++		retirement = f.registry.retireStartupDiscovery();
++		expect(() => f.registry.refreshRuntimeProviders("online")).toThrow("admission closed");
++		gate.resolve([]);
++		await work;
++		await retirement;
++	} finally {
++		gate.resolve([]);
++		await work;
++		await retirement;
++		f.close();
++	}
++});

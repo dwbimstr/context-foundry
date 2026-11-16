@@ -62,6 +62,14 @@ pub enum ChildMessage {
         memory_disabled: bool,
         credential_usage_joined: bool,
     },
+    CatalogRetired {
+        discovery_retired: bool,
+        originals_joined: bool,
+        callbacks_joined: bool,
+        timers_retired: bool,
+        operations: u32,
+        rejections: u32,
+    },
     Fault {
         code: Fault,
     },
@@ -170,6 +178,24 @@ impl ChannelState {
         {
             return Err(ProtocolFault("startup_restrictions_unqualified"));
         }
+        if let ChildMessage::CatalogRetired {
+            discovery_retired,
+            originals_joined,
+            callbacks_joined,
+            timers_retired,
+            operations,
+            rejections,
+        } = &h.msg
+            && (!discovery_retired
+                || !originals_joined
+                || !callbacks_joined
+                || !timers_retired
+                || *operations == 0
+                || *operations > 4096
+                || rejections > operations)
+        {
+            return Err(ProtocolFault("startup_catalog_unqualified"));
+        }
         Ok(Some(Inbound {
             seq: h.seq,
             msg: h.msg,
@@ -234,6 +260,52 @@ impl CaptureSession {
     }
 }
 
+#[derive(Default)]
+struct ObservedOwners {
+    attempts: u32,
+    warmup: bool,
+    restrictions: bool,
+    catalog: bool,
+}
+impl ObservedOwners {
+    fn accept(&mut self, message: &ChildMessage) -> Result<(), ProtocolFault> {
+        match message {
+            ChildMessage::StartupAttempt { attempt, .. } => {
+                if self.warmup || self.restrictions || self.catalog {
+                    return Err(ProtocolFault("startup_attempt_after_settlement"));
+                }
+                if *attempt != self.attempts + 1 || self.attempts == MAX_ATTEMPTS {
+                    return Err(ProtocolFault("startup_attempt_order"));
+                }
+                self.attempts += 1;
+            }
+            ChildMessage::OwnerSettled { .. } => {
+                if self.attempts == 0 || self.warmup {
+                    return Err(ProtocolFault("startup_owner_order"));
+                }
+                self.warmup = true;
+            }
+            ChildMessage::RestrictionsSettled { .. } => {
+                if !self.warmup || self.restrictions {
+                    return Err(ProtocolFault("startup_restrictions_order"));
+                }
+                self.restrictions = true;
+            }
+            ChildMessage::CatalogRetired { .. } => {
+                if !self.restrictions || self.catalog {
+                    return Err(ProtocolFault("startup_catalog_order"));
+                }
+                self.catalog = true;
+            }
+            ChildMessage::Fault { .. } => return Err(ProtocolFault("startup_child_fault")),
+        }
+        Ok(())
+    }
+    fn complete(&self) -> bool {
+        self.warmup && self.restrictions && self.catalog
+    }
+}
+
 async fn observe(a: ObservationAdmission) -> Result<ObservationReceipt, CaptureFault> {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(OBSERVATION_SECONDS);
     let (run_dir, hosts_dir) = claim_run_dir(&a.run_dir)?;
@@ -256,40 +328,38 @@ async fn observe(a: ObservationAdmission) -> Result<ObservationReceipt, CaptureF
     };
     let (host, mut events) =
         host::Host::launch(&spec).map_err(|e| journal.admission_refusal("startup_launch", e))?;
-    let mut attempts = 0;
-    let mut warmup_done = false;
-    let mut restrictions_done = false;
+    let mut owners = ObservedOwners::default();
     let result: Result<(), CaptureFault> = tokio::time::timeout_at(deadline, async {
         journal.append("host_launched", json!({"pid":host.launch.pid,"bridge_sha256":host.launch.bridge_sha256,"policy_sha256":host.launch.policy_sha256}))?;
         loop {
             match events.recv().await {
-                Some(host::HostEvent::Startup(inbound)) => match inbound.msg {
+                Some(host::HostEvent::Startup(inbound)) => {
+                    owners.accept(&inbound.msg).map_err(|e|fault(FaultClass::Protocol,e.0))?;
+                    match inbound.msg {
                     ChildMessage::StartupAttempt { attempt, .. } => {
-                        if attempt != attempts + 1 || attempts == MAX_ATTEMPTS { return Err(fault(FaultClass::Protocol,"startup_attempt_order")); }
                         journal.append("startup_refused", json!({"child_seq":inbound.seq,"attempt":inbound.msg}))?;
                         // Sync happened in append; attest exactly the committed prefix
                         // before the response can reach the child.
                         let digest = journal.digest()?;
                         host.send_startup(ParentMessage::StartupRefused { attempt, journal_seq:journal.records,journal_sha256:digest }).await?;
-                        attempts += 1;
                     }
                     ChildMessage::OwnerSettled { .. } => {
-                        if attempts == 0 || warmup_done { return Err(fault(FaultClass::Protocol,"startup_owner_order")); }
                         journal.append("startup_owner_settled",json!({"child_seq":inbound.seq,"owner":Owner::ModelConnectionWarmup}))?;
-                        warmup_done = true;
                     }
                     ChildMessage::RestrictionsSettled { .. } => {
-                        if restrictions_done || !warmup_done { return Err(fault(FaultClass::Protocol,"startup_restrictions_order")); }
                         journal.append("startup_restrictions_settled",json!({"child_seq":inbound.seq,"restrictions":inbound.msg}))?;
-                        restrictions_done = true;
+                    }
+                    ChildMessage::CatalogRetired { .. } => {
+                        journal.append("startup_catalog_retired",json!({"child_seq":inbound.seq,"catalog":inbound.msg}))?;
                     }
                     ChildMessage::Fault { .. } => return Err(fault(FaultClass::Protocol,"startup_child_fault")),
+                    }
                 },
                 Some(host::HostEvent::Rpc(host::RpcEvent::Ready | host::RpcEvent::Other)) => {},
                 Some(host::HostEvent::BridgeFault(e)) => return Err(fault(FaultClass::Protocol,e.0)),
                 _ => return Err(fault(FaultClass::Protocol,"startup_unexpected_event")),
             }
-            if warmup_done && restrictions_done { return Err(fault(FaultClass::Authority,"startup_inventory_unqualified")); }
+            if owners.complete() { return Err(fault(FaultClass::Authority,"startup_inventory_unqualified")); }
         }
     }).await.unwrap_or_else(|_|Err(fault(FaultClass::Deadline,"startup_observation_deadline")));
     let terminal = result
@@ -329,7 +399,7 @@ async fn observe(a: ObservationAdmission) -> Result<ObservationReceipt, CaptureF
         ));
     }
     Ok(ObservationReceipt {
-        attempts,
+        attempts: owners.attempts,
         terminal_code: terminal.code,
         journal_records: journal.records,
         journal_sha256: journal.digest()?,
@@ -465,6 +535,98 @@ mod tests {
                 .read(&mut frame(1, message).as_slice())
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn startup_catalog_requires_each_join_and_bounded_source_operations() {
+        let valid = json!({"type":"catalog_retired","discovery_retired":true,"originals_joined":true,"callbacks_joined":true,"timers_retired":true,"operations":1,"rejections":0});
+        for field in [
+            "discovery_retired",
+            "originals_joined",
+            "callbacks_joined",
+            "timers_retired",
+        ] {
+            let mut bad = valid.clone();
+            bad[field] = json!(false);
+            let msg = serde_json::from_value::<ChildMessage>(bad).unwrap();
+            assert!(
+                ChannelState::new(identity())
+                    .read(&mut frame(1, msg).as_slice())
+                    .is_err()
+            );
+            let mut missing = valid.clone();
+            missing.as_object_mut().unwrap().remove(field);
+            assert!(serde_json::from_value::<ChildMessage>(missing).is_err());
+        }
+        for (operations, rejections) in [(0, 0), (4097, 0), (1, 2)] {
+            let mut bad = valid.clone();
+            bad["operations"] = json!(operations);
+            bad["rejections"] = json!(rejections);
+            let msg = serde_json::from_value::<ChildMessage>(bad).unwrap();
+            assert!(
+                ChannelState::new(identity())
+                    .read(&mut frame(1, msg).as_slice())
+                    .is_err()
+            );
+        }
+        let msg = serde_json::from_value::<ChildMessage>(valid).unwrap();
+        assert!(
+            ChannelState::new(identity())
+                .read(&mut frame(1, msg).as_slice())
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn startup_owner_order_rejects_duplicates_and_attempts_after_settlement() {
+        let warmup = ChildMessage::OwnerSettled {
+            owner: Owner::ModelConnectionWarmup,
+        };
+        let restrictions = ChildMessage::RestrictionsSettled {
+            tool_names: vec!["edit".into(), "read".into()],
+            mcp_disabled: true,
+            memory_disabled: true,
+            credential_usage_joined: true,
+        };
+        let catalog = ChildMessage::CatalogRetired {
+            discovery_retired: true,
+            originals_joined: true,
+            callbacks_joined: true,
+            timers_retired: true,
+            operations: 1,
+            rejections: 0,
+        };
+        for early in [&warmup, &restrictions, &catalog] {
+            assert!(ObservedOwners::default().accept(early).is_err());
+        }
+        let mut state = ObservedOwners::default();
+        state.accept(&attempt()).unwrap();
+        assert!(state.accept(&attempt()).is_err());
+        assert!(state.accept(&restrictions).is_err());
+        assert!(state.accept(&catalog).is_err());
+        state.accept(&warmup).unwrap();
+        assert!(state.accept(&warmup).is_err());
+        assert!(state.accept(&attempt()).is_err());
+        state.accept(&restrictions).unwrap();
+        assert!(state.accept(&restrictions).is_err());
+        assert!(!state.complete());
+        state.accept(&catalog).unwrap();
+        assert!(state.complete());
+        assert!(state.accept(&catalog).is_err());
+        assert!(state.accept(&attempt()).is_err());
+        let mut bounded = ObservedOwners::default();
+        for id in 1..=MAX_ATTEMPTS {
+            let mut msg = attempt();
+            if let ChildMessage::StartupAttempt { attempt, .. } = &mut msg {
+                *attempt = id;
+            }
+            bounded.accept(&msg).unwrap();
+        }
+        let mut extra = attempt();
+        if let ChildMessage::StartupAttempt { attempt, .. } = &mut extra {
+            *attempt = MAX_ATTEMPTS + 1;
+        }
+        assert!(bounded.accept(&extra).is_err());
     }
 
     #[test]

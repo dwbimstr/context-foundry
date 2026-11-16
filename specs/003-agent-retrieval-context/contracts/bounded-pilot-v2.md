@@ -1384,6 +1384,36 @@ The catalog/discovery waiter is not a complete lifecycle join. Include the await
 daemon project-presence registration and its exit cleanup in the remaining owner
 inventory; the initial categories above are not an exhaustive list.
 
+**Catalog lifecycle round, 2026-11-16 — selected, not qualified.** After the
+restricted-owner round's terminal publication/cache receipt, start one new no-spend
+90-minute round with the same one-heavy-job, 20 GiB/8 GiB and 120-second cleanup
+bounds. Trace the original registry discovery operations, including nested runtime
+provider callbacks and their timeout timers. `withModelDiscoveryTimeout` races the
+operation without cancelling it; joining its returned race is not original-operation
+settlement. Qualify that counterexample with pinned native runtime/owned IO before
+repairing the concrete source owner. Retain ordinary timeout behavior. A one-use
+catalog retirement must prevent new discovery before work starts, join original
+operations and completion observers on success/error/timeout, retire timers and
+callbacks, and refuse unknown/mirrored/ambiguous/repeated ownership. Positive and
+held-original/ignored-cancellation/late-start/mutation controls must precede any
+catalog settlement report. Do not replace this with an empty catalog, static-only
+registration, a pending-count snapshot, or changed model identity. Use one opt-in registry owner established at construction; keep the original
+operation and its completion observer, including raw work after a timeout race,
+response bodies and shared catalog requests after a subscriber stops waiting.
+Bound ownership to 4,096 starts. Existing fetch-identity-scoped catalog sessions
+carry that same owner; this is source callback ownership, not a global transport
+fence. Close public discovery admission before draining. Reject mirrors and
+unqualified Cursor native HTTP/2 discovery; the fixed profile retains its existing
+disabled-provider/model identities. A retirement receipt reports joined operations
+and bounded rejection counts, not successful provider requests or physical FD
+shutdown. Bind it to the already sealed actual restricted session/registry.
+Rust validates and journals this metadata after restrictions and before its
+incomplete-inventory halt; a late attempt after warm-up settlement is a protocol
+fault. Persist-failure controls include the new catalog-append boundary.
+The complete
+startup inventory and prefix acknowledgment/Ready echo remain required; a catalog
+receipt alone cannot grant admission. Paid execution and release signing stay gated.
+
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
 and a complete startup-owner inventory: catalog/discovery, credential refresh,

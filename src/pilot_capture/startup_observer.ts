@@ -41,7 +41,7 @@ function createStartupObserver() {
  });
  return Object.freeze({
   channel,
-  bind(pi: { on(event: string, callback: (event: unknown, ctx: any) => Promise<void>): void }, sealRestricted: (manager: unknown, registry: unknown) => unknown) {
+  bind(pi: { on(event: string, callback: (event: unknown, ctx: any) => Promise<void>): void }, sealRestricted: (manager: unknown, registry: unknown) => unknown, retireCatalog: (manager: unknown, registry: unknown) => Promise<unknown>) {
    if (bound || channel.quiet) startupFail(); bound = true;
    pi.on("session_start", async (_event, ctx) => {
     if (channel.quiet) return;
@@ -53,6 +53,11 @@ function createStartupObserver() {
     if (!startupExact(restriction,["tool_names","mcp_disabled","memory_disabled","credential_usage_joined"]) || restriction.mcp_disabled !== true || restriction.memory_disabled !== true || restriction.credential_usage_joined !== true || JSON.stringify(restriction.tool_names) !== JSON.stringify(["edit","read"])) startupFail();
     settled = true;
     if (!channel.send({type:"owner_settled",owner:"model_connection_warmup"}) || !channel.send({type:"restrictions_settled",...restriction})) startupFail();
+    let catalog: any;
+    try { catalog = await retireCatalog(ctx.sessionManager, ctx.modelRegistry); }
+    catch { channel.send({type:"fault",code:"unclassified"}); startupFail(); }
+    if (!startupExact(catalog,["discovery_retired","originals_joined","callbacks_joined","timers_retired","operations","rejections"]) || catalog.discovery_retired !== true || catalog.originals_joined !== true || catalog.callbacks_joined !== true || catalog.timers_retired !== true || !Number.isInteger(catalog.operations) || catalog.operations < 1 || catalog.operations > 4096 || !Number.isInteger(catalog.rejections) || catalog.rejections < 0 || catalog.rejections > catalog.operations) startupFail();
+    if (!channel.quiet && !channel.send({type:"catalog_retired",...catalog})) startupFail();
    });
   },
  });
@@ -66,7 +71,7 @@ if (startupOwner === undefined) {
 export default async function observeStartup(pi: { on(event: string, callback: (event: unknown, ctx: any) => Promise<void>): void }): Promise<void> {
  // Only the late trusted-extension loader resolves host SDK imports. The early
  // preload owns the channel and receives this exact source binding afterward.
- const { sealRestrictedStartup } = await import("@oh-my-pi/pi-coding-agent");
- if (typeof sealRestrictedStartup !== "function") startupFail();
- startupOwner!.bind(pi, sealRestrictedStartup);
+ const { sealRestrictedStartup, retireRestrictedStartupCatalog } = await import("@oh-my-pi/pi-coding-agent");
+ if (typeof sealRestrictedStartup !== "function" || typeof retireRestrictedStartupCatalog !== "function") startupFail();
+ startupOwner!.bind(pi, sealRestrictedStartup, retireRestrictedStartupCatalog);
 }
