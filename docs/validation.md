@@ -113,6 +113,37 @@ Credential lifetimes, remaining startup owners, complete timer/transport coverag
 and durable parent acknowledgment remain open. V2 stays unfunded/unfrozen; paid
 runs, signing and release remain gated.
 
+The repair and records through `fe46c66` are published to experimental;
+all **413 tracked paths** match a fresh clone by type, executable mode and bytes.
+Main remains `d94b013`; no release signing, tags/releases, paid request or workflow dispatch.
+The new build/MSRV cache is pruned from **8,442,310,656** to **35,463,168 allocated bytes**
+after cache-marker, open-file and system-library-only dependency checks. Exactly
+**11,755 generated files** are removed while one runnable
+final integration executable and the separate proper red remain retained; all
+**190 other stage files** retain exact hashes.
+Before the gate continuation, five private-preflight native-library extractions are byte-identical to the
+retained master and not open/mapped; only those copies are removed, preserving
+**130 other preflight-case files** exactly. The same resource recovery removes **37** task-created,
+unchanged published-source readback checkouts, after checking their exact recorded
+heads, clean/untracked/ignored state, sole refs/reflog, every recorded file byte,
+no worktrees and no open paths. Their original publication/file manifests remain.
+These recoverable public-code checkouts contain no private evidence. Combined cache
+allocation falls by **9,685,164,032 bytes (9.020 GiB)**. This is du allocation,
+not inferred physical APFS reclamation.
+
+All five current native diagnostics, including all new logging and five warm-up controls, pass
+**directly from the retained final binary without Cargo** in
+**314.975 seconds** after cleanup. Both red/green binary
+digests and their 40-test inventories match; code/test source remains exact.
+The resumed gates and post-cleanup readback finish within the stated continuation
+hour; the original partial stage remains separate. Final allocations: target **92,450,816**,
+runs **9,950,068,736**, datasets
+**34,715,725,824 bytes**. Retained evidence,
+models, corpus/oracles, native masters and user-owned untracked files remain local;
+no further dataset deletion is needed for this change. Private publication,
+cleanup and direct-readback receipts remain in the existing qualification root.
+Complete startup admission and paid/signing/release gates are unchanged.
+
 ## Known native warm-up deadline before capture Ready — 2026-11-15
 
 **Capture Ready now waits for the identified native warm-up deadline and detached

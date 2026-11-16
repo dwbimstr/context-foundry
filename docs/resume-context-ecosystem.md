@@ -550,6 +550,11 @@ and dated paragraphs below are history.
     Next, qualify initial marketplace autoUpdate=off: associated source defaults to
     notify and captures it before trusted factories. The source notes are retained;
     actual marketplace owner exclusion has not been demonstrated.
+    Logging repair/records through `fe46c66` are published with full
+    fresh-clone readback. New build/MSRV and five duplicate native libraries are
+    pruned after exact/open-file checks; runnable red/green and all other evidence
+    remain. All five current diagnostics pass directly after cleanup without Cargo;
+    the logging receipt owns counts and retention details.
     The settlement finding/design through `2238253` is published with full fresh-clone
     readback; ten redundant native-library copies are removed after byte/open-file
     checks, preserving all other evidence and the prior retained library.
