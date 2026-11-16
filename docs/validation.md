@@ -1,5 +1,107 @@
 # Validation
 
+## Source-built capture profile qualification — 2026-11-16
+
+**The separately pinned source-built capture profile passes its actual no-provider
+consumers and affected Rust gates. Complete startup admission remains HOLD.**
+The [Rust launch owner](../src/pilot_capture/host.rs) adds explicit
+`SourceQualification`, leaving the current `OwnedQualification` and frozen
+`HostDefault` pins unchanged. This diagnostic profile does not authorize Live/v2,
+provider spend or release signing. The existing stateless-host repair remains
+published; this change closes the source-build auth-binding gap.
+
+The proposed [upstream auth-owner patch/tests](references/omp-startup-auth-retirement.patch)
+target oh-my-pi `24439066040e006eb08da7b204f0ac41c79d2de9` and its
+`createAuthStorageSettingsSync` in
+[auth-broker-config.ts](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/session/auth-broker-config.ts).
+It is reference/test data, unapplied by Foundry, retaining the actual MIT notice.
+The new upstream test path in that patch is proposed. Its two files apply/reverse
+against exact qualified bytes; patch digest `1572ad74ef2aa50aa46ece6bd3efcc3eca5dd1c6ec25eb5f91b5b30cfdc445b4`.
+It composes with the [previous five-call SDK owner](#source-built-bounded-startup-caller-owner--2026-11-16)
+under 003 T006's [existing contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission).
+
+The original CLI auth-settings sync retains its initial resolver and catch return,
+stops its real subscription, crosses the queued-listener turn and joins the current
+pending chain. A one-use binding requires the exact Settings/AuthStorage owner;
+missing/duplicate/wrong owners, rejected originals and a changing pending chain
+refuse completion. No unbounded change history is retained. The existing prefetch
+helper keeps its namespace/original-call and nested native-store closure checks.
+The source profile skips frame-dependent Promise/Set capture for this auth owner,
+recording explicit bound/retired metadata without inventing a four-Set count.
+Settings, memory/telemetry/logging, model/tool/usage, transport refusal and native
+warm-up deadline checks remain. General OAuth/broker drain and physical FD release
+are not claimed.
+
+The actual missing-binding red runs before the implementation: bridge fault,
+zero captured/local fixture HTTP requests, exit 1, no forced cleanup and process
+group absent. Seven new source-unit tests pass. Removing the join makes **4/7**
+fail; restored source passes **7/0**. The first run's three failures come from
+omitted mocked getters; fixing those fixtures and checking captured warnings
+produces the pass without changing production behavior. Focused source lint and
+type checking pass; formatting is applied. The previous five-call owner source
+and its frozen lock remain byte-exact. The source snapshot readback verifies
+**10,323** original-or-qualified files.
+
+The private build checks source and lock bytes before/after compilation, with
+retained Bun 1.4.4 and native-addon identities. Patch readback binds the same source
+bytes after the build. The binary digest is
+`b5e50ce94846e29ea3db04ddab00f716208f21c0299263a30aee725c006ff9e9`. The only signature is the compiler's ad hoc test-binary
+signature, read back with `codesign --display`; no release signing occurs.
+
+At Foundry implementation `4335237eb8e7d8dde6809dfd7208f2af4e61c01a`, the actual source capture completes both
+generations with full native model digest
+`53bec6f047bbd7eeab26c93c1a6dd6c0e4ccc30d50a29d79e416c28692d5a027`,
+**29/29** usage mutations and **25/25** startup-trace mutations rejected.
+Original auth retirement is complete before Ready; the observed native warm-up
+deadline elapses, and the before-prompt trace remains a prefix of the final trace.
+The fixture reports two qualified requests and four local HTTP requests. This is
+fixture evidence, not paid provider usage or end-to-end token economics.
+
+Three actual native auth cases pass: active produces policies **[11,10]**,
+retired produces **[]**, and delivered work at retirement produces **[10]** before
+the helper returns. The real Derived unsubscribe cancels the second queued
+recompute; already delivered policy work reads the restored setting. All cases
+reject a wrong Settings identity and duplicate binding, verify the actual
+AuthStorage receiver, restore instrumentation and preserve two equal complete
+model readbacks (`83aac156b7678be8faab3ca2d09fbf4e9773214fc968f1c4a13839dc718317c9`).
+Retired cases produce no future policy work. Wrong AuthStorage binding and rejected/
+changing chains are source-unit controls. These native cases have zero TCP
+connections, no prompt, empty stderr, natural exit and an absent process group.
+
+All **five** current-artifact native consumers pass. Frozen compatibility passes
+**34/0**, with **9** explicit diagnostics ignored. Pilot units pass **102/0**,
+with **1** ignored. Four affected gates are fresh: Rust formatting, pilot Clippy,
+pilot units and actual Rust 1.90 pilot all-target check. Four default-feature gates
+are reused only after exact effective-input verification and explicit feature
+exclusion; the receipt names the prior runs. This is not eight freshly rerun gates.
+No retrieval behavior change or G2 improvement is claimed.
+
+The original no-spend hour uses a shared `CLOCK_MONOTONIC` deadline, 120-second
+cleanup reserve, one heavy job, 20 GiB free-disk floor and 8 GiB sampled individual
+RSS ceiling. A preflight stops before native launch when disk falls below the
+floor; its inherited error text says "512 MiB", but the configured floor is
+21,474,836,480 bytes. The stopped receipt has no child identity or exit. Dependency/
+package caches, Rust intermediates and one verified duplicate native library are
+pruned after open-file checks, preserving **10,537** other files exactly. Directory
+allocation falls by **3,765,305,344 bytes**. Free disk is initially still below the
+floor, then recovers to **38,888,910,848 bytes**; only then does qualification resume,
+inside the unchanged deadline with unchanged assertions. No native failure is
+retried or hidden by that resource recovery.
+
+At qualification readback, elapsed time is **2965.688 s**,
+maximum sampled individual RSS **2,935,308,288 bytes**
+and minimum launched-command sampled free disk
+**22,225,371,136 bytes**. Samples are not
+global/GPU quotas. Raw failures, build/patch identity, controls, gate reuse and
+readback remain private under `runs/pilot-source-capture-2026-11-16/`, especially
+`qualification-readback.json`. Review is in-session. Original user-owned untracked
+files, required data/models, encrypted backups and other services remain untouched.
+
+Complete transport/timer coverage and durable parent startup acknowledgment remain
+open. Complete startup admission, paid runs, release signing and v2/T006 execution
+stay gated; the wrap-up goal remains active. Publication, final cache retirement
+and retained-consumer replay are recorded below once completed.
+
 ## Source-built bounded startup caller owner — 2026-11-16
 
 **The private source-built SDK candidate now owns all five generic connection

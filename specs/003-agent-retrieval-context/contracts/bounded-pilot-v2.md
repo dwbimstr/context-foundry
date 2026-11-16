@@ -1229,7 +1229,7 @@ controls cover the initial normal/error paths; other model-selection branches ar
 not separately live-exercised. The separate capture profile and its real consumers,
 complete owner/transport inventory and durable acknowledgment remain required.
 
-**Selected source-built capture profile, 2026-11-16 — implementation/qualification pending.**
+**Selected source-built capture profile, 2026-11-16 — qualified diagnostic; complete admission remains HOLD.**
 Add an explicit diagnostic catalog profile with its own exact artifact pin; current
 OwnedQualification and frozen HostDefault keep their pins and behavior. Bind the
 source/patch/lock/Bun/native-addon/binary identities in the receipt. This profile
@@ -1269,6 +1269,16 @@ no-provider hour, cleanup reserve and resource bounds; publish reviewed changes,
 then prune verified new caches and replay retained consumers. No missing proof
 becomes a permissive default. Paid runs, release signing, full startup admission
 and v2/T006 execution remain gated.
+
+The [Rust launch owner](../../../src/pilot_capture/host.rs) now implements the
+explicit source profile and unchanged current/frozen pins. The proposed upstream
+[auth retirement patch/tests](../../../docs/references/omp-startup-auth-retirement.patch)
+retain the original owner; Foundry does not apply that patch. The
+[dated receipt](../../../docs/validation.md#source-built-capture-profile-qualification--2026-11-16)
+records actual source conversation/usage/identity/retirement controls, compatibility,
+fresh versus reused gates and the pre-launch resource pause. This qualifies the
+fixed source diagnostic only. Transport/timer completeness and durable startup
+acknowledgment below remain unimplemented admission conditions.
 
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association

@@ -606,26 +606,19 @@ and dated paragraphs below are history.
     now pruned; the one still mapped by the IDE is preserved. The earlier rejected
     static-registration candidate is not selected again. Complete startup admission
     remains HOLD and the wrap-up remains active.
-    A [source-built caller comparison](validation.md#source-built-warm-up-caller-feasibility--2026-11-16)
-    now demonstrates an initial warm-up join without another global promise hook.
-    No replacement host pin is selected: the existing capture consumer refuses the
-    different artifact before launch. The next investigation is ownership across
-    all five SDK warm-up sites and success/error exits, followed by a separately
-    bound profile's real consumers. Current/frozen pins and paid/signing gates remain.
-    Feasibility records are published with full fresh-clone readback. Generated
-    dependency and duplicate extraction caches are pruned, preserving source and
-    both runnable builds; all three stricter native-deadline controls pass after
-    cleanup. The linked receipt owns limits, corrected clock and retention details.
-    The [bounded source caller owner](validation.md#source-built-bounded-startup-caller-owner--2026-11-16)
-    is now implemented and locally checked across all five SDK call sites and
-    normal/error exits. Its proposed upstream patch/tests are retained as reference
-    data; Foundry does not apply it or change current/frozen pins. The next work is
-    a separately bound source-built capture profile and its actual consumers;
-    complete transport/timer coverage and durable acknowledgment remain open.
-    Caller-owner patch/tests and records are published with full fresh-clone
-    readback. Generated dependency and duplicate native-library caches are pruned;
-    all four normal/error SDK controls pass directly after cleanup. The linked
-    caller-owner receipt owns retention, limits and the still-unqualified profile.
+    The [source-built caller comparison](validation.md#source-built-warm-up-caller-feasibility--2026-11-16)
+    led to the [bounded SDK caller owner](validation.md#source-built-bounded-startup-caller-owner--2026-11-16),
+    checked across all five generic warm-up sites and normal/error exits. Its
+    proposed upstream patch/tests remain reference data; Foundry does not apply it.
+    The [separately pinned source capture profile](validation.md#source-built-capture-profile-qualification--2026-11-16)
+    now passes its actual no-provider consumers and affected Rust gates. Its native
+    auth owner replaces frame-based capture only in this explicit diagnostic;
+    current/frozen host pins remain unchanged. Complete transport/timer coverage
+    and durable startup acknowledgment remain open, so full startup admission
+    stays HOLD. Paid runs, release signing and v2/T006 execution stay gated.
+    The linked source-profile receipt owns exact source/build identity, fresh
+    versus reused checks, the pre-launch disk stop, publication and cache replay.
+    Earlier caller-owner publication and cleanup remain recorded in their receipt.
     Marketplace repair/records through `467bd45` are published
     with full fresh-clone readback. New build/MSRV cache is pruned after exact and
     open-file checks; runnable red/green and other evidence remain. All five current
