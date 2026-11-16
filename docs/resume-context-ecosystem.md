@@ -548,10 +548,17 @@ and dated paragraphs below are history.
     transport/timer coverage and durable acknowledgment stay open. Paid runs and
     signing remain gated.
     Native marketplace controls now confirm that initial off excludes the task,
-    while the current owned configuration and even a late off override run it.
+    while the prior owned configuration and even a late off override run it.
     The proper native regression fails exclusion on `7dab0cd`. Initial owned
-    configuration and final readback are repaired; green qualification is pending
+    configuration and final readback are repaired and locally qualified
     ([marketplace receipt](validation.md#fixed-profile-marketplace-update-exclusion--2026-11-15)).
+    All current/frozen consumers and eight gates pass on `7863a44`;
+    the marketplace receipt owns the green and resource-recovery evidence.
+    Next qualify original credential settings/resolver/refresh lifetimes and the
+    actual startup watchdog handle. Source inspection finds a discarded original
+    settings-sync handle, demand-driven pool polling and void asynchronous close;
+    neither a second sync nor an empty snapshot can prove original work joined.
+    Those source pins are retained; native completion remains unqualified.
     Logging repair/records through `fe46c66` are published with full
     fresh-clone readback. New build/MSRV and five duplicate native libraries are
     pruned after exact/open-file checks; runnable red/green and all other evidence

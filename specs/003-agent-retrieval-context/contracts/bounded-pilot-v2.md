@@ -894,9 +894,9 @@ pass in a fresh offline-hour continuation with RUST_TEST_THREADS=4. Explicit
 concurrency tests and all assertions/deadlines remain intact. The receipt keeps
 both stages separate and records the forced cleanup of the interrupted run.
 
-**Selected fixed-profile marketplace exclusion, 2026-11-15 — implemented; qualification pending.**
-The actual current SDK runs refreshStaleMarketplaces and checkForUpdates with the
-existing owned configuration, whose initial marketplace.autoUpdate defaults to
+**Selected fixed-profile marketplace exclusion, 2026-11-15 — implemented and locally qualified.**
+The actual current SDK ran refreshStaleMarketplaces and checkForUpdates with the
+prior owned configuration, whose initial marketplace.autoUpdate defaulted to
 notify. Both original promises complete in the native observation. Explicit off
 excludes those calls with the same complete model, two state readbacks, empty
 stderr and normal exit. A trusted-factory change from notify to off still runs
@@ -939,6 +939,16 @@ controls observe actual manager calls, not a quiet network proxy. Source
 association is not reproducible-build proof. Other startup owners, complete
 timer/transport coverage and durable parent acknowledgment remain open; v2 stays
 unfunded/unfrozen and execution locked.
+
+The [dated marketplace receipt](../../../docs/validation.md#fixed-profile-marketplace-update-exclusion--2026-11-15)
+records the actual-launcher red on `7dab0cd`, original-call controls, all five
+current diagnostics, frozen compatibility and eight gates on `7863a44`. The initial
+disk-stopped build and private model-pin correction are retained separately.
+The [launcher](../../../src/pilot_capture/host.rs) owns the initial setting; the
+[bridge](../../../src/pilot_capture/bridge.ts) checks native readback, and the
+[native consumer](../../../tests/pilot_capture.rs) observes actual SDK calls.
+This excludes the fixed qualifier's task; it does not drain an active marketplace
+or establish full startup admission.
 
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association

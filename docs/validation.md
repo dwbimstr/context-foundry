@@ -2,9 +2,10 @@
 
 ## Fixed-profile marketplace update exclusion — 2026-11-15
 
-**Initial owned configuration now excludes the marketplace task; qualification
-is pending.** The prior owned configuration defaults to notify.
-In the actual pinned OMP 18.18.1 / Bun 1.4.4, it invokes the native
+**The owned qualifier excludes the native marketplace task before capture Ready;
+complete startup admission remains HOLD.** Qualified source `7863a44`
+implements the selected contract. The prior owned configuration defaulted to notify.
+In the actual pinned OMP 18.18.1 / Bun 1.4.4, that invoked the native
 MarketplaceManager.refreshStaleMarketplaces and checkForUpdates; both original
 promises complete. Explicit notify does the same, while initial off excludes both
 calls. A trusted-factory change from notify to off still runs the task. All four
@@ -59,9 +60,40 @@ Active prepared stores, models, corpora, questions, oracles and holdout data are
 unchanged. Extra volume headroom later recovered; its cause is not established.
 A fresh stated hour begins with over 35 GiB available and retains the same
 20 GiB floor, one heavy job, four outer test threads, 120-second cleanup reserve
-and 8 GiB sampled individual RSS ceiling. Current/frozen qualification and gates
-remain pending; complete startup admission, paid runs and release signing stay
-gated.
+and 8 GiB sampled individual RSS ceiling. The original partial stage remains
+separate from this qualification continuation.
+
+The [Rust launcher](../src/pilot_capture/host.rs) sets initial
+marketplace.autoUpdate=off only for OwnedQualification. The existing
+[bridge](../src/pilot_capture/bridge.ts) checks the actual native setting after its
+final strict settings reload and before Ready. No new module, owner, worker,
+configuration mechanism or protocol is added. Ordinary capture/frozen v1 retain
+their settings; provider policy, shared channel and metadata bounds are unchanged.
+
+The repaired original-call controls yield **[2,0,0,2]** for notify/owned/off/late-off,
+with complete equal native control models, original promise returns, completed
+positive calls, empty stderr, normal reaping and no forced cleanup. The observer
+remains through process exit and restores both descriptors; overflow fails.
+All **five current diagnostics pass in 362.893 seconds**, preserving
+the owned two-generation tool conversation, four synthetic TLS POSTs, native
+usage/29 mutations, metadata/16 mutations, catalog/model identity, MCP/disk-edit
+checks and all prior startup controls. The native controls use the original catalog
+model; the capture bridge's deliberate model override has its own unchanged pin.
+Synthetic counters and responses do not establish provider economics or task benefit.
+
+Frozen compatibility passes **33/0/7 ignored in 291.783 seconds**;
+focused lint and all **eight gates pass** (966.896 seconds), including
+actual Rust **1.90.0**. Default outer totals are **1,319/0/35 ignored**; pilot units
+are **102/0/1 ignored**. No existing assertion or per-test deadline is weakened
+and no ignore is added. Four outer threads bound scheduling while explicit concurrency tests keep their
+internal concurrency. Review is in-session. The continuation qualification finishes
+in **1948.213 seconds**; maximum sampled individual RSS is
+**2029.531 MiB**, and minimum observed
+free disk is **24.599 GiB**. These are
+samples, not global/GPU resource enforcement. No model download, real credential
+or provider spend is used. Remaining credential lifetimes, other startup owners,
+complete timer/transport coverage and durable parent acknowledgment stay open.
+V2 remains unfunded/unfrozen; paid runs and release signing remain gated.
 
 ## Fixed-profile native logging quiescence — 2026-11-15
 
