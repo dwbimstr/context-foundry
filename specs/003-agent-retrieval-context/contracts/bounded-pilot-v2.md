@@ -1334,6 +1334,21 @@ qualification selects a new source candidate. Work is bounded to one no-spend
 120-second cleanup reserve. Retain red/green evidence and keep unfinished work
 explicitly unqualified; paid trials and release signing remain gated.
 
+**Refusal integration in progress, 2026-11-16.** Continue inside the same
+90-minute bound above. The source warm-up function consults an immutable early
+no-grant observer before constructing its fetch transport or abort signal. Even
+a resolved observer cannot permit IO. Closed revision 2 metadata carries a bounded
+attempt, owner, method, scheme, hostname, port and route; the existing Rust journal
+must append, sync and read back its refusal before the child is answered. Use at
+most 20 attempts, existing 64 KiB headers, zero payload and a 30-second startup
+observation wall. Only the exact Anthropic HEAD origin is classified in this
+initial owner integration. Other destinations/owners fail visibly. A warm-up-only
+`owner_settled` message is not complete `startup_settled`: without the full frozen
+inventory the parent records `startup_inventory_unqualified` and closes without
+Ready, counters, permits, preview or generation. No v1 fallback is possible in
+this explicit diagnostic. This integration is a prerequisite to the full prefix/
+acknowledgment exchange below, whose inventory and execution gates remain intact.
+
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
 and a complete startup-owner inventory: catalog/discovery, credential refresh,

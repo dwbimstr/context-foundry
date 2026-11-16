@@ -84,6 +84,96 @@ async fn source_host_owned_catalog_preserves_full_history() {
     assert_eq!(report["native_warmup_deadline_readback"], true);
 }
 
+/// Actual source-built CLI, shared FIFOs and the capture journal; no model
+/// delivery API is available in this startup-only profile.
+#[test]
+#[ignore = "needs explicit CF_PILOT_STARTUP_OMP; no-provider startup refusal diagnostic"]
+fn source_startup_refusal_is_durable_and_incomplete_inventory_never_admits() {
+    use pilot_capture::startup::ObservationAdmission;
+    let omp = PathBuf::from(
+        std::env::var_os("CF_PILOT_STARTUP_OMP").expect("explicit startup source host"),
+    );
+    let output = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT").map(PathBuf::from);
+    for (name, fail_after) in [
+        ("normal", None),
+        ("refusal-write", Some(2)),
+        ("halt-write", Some(4)),
+    ] {
+        let e = env();
+        let run_dir = e._root.path().join("startup-observation");
+        let receipt = CaptureSession::observe_startup(ObservationAdmission {
+            run_dir: run_dir.clone(),
+            omp: omp.clone(),
+            workspace: e.workspace.clone(),
+            faults: VerificationFaults {
+                journal_fail_after: fail_after,
+            },
+        });
+        let bytes = std::fs::read(run_dir.join("journal.jsonl")).unwrap();
+        let rows: Vec<Value> = bytes
+            .split(|b| *b == b'\n')
+            .filter(|b| !b.is_empty())
+            .map(|b| serde_json::from_slice(b).unwrap())
+            .collect();
+        assert!(!rows.iter().any(|r| matches!(
+            r["kind"].as_str(),
+            Some("bridge_ready" | "prompt_sent" | "permit" | "counter_result" | "provider_attempt")
+        )));
+        if name == "normal" {
+            let receipt = receipt.unwrap();
+            assert_eq!(receipt.attempts, 1);
+            assert_eq!(receipt.terminal_code, "startup_inventory_unqualified");
+            assert!(receipt.exit.normal && !receipt.exit.forced && receipt.exit.group_gone);
+            assert_eq!(receipt.journal_sha256, pilot_capture::sha256_hex(&bytes));
+            assert_eq!(
+                rows.iter()
+                    .filter(|r| r["kind"] == "startup_refused")
+                    .count(),
+                1
+            );
+            assert_eq!(
+                rows.iter()
+                    .filter(|r| r["kind"] == "startup_owner_settled")
+                    .count(),
+                1
+            );
+            assert!(
+                rows.iter()
+                    .any(|r| r["kind"] == "halt" && r["code"] == "startup_inventory_unqualified")
+            );
+            if let Some(out) = &output {
+                fixture_private_dirs(out).unwrap();
+                fixture_private_write(
+                    out.join("normal-result.json"),
+                    serde_json::to_vec_pretty(&receipt).unwrap(),
+                )
+                .unwrap();
+            }
+        } else {
+            let error = receipt.unwrap_err();
+            assert_eq!(error.class, FaultClass::Persistence);
+            assert_eq!(error.code, "journal_append_failed");
+            assert_eq!(rows.len(), fail_after.unwrap() as usize);
+            if name == "refusal-write" {
+                assert!(!rows.iter().any(|r| r["kind"] == "startup_owner_settled"));
+            }
+        }
+        assert!(
+            CaptureSession::observe_startup(ObservationAdmission {
+                run_dir: run_dir.clone(),
+                omp: omp.clone(),
+                workspace: e.workspace,
+                faults: VerificationFaults::default()
+            })
+            .is_err()
+        );
+        if let Some(out) = &output {
+            fixture_private_dirs(out).unwrap();
+            fixture_private_write(out.join(format!("{name}-journal.jsonl")), bytes).unwrap();
+        }
+    }
+}
+
 async fn startup_control_configuration(
     omp: &Path,
     base: &Path,

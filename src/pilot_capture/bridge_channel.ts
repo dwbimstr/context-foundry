@@ -25,6 +25,8 @@ class OwnedCaptureChannel {
 	#host: string;
 	#txInode: string;
 	#rxInode: string;
+	#api: string;
+	#version: 1 | 2;
 	#out = 0;
 	#incoming = 0;
 	#quiet = false;
@@ -41,19 +43,21 @@ class OwnedCaptureChannel {
 		this.#host = env.CF_PILOT_HOST ?? "";
 		this.#txInode = env.CF_PILOT_TX_INO ?? "";
 		this.#rxInode = env.CF_PILOT_RX_INO ?? "";
+		this.#api = env.CF_PILOT_API ?? "";
+		this.#version = this.#api === "cf-pilot-startup-v2" ? 2 : 1;
 		if (!CF_CHANNEL_ID.test(this.#session) || !CF_CHANNEL_ID.test(this.#host) ||
 						env.CF_PILOT_TX_FD !== "3" || !channelFifo(3, env.CF_PILOT_TX_INO)) {
 			throw new Error("pilot capture bridge: invalid channel configuration");
 		}
 		if (env.CF_PILOT_RX_FD !== "4" || !channelFifo(4, env.CF_PILOT_RX_INO) ||
-						env.CF_PILOT_API !== "cf-pilot-capture-v1" || !channelObject((globalThis as { Bun?: unknown }).Bun) || typeof Bun.file !== "function") {
+						(this.#api !== "cf-pilot-capture-v1" && this.#api !== "cf-pilot-startup-v2") || !channelObject((globalThis as { Bun?: unknown }).Bun) || typeof Bun.file !== "function") {
 			this.send({ type: "fault", code: "config" });
 			throw new Error("pilot capture bridge: invalid configuration");
 		}
 	}
 	matches(): boolean {
 		return this.#session === process.env.CF_PILOT_SESSION && this.#host === process.env.CF_PILOT_HOST &&
-			process.env.CF_PILOT_TX_FD === "3" && process.env.CF_PILOT_RX_FD === "4" && process.env.CF_PILOT_API === "cf-pilot-capture-v1" &&
+			process.env.CF_PILOT_TX_FD === "3" && process.env.CF_PILOT_RX_FD === "4" && process.env.CF_PILOT_API === this.#api &&
 			process.env.CF_PILOT_TX_INO === this.#txInode && process.env.CF_PILOT_RX_INO === this.#rxInode &&
 			channelFifo(3, this.#txInode) && channelFifo(4, this.#rxInode);
 	}
@@ -67,8 +71,8 @@ class OwnedCaptureChannel {
 		this.send({ type: "fault", code: "protocol" }); this.#terminate(72);
 	}
 	send(message: unknown, payload: Uint8Array = CF_CHANNEL_EMPTY): boolean {
-		if (this.#quiet || this.#out >= 0xfffffffe) return false;
-		const header = this.#encoder.encode(JSON.stringify({ v: 1, session: this.#session, host: this.#host, seq: this.#out + 1, msg: message }));
+		if (this.#quiet || this.#out >= 0xfffffffe || (this.#version === 2 && payload.length)) return false;
+		const header = this.#encoder.encode(JSON.stringify({ v: this.#version, session: this.#session, host: this.#host, seq: this.#out + 1, msg: message }));
 		if (!header.length || header.length > CF_CHANNEL_HEADER_MAX || payload.length > CF_CHANNEL_PAYLOAD_MAX) return false;
 		const frame = new Uint8Array(8 + header.length + payload.length), view = new DataView(frame.buffer);
 		view.setUint32(0, header.length, true); frame.set(header, 4);
@@ -90,7 +94,7 @@ class OwnedCaptureChannel {
 		try { header = JSON.parse(this.#decoder.decode(bytes)); } catch { this.#protocolFault(); }
 		if (!channelObject(header) || Object.keys(header).length !== 5 ||
 						!["v", "session", "host", "seq", "msg"].every(key => Object.prototype.hasOwnProperty.call(header, key)) ||
-						header.v !== 1 || header.session !== this.#session || header.host !== this.#host ||
+						header.v !== this.#version || header.session !== this.#session || header.host !== this.#host ||
 						header.seq !== this.#incoming + 1 || this.#incoming >= 0xfffffffe || !this.#handler) this.#protocolFault();
 		this.#incoming += 1;
 		this.#handler(header.msg, payload);
@@ -108,7 +112,7 @@ class OwnedCaptureChannel {
 			if (!header || header > CF_CHANNEL_HEADER_MAX) this.#protocolFault();
 			if (view.byteLength < 8 + header) break;
 			const payload = view.getUint32(4 + header, true);
-			if (payload > CF_CHANNEL_PAYLOAD_MAX) this.#protocolFault();
+			if (payload > (this.#version === 2 ? 0 : CF_CHANNEL_PAYLOAD_MAX)) this.#protocolFault();
 			const total = 8 + header + payload;
 			if (view.byteLength < total) break;
 			const bytes = this.#buffer.subarray(offset + 4, offset + 4 + header);

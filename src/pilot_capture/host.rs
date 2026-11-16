@@ -114,6 +114,8 @@ pub enum CatalogProfile {
     OwnedQualification,
     /// Source-built SDK diagnostic; never selected by Live admission.
     SourceQualification,
+    /// Source startup refusal diagnostic; never capture admission.
+    StartupObservation,
 }
 
 /// Artifact whose catalog API and inventory this qualification profile exercises.
@@ -125,6 +127,15 @@ pub const QUALIFICATION_OMP_SHA256: &str =
 pub const SOURCE_QUALIFICATION_OMP_SHA256: &str =
     "b5e50ce94846e29ea3db04ddab00f716208f21c0299263a30aee725c006ff9e9";
 
+pub const STARTUP_OBSERVATION_OMP_SHA256: &str =
+    "00e24e41653873b7c1e51552c3686a7fc2099b918e877b202ee4788161107432";
+pub const STARTUP_OBSERVER_SOURCE: &[u8] = concat!(
+    include_str!("bridge_channel.ts"),
+    "\n",
+    include_str!("startup_observer.ts")
+)
+.as_bytes();
+
 impl CatalogProfile {
     pub fn is_owned(self) -> bool {
         matches!(self, Self::OwnedQualification | Self::SourceQualification)
@@ -135,6 +146,7 @@ impl CatalogProfile {
             Self::HostDefault => None,
             Self::OwnedQualification => Some(QUALIFICATION_OMP_SHA256),
             Self::SourceQualification => Some(SOURCE_QUALIFICATION_OMP_SHA256),
+            Self::StartupObservation => Some(STARTUP_OBSERVATION_OMP_SHA256),
         }
     }
 }
@@ -324,6 +336,7 @@ pub enum RpcEvent {
 #[derive(Debug)]
 pub enum HostEvent {
     Bridge(Inbound),
+    Startup(super::startup::Inbound),
     BridgeFault(ProtocolFault),
     BridgeEof,
     Rpc(RpcEvent),
@@ -347,12 +360,18 @@ pub struct HostExit {
     pub stderr_sha256: String,
 }
 
+enum BridgeOutbound {
+    Capture(ParentMessage, Vec<u8>),
+    Startup(super::startup::ParentMessage),
+}
+
 pub struct Host {
     pub paths: HostPaths,
     pub launch: LaunchRecord,
     child: Child,
     pgid: i32,
-    bridge_out: Option<mpsc::Sender<(ParentMessage, Vec<u8>)>>,
+    bridge_out: Option<mpsc::Sender<BridgeOutbound>>,
+    startup_observation: bool,
     rpc_out: Option<mpsc::Sender<Vec<u8>>>,
     threads: Vec<JoinHandle<()>>,
     stderr: std::sync::Arc<std::sync::Mutex<StderrDigest>>,
@@ -487,6 +506,7 @@ impl Host {
     /// Returns the host and the receiver of its events (kept separate so
     /// the driver can await events while sending frames).
     pub fn launch(spec: &HostSpec) -> Result<(Host, mpsc::Receiver<HostEvent>), CaptureFault> {
+        let startup_observation = spec.catalog == CatalogProfile::StartupObservation;
         if let Some(pin) = spec.catalog.artifact_pin() {
             let bytes = fs::read(&spec.omp)
                 .map_err(|_| fault(FaultClass::Pins, "qualification_host_unreadable"))?;
@@ -529,7 +549,9 @@ impl Host {
         write_private_new(&paths.agent.join("models.yml"), MODELS_YML.as_bytes())?;
         let config = match spec.catalog {
             CatalogProfile::HostDefault => CONFIG_YML.to_owned(),
-            CatalogProfile::OwnedQualification | CatalogProfile::SourceQualification => format!(
+            CatalogProfile::OwnedQualification
+            | CatalogProfile::SourceQualification
+            | CatalogProfile::StartupObservation => format!(
                 "{CONFIG_YML}\ndisabledProviders: {}\nmcp:\n  enableProjectConfig: false\n\ntelemetry:\n  otlpExportEnabled: false\n\nmarketplace:\n  autoUpdate: off\n",
                 serde_json::to_string(QUALIFICATION_DISABLED_PROVIDERS)
                     .expect("literal provider inventory")
@@ -538,11 +560,15 @@ impl Host {
         write_private_new(&paths.agent.join("config.yml"), config.as_bytes())?;
         let bridge_sha256 = materialize_source(
             &paths.bridge,
-            BRIDGE_SOURCE,
+            if startup_observation {
+                STARTUP_OBSERVER_SOURCE
+            } else {
+                BRIDGE_SOURCE
+            },
             "bridge_unreadable",
             "bridge_bytes_mismatch",
         )?;
-        if spec.catalog == CatalogProfile::SourceQualification {
+        if spec.catalog == CatalogProfile::SourceQualification || startup_observation {
             materialize_source(
                 &root.join("bridge/bridge_channel.ts"),
                 CHANNEL_SOURCE,
@@ -612,6 +638,14 @@ impl Host {
         let tx_ino = fstat_ino(c2r_write.as_raw_fd())?;
         let rx_ino = fstat_ino(r2c_read.as_raw_fd())?;
         let mut env = host_env(&paths, &spec.identity, tx_ino, rx_ino);
+        if startup_observation {
+            env.iter_mut()
+                .find(|(name, _)| name == "CF_PILOT_API")
+                .expect("fixed environment")
+                .1 = "cf-pilot-startup-v2".into();
+            env.push(("BUN_OPTIONS".into(), "--preload ./bridge/bridge.ts".into()));
+        }
+
         if spec.catalog == CatalogProfile::SourceQualification {
             env.push(("CF_PILOT_EARLY_CHANNEL".into(), "1".into()));
         }
@@ -646,7 +680,7 @@ impl Host {
             .args(&args)
             // Relative preload arguments avoid Bun's whitespace parsing. The
             // qualifier restores the canonical workspace before SDK startup.
-            .current_dir(if startup_probe_sha256.is_some() {
+            .current_dir(if startup_probe_sha256.is_some() || startup_observation {
                 &root
             } else {
                 &workspace
@@ -714,14 +748,29 @@ impl Host {
             let identity = spec.identity.clone();
             let mut reader = c2r_read;
             threads.push(std::thread::spawn(move || {
-                let mut state = InboundState::new(identity);
+                let mut legacy =
+                    (!startup_observation).then(|| InboundState::new(identity.clone()));
+                let mut startup =
+                    startup_observation.then(|| super::startup::ChannelState::new(identity));
                 loop {
-                    let event = match state.read(&mut reader) {
-                        Ok(Some(inbound)) => HostEvent::Bridge(inbound),
-                        Ok(None) => HostEvent::BridgeEof,
-                        Err(f) => HostEvent::BridgeFault(f),
+                    let event = if let Some(state) = &mut startup {
+                        match state.read(&mut reader) {
+                            Ok(Some(inbound)) => HostEvent::Startup(inbound),
+                            Ok(None) => HostEvent::BridgeEof,
+                            Err(f) => HostEvent::BridgeFault(f),
+                        }
+                    } else {
+                        match legacy
+                            .as_mut()
+                            .expect("selected legacy codec")
+                            .read(&mut reader)
+                        {
+                            Ok(Some(inbound)) => HostEvent::Bridge(inbound),
+                            Ok(None) => HostEvent::BridgeEof,
+                            Err(f) => HostEvent::BridgeFault(f),
+                        }
                     };
-                    let stop = !matches!(event, HostEvent::Bridge(_));
+                    let stop = !matches!(event, HostEvent::Bridge(_) | HostEvent::Startup(_));
                     if tx.blocking_send(event).is_err() || stop {
                         break;
                     }
@@ -729,15 +778,28 @@ impl Host {
             }));
         }
         // Bridge writer: bounded queue → fd 4 frames.
-        let (bridge_tx, mut bridge_rx) = mpsc::channel::<(ParentMessage, Vec<u8>)>(WRITE_QUEUE);
+        let (bridge_tx, mut bridge_rx) = mpsc::channel::<BridgeOutbound>(WRITE_QUEUE);
         {
             let tx = event_tx.clone();
             let identity = spec.identity.clone();
             let mut writer = r2c_write;
             threads.push(std::thread::spawn(move || {
-                let mut state = OutboundState::new(identity);
-                while let Some((msg, payload)) = bridge_rx.blocking_recv() {
-                    if let Err(ProtocolFault(code)) = state.write(&mut writer, msg, &payload) {
+                let mut legacy =
+                    (!startup_observation).then(|| OutboundState::new(identity.clone()));
+                let mut startup =
+                    startup_observation.then(|| super::startup::ChannelState::new(identity));
+                while let Some(message) = bridge_rx.blocking_recv() {
+                    let result = match message {
+                        BridgeOutbound::Capture(msg, payload) => legacy
+                            .as_mut()
+                            .ok_or(ProtocolFault("capture_on_startup_channel"))
+                            .and_then(|state| state.write(&mut writer, msg, &payload)),
+                        BridgeOutbound::Startup(msg) => startup
+                            .as_mut()
+                            .ok_or(ProtocolFault("startup_on_capture_channel"))
+                            .and_then(|state| state.write(&mut writer, msg)),
+                    };
+                    if let Err(ProtocolFault(code)) = result {
                         let _ = tx.blocking_send(HostEvent::BridgeWriteFailed(code));
                         break;
                     }
@@ -830,6 +892,7 @@ impl Host {
             child,
             pgid,
             bridge_out: Some(bridge_tx),
+            startup_observation,
             rpc_out: Some(rpc_tx),
             threads,
             stderr: digest,
@@ -847,7 +910,25 @@ impl Host {
             .bridge_out
             .as_ref()
             .ok_or(fault(FaultClass::Protocol, "bridge_channel_closed"))?;
-        out.send((msg, payload))
+        if self.startup_observation {
+            return Err(fault(FaultClass::Protocol, "capture_on_startup_channel"));
+        }
+        out.send(BridgeOutbound::Capture(msg, payload))
+            .await
+            .map_err(|_| fault(FaultClass::Protocol, "bridge_channel_closed"))
+    }
+
+    pub(crate) async fn send_startup(
+        &self,
+        msg: super::startup::ParentMessage,
+    ) -> Result<(), CaptureFault> {
+        if !self.startup_observation {
+            return Err(fault(FaultClass::Protocol, "startup_on_capture_channel"));
+        }
+        self.bridge_out
+            .as_ref()
+            .ok_or(fault(FaultClass::Protocol, "bridge_channel_closed"))?
+            .send(BridgeOutbound::Startup(msg))
             .await
             .map_err(|_| fault(FaultClass::Protocol, "bridge_channel_closed"))
     }

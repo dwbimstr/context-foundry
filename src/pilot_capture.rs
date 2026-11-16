@@ -16,6 +16,7 @@
 pub mod apparatus;
 pub mod host;
 pub mod protocol;
+pub mod startup;
 pub mod wire;
 
 use std::collections::BTreeMap;
@@ -3507,6 +3508,12 @@ impl Inner {
                 return Err(CaptureFault::new(FaultClass::Protocol, code));
             }
             E::Bridge(inbound) => self.on_bridge(host, run, inbound, slot_deadline).await?,
+            E::Startup(_) => {
+                return Err(CaptureFault::new(
+                    FaultClass::Protocol,
+                    "startup_on_capture_channel",
+                ));
+            }
         }
         Ok(())
     }
