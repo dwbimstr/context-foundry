@@ -100,6 +100,43 @@ other startup owners, native timers, complete transport coverage and durable par
 acknowledgment remain open. V2 stays unfunded/unfrozen; paid runs, signing and
 release remain gated.
 
+Publication and cache cleanup follow this qualification. Code/records through
+`3224b6b` are pushed to `experimental/context-ecosystem`; a fresh clone
+matches all **409 tracked files** by bytes, type and executable mode. Main stays
+`d94b013`; no tag, release, signing or workflow dispatch is made. Public changes
+are nine code/test/contract/record paths. Private evidence, models, tasks,
+credentials, holdouts and backups stay local; unrelated untracked files stay exact.
+
+After publication, cache tags, exact path/source checks, system-only dynamic
+library dependencies and no-open-file checks permit pruning this stage's generated
+build/MSRV cache from **8,442,163,200 to
+35,364,864 allocated bytes**, removing
+**11,755 generated files**. The standalone green integration
+executable remains SHA-256 `ed3fddc7987b83d2fa4cdf3d73b2cb55e123ebd165d9d4a369cc838a32d85574`; the separately retained actual
+expected-red executable remains `73b404897ea17fbdb955887fee9249a43e17c902148593680e9958a19b98a7ae`. Both list all **40 tests**.
+All **185 existing implementation-evidence files** stay exact.
+
+Fourteen extracted SDK libraries are byte-identical to the retained current master
+(`ee0bf26f4e88b0905611f761efcd6e73a0f2e55a9355e293b0251542dc8b900b`)
+and have no open/mapped handles. Removing only those duplicates deletes
+**1,555,544,480 logical bytes** while all **372 other probe files**
+remain exact. The retained master, current/frozen host artifacts, required datasets
+and earlier acceptance evidence remain available. Combined owned-directory
+allocation falls **9,962,369,024 bytes**; du allocation is not an
+APFS physical-reclamation claim.
+
+All five current native diagnostics pass directly from the retained green
+executable in **195.945 seconds** after cleanup, including three telemetry, nine memory and eight
+prefetch controls, actual conversation and usage, model/cache, MCP/settings and
+TCP controls. Cargo is not invoked and build/MSRV caches are not recreated.
+Post-cleanup source/test bytes and red/green executable hashes remain exact.
+Storage readback reports target **92,450,816 bytes**,
+runs **9,667,809,280 bytes** and required datasets
+**34,715,725,824 bytes** (directory allocation).
+The bounded stage including retained checks finishes at
+**2308.401 seconds**. Provider spend stays zero; full startup
+admission, paid runs and signing remain gated.
+
 ## Fixed off-memory startup owner qualification — 2026-11-15
 
 **The fixed read/edit qualifier now checks its actual off-memory startup owner

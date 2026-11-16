@@ -521,6 +521,11 @@ and dated paragraphs below are history.
     This excludes exporters in the fixed profile; active-graph drain remains
     unqualified. Credential lifetimes, remaining owners, native timers/transport
     coverage and durable acknowledgment stay open. Paid runs/signing remain gated.
+    Telemetry repair/records through `3224b6b` are published with full
+    fresh-clone readback. New build/MSRV and fourteen duplicate SDK libraries are
+    pruned after exact/open-file checks; runnable red/green diagnostics and all other
+    evidence remain. All five current native diagnostics pass directly after cleanup
+    without Cargo; the telemetry receipt owns counts and retention details.
     The settlement finding/design through `2238253` is published with full fresh-clone
     readback; ten redundant native-library copies are removed after byte/open-file
     checks, preserving all other evidence and the prior retained library.
