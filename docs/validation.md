@@ -67,6 +67,46 @@ and durable parent acknowledgment remain open. No provider request, model downlo
 or spend. Paid runs, release signing and release publication remain gated;
 v2/T006 stays unfunded/unfrozen and execution locked.
 
+Qualified tests/records through `df6471d` are published to experimental;
+a fresh clone matches all **419 tracked paths** by type, executable mode and bytes.
+Main remains `d94b013`; head uses `[skip ci]`, with no workflow dispatch, release
+signing, release/tag or paid run. Verified new build/MSRV allocation falls from
+**3,301,769,216** to **35,573,760 bytes**, removing **10,424
+generated files** while retaining one private runnable 40-test executable.
+All **206 other stage files** keep exact hashes;
+MSRV phase logs are outside the generated cache and remain intact. Six completed
+probe libraries are removed after exact master equality and open/mapped-use checks,
+with **206 other preflight files** preserved exactly.
+Combined reported allocation reduction is **3,932,868,608
+bytes (3.663 GiB)**; physical APFS reclamation is not inferred.
+
+The complete owner regression passes **directly without Cargo after cleanup** in
+**481.088 seconds**, including original policy-chain
+identity, serial/coalesced setter completion, absence of a hard runtime override,
+both equal model readbacks and every prior owner group. All **44** per-case native
+library copies are verified and retired after reaping. The retained executable's
+digest and 40-test inventory match; source, earlier evidence and user-owned
+untracked bytes remain exact. Final allocation readback: target
+**92,450,816**, runs
+**7,644,217,344**, datasets
+**34,715,725,824 bytes**. Private evidence,
+archives, native masters, models, prepared stores and corpus/oracle/holdout inputs
+remain local. Qualification, publication, cleanup and replay remain within the
+stated hour. Paid runs and release signing remain gated.
+
+Next-owner source inspection at the same pinned upstream commit finds that
+`LocalAuthStorageBackend.close` retires its current modules, while `replaceStore`
+can compose another store later. `OAuthRefresher.close` returns void and may defer
+store closure behind tracked work; `Settings.cancelPendingSaves` leaves the auth
+listener registered. Closing AuthStorage alone therefore cannot establish durable
+owner retirement. The relevant upstream auth-storage-close-releases-handles test
+checks a separate store's exclusive-access boundary and is not executed here.
+Private source pins are in next-owner-source-notes.json. An early Set.add
+registration observation is an unexecuted candidate for retaining the four exact
+listener entries; queued original continuations and actual conversation/usage
+acceptance would still be required before any runtime change. No auth-retirement
+implementation or complete startup admission is selected by this finding.
+
 ## Original native credential-resolver join — 2026-11-16
 
 **The original initial resolver pair is identified and joined on `4682e9e`;

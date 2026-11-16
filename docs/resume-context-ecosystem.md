@@ -582,6 +582,10 @@ and dated paragraphs below are history.
     The whole native owner consumer and three fresh affected checks pass; five
     unchanged gates and other consumer receipts are explicitly reused
     ([settings-policy receipt](validation.md#original-native-settings-policy-chain--2026-11-16)).
+    Settings-policy tests/records through `df6471d` are published with
+    full fresh-clone readback. New build/MSRV and duplicate extraction caches are
+    pruned, preserving evidence; the entire owner consumer passes directly from
+    its retained executable. The settings-policy receipt owns retention and reuse.
     Application source is unchanged. Next qualify broker/store replacement and
     polling/refresh/close lifetimes; those remain open, along with the discarded
     warm-up promise, full coverage and durable acknowledgment.
