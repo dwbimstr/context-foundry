@@ -1119,6 +1119,7 @@ async fn qualify_current_host_history(
                             if ready["valid"] != true
                                 || ready["warmup_settled"] != true
                                 || ready["logging_quiesced"] != true
+                                || ready["auth_retired"] != true
                             {
                                 return Err("native startup owners unfinished at capture Ready");
                             }

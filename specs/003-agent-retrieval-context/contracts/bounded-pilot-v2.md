@@ -1115,6 +1115,60 @@ no-await mutation. The whole owner regression and three affected checks pass;
 five unchanged effective gates and other consumers are explicitly reused.
 No application source or startup admission authority changes.
 
+**Selected fixed-profile original auth retirement, 2026-11-16 — implementation pending.**
+Native feasibility retains four distinct original auth listener Sets sharing the
+same callback, with exact add receiver/argument/return identities. Removing only
+those entries excludes future changes; queued original continuations still run
+and must be joined. The session's original AuthStorage closes its actual native
+SQLite wrapper synchronously, with a successful metadata-only revision poll
+before close and a rejected poll after. Two subsequent complete model readbacks
+remain equal. The active control produces policy calls [11,10]; retired has none;
+queued-then-retired joins two original calls [10,10], with no later calls.
+
+Select retirement only for the explicit owned fixed-catalog qualification profile.
+Reuse the early preload, existing auth helper, bridge and diagnostic trace. Retain
+the exact four listener entries, the original initial resolver receiver/return,
+and at most eight original pending continuation pairs. Match pinned native frames
+and callback fingerprints; preserve valid original arguments, receivers, callbacks
+and returned objects. After the existing settings watcher/reload barrier, remove
+only those four entries, cross one immediate turn to expose queued callbacks,
+await the original pairs, require the pending inventory stable, then close the
+session's actual AuthStorage. Require one native SQLite close nested inside that
+call, returning synchronously, and the metadata-only closed-wrapper witness.
+Any unknown, missing, duplicate, rejected, late or over-cap owner work refuses
+before Ready; matching late registrations/continuations after sealing terminate
+the qualifier. Never read credential values or construct a replacement sync/store.
+
+Emit bounded registered/retired metadata into the existing diagnostic trace;
+validate ordering, shape and counts in its existing native consumer. Capture Ready
+requires auth retirement alongside the existing partial owner barriers. This is
+not the shared-channel durable startup acknowledgment or complete admission.
+The frozen default profile is unchanged. This intentionally excludes unused native
+credential reconfiguration in a profile whose actual provider credential/transport
+is owned by Rust; it does not remove real coding or usage acceptance.
+
+First run an actual-bridge red control against the current implementation, then
+qualify the repaired bridge with all current native conversation/settings/usage
+and owner controls and frozen 33/0/7 consumers. Run fmt, pilot all-target Clippy,
+pilot unit tests and actual Rust1.90 pilot all-target check fresh. Reuse only four
+default-feature gates after exact effective-input and feature-exclusion checks.
+Use an offline hour, 120-second cleanup reserve, one heavy job, 20 GiB disk floor
+and 8 GiB sampled individual RSS ceiling. Publish reviewed public repair/tests/
+records to experimental; prune verified generated caches, preserve the executable
+and evidence, and replay current consumers directly after cleanup.
+
+Association remains upstream 24439066040e006eb08da7b204f0ac41c79d2de9,
+auth-broker-config.ts::createAuthStorageSettingsSync, registry.ts::Derived.listen,
+settings.ts::onEffectiveChange, AuthStorage/LocalAuthStorageBackend::close,
+OAuthRefresher::close and SqliteAuthCredentialStore::close/pollExternalChanges.
+The settings-live-routing and auth-storage-close-releases-handles upstream tests
+are source references, not executed evidence. Unlike their replacement handles or
+separate stores, this path retires the CLI's original owner. Source association is
+not reproducible-build proof. Logical wrapper closure does not establish physical
+file-handle release or general OAuth drain. Complete transport/timer coverage,
+original warm-up promise identity and durable acknowledgment stay open; paid runs,
+release signing and v2/T006 execution remain gated.
+
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
 and a complete startup-owner inventory: catalog/discovery, credential refresh,
