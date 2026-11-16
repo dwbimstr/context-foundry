@@ -566,12 +566,15 @@ and dated paragraphs below are history.
     checks, preserving the executable/evidence; the full owner test passes directly
     without Cargo after cleanup. The watchdog receipt owns retention and reuse scope.
     Native promise hooks cannot observe even the synthetic control on this artifact;
-    the V8 hook throws NotImplementedError. Original promise work remains unqualified.
-    Next qualify original credential settings/resolver/refresh lifetimes.
-    Source inspection finds a discarded original
-    settings-sync handle, demand-driven pool polling and void asynchronous close;
-    neither a second sync nor an empty snapshot can prove original work joined.
-    Those source pins are retained; native completion remains unqualified.
+    the V8 hook throws NotImplementedError. Those hooks establish no original-promise join.
+    The original initial credential-resolver source and catch-return promises are
+    now identified and joined by the native consumer on `4682e9e`. Pending and
+    rejected synthetic controls, the materialized no-await mutation and the whole
+    owner regression pass, with three fresh affected checks and five unchanged
+    gates explicitly reused ([resolver receipt](validation.md#original-native-credential-resolver-join--2026-11-16)).
+    Application source is unchanged. Next qualify the original settings listener's
+    later change chain and refresh/polling/close lifetimes; those remain open,
+    along with the discarded warm-up promise, full coverage and durable acknowledgment.
     Marketplace repair/records through `467bd45` are published
     with full fresh-clone readback. New build/MSRV cache is pruned after exact and
     open-file checks; runnable red/green and other evidence remain. All five current

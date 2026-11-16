@@ -1007,7 +1007,7 @@ separate; five unaffected checks are reused, with three affected checks fresh.
 The helper also retires only hash/mode/owner-verified generated libraries after
 reaping, preserving all other private output checks. No application source changes.
 
-**Selected original credential-resolver qualification, 2026-11-16 — acceptance pending.**
+**Selected original credential-resolver qualification, 2026-11-16 — locally qualified.**
 The pinned native extension export identifies `createAuthStorageSettingsSync` as
 `aee`, with function-source SHA-256
 25f681643c58b0b08a43f839ab6760b76ab1cbd65e5ff3ba61d110fff8c03ca9.
@@ -1052,6 +1052,14 @@ checks. Publish reviewed public tests and records to experimental; prune only
 verified new build caches and duplicate extractions after reaping. Retain the
 runnable consumer and replay after cleanup. Paid runs and release signing remain
 gated; this does not freeze or unlock v2/T006.
+
+The [dated resolver receipt](../../../docs/validation.md#original-native-credential-resolver-join--2026-11-16)
+qualifies `4682e9e` with the original [registration observer](../../../tests/pilot_capture/resolver_probe.ts),
+[SDK witness](../../../tests/pilot_capture/resolver_witness.mjs) and existing native
+consumer. All three cases join the original pair; the materialized no-await
+mutation fails its pending assertion. The whole owner regression and three
+fresh affected gates pass; five unchanged effective checks and other consumer
+receipts are explicitly reused. No application source or startup authority changes.
 
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association

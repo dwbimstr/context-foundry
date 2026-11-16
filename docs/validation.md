@@ -1,5 +1,62 @@
 # Validation
 
+## Original native credential-resolver join — 2026-11-16
+
+**The original initial resolver pair is identified and joined on `4682e9e`;
+complete startup admission remains HOLD.** Application source is unchanged. The
+pinned OMP18.18.1 / Bun1.4.4 export identifies `createAuthStorageSettingsSync` as
+`aee`; function-source SHA256 is
+25f681643c58b0b08a43f839ab6760b76ab1cbd65e5ff3ba61d110fff8c03ca9.
+A bounded test-only Promise.catch observer captures the exact receiver and original
+return at its native registration frame. It preserves the receiver, callback and
+return object, restores the exact descriptor at factory entry, and awaits both
+original promises without reading their values. All three actual native controls
+find this pair fulfilled before the factory; this selects no runtime repair.
+
+The existing [contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission)
+and [native consumer](../tests/pilot_capture.rs) own ordinary, synthetic-pending
+and synthetic-rejection controls. Each returns the same complete model twice,
+separated by twelve seconds, crosses the native warm-up deadline and exits normally
+with empty stderr, no prompt and zero connections. A synthetic pending source stays
+pending until explicitly resolved. A rejected synthetic source refuses the join
+although its original catch return fulfills. A materialized native green/mutant
+comparison passes with the original await and fails the pending assertion when
+only that await is removed; both runs complete native readbacks. No second
+resolver or settings-sync invocation is substituted for the original.
+
+Association remains upstream 24439066040e006eb08da7b204f0ac41c79d2de9,
+[auth-broker-config.ts::createAuthStorageSettingsSync](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/session/auth-broker-config.ts#L153)
+(blob e212c2a0766f5bfc9ce4c843b389431bbc9f7aa8), with the original discarded
+handle in main.ts (blob 2bfe0b7230e9b3e30aebfd493a03bffb652cdfb3).
+Relevant upstream auth-broker-live-settings and settings-live-routing tests cover
+later broker/policy changes; neither is executed. This test observes the fixed
+empty no-provider profile's initial call without changing auth settings. Source
+association is not reproducible-build proof. Initial feasibility and qualified
+receipts remain private under runs/pilot-credential-promise-seam-2026-11-16/,
+runs/pilot-credential-resolver-owner-2026-11-16/ and
+runs/pilot-credential-resolver-qualification-2026-11-16/.
+
+The whole current owner regression passes in **528.384
+seconds including a cold build** (native test body **438.78 seconds**), with every
+previous owner group intact and **41** verified generated native libraries retired
+after their cases are reaped. Fresh formatting, all-target pilot Clippy and actual
+Rust1.90 all-target pilot check pass. The five unaffected effective gates are
+explicitly reused after exact application/gate/body/artifact checks; no new ignore
+or relaxed existing deadline. Reused default totals are **1,319/0/35 ignored**,
+pilot units **102/0/1 ignored**. Current conversation/settings/usage and frozen
+**33/0/7** receipts from `7863a44` are unchanged and reused, not rerun.
+
+Qualification/readback takes **821.233 seconds** within
+the stated offline hour, with 120 seconds reserved for cleanup. Maximum sampled
+individual RSS is **1812.672 MiB**;
+minimum observed free disk **41.085 GiB**.
+Samples do not establish a global/GPU quota. Review is in-session. The original
+listener's later settings-change chain, refresh/polling/close lifetimes, discarded
+warm-up promise, complete timer/transport coverage and durable parent acknowledgment
+remain open. No provider request, model download or spend. Paid runs, release
+signing and release publication remain gated; v2/T006 stays unfunded/unfrozen and
+execution locked.
+
 ## Native startup watchdog and promise-hook limits — 2026-11-15
 
 **The original native watchdog is cancelled before handler entry; complete
