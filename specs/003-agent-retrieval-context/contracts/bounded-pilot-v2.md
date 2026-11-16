@@ -839,6 +839,53 @@ The [dated telemetry receipt](../../../docs/validation.md#fixed-profile-telemetr
 records successful native trace/log/metric deliveries, actual-launcher red/green,
 all current/frozen consumers and eight gates on `2bc27c0`.
 
+**Selected fixed-profile logging quiescence, 2026-11-15 — implementation pending.**
+The associated native logger owns a one-second buffered-file timer and an unref'd
+retention immediate. A native scoped observer establishes actual pending handles:
+enabled logging writes both synthetic markers; setTransports(false/false) flushes
+the first and cancels that timer, but returns with retention still pending. One
+native immediate turn joins the already-queued retention callback; later SDK log
+calls produce no further file writes. All three native controls exit normally with
+the same complete model. Preserve the first rejected lazy-construction observation.
+
+Use the existing native logger.setTransports({console:false,file:false}) in the
+owned trusted factory before SDK construction, then await one native immediate
+turn. Keep the operation in a small first-party extension helper, because native
+package imports are rewritten only in the extension graph and the real SDK
+controls must exercise the same helper. This adds no logging implementation,
+worker, table, service or configuration. Materialize/hash-bind it only for the
+artifact-pinned owned qualifier; ordinary capture and frozen v1 keep their logging.
+Record its completed operation through the existing preload's metadata owner,
+and require it before that owner's final seal and capture Ready. One closed
+logging/quiesced row raises the total cap from 25 to 26; retain 20 attempts and
+8192 bytes. Missing or duplicate completion refuses. This retires the existing
+local file/console transport and its queued retention work. It is not a fence
+against arbitrary injected reconfiguration or every host logging implementation.
+
+First require this completion at actual capture Ready: the old launcher must fail
+before any Count/Messages fixture call, with normal reaped cleanup. Then require
+native enabled/stop-only/actual-owned-helper controls, independent timer/immediate
+observations and real marker bytes, the complete actual owned conversation, all
+current/frozen consumers, focused lint and eight gates. Run in an offline hour
+with 120 seconds for cleanup, one heavy job, 20 GiB disk floor and 8 GiB sampled
+individual RSS ceiling. Publish reviewed public changes and prune only verified
+new build/duplicate native-library caches, retaining evidence and runnable red/green.
+
+Source association is oh-my-pi 24439066040e006eb08da7b204f0ac41c79d2de9:
+utils/src/logger.ts::setTransports/schedulePruneStaleProcessLogs (blob
+22c731efb1939c584f091d943338f31db3083071),
+utils/src/logger/rotating-file.ts::flush/close (blob
+a927106076e5afa3ac89d983f5b375c1e1382649), and the relevant native
+utils/test/fixtures/logger-contract-probe.ts contract controls. The verified
+program-source census covers 6,816 regular source/manifest blobs; the only
+production setTransports import/caller is cli/auth-broker-cli.ts, outside this RPC
+path. Literal-reference census is not whole-program absence proof. The native
+logger's supported sink also observes the original warm-up catch and a subsequent
+microtask, but original promise identity remains unobserved; do not claim it joined.
+Bun.plugin is non-writable/non-configurable and redefining the native warm-up export
+is rejected; do not replace either. Complete startup/transport admission, paid
+runs, signing and release remain gated.
+
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
 and a complete startup-owner inventory: catalog/discovery, credential refresh,
