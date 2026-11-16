@@ -1,4 +1,6 @@
 Experimental source-owned project-presence retirement; not applied by Context Foundry.
+UNQUALIFIED handle-immutability candidate: baseline tests pass, but the final fix
+has not been compiled or run because the same-round disk guard refuses launch.
 Target: can1357/oh-my-pi @ 24439066040e006eb08da7b204f0ac41c79d2de9
 Owner: 003 T006, bounded-pilot-v2 startup observation and admission.
 Requires prior caller/auth/refusal/restricted/catalog/settings/empty-auth patches.
@@ -12,7 +14,9 @@ explicit startup diagnostic. Keep the real original registration and private fil
 One module owner closes registration admission before joining that original, its
 completion observer and whichever caller first began original cleanup. Cached
 exports and close references retain the same lifecycle. Failed or ambiguous work
-cannot produce a receipt. The original close is a shared promise, cancels its
+cannot produce a receipt. The owned returned handle is frozen before exposure, so callers cannot replace
+its original close. Ordinary returned handles retain their existing mutability.
+The original close is a shared promise, cancels its
 postmortem callback and verifies absence after real removal; partial failed writes
 are cleaned. Ordinary registration remains available without the option. The CLI
 joins its original logging/catch observer and the SDK binds the exact opaque owner
@@ -178,7 +182,7 @@ diff --git a/packages/coding-agent/src/launch/presence.ts b/packages/coding-agen
  	projectDir: string,
  	runtimeOverride?: string,
  ): Promise<DaemonProjectPresence> {
-@@ -43,17 +123,34 @@
+@@ -43,18 +123,35 @@
  	await fs.mkdir(clientsDir, { recursive: true, mode: 0o700 });
  	const id = `${process.pid}-${crypto.randomUUID()}`;
  	const presencePath = path.join(clientsDir, `${id}.json`);
@@ -216,12 +220,14 @@ diff --git a/packages/coding-agent/src/launch/presence.ts b/packages/coding-agen
 +		return closing;
  	};
 -	const cancelCleanup = postmortem.register(`daemon-presence:${id}`, () => close());
+-	return { close };
 +	cancelCleanup = postmortem.register(`daemon-presence:${id}`, () => close());
 +	// A late postmortem registration may invoke its callback synchronously.
 +	if (closing) cancelCleanup();
- 	return { close };
++	return startupPresence ? Object.freeze({ close }) : { close };
  }
  
+ /** Return whether a registered omp process in this runtime directory is still alive. */
 diff --git a/packages/coding-agent/src/main.ts b/packages/coding-agent/src/main.ts
 --- a/packages/coding-agent/src/main.ts
 +++ b/packages/coding-agent/src/main.ts
@@ -356,7 +362,7 @@ diff --git a/packages/coding-agent/test/startup-presence-owner.test.ts b/package
 new file mode 100644
 --- /dev/null
 +++ b/packages/coding-agent/test/startup-presence-owner.test.ts
-@@ -0,0 +1,264 @@
+@@ -0,0 +1,277 @@
 +import { afterEach, expect, test } from "bun:test";
 +import fs from "node:fs/promises";
 +import os from "node:os";
@@ -620,4 +626,17 @@ new file mode 100644
 +	expect(args.startupPresence).toBe(true);
 +	expect(args.model).toBe("synthetic/model");
 +	expect(VALUELESS_FLAGS.has("--startup-presence")).toBe(true);
++});
++
++test("owned registration cannot substitute a fake cleanup and obtain retirement", async () => {
++ const m = await load(), s = await scope(), owner = m.ownStartupDaemonPresence();
++ const presence = await m.registerDaemonProjectPresence(s.cwd, s.runtime), close = presence.close;
++ let fakeCalls = 0;
++ const replaced = Reflect.set(presence, "close", async () => { fakeCalls++; });
++ const receipt = await m.retireStartupDaemonPresence(owner);
++ expect(receipt.presence_removed).toBe(true);
++ expect(fakeCalls).toBe(0);
++ expect(await presenceFiles(s.runtime)).toEqual([]);
++ expect(replaced).toBe(false);
++ expect(presence.close).toBe(close);
 +});

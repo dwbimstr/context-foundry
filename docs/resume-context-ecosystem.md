@@ -661,6 +661,13 @@ and dated paragraphs below are history.
     by this empty profile. Complete inventory, telemetry/update/logging, trusted-
     extension and daemon-presence ownership plus prefix acknowledgment/Ready echo
     remain open; full admission stays HOLD.
+    The [daemon-presence candidate](validation.md#original-daemon-presence-candidate--2026-11-16)
+    is local and unaccepted: baseline checks pass, but a returned-handle mutation
+    gap requires the prepared immutability fix's fresh qualification. The disk
+    guard refuses before launch; source bytes/red evidence survive SDK-cache cleanup.
+    The shared round deadline/floor stay unchanged. Six historical derived stores
+    and three unselected build intermediates are losslessly cold-stored with
+    verified manifests/restore recipes; models/corpora/holdouts/backups stay intact.
     The empty-auth fix/records are published with full fresh-clone readback.
     New build/MSRV/SDK caches and duplicate native libraries are pruned; retained
     units, channel/startup controls and both legacy-source consumers pass directly

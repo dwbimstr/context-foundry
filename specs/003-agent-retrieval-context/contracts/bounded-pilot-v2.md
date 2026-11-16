@@ -1473,7 +1473,10 @@ original file removal finishes. Retain the original registration, real private
 presence file and exit cleanup. Give only the explicit restricted startup profile
 one source-owned presence lifetime from before registration. Close registration
 admission, join the original promise and its completion observer, and join the
-original idempotent cleanup before attesting retirement. Cached registration and
+original idempotent cleanup before attesting retirement. Freeze the owned returned
+handle before exposure so callers cannot replace its original cleanup; ordinary
+unowned handles retain their existing API. A mutation attempt must not obtain
+retirement without the original real removal. Cached registration and
 close references must obey the same owner; failed registration/cleanup, ambiguous
 or repeated bindings cannot produce a successful receipt. Preserve the ordinary
 CLI's registration behavior. Use the existing source module, SDK binding, channel
@@ -1486,6 +1489,9 @@ Carry bounded metadata after auth retirement and before incomplete-inventory HOL
 include its journal append-failure boundary. Full startup inventory, telemetry/
 update/logging and trusted-extension ownership plus durable prefix acknowledgment/
 Ready echo remain required. No paid, signing or v2/T006 execution gate changes.
+The [dated checkpoint](../../../docs/validation.md#original-daemon-presence-candidate--2026-11-16)
+separates passing baseline evidence from the unqualified immutability correction
+and records the unchanged resource/time gate. Final acceptance/publication stay HOLD.
 The incremental [source patch](../../../docs/references/omp-startup-presence-retirement.patch)
 retains the original registration/cleanup, upstream identity and focused tests.
 

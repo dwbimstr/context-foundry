@@ -1,5 +1,127 @@
 # Validation
 
+## Original daemon-presence candidate — 2026-11-16
+
+**Implemented locally; final acceptance and publication are HOLD.** Baseline code
+`a916a4e621104b00197161747bfa11b5f86a8f84` owns original project-presence registration,
+its completion observer and shared cleanup before startup's durable HOLD. Final
+review finds a mutable returned handle can substitute its `close` method; the
+source candidate now freezes only the owned handle before exposing it. Ordinary
+handles keep their prior API. The final candidate has **not** been compiled or run.
+The [selected contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission)
+and [incremental upstream MIT patch](references/omp-startup-presence-retirement.patch)
+retain this required correction, upstream identity, modules and tests. The patch
+reproduces all six changed/new source files exactly, but is explicitly unqualified;
+Foundry does not automatically apply it. Its target remains
+`can1357/oh-my-pi@24439066040e006eb08da7b204f0ac41c79d2de9`, after the existing
+caller/auth/refusal/restricted/catalog/settings/empty-auth patches.
+
+The actual CLI awaited registration but discarded its real returned handle. Its
+original concurrent close could return before the original removal finished.
+The candidate retains the real file/handle, uses one shared cleanup promise,
+cancels the original postmortem callback, verifies absence after native removal
+and cleans partial failed writes. The explicit `--startup-presence` flag requires
+`--restrict-tools`; a source module owner begins before any registration, guards
+captured references and prevents new work before joining originals/callbacks.
+The CLI joins its original logging/catch observer. The SDK binds the exact opaque
+presence owner to its sealed original session/registry and requires original auth
+retirement first. Rust validates five closed facts after auth and journals them
+before incomplete-inventory HOLD. No path or user data enters this metadata.
+
+**Baseline evidence, before the final handle correction:** the SDK matrix passes
+**634/0** across **57** files, including **13** focused presence tests and existing
+daemon/auth/settings/caller/main/CLI controls. Source type/lint checks pass. Four
+13-test counterfactuals fail as expected: no-registration-join **8/5**, no-admission
+**11/2**, no-close-share **10/3** and no-remove **9/4** passes/failures. The initial
+nullable-state type errors remain in the raw evidence. The separately compiled
+baseline host is
+`cca508ac51d0d6725e751324cdabf6d500e51ee20d997d617d257576d0eb73bf`;
+all **10,332** inputs were hashed before/after compilation. Seven actual CLI
+controls pass: ordinary presence, owned fast path, held original registration,
+held cleanup, registration failure, cleanup failure and invalid flags. Five
+normal-exit cases preserve full model digest
+`83aac156b7678be8faab3ca2d09fbf4e9773214fc968f1c4a13839dc718317c9`.
+Registration/flag failures exit 1 before readiness; cleanup failure returns no
+presence receipt. The fixture catches that cleanup error for readback, which
+cannot establish admission. Parent file/release observations and source traces
+qualify these baseline paths; every owned process group is reaped without forced
+cleanup. No case sends a prompt or contacts a provider.
+
+Ordinary RPC EOF leaves its original presence file after normal process exit.
+The first comparison incorrectly assumed exit removed it and failed. That raw
+run is retained; the corrected ordinary comparison verifies its actual dead owner,
+while successful owned retirement requires absence before reporting. Neither
+ordinary RPC exit cleanup nor daemon-server shutdown is claimed repaired.
+
+On the same committed Rust baseline, formatting, pilot all-target Clippy,
+**114/0** pilot units (**1** ignored) and actual Rust **1.90** pilot all-target
+checking pass fresh. Four default-feature gates reuse **258** identical effective
+inputs. All five current-host consumers, **36/0** frozen compatibility (**10**
+explicit diagnostics ignored), both legacy-source consumers and seven channel
+cases pass. All seven actual startup persistence cases pass: normal **11-record
+HOLD**, refusal/catalog/settings/auth/presence append failures and terminal-HOLD
+append failure. No Ready, counter, permit or generation is admitted. The legacy
+conversation retains two requests, **29** usage and **25** trace mutation refusals.
+These receipts do not accept the later changed source candidate.
+
+The initial current-host run stops at the unchanged disk floor; its 60-second
+SIGINT grace expires and forced cleanup is needed. The process tree is confirmed
+gone. Its orphaned fixture retains **341** exact files after two identical native
+copies are removed; the compiler cache is removed after retaining executables.
+The unchanged direct retry passes. The first cache-free frozen run then passes
+35 cases but fails the CLI-manifests case because its compile-time CLI path was
+pruned. The real CLI is rebuilt from the same commit, its compiler intermediates
+are pruned, and the full retry passes **36/0**. The required **31,802,320-byte** CLI
+leaf remains at its embedded test path; no compiler intermediates remain there.
+The accepted MSRV cache is also removed. Earlier duplicated SDK/package caches
+and eight native copies were pruned with exact source restoration inputs retained.
+
+The added handle-mutation red checkpoint passes 13 tests and fails its 14th frozen-
+handle assertion on the baseline. Source review shows why: retirement freshly
+looks up the mutable `close` property. The prepared correction freezes the owned
+returned object; its stronger behavioral regression attempts substitution, then
+requires the original real removal and no fake call. That final regression is
+prepared **but unexecuted**. When qualification was attempted, the resource guard
+refused **before launch**. Its inherited error text says 512 MiB, but the actual
+round overrides/enforces **20 GiB**. No deadline, floor or assertion is relaxed.
+After pruning the regenerated SDK/package cache, observed free space is about
+**19.7 GB**, still below the **21,474,836,480-byte** floor. The cause is unassigned.
+The same 90-minute round's clock remains unchanged; no experiment runs below the
+floor. Model acquisition, paid runs, training, release signing and v2/T006
+execution remain gated.
+
+**Authorized cleanup:** six idle historical derived stores move to lossless local
+cold storage: four G2 artifact stores and the older T005 units7 Rust/Bun baselines.
+All **893** files are fully decoded and hash/mode checked before hot removal,
+then the original manifests are rechecked. Original directory allocation is
+**14,797,099,008 bytes**; compressed archives total **9,389,938,386 bytes**. Archives stay with
+their dataset owner under 0700 directories/0600 files. Old store paths become
+explicit not-a-directory sentinels, preventing accidental empty-store creation.
+Bounded reconstruction recipes preserve bytes/modes/timestamps; full restoration
+to disk has not been rerun. No indexing, retrieval evaluation, inference or training
+runs are used for archival. Models, source corpora, holdouts, transcripts and
+encrypted backups stay untouched. Three unselected prior auth-build intermediates
+also move to fully decoded hash/size-verified cold storage; the current/frozen/B5/
+startup/runtime/native continuation pins remain hot. Restore selected historical
+paths before reuse; expired qualification wrappers must not run. Directory
+allocation is not a physical APFS reclamation measurement.
+
+Final candidate bytes and a tested patch-application readback survive the SDK cache
+prune in `retained-pending-source/` and `pending-handle-source-inputs.json`. Baseline
+artifacts/receipts and original user files remain exact. The published branch
+still ends at `ccb6659f4c422b4227567fc3a7b1fab7db0c3b0b`; main remains
+`d94b013e3c638276f6afba49f80194776e294fbb`. No candidate push or workflow is attempted.
+
+Private evidence: `runs/pilot-daemon-presence-lifecycle-2026-11-16/`, including
+`protocol.json`, `baseline-evidence-readback.json`, `handle-freeze-red-execution.json`,
+`pending-handle-retention.json`, `pending-cache-prune.json`, resource recovery,
+CLI-cache, cold manifests and their bounded restore scripts. Resume the handle
+correction's compilation/native/startup qualification only with restored resource
+headroom and valid shared time; do not substitute the already-tested mutable
+baseline. Presence acceptance, complete inventory, telemetry/update/logging and
+trusted-extension ownership plus durable prefix acknowledgment/Ready echo remain
+open. Review is in-session.
+
 ## Fixed empty-auth startup retirement — 2026-11-16
 
 **The explicit startup-only profile now enforces empty auth from construction,
