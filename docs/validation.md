@@ -2,8 +2,8 @@
 
 ## Fixed-profile marketplace update exclusion — 2026-11-15
 
-**Native feasibility identifies an unadmitted startup task; implementation and
-qualification are pending.** The current owned configuration defaults to notify.
+**Initial owned configuration now excludes the marketplace task; qualification
+is pending.** The prior owned configuration defaults to notify.
 In the actual pinned OMP 18.18.1 / Bun 1.4.4, it invokes the native
 MarketplaceManager.refreshStaleMarketplaces and checkForUpdates; both original
 promises complete. Explicit notify does the same, while initial off excludes both
@@ -29,8 +29,39 @@ returns before import/construction for off. Verified source blobs, private nativ
 controls and command/resource receipts remain in
 runs/pilot-marketplace-feasibility-2026-11-15/ and
 runs/pilot-marketplace-owner-2026-11-15/. Source association is not a reproducible
-build. Current/frozen qualification and gates remain pending; complete startup
-admission, paid runs and release signing remain gated.
+build. The upstream
+[manager tests](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/test/marketplace/manager.test.ts#L1306)
+cover update results and fresh/stale refresh behavior; they were read, not run.
+Foundry intentionally excludes the fixed qualifier's task rather than modifying
+those native marketplace semantics.
+
+The committed native regression on `7dab0cd` fails at the owned initial-setting
+assertion after all four controls finish normally: call counts are **[2,2,0,2]**
+for notify/owned/off/late-off. It takes **116.886 seconds**, including compilation,
+with no prompt or provider call. The executable and all rows remain retained.
+The private verifier initially used the capture bridge's modified model pin for
+these unmodified native control models. Corrected readback matches the earlier
+native owner controls; the original rejection remains recorded and no native run
+is repeated. The regression itself failed at the intended assertion.
+
+Before that proper red, the initial offline build stopped at the 20 GiB disk
+reserve, before any native host launched, and reaped normally without forced
+cleanup. It is not an accepted run. Four duplicate native-library extractions are
+byte/hash-identical to the retained master and not open/mapped; removing only
+those preserves **138 other preflight files** exactly. Five already-cold,
+non-runtime source/fact snapshots are losslessly gzip-retained, recovering
+**2,490,179,584 allocated bytes**. Every decoded byte count/SHA256 matches before
+the uncompressed copy is removed; a complete real-file restore and the helper's
+no-clobber refusal also pass. All other cold receipts remain exact. Their original
+historical receipts remain, and the private cold-stores/gzip-retention-index.json,
+per-snapshot maps and RESTORE.md provide the new locations and restore procedure.
+Active prepared stores, models, corpora, questions, oracles and holdout data are
+unchanged. Extra volume headroom later recovered; its cause is not established.
+A fresh stated hour begins with over 35 GiB available and retains the same
+20 GiB floor, one heavy job, four outer test threads, 120-second cleanup reserve
+and 8 GiB sampled individual RSS ceiling. Current/frozen qualification and gates
+remain pending; complete startup admission, paid runs and release signing stay
+gated.
 
 ## Fixed-profile native logging quiescence — 2026-11-15
 

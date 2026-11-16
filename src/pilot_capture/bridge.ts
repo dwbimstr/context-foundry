@@ -652,6 +652,7 @@ async function onSessionStart(pi: PiApi, ctxValue: unknown): Promise<void> {
 			await settings.reloadFromDisk();
 			const { lookup } = await import("@oh-my-pi/pi-coding-agent/config/registry");
 			if (lookup("telemetry.otlpExportEnabled")?.get(settings) !== false) throw new Error("owned telemetry export enabled");
+			if (lookup("marketplace.autoUpdate")?.get(settings) !== "off") throw new Error("owned marketplace update enabled");
 			if (!ownedMemory) throw new Error("owned memory owner unavailable");
 			await ownedMemory.seal(settings, ctx.modelRegistry);
 			const auth = (ctx.modelRegistry as { authStorage?: { keys?: unknown } } | undefined)?.authStorage;

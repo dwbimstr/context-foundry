@@ -549,8 +549,8 @@ and dated paragraphs below are history.
     signing remain gated.
     Native marketplace controls now confirm that initial off excludes the task,
     while the current owned configuration and even a late off override run it.
-    Initial owned configuration and final readback repair are selected; native
-    regression and qualification are pending
+    The proper native regression fails exclusion on `7dab0cd`. Initial owned
+    configuration and final readback are repaired; green qualification is pending
     ([marketplace receipt](validation.md#fixed-profile-marketplace-update-exclusion--2026-11-15)).
     Logging repair/records through `fe46c66` are published with full
     fresh-clone readback. New build/MSRV and five duplicate native libraries are

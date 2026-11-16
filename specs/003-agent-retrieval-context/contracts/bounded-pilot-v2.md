@@ -894,7 +894,7 @@ pass in a fresh offline-hour continuation with RUST_TEST_THREADS=4. Explicit
 concurrency tests and all assertions/deadlines remain intact. The receipt keeps
 both stages separate and records the forced cleanup of the interrupted run.
 
-**Selected fixed-profile marketplace exclusion, 2026-11-15 — implementation and qualification pending.**
+**Selected fixed-profile marketplace exclusion, 2026-11-15 — implemented; qualification pending.**
 The actual current SDK runs refreshStaleMarketplaces and checkForUpdates with the
 existing owned configuration, whose initial marketplace.autoUpdate defaults to
 notify. Both original promises complete in the native observation. Explicit off
