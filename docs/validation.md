@@ -1,5 +1,79 @@
 # Validation
 
+## Fixed-profile original auth retirement — 2026-11-16
+
+**The owned no-provider qualifier retires the original native auth owner before
+capture Ready on `3f972c9`; complete startup admission remains HOLD.** The
+preload retains exactly four original settings-listener entries, the initial
+resolver's source/return pair and at most eight original continuation pairs.
+Pinned native frames and callback fingerprints bind this bookkeeping; every valid
+original receiver, argument, callback and returned object is preserved. After the
+existing settings watcher/reload barrier, the helper removes only those four
+entries, crosses one immediate turn for already queued callbacks, and joins the
+original promises. It refuses missing, duplicate, rejected, late or over-cap work.
+Matching late registrations/continuations after sealing terminate the qualifier.
+
+The existing helper then closes the session's actual AuthStorage. One native
+SQLite close must occur synchronously inside that call and return normally;
+metadata-only version/revision polling succeeds before it and throws afterward.
+No credential values, replacement sync or replacement store is used. This proves
+logical wrapper closure, not physical file-handle release or general OAuth drain.
+It excludes unused native credential reconfiguration only in the explicit fixed
+qualification profile; Rust already owns the actual provider credential and
+transport. The frozen default profile and coding/usage requirements remain.
+
+Actual-bridge red on `0dc53aa` fails at the new Ready requirement before prompting.
+The red receipt checker initially expected a report not emitted on that early
+failure; its raw Cargo/host receipt is retained and verified without rerunning or
+rewriting it. First actual-bridge green on `97180ba` completes the two-generation
+fixture conversation and native usage checks. Final source `3f972c9` passes all
+five current native consumers and frozen **33/0/7** fresh. The real owned bridge
+records registered/retired metadata before Ready in the existing diagnostic trace;
+its reader rejects **23** format/owner mutations, and native usage rejects **29**
+mutations. The trace remains separate from the proposed durable startup journal
+acknowledgment and cannot grant complete admission.
+
+Native active/retired/queued controls preserve the original owner. Active produces
+setter values **[11,10]**; retired excludes later continuations; queued retirement
+joins two original setter calls **[10,10]** and excludes subsequent work. All
+three return two equal complete models, exit normally, restore synthetic overrides
+and use the existing AuthStorage. Previous settings-chain, resolver, watchdog,
+Agent/raw, prefetch, off-memory, logging, telemetry and marketplace controls remain
+in the full owner consumer; **47** generated libraries are retired after reaping.
+
+Fresh checks are formatting, pilot all-target Clippy, pilot units **102/0/1 ignored**
+and actual Rust1.90 all-target pilot check. Four default-feature gates are explicitly
+reused on exact effective inputs: the modified module and native integration crate
+are excluded when pilot-capture is disabled, and source/dependencies outside them
+are unchanged. Reused default totals remain **1,319/0/35 ignored**; no new ignore or
+relaxed previous deadline. Current and frozen runtime evidence is fresh, not reused.
+Check times: current **597.459s**, frozen
+**288.471s**. Qualification/readback completes in
+**2035.475s** within the stated offline hour, with a
+120-second cleanup reserve. Maximum sampled individual RSS is
+**1929.859 MiB**, minimum free disk
+**26.158 GiB**; samples are not global/GPU quotas.
+
+The [existing contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission),
+[early observer](../src/pilot_capture/startup_probe.ts),
+[auth helper](../src/pilot_capture/startup_auth.ts), [bridge](../src/pilot_capture/bridge.ts)
+and [native consumer](../tests/pilot_capture.rs) own the repair. Associated upstream
+24439066040e006eb08da7b204f0ac41c79d2de9 symbols are
+createAuthStorageSettingsSync, Derived.listen, Settings.onEffectiveChange,
+AuthStorage/LocalAuthStorageBackend.close, OAuthRefresher.close and
+SqliteAuthCredentialStore.close/pollExternalChanges. Relevant upstream
+settings-live-routing and auth-storage-close-releases-handles tests are source
+references only, not executed. This retires the CLI's original owner instead of
+substituting their separate sync/store. Source association is not reproducible-build
+proof. Private probes/receipts are under runs/pilot-auth-listener-seam-2026-11-16/,
+runs/pilot-auth-retirement-seam-2026-11-16/ and
+runs/pilot-auth-retirement-repair-2026-11-16/. Review is in-session.
+
+Original warm-up promise identity, complete transport/timer coverage and durable
+parent acknowledgment remain open. No real provider request, model download or
+spend; paid trials, release signing and release publication remain gated.
+v2/T006 stays unfunded/unfrozen and execution locked.
+
 ## Original native settings-policy chain — 2026-11-16
 
 **The CLI's original reserve-policy continuations are identified and joined on

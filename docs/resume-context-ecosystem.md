@@ -586,9 +586,16 @@ and dated paragraphs below are history.
     full fresh-clone readback. New build/MSRV and duplicate extraction caches are
     pruned, preserving evidence; the entire owner consumer passes directly from
     its retained executable. The settings-policy receipt owns retention and reuse.
-    Application source is unchanged. Next qualify broker/store replacement and
-    polling/refresh/close lifetimes; those remain open, along with the discarded
-    warm-up promise, full coverage and durable acknowledgment.
+    The fixed owned qualifier now retires the original native auth listener and
+    joins its initial/queued promises before capture Ready, then requires the
+    original SQLite wrapper to close synchronously. Actual-bridge red/green,
+    active/retired/queued controls, all current native consumers and frozen33/0/7
+    pass on `3f972c9` ([retirement receipt](validation.md#fixed-profile-original-auth-retirement--2026-11-16)).
+    Four affected checks are fresh, with four unchanged default-feature gates reused
+    on exact inputs. This excludes unused native credential reconfiguration only
+    for this fixed profile; physical FD release and general OAuth drain are not
+    claimed. Original warm-up promise identity, full transport/timer coverage and
+    durable acknowledgment remain open; paid runs and release signing stay gated.
     Marketplace repair/records through `467bd45` are published
     with full fresh-clone readback. New build/MSRV cache is pruned after exact and
     open-file checks; runnable red/green and other evidence remain. All five current

@@ -1115,7 +1115,7 @@ no-await mutation. The whole owner regression and three affected checks pass;
 five unchanged effective gates and other consumers are explicitly reused.
 No application source or startup admission authority changes.
 
-**Selected fixed-profile original auth retirement, 2026-11-16 — implementation pending.**
+**Selected fixed-profile original auth retirement, 2026-11-16 — implemented and locally qualified.**
 Native feasibility retains four distinct original auth listener Sets sharing the
 same callback, with exact add receiver/argument/return identities. Removing only
 those entries excludes future changes; queued original continuations still run
@@ -1168,6 +1168,12 @@ not reproducible-build proof. Logical wrapper closure does not establish physica
 file-handle release or general OAuth drain. Complete transport/timer coverage,
 original warm-up promise identity and durable acknowledgment stay open; paid runs,
 release signing and v2/T006 execution remain gated.
+
+The [dated retirement receipt](../../../docs/validation.md#fixed-profile-original-auth-retirement--2026-11-16)
+qualifies `3f972c9` with the actual bridge Ready red/green, original-owner
+[controls](../../../tests/pilot_capture/retirement_witness.mjs), all current native
+consumers and frozen33/0/7. Four affected checks are fresh; four default-feature
+checks reuse unchanged effective inputs. No complete startup admission is granted.
 
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
