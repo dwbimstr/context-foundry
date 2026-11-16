@@ -1007,6 +1007,52 @@ separate; five unaffected checks are reused, with three affected checks fresh.
 The helper also retires only hash/mode/owner-verified generated libraries after
 reaping, preserving all other private output checks. No application source changes.
 
+**Selected original credential-resolver qualification, 2026-11-16 — acceptance pending.**
+The pinned native extension export identifies `createAuthStorageSettingsSync` as
+`aee`, with function-source SHA-256
+25f681643c58b0b08a43f839ab6760b76ab1cbd65e5ff3ba61d110fff8c03ca9.
+The original call registers `.catch(() => null)` before the trusted factory.
+Native feasibility captures its exact source and original derived promises; both
+are fulfilled before that factory. An empty credential snapshot, another sync
+invocation, or awaiting only the recovered derived promise is insufficient.
+
+Add bounded test-only observation to the existing native owner consumer. Bind the
+actual registration to its pinned native frame, callback shape and exported
+function fingerprint, retain at most two source/derived pairs (one synthetic),
+and restore the exact Promise.catch descriptor at factory entry. Pass every
+original callback, receiver and return object unchanged; invoke no extra resolver
+or settings sync. Await both original promises without inspecting their values.
+Require a synthetic pending pair to stay pending until explicitly resolved, and
+a synthetic rejected source to fail the join despite its fulfilled catch return.
+Require ordinary, pending and rejected controls, snapshots before the factory
+join and at handler entry, two equal native model readbacks separated by twelve
+seconds, empty stderr, no prompt and zero connections. These new cases have a
+45-second bound; other controls retain their deadlines. No runtime hook or
+product admission authority is added.
+
+Association is upstream 24439066040e006eb08da7b204f0ac41c79d2de9,
+`session/auth-broker-config.ts::createAuthStorageSettingsSync` (blob
+e212c2a0766f5bfc9ce4c843b389431bbc9f7aa8) and `main.ts::runRootCommand`
+(blob 2bfe0b7230e9b3e30aebfd493a03bffb652cdfb3). Relevant upstream
+`test/auth-broker-live-settings.test.ts` exercises a settings-driven broker switch;
+`test/settings-live-routing.test.ts` exercises policy routing changes. Neither is
+executed here. Unlike those tests, Foundry observes and joins the CLI's original
+initial resolver under the empty fixed no-provider profile, without changing
+auth settings or opening a broker. Source association is not reproducible-build
+proof. The initial resolver is separate from the discarded settings listener's
+later change chain, demand-driven polling and asynchronous refresh/close work;
+those lifetimes and complete startup/transport/parent acknowledgment stay open.
+
+Use an offline hour with 120 seconds reserved for cleanup, one heavy job,
+20 GiB disk floor and 8 GiB sampled individual RSS ceiling. Run the whole current
+native owner regression, formatting, all-target pilot Clippy and actual Rust 1.90
+all-target pilot check. Reuse the five unaffected effective gates and unchanged
+conversation/settings/usage/frozen consumers only with exact input/body/artifact
+checks. Publish reviewed public tests and records to experimental; prune only
+verified new build caches and duplicate extractions after reaping. Retain the
+runnable consumer and replay after cleanup. Paid runs and release signing remain
+gated; this does not freeze or unlock v2/T006.
+
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
 and a complete startup-owner inventory: catalog/discovery, credential refresh,

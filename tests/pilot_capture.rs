@@ -193,6 +193,90 @@ async fn current_host_startup_owners_have_native_controls() {
                 && call["rejected"] == false));
         }
     }
+    for kind in ["resolver-joined", "resolver-pending", "resolver-rejected"] {
+        let root = base.join(format!("{kind} control with spaces"));
+        let report = startup::control(&omp, &root, &e.workspace, &config, &models, kind).await;
+        assert_owned_private_tree(
+            &root,
+            Some(Path::new(
+                "home/.omp/natives/18.18.1/pi_natives.darwin-arm64.node",
+            )),
+        );
+        if let Some(path) = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT") {
+            let out = PathBuf::from(format!(
+                "{}-resolver-controls",
+                PathBuf::from(path).display()
+            ));
+            fixture_private_dirs(&out).unwrap();
+            fixture_private_write(
+                out.join(format!("{kind}.json")),
+                serde_json::to_vec_pretty(&report).unwrap(),
+            )
+            .unwrap();
+        }
+        assert_eq!(report["connections"], 0);
+        assert_eq!(report["resolver_second_state"], true);
+        assert_eq!(
+            report["native_model_sha256"],
+            marketplace_reports[0]["native_model_sha256"]
+        );
+        assert_eq!(
+            report["resolver_witness_sha256"],
+            pilot_capture::sha256_hex(include_bytes!("pilot_capture/resolver_witness.mjs"))
+        );
+        let witness = &report["witness"];
+        for field in [
+            "installed",
+            "restored",
+            "seed_receiver_exact",
+            "seed_return_exact",
+            "native_join",
+        ] {
+            assert_eq!(witness[field], true, "{kind}: {field}");
+        }
+        assert_eq!(witness["overflow"], false);
+        assert_eq!(witness["native_function_name"], "aee");
+        assert_eq!(
+            witness["native_function_sha256"],
+            "25f681643c58b0b08a43f839ab6760b76ab1cbd65e5ff3ba61d110fff8c03ca9"
+        );
+        assert_eq!(witness["seed_join"], kind != "resolver-rejected");
+        for phase in ["factory", "after_join", "session_entry", "rows"] {
+            let rows = witness[phase].as_array().unwrap();
+            assert_eq!(rows.len(), 2);
+            assert_eq!(rows[0]["seed"], true);
+            assert_eq!(rows[1]["seed"], false);
+            for row in rows {
+                assert_eq!(row["source_is_promise"], true);
+                assert_eq!(row["derived_is_promise"], true);
+                assert_eq!(row["derived_rejected"], false);
+            }
+            assert_eq!(rows[1]["source_fulfilled"], true);
+            assert_eq!(rows[1]["derived_fulfilled"], true);
+            assert_eq!(rows[1]["source_rejected"], false);
+            let finished = phase != "factory";
+            assert_eq!(
+                rows[0]["source_fulfilled"],
+                finished && kind != "resolver-rejected"
+            );
+            assert_eq!(
+                rows[0]["source_rejected"],
+                finished && kind == "resolver-rejected"
+            );
+            assert_eq!(rows[0]["derived_fulfilled"], finished);
+        }
+        if kind == "resolver-pending" {
+            assert_eq!(witness["pending_control"]["returned_while_pending"], false);
+            assert_eq!(
+                witness["pending_control"]["before"][0]["source_fulfilled"],
+                false
+            );
+            assert_eq!(
+                witness["pending_control"]["before"][0]["derived_fulfilled"],
+                false
+            );
+        }
+    }
     let mut watchdog_reports = Vec::new();
     for kind in ["watchdog-baseline", "watchdog-active", "watchdog-uncleared"] {
         let root = base.join(format!("{kind} control with spaces"));
