@@ -86,6 +86,33 @@ Credential lifetimes, remaining owners, complete timer/transport coverage and
 durable parent acknowledgment remain open. V2 stays unfunded/unfrozen; paid runs,
 signing and release remain gated.
 
+The repair and records through `1dc6f14` are published to experimental;
+all **410 tracked paths** match a fresh clone by type, executable mode and bytes.
+Main remains `d94b013`; no signing, tags/releases, paid request or workflow dispatch.
+The new build/MSRV cache is pruned from **8,442,290,176** to **35,426,304 allocated bytes**
+after cache-marker, open-file and system-library-only dependency checks. Exactly
+**11,755 generated files** are removed while one runnable
+final integration executable and the separate proper red remain retained; all
+**343 other stage files** retain exact hashes.
+Three new private-preflight native-library extractions are byte-identical to the
+retained master and not open/mapped; only those copies are removed, preserving
+**78 other preflight-case files** exactly. Combined directory
+allocation falls by **8,740,200,448 bytes (8.140 GiB)**. This is du allocation,
+not inferred physical APFS reclamation.
+
+All five current native diagnostics, including all five warm-up controls, pass
+**directly from the retained final binary without Cargo** in
+**295.612 seconds** after cleanup. Both red/green binary
+digests and their 40-test inventories match; code/test source remains exact.
+The final source qualification and post-cleanup readback finish within the same
+stated hour. Final allocations: target **92,450,816**,
+runs **9,745,678,336**, datasets
+**34,715,725,824 bytes**. Retained evidence,
+models, corpus/oracles, native masters and user-owned untracked files remain local;
+no further dataset deletion is needed for this change. Private publication,
+cleanup and direct-readback receipts remain in the existing qualification root.
+Complete startup admission and paid/signing/release gates are unchanged.
+
 ## Fixed-profile telemetry exporter exclusion — 2026-11-15
 
 **The owned qualifier excludes trace, metric and log exporter registration before

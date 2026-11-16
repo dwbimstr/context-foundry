@@ -533,6 +533,11 @@ and dated paragraphs below are history.
     ([native-deadline receipt](validation.md#known-native-warm-up-deadline-before-capture-ready--2026-11-15)).
     The discarded prewarm promise, other native timers/owners, full transport
     coverage and durable acknowledgment remain open; paid runs/signing stay gated.
+    Native-deadline repair/records through `1dc6f14` are published with full
+    fresh-clone readback. New build/MSRV and three duplicate native libraries are
+    pruned after exact/open-file checks; runnable red/green and all other evidence
+    remain. All five current diagnostics pass directly after cleanup without Cargo;
+    the native-deadline receipt owns counts and retention details.
     The settlement finding/design through `2238253` is published with full fresh-clone
     readback; ten redundant native-library copies are removed after byte/open-file
     checks, preserving all other evidence and the prior retained library.
