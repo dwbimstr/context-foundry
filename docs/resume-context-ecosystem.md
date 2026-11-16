@@ -661,6 +661,10 @@ and dated paragraphs below are history.
     by this empty profile. Complete inventory, telemetry/update/logging, trusted-
     extension and daemon-presence ownership plus prefix acknowledgment/Ready echo
     remain open; full admission stays HOLD.
+    The empty-auth fix/records are published with full fresh-clone readback.
+    New build/MSRV/SDK caches and duplicate native libraries are pruned; retained
+    units, channel/startup controls and both legacy-source consumers pass directly
+    afterward. Exact restoration inputs and continuation pins remain.
     Discovery retirement code/records are published with full fresh-clone readback.
     New build/MSRV caches are pruned; units, channel, four startup persistence cases
     and both legacy-source consumers pass directly afterward. Exact source inputs

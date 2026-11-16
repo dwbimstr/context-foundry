@@ -108,10 +108,27 @@ individual RSS; these are sampled bounds, not global/GPU quotas.
 Before Rust qualification, the duplicate source/dependency/package-cache trees
 and **22** generated native copies are pruned after full restoration/open-file
 checks; **759** other stage files remain exact. The retained source manifest refers
-to the one pinned native master, with no redundant native entry. New Rust-cache
-cleanup/publication/replay are recorded below when completed. Original user files,
+to the one pinned native master, with no redundant native entry. Rust-cache
+cleanup/publication/replay are recorded below. Original user files,
 corpora, models, outcomes and encrypted backups remain intact. Rejected retrieval
 candidates are not run, selected or published.
+
+The implementation and qualification records are pushed to
+`experimental/context-ecosystem` as `4029e1c8e2f46c680f8ee95dcf2f49d4c79b3613`. A fresh HTTPS clone reads back
+all **432** tracked files with matching types, executable modes and bytes;
+main remains `d94b013e3c638276f6afba49f80194776e294fbb`. No CI run is observed on
+that head and no workflow is dispatched.
+
+Both new Rust build/MSRV trees are removed after open-file, source-retention and
+executable checks. The native-library scan finds no remaining duplicates; **993** other stage files remain exact.
+Stage allocation changes from **4,667,138,048** to
+**1,179,463,680 bytes**. Retained units, seven channel cases,
+six startup persistence cases and both legacy-source consumers then pass directly
+without the build trees. After replay, another open-file/native-library scan finds no duplicate copies; **1048**
+other files remain exact. Directory allocation is not a physical APFS reclamation
+measurement. The current continuation pins, original user files and exact
+restoration inputs remain intact. The terminal remote/cache/resource readback is
+in `final-readback.json`; full startup admission remains HOLD.
 
 Private evidence: `runs/pilot-auth-store-lifecycle-2026-11-16/`, including
 `protocol.json`, `sdk-completion-qualified-execution.json`, `native-auth-readback-final.json`,
