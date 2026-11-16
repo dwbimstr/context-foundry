@@ -68,6 +68,25 @@ conversation/usage/owner proof. Complete transport/timer coverage and durable pa
 acknowledgment remain open; complete startup admission stays HOLD. Paid runs,
 release signing and v2/T006 execution remain gated.
 
+Patch/tests and records are published first as `bfa5eed`, with fresh-clone
+type/mode/byte readback of all **421** tracked paths. Two generated dependency
+cache trees and five duplicate native libraries are pruned after exact/open-file
+checks. **10,682** other retained files remain exact, including source and the
+runnable owner binary; directory allocation falls by **1,821,429,760 bytes**.
+The immutable baseline/runtime and canonical native master remain retained.
+
+All four native normal/error controls pass directly after cleanup in **50.625
+seconds** of command receipts, preserving model/error identity and the native
+deadline hold. Four newly extracted libraries are then pruned after exact/open-file
+checks; **10,826** other retained files remain exact. The readback finishes at
+**2037.533 seconds** inside the original hour. Target/runs/datasets allocations are
+**3,641,344 / 9,070,243,840 / 34,715,725,824 bytes**. These are directory
+allocations, not measured physical APFS reclamation. Required models, datasets,
+backups, raw evidence and original user-owned untracked files are unchanged.
+`REBUILD.md`, both cleanup plans/results and `post-cleanup-readback.json` in the
+private root retain the rebuild and deletion details. Foundry Rust inputs and
+current/frozen host pins remain unchanged; the separate capture profile remains open.
+
 ## Source-built warm-up caller feasibility — 2026-11-16
 
 **A private source-built caller can await the original initial warm-up before

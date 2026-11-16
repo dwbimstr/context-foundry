@@ -622,6 +622,10 @@ and dated paragraphs below are history.
     data; Foundry does not apply it or change current/frozen pins. The next work is
     a separately bound source-built capture profile and its actual consumers;
     complete transport/timer coverage and durable acknowledgment remain open.
+    Caller-owner patch/tests and records are published with full fresh-clone
+    readback. Generated dependency and duplicate native-library caches are pruned;
+    all four normal/error SDK controls pass directly after cleanup. The linked
+    caller-owner receipt owns retention, limits and the still-unqualified profile.
     Marketplace repair/records through `467bd45` are published
     with full fresh-clone readback. New build/MSRV cache is pruned after exact and
     open-file checks; runnable red/green and other evidence remain. All five current
