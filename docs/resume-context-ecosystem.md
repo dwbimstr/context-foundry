@@ -624,6 +624,10 @@ and dated paragraphs below are history.
     source-bound transport ownership and the closed shared-channel startup
     acknowledgment remain required. Full admission stays HOLD. The linked receipt
     distinguishes fresh checks, exact-input reuse and preload-only diagnostics.
+    The repair/records are published with full fresh-clone readback. Temporary
+    build/dependency trees are pruned while bundled source/notices and runnable
+    evidence remain. Direct readback-owner, native probe and source-conversation
+    replay pass after cleanup; ABI replay confirms the named DNS bypass again.
     Source-profile code/records are published with full fresh-clone readback.
     New build/MSRV caches are pruned; both source consumers pass directly from
     the retained executable after cleanup. The source-profile receipt owns exact

@@ -100,7 +100,35 @@ and `bundle-source-readback.json`. No provider call, model download or release
 signing occurs. Original user untracked files and required datasets/models/backups
 remain unchanged. Complete transport/timer coverage and durable startup
 acknowledgment remain open; paid trials and release/signing stay gated.
-Publication, cache retirement and retained replay are recorded below when finished.
+Repair/records are published through `de5c481`, with a full fresh-clone
+type/mode/byte readback of all **423** tracked files, unchanged main and zero CI
+runs observed for that push. Only the two Rust code/test files and three existing
+record files are included; private probes, dependency source, binaries and evidence
+remain local.
+
+Five temporary cache/build trees are then pruned after open-file and identity
+checks: Rust build/MSRV, SDK copy/dependencies, package cache and the unselected
+graph build. The retained original SDK/host/native master remain unchanged, and
+the **3,690** bundled input snapshots plus package identities/notices remain exact.
+**4,061** other retained files remain exact. Directory allocation falls
+from **5,874,331,648** to **502,779,904 bytes**, by
+**5,371,551,744 bytes**; physical APFS reclamation is not inferred.
+
+Direct replay without Cargo or build intermediates passes all **three** readback
+owner tests, the native three-case probe failure test and the source conversation,
+retaining **29** usage and **25** trace mutations. A source-hashed before/after
+replay of all **12** valid ABI pairs confirms the eleven interceptions and the
+named DNS bypass again. Those preload-only IO probes still do not claim callback
+settlement or startup admission. Replay cleanup preserves **4,220** other files
+exactly; no duplicate native library remains to prune.
+
+Post-cleanup readback completes at **3524.309 s** inside the same hour.
+Target/runs/datasets allocations are **3,641,344 / 10,165,059,584 /
+34,715,725,824 bytes**. The existing IDE-mapped target leaf and original user files
+are preserved. Private receipts include `publication-fix.json`,
+`cleanup-build-result.json`, `retained-execution.json` and
+`post-cleanup-readback.json` under the same run directory. No paid, signing or
+complete-startup-admission gate changes.
 
 ## Source-built capture profile qualification — 2026-11-16
 
