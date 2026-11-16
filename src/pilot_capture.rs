@@ -1034,7 +1034,11 @@ impl Journal {
         if seen != self.records || previous != self.prev {
             return Err(mismatch());
         }
-        Ok(format!("{:x}", digest.finalize()))
+        Ok(digest
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect())
     }
 }
 
