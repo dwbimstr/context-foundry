@@ -677,7 +677,8 @@ async fn qualify_current_host_history(
     let startup_logging_sha = host.launch.startup_logging_sha256.clone();
     assert_eq!(
         startup_logging_sha,
-        owned_catalog.then(|| pilot_capture::sha256_hex(host::QUALIFICATION_STARTUP_LOGGING))
+        owned_catalog
+            .then(|| pilot_capture::sha256_hex(pilot_capture::host::QUALIFICATION_STARTUP_LOGGING))
     );
     assert_eq!(
         host.paths.root.join("bridge/startup_logging.ts").exists(),
