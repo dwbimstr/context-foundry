@@ -616,6 +616,12 @@ and dated paragraphs below are history.
     dependency and duplicate extraction caches are pruned, preserving source and
     both runnable builds; all three stricter native-deadline controls pass after
     cleanup. The linked receipt owns limits, corrected clock and retention details.
+    The [bounded source caller owner](validation.md#source-built-bounded-startup-caller-owner--2026-11-16)
+    is now implemented and locally checked across all five SDK call sites and
+    normal/error exits. Its proposed upstream patch/tests are retained as reference
+    data; Foundry does not apply it or change current/frozen pins. The next work is
+    a separately bound source-built capture profile and its actual consumers;
+    complete transport/timer coverage and durable acknowledgment remain open.
     Marketplace repair/records through `467bd45` are published
     with full fresh-clone readback. New build/MSRV cache is pruned after exact and
     open-file checks; runnable red/green and other evidence remain. All five current

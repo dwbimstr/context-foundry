@@ -1,0 +1,427 @@
+Experimental upstream SDK caller-owner patch; not applied by Context Foundry.
+Target: can1357/oh-my-pi @ 24439066040e006eb08da7b204f0ac41c79d2de9
+Owner: 003 T006, bounded-pilot-v2 startup caller evaluation.
+Current/frozen host pins and execution authority are unchanged.
+
+MIT License
+
+Copyright (c) 2025 Mario Zechner
+Copyright (c) 2025-2026 Can Bölük
+Copyright (c) 2026 Stencil Labs, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+diff --git a/packages/coding-agent/src/sdk.ts b/packages/coding-agent/src/sdk.ts
+index 243c422..ae2ee67 100644
+--- a/packages/coding-agent/src/sdk.ts
++++ b/packages/coding-agent/src/sdk.ts
+@@ -28,7 +28,7 @@ import { resolveApiKeyOnce } from "@oh-my-pi/pi-ai/auth-retry";
+ import type { DiscoverAuthStorageOptions } from "@oh-my-pi/pi-ai/auth-broker/discover";
+ import type { Dialect } from "@oh-my-pi/pi-ai/dialect";
+ import { anthropicHostRunsTool } from "@oh-my-pi/pi-ai/providers/anthropic";
+-import { prewarmModelConnection } from "@oh-my-pi/pi-ai/providers/connection-prewarm";
++import { withStartupConnectionWarmups } from "./startup-connection-warmups";
+ import { isOpenAICodexWebSocketPreferred } from "@oh-my-pi/pi-ai/providers/openai-codex-transport";
+ import { withCredentialRedaction } from "@oh-my-pi/pi-ai/providers/transform-messages";
+ import { sendsImageInputOnWire } from "@oh-my-pi/pi-ai/providers/vision-guard";
+@@ -1952,6 +1952,13 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
+ }
+ 
+ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Promise<CreateAgentSessionResult> {
++	return await withStartupConnectionWarmups(startWarmup => createAgentSessionBody(options, startWarmup));
++}
++
++async function createAgentSessionBody(
++	options: CreateAgentSessionOptions,
++	startWarmup: (model: Model) => void,
++): Promise<CreateAgentSessionResult> {
+ 	if (options.systemPromptTemplate !== undefined && options.customSystemPrompt !== undefined) {
+ 		throw new Error("systemPromptTemplate cannot be combined with a literal custom system prompt");
+ 	}
+@@ -2348,12 +2355,12 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
+ 		effectiveThinkingLevel = logger.time("resolveThinkingLevelForModel", () =>
+ 			resolveConfiguredThinkingLevel(resolvedModel, thinkingLevel),
+ 		);
+-		// Fire-and-forget connection warm-up so the handshake overlaps the rest
++		// Caller-owned connection warm-up so the handshake overlaps the rest
+ 		// of session setup (extension/skill load, tool registry, system prompt
+ 		// build). Effective for endpoints known before any request (official
+ 		// Anthropic); others warm once a request has revealed their real origin.
+ 		// Every mode benefits (interactive, print, rpc, acp).
+-		void prewarmModelConnection(model);
++		startWarmup(model);
+ 		// Usage-aware credential selection may need a cold remote usage report.
+ 		// Start only that metadata read while tools/extensions/context are loading;
+ 		// the selector owns eligibility and still chooses/pins the account at request
+@@ -3148,7 +3155,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
+ 						// model: any value derived from the earlier fallback model's
+ 						// `thinking.defaultLevel` must not become sticky.
+ 						adoptThinkingForModel(restoredModel);
+-						void prewarmModelConnection(restoredModel);
++						startWarmup(restoredModel);
+ 						return true;
+ 					}
+ 				}
+@@ -3483,7 +3490,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
+ 					);
+ 					modelFallbackMessage = `Fallback: ${usageFallbackReason.from} -> ${target}\n${usageFallbackReason.reason}`;
+ 				}
+-				void prewarmModelConnection(selectedModel);
++				startWarmup(selectedModel);
+ 				break;
+ 			}
+ 			if (!model) {
+@@ -3532,7 +3539,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
+ 				// `pickInitialThinkingLevel` closes over `defaultRoleSpec`,
+ 				// so the role's explicit selector (e.g. `:max`) now applies.
+ 				adoptThinkingForModel(resolvedDefaultModel);
+-				void prewarmModelConnection(resolvedDefaultModel);
++				startWarmup(resolvedDefaultModel);
+ 				return true;
+ 			};
+ 
+@@ -3606,7 +3613,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
+ 						restoredSessionThinkingLevel = retryFallback.originalThinkingLevel;
+ 					}
+ 					adoptThinkingForModel(resolved.model);
+-					void prewarmModelConnection(resolved.model);
++					startWarmup(resolved.model);
+ 					return true;
+ 				}
+ 				return false;
+diff --git a/packages/coding-agent/src/startup-connection-warmups.ts b/packages/coding-agent/src/startup-connection-warmups.ts
+new file mode 100644
+index 0000000..d751018
+--- /dev/null
++++ b/packages/coding-agent/src/startup-connection-warmups.ts
+@@ -0,0 +1,50 @@
++import type { Model } from "@oh-my-pi/pi-ai";
++import { prewarmModelConnection } from "@oh-my-pi/pi-ai/providers/connection-prewarm";
++import type { CreateAgentSessionResult } from "./sdk";
++
++/** Own the five SDK startup call sites without serializing their work. */
++export async function withStartupConnectionWarmups(
++	operation: (start: (model: Model) => void) => Promise<CreateAgentSessionResult>,
++): Promise<CreateAgentSessionResult> {
++	const pending: Promise<void>[] = [];
++	let calls = 0;
++	let sealed = false;
++	const start = (model: Model): void => {
++		if (sealed) throw new Error("SDK startup connection warm-ups sealed");
++		if (calls === 5) throw new Error("SDK startup connection warm-up bound exceeded");
++		calls++;
++		const original = prewarmModelConnection(model);
++		pending.push(original);
++		// Observe rejection immediately, then join both original and observer.
++		// Never substitute the observer for the original promise's result.
++		pending.push(
++			original.then(
++				() => {},
++				() => {},
++			),
++		);
++	};
++	let result: CreateAgentSessionResult | undefined;
++	let bodyFailed = false;
++	let primaryError: unknown;
++	try {
++		result = await operation(start);
++	} catch (error) {
++		bodyFailed = true;
++		primaryError = error;
++	}
++	sealed = true;
++	const settled = await Promise.allSettled(pending);
++	if (bodyFailed) throw primaryError;
++	if (!result) throw new Error("SDK startup session result missing");
++	const failure = settled.find(outcome => outcome.status === "rejected");
++	if (failure?.status === "rejected") {
++		try {
++			await result.session.dispose();
++		} catch (cleanupError) {
++			throw new SuppressedError(cleanupError, failure.reason, "SDK startup connection cleanup failed");
++		}
++		throw failure.reason;
++	}
++	return result;
++}
+diff --git a/packages/coding-agent/test/startup-connection-warmups.test.ts b/packages/coding-agent/test/startup-connection-warmups.test.ts
+new file mode 100644
+index 0000000..1079045
+--- /dev/null
++++ b/packages/coding-agent/test/startup-connection-warmups.test.ts
+@@ -0,0 +1,258 @@
++import { beforeEach, expect, mock, test } from "bun:test";
++import type { Model } from "@oh-my-pi/pi-ai";
++import type { CreateAgentSessionResult } from "../src/sdk";
++
++let dispatch: (model: Model) => Promise<void>;
++let calls: Model[];
++mock.module("@oh-my-pi/pi-ai/providers/connection-prewarm", () => ({
++	prewarmModelConnection(model: Model) {
++		calls.push(model);
++		return dispatch(model);
++	},
++}));
++const { withStartupConnectionWarmups } = await import("../src/startup-connection-warmups");
++beforeEach(() => {
++	calls = [];
++	dispatch = () => Promise.resolve();
++});
++const models = Array.from({ length: 6 }, (_, i) => ({ id: `synthetic-${i}` }) as Model);
++const turn = () => new Promise<void>(resolve => setImmediate(resolve));
++function deferred() {
++	let resolve!: () => void, reject!: (error: unknown) => void;
++	const promise = new Promise<void>((yes, no) => {
++		resolve = yes;
++		reject = no;
++	});
++	void promise.catch(() => {}); // Keep deliberately broken red/mutation runs bounded.
++	return { promise, resolve, reject };
++}
++function result(dispose: () => Promise<void> = async () => {}) {
++	return { session: { dispose } } as CreateAgentSessionResult;
++}
++function observe(work: Promise<CreateAgentSessionResult>) {
++	const state = { done: false };
++	const outcome = work.then(
++		value => {
++			state.done = true;
++			return { value, error: undefined };
++		},
++		error => {
++			state.done = true;
++			return { value: undefined, error };
++		},
++	);
++	return { state, outcome };
++}
++
++test("no warm-ups returns the original result and seals late starts", async () => {
++	const value = result();
++	let late!: (model: Model) => void;
++	expect(
++		await withStartupConnectionWarmups(async start => {
++			late = start;
++			return value;
++		}),
++	).toBe(value);
++	expect(calls).toHaveLength(0);
++	expect(() => late(models[0])).toThrow("sealed");
++	expect(calls).toHaveLength(0);
++});
++
++test("all five original warm-ups finish before the result escapes", async () => {
++	const pending = Array.from({ length: 5 }, deferred);
++	let index = 0;
++	dispatch = () => pending[index++].promise;
++	const value = result();
++	const work = observe(
++		withStartupConnectionWarmups(async start => {
++			models.slice(0, 5).forEach(start);
++			return value;
++		}),
++	);
++	await turn();
++	expect(work.state.done).toBe(false);
++	expect(calls).toEqual(models.slice(0, 5));
++	pending.slice(0, 4).forEach(p => p.resolve());
++	await turn();
++	expect(work.state.done).toBe(false);
++	pending[4].resolve();
++	expect((await work.outcome).value).toBe(value);
++});
++
++test("a body error waits for its original warm-up and keeps identity", async () => {
++	const pending = deferred(),
++		primary = new Error("synthetic body failure");
++	dispatch = () => pending.promise;
++	const work = observe(
++		withStartupConnectionWarmups(async start => {
++			start(models[0]);
++			throw primary;
++		}),
++	);
++	await turn();
++	expect(work.state.done).toBe(false);
++	pending.resolve();
++	expect((await work.outcome).error).toBe(primary);
++});
++
++test("body failure remains primary after a warm-up rejection", async () => {
++	const pending = deferred(),
++		primary = new Error("synthetic body"),
++		secondary = new Error("synthetic warmup");
++	dispatch = () => pending.promise;
++	const work = observe(
++		withStartupConnectionWarmups(async start => {
++			start(models[0]);
++			throw primary;
++		}),
++	);
++	await turn();
++	expect(work.state.done).toBe(false);
++	pending.reject(secondary);
++	expect((await work.outcome).error).toBe(primary);
++});
++
++test("a rejected warm-up cannot skip another pending original", async () => {
++	const first = deferred(),
++		second = deferred(),
++		failure = new Error("synthetic warmup failure");
++	let index = 0,
++		disposed = 0;
++	dispatch = () => [first, second][index++].promise;
++	const work = observe(
++		withStartupConnectionWarmups(async start => {
++			start(models[0]);
++			start(models[1]);
++			return result(async () => {
++				disposed++;
++			});
++		}),
++	);
++	first.reject(failure);
++	await turn();
++	expect(work.state.done).toBe(false);
++	expect(disposed).toBe(0);
++	second.resolve();
++	expect((await work.outcome).error).toBe(failure);
++	expect(disposed).toBe(1);
++});
++
++test("failure selection follows original registration order", async () => {
++	const first = deferred(),
++		second = deferred(),
++		firstError = new Error("first"),
++		secondError = new Error("second");
++	let index = 0;
++	dispatch = () => [first, second][index++].promise;
++	const work = observe(
++		withStartupConnectionWarmups(async start => {
++			start(models[0]);
++			start(models[1]);
++			return result();
++		}),
++	);
++	second.reject(secondError);
++	await turn();
++	expect(work.state.done).toBe(false);
++	first.reject(firstError);
++	expect((await work.outcome).error).toBe(firstError);
++});
++
++test("the sixth call is refused before native work, after joining the first five", async () => {
++	const pending = deferred();
++	dispatch = () => pending.promise;
++	const work = observe(
++		withStartupConnectionWarmups(async start => {
++			models.forEach(start);
++			return result();
++		}),
++	);
++	await turn();
++	expect(calls).toHaveLength(5);
++	expect(work.state.done).toBe(false);
++	pending.resolve();
++	expect((await work.outcome).error.message).toContain("bound");
++	expect(calls).toHaveLength(5);
++});
++
++test("a sealed owner refuses calls while its originals are pending", async () => {
++	const pending = deferred();
++	dispatch = () => pending.promise;
++	let late!: (model: Model) => void;
++	const work = observe(
++		withStartupConnectionWarmups(async start => {
++			late = start;
++			start(models[0]);
++			return result();
++		}),
++	);
++	await turn();
++	expect(() => late(models[1])).toThrow("sealed");
++	expect(calls).toHaveLength(1);
++	pending.resolve();
++	await work.outcome;
++});
++
++test("a synchronous native throw preserves earlier pending ownership", async () => {
++	const pending = deferred(),
++		failure = new Error("synthetic native synchronous failure");
++	let index = 0;
++	dispatch = () => {
++		if (index++ === 0) return pending.promise;
++		throw failure;
++	};
++	const work = observe(
++		withStartupConnectionWarmups(async start => {
++			start(models[0]);
++			start(models[1]);
++			return result();
++		}),
++	);
++	await turn();
++	expect(work.state.done).toBe(false);
++	pending.resolve();
++	expect((await work.outcome).error).toBe(failure);
++});
++
++test("a completed session's disposal is joined before rejection", async () => {
++	const pending = deferred(),
++		disposal = deferred(),
++		failure = new Error("synthetic warmup failure");
++	let called = false;
++	dispatch = () => pending.promise;
++	const work = observe(
++		withStartupConnectionWarmups(async start => {
++			start(models[0]);
++			return result(() => {
++				called = true;
++				return disposal.promise;
++			});
++		}),
++	);
++	pending.reject(failure);
++	await turn();
++	expect(called).toBe(true);
++	expect(work.state.done).toBe(false);
++	disposal.resolve();
++	expect((await work.outcome).error).toBe(failure);
++});
++
++test("warm-up and disposal errors both survive failed cleanup", async () => {
++	const pending = deferred(),
++		failure = new Error("synthetic warmup failure"),
++		cleanup = new Error("synthetic cleanup failure");
++	dispatch = () => pending.promise;
++	const work = observe(
++		withStartupConnectionWarmups(async start => {
++			start(models[0]);
++			return result(async () => {
++				throw cleanup;
++			});
++		}),
++	);
++	pending.reject(failure);
++	const error = (await work.outcome).error;
++	expect(error).toBeInstanceOf(SuppressedError);
++	expect(error.error).toBe(cleanup);
++	expect(error.suppressed).toBe(failure);
++});

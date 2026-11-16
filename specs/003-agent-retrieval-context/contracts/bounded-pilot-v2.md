@@ -1194,6 +1194,41 @@ silently to another build. Current/frozen profiles and execution authority remai
 unchanged. Complete transport/timer coverage and durable acknowledgment remain
 required, independently of this caller-join feasibility.
 
+**Selected source-built caller-owner evaluation, 2026-11-16 — locally qualified at the SDK caller boundary; not an admitted host.**
+Evaluate one per-session SDK owner for all five connection warm-up calls. Keep
+their original promises and immediately attach bounded rejection observers; join
+both original/observer pairs on every return and error exit. Refuse a sixth or
+sealed-owner call before invoking the native warm-up. Keep concurrency with other
+startup work. Preserve the body's primary error after all warm-ups settle. If a
+completed session cannot be returned because a warm-up failed, dispose it first;
+retain both errors if that cleanup also fails. No timeout race grants success.
+The existing outer host deadline remains the failure bound for ignored work.
+
+Require source-owner tests for pending normal/error exits, rejection with another
+promise pending, deterministic rejection, no-work, cap, late calls and disposal.
+The no-await mutation must fail completion assertions. Require the source-built
+real SDK under held local refusal on both normal startup and an injected SDK
+input-getter failure after its original warm-up starts; compare the immutable
+baseline and keep model identity on healthy readbacks. These are source-built
+owner controls, not a replacement for the still-required actual capture bridge,
+native usage, complete owner/transport inventory or durable acknowledgment.
+Keep source/patch/lock/runtime/native/binary pins and raw failures. Current/frozen
+host pins stay unchanged. Use an offline hour, a 120-second cleanup reserve, one
+heavy job, 20 GiB disk floor and 8 GiB sampled individual RSS ceiling. Publish only
+reviewed public patch/test data and records; prune verified new build/extraction
+caches afterward, retaining runnable controls and exact evidence. Paid runs and
+release signing remain gated.
+
+The [caller-owner receipt](../../../docs/validation.md#source-built-bounded-startup-caller-owner--2026-11-16)
+records the five-site source change, eleven owner tests, failing no-join mutation,
+coding-agent type/lint/format checks and four native normal/error controls.
+The [upstream patch](../../../docs/references/omp-startup-connection-warmups.patch)
+contains the proposed helper and durable source-owner tests, with its original
+license; Foundry does not apply it or select that binary as a capture pin. Native
+controls cover the initial normal/error paths; other model-selection branches are
+not separately live-exercised. The separate capture profile and its real consumers,
+complete owner/transport inventory and durable acknowledgment remain required.
+
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
 and a complete startup-owner inventory: catalog/discovery, credential refresh,

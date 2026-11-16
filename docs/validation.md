@@ -1,5 +1,73 @@
 # Validation
 
+## Source-built bounded startup caller owner — 2026-11-16
+
+**The private source-built SDK candidate now owns all five generic connection
+warm-up calls and joins them on success and error exits. This does not admit a
+new capture host.** The retained [upstream patch and owner tests](references/omp-startup-connection-warmups.patch)
+target oh-my-pi `24439066040e006eb08da7b204f0ac41c79d2de9` under
+003 T006's [existing startup contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission).
+It is reference/test data, unapplied by Foundry. The new upstream helper/test paths
+in that patch are proposed; they are not landed upstream or Foundry Rust modules.
+The upstream MIT notice is retained. Applying and reversing the patch on a fresh
+three-file readback reproduces the exact qualified bytes.
+
+One per-session SDK owner starts the original function at each of the five sites,
+preserves concurrent startup and retains the original/observer promise pairs.
+Observers prevent early unhandled rejection; they do not replace original results.
+A sixth or sealed-owner call refuses before native work. The caller joins every
+pair before returning or throwing and preserves the body's primary error. A
+completed session is disposed before a warm-up rejection escapes; a failed disposal
+retains both errors through SuppressedError. There is no successful timeout race.
+The original [SDK caller](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/sdk.ts#L2356)
+and [warm-up implementation](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/ai/src/providers/connection-prewarm.ts#L49)
+remain the source basis. This covers those five generic SDK calls, not every host
+transport or connection-preparation owner.
+
+The source-owner suite passes **11/0**. The materialized discarded-return red
+fails **0/11**; removing only the join from the owner fails **2/9**. The final
+restored source passes all eleven. Controls cover pending normal/error exits,
+all five original calls, rejection while another original is pending, deterministic
+failure ordering, sixth/late calls, synchronous failure and joined disposal with
+both cleanup errors retained. The coding-agent package type check reports no
+errors in **4,850 files**. Focused lint and formatting pass on all three changed
+TypeScript files. The first lint launcher exits 127 because its Node shebang is
+unavailable in the cleared environment; invoking that same tool with pinned Bun
+passes without changing the host installation.
+
+Four real source-built SDK controls pass: immutable baseline and owned candidate,
+each with normal startup and a post-warm-up input-getter failure. The baseline
+rethrows the exact primary error at **1039 ms**, before its refusal at **5032 ms**;
+the owner waits until **5105 ms**, after its refusal at **5104 ms**, preserving
+that same error object. The getter is reached only after the actual original
+request starts. The failed helper SDK uses an isolated empty agent directory;
+the subsequent ordinary CLI still returns two equal native model readbacks.
+All four cases preserve complete model digest
+`83aac156b7678be8faab3ca2d09fbf4e9773214fc968f1c4a13839dc718317c9`,
+exit normally with empty stderr, and hold at least eleven seconds after observing
+the request before the second readback. Requests receive a held local refusal;
+network is denied and no prompt/provider request is sent.
+
+The native controls exercise initial normal/error paths. Other model-selection
+branches are changed in source but not separately live-exercised. Rejection and
+disposal-failure injection is source-unit evidence. The build binds all changed
+source bytes before/after compilation, the frozen lock, retained Bun1.4.4/native
+addon and binary digest `cd59e86cc512f27d6782c2f2c50b936ec3a47792e52e27695af1271220a6ea07`.
+All **10,320** original-or-qualified source/assets remain exact. Qualification
+readback completes at **1290.566 seconds** inside the original offline hour, with
+120 seconds reserved for cleanup, one heavy job, a 20 GiB disk floor and 8 GiB
+sampled individual RSS ceiling. Maximum sampled RSS is **3,236,724,736 bytes**;
+minimum observed free disk **30,152,314,880 bytes**. Samples are not global/GPU quotas.
+
+Private raw failures, build inputs, unit mutation, native traces and readback remain
+under `runs/pilot-owned-warmup-owner-2026-11-16/`; review is in-session. No Foundry
+Rust code changes or fresh Rust-gate run is claimed. Current/frozen host pins and
+the [Rust launch owner](../src/pilot_capture/host.rs) are unchanged. This source
+artifact still needs a separately bound capture profile and full actual-consumer
+conversation/usage/owner proof. Complete transport/timer coverage and durable parent
+acknowledgment remain open; complete startup admission stays HOLD. Paid runs,
+release signing and v2/T006 execution remain gated.
+
 ## Source-built warm-up caller feasibility — 2026-11-16
 
 **A private source-built caller can await the original initial warm-up before
