@@ -631,9 +631,12 @@ and dated paragraphs below are history.
     The [shared early capture channel](validation.md#shared-early-capture-channel-qualification--2026-11-16)
     now qualifies one FIFO/sequence owner across the early source preload and later
     extension, with fresh current/frozen/source consumers and explicit gate reuse.
-    This is the first exchange implementation slice. Source-owned pre-dispatch
-    refusal, closed startup messages, complete lifecycle inventory and durable
-    acknowledgment remain open; full startup admission stays HOLD.
+    This is the first exchange implementation slice. The subsequent
+    [source-owned durable refusal](validation.md#source-owned-durable-startup-refusal--2026-11-16)
+    now journals the known SDK warm-up before transport construction, with real
+    CLI append-failure and independent named-DNS controls. This startup-only
+    revision cannot deliver capture Ready. Complete inventory/lifecycle evidence
+    and the full prefix acknowledgment/Ready echo remain open; admission stays HOLD.
     Shared-channel code/records are published with full fresh-clone readback.
     Both new build trees are pruned; pilot units, native channel controls and the
     source conversation pass directly from retained binaries afterward. The linked

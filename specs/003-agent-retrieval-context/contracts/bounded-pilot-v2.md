@@ -1334,7 +1334,11 @@ qualification selects a new source candidate. Work is bounded to one no-spend
 120-second cleanup reserve. Retain red/green evidence and keep unfinished work
 explicitly unqualified; paid trials and release signing remain gated.
 
-**Refusal integration in progress, 2026-11-16.** Continue inside the same
+**Known-owner refusal integration qualified, 2026-11-16; full acknowledgment open.**
+The [native refusal receipt](../../../docs/validation.md#source-owned-durable-startup-refusal--2026-11-16)
+qualifies the source-owned before-dispatch seam and durable refusal at their
+specified diagnostic boundaries. This startup-only revision cannot grant Ready.
+Continue inside the same
 90-minute bound above. The source warm-up function consults an immutable early
 no-grant observer before constructing its fetch transport or abort signal. Even
 a resolved observer cannot permit IO. Closed revision 2 metadata carries a bounded

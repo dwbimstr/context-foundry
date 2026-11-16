@@ -1,5 +1,101 @@
 # Validation
 
+## Source-owned durable startup refusal — 2026-11-16
+
+**The known SDK warm-up now waits for a durable Rust refusal before constructing
+its transport or abort timeout. Incomplete inventory still ends in HOLD.** The
+integration is qualified at `6f3b8a1f0a5670b2992405ae92e613d5cb0d549c` under
+003 T006's [selected startup contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission).
+It continues the previous shared-channel round within its original 90-minute
+deadline; the clock is not reset. Full startup admission and T006 remain unaccepted.
+
+The [upstream source patch](references/omp-startup-refusal.patch) targets
+`can1357/oh-my-pi@24439066040e006eb08da7b204f0ac41c79d2de9`, specifically
+`packages/ai/src/providers/connection-prewarm.ts::prewarmModelConnection` and its
+named tests. Its immutable early observer is consulted before `transportFetch`
+and `AbortSignal.timeout`; resolving or rejecting the observer always refuses.
+A late/mutable binding also refuses. Observer error text is discarded. Ordinary
+unbound warm-ups retain their original path. The existing SDK caller owner still
+joins the original warm-up promises; no promise/prototype hook is substituted.
+The patch is reference data, not automatically applied by Foundry. Its MIT notices,
+module/test provenance and intentional differences are retained.
+
+The separate startup-only source artifact is pinned at
+`00e24e41653873b7c1e51552c3686a7fc2099b918e877b202ee4788161107432`. All **10,323** original-or-previously-qualified source
+files remain exact except the named AI module; the new test and exact existing
+native master account for the two additional build inputs. The package lock,
+pinned Bun 1.4.4 runtime, native-module identity and compiler input/readbacks are
+retained. Applying the public patch to the retained original AI file reproduces
+both changed/new source files exactly. The three earlier capture host pins remain
+unchanged; this fourth artifact grants no capture or Live authority.
+
+[`startup.rs`](../src/pilot_capture/startup.rs) adds closed, metadata-only revision
+2 to the existing framed pipes and journal. Limits are 20 attempts, shared 64 KiB
+headers, zero payload and a 30-second async observation deadline plus existing
+host cleanup grace. Only the declared official Anthropic HEAD origin is classified.
+Unknown messages/owners/routes, replay, stale identity, truncation, exhausted
+sequence, wrong version or payload refuse. There is no Ready, fetch, tool or
+capture variant in this startup-only revision, and no v1 fallback.
+
+[`CaptureSession::observe_startup`](../src/pilot_capture/startup.rs) appends/syncs a
+refusal and verifies the committed journal prefix before replying to the exact
+child attempt. The [early observer](../src/pilot_capture/startup_observer.ts) and
+later extension share one channel/sequence owner. A warm-up `owner_settled` frame
+reflects the original SDK caller join; it is not complete `startup_settled`.
+The parent records `startup_inventory_unqualified`, closes and reaps. The returned
+observation receipt is not an execution/compatibility seal. No provider transport,
+counter or permit is constructed by this API and it sends no prompt; these source
+facts are distinct from the independent IO control below.
+
+The actual compiled CLI passes three cases: normal durable refusal/HOLD, failed
+refusal append and failed terminal-HOLD append. The normal six-record journal has
+one attempt/refusal, owner settlement, terminal HOLD and normal group reaping with
+empty stderr. Both failure cases return persistence errors, retain their consumed
+run claim and publish no successful observation receipt. The first cannot reach
+owner settlement. The startup-only consumer is a durable ignored native test,
+explicitly selected for this qualification.
+
+An additional actual-IO control runs pinned Bun against the exact SDK source,
+with a custom fetch callback containing the named `node:dns.resolve4` route that
+bypassed the rejected generic fence. Its independent owned UDP counter observes
+**1 / 0 / 0** datagrams for unbound / observer-resolved / observer-rejected runs.
+Transport callback and abort-timeout construction counts are also **1 / 0 / 0**;
+the held observer has not completed the original warm-up. All cases retain the
+same complete synthetic model digest. This is an unbundled SDK/native-runtime
+before-IO proof, not compiled-CLI bypass coverage or a full transport inventory.
+
+All ten SDK tests pass; removing the observer await yields **8 passes / 2 failures**.
+Focused SDK lint/format/type checks pass. Four affected Rust gates are fresh:
+formatting, pilot all-target Clippy, **108/0** pilot units (**1** ignored), and
+actual Rust 1.90 pilot all-target checking. Four default-feature gates reuse 258
+exact effective input files. All **five** current-host and both earlier source
+consumers are fresh; frozen compatibility is **36/0**, with **10** explicit
+diagnostics ignored. The earlier source conversation preserves model digest
+`53bec6f047bbd7eeab26c93c1a6dd6c0e4ccc30d50a29d79e416c28692d5a027`,
+**29** usage and **25** trace mutation refusals. No retrieval or provider-economics
+gain is claimed.
+
+Retained setup failures include an incomplete initial source copy (corrected to
+all original files), the missing native-addon fixture, an incomplete synthetic
+model, an initial Clippy warning and a source compiler invocation from the wrong
+working directory. None is used as positive qualification evidence. The corrected
+source build and current green receipts are separate from these failed attempts.
+
+The complete owner/transport inventory, lifecycle controls beyond this warm-up,
+and full startup-prefix acknowledgment/Ready echo remain open. The generic API
+fence remains rejected; this source-owned seam does not qualify arbitrary network
+calls. V2 task/sample/funding freeze, paid execution, signing and release remain
+gated. No provider call, spend, model download or release signing occurs.
+
+Private evidence is `runs/pilot-startup-refusal-2026-11-16/`, including
+`qualification-readback.json`, `source-build.json`, `dns-bypass-readback.json`,
+`startup-committed-evidence/` and the fresh/reused gate receipts. At readback,
+shared elapsed time is **4711.831 s**; maximum sampled individual RSS is
+**2,237,923,328 bytes**, minimum sampled free disk
+**36,093,038,592 bytes**, within the unchanged 8 GiB/20 GiB limits.
+These are sampled process/disk bounds, not global/GPU quotas. Review is in-session.
+Publication, cache retirement and retained replay are recorded below when finished.
+
 ## Shared early capture channel qualification — 2026-11-16
 
 **The early source-profile preload and later capture extension now use one
