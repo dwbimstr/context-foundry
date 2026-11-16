@@ -1,5 +1,107 @@
 # Validation
 
+## Journal attestation readback and transport census — 2026-11-16
+
+**The existing journal's seal/finish attestation now checks the writer's committed
+history. Full startup admission remains HOLD.** The repair stays with
+[`Journal::digest` and the probe-seal owner](../src/pilot_capture.rs) under
+003 T006's [existing startup contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission).
+No worker, database, independent log, new wire revision or model change is added.
+All three host pins, frozen v1 policy/receipt shape and execution locks remain.
+
+Before the repair, digest readback opens the pathname and hashes whatever bytes
+are there. Three owner tests fail as expected: earlier-record corruption, a new
+inode containing identical bytes, and an unowned tail passed to the real final-
+receipt consumer. A real frozen-host probe also returns a **successful ProbeSeal
+for a modified journal prefix** after its two local fixture requests. This is a
+verification-mode counterexample, not paid execution or a historical v1 finding.
+The red code is `55896c4`; its runnable unit/integration artifacts and raw failures
+are retained privately.
+
+Readback now requires the same device/inode as the writer, complete bounded JSONL,
+ordered sequence, each previous-record hash, the exact record count and the
+writer's last committed record digest. It hashes the complete unchanged bytes while
+streaming within the existing per-record bound. Healthy journals keep exactly the
+same digest. Probe sealing sets its sealed flag only after this readback succeeds;
+append/readback failures enter the existing monotonic halt, and failed halt
+persistence remains an error. No successful seal/final receipt or later request
+can follow. Consumed authority/run claims remain consumed.
+
+At implementation `7a78d88f472a650f8816db25fca1b198b7098d6c`, the three focused owner tests pass.
+The actual frozen-host probe passes corruption, truncation and replacement controls:
+sealing refuses, repeated sealing observes the halt, another slot/request refuses,
+finish publishes no successful receipt, and the original claim remains consumed.
+Each case stays at its original two fixture requests and retains credential
+absence checks. The first build's SHA-256 LowerHex type error is retained; using
+the crate's existing byte-to-hex format fixes compilation without changing tests.
+
+Four affected Rust gates are fresh: formatting, pilot all-target Clippy, **105/0**
+pilot units (**1** ignored), and actual Rust 1.90 pilot all-target checking.
+Frozen compatibility is **35/0**, with **9** explicit diagnostics ignored. Four
+current-artifact consumers are freshly run; the fifth, Host-only startup-owner
+matrix is reused after exact effective-input checks. It never calls Journal or
+CaptureSession: host/protocol, root privacy/clock/policy helpers, test prefix,
+control helper and all embedded witnesses/probes are unchanged. Its previous
+five-consumer receipt remains retained. Four default-feature gates also reuse
+exact effective inputs: the entire root pilot module is excluded by
+`src/lib.rs:51`, default `semantic` does not enable it, integration crates are
+feature-gated and the capture binary requires that feature. The conservative old
+input manifest's preflight rejection and corrected exclusion proof are retained.
+This is explicit scoped reuse, not eight freshly run gates.
+
+The source-host two-generation conversation passes unchanged, including complete
+model digest `53bec6f047bbd7eeab26c93c1a6dd6c0e4ccc30d50a29d79e416c28692d5a027`,
+**29** usage and **25** startup-trace mutation refusals. No retrieval behavior or
+G2 improvement is claimed. These are local fixtures; provider usage/economics and
+v2/T006 acceptance are not established.
+
+**Transport decision.** A separate before-IO API-fence experiment on the exact
+qualified source binary finds eleven intercepted routes: global/named Bun TCP,
+default/named Node TCP, direct Socket, default/named TLS, default/named HTTP/2,
+UDP send and an explicit DNS Resolver. Each valid baseline reaches an independent
+owned loopback counter; the guarded case does not. The first UDP baseline has
+zero packets and is explicitly invalid. Only after explicit loopback binding and
+its scoped sandbox permission produce a positive baseline is UDP interception
+measured. Those failed/corrected fixtures remain retained.
+
+The named `node:dns.resolve4` export bypasses the candidate: baseline and guarded
+cases each send **one UDP datagram**, with no hook observation. Replacing the default
+DNS object does not change that named export, even after syncBuiltinESMExports.
+An early Bun loader plugin registers, but its tested onResolve hook never sees
+the builtin DNS import. The generic-fence candidate is rejected; no part is adopted
+as complete transport enforcement. The WebSocket case after this counterexample
+is not run. These probes exit from the preload before CLI/SDK startup; they prove
+API/IO behavior, not host Ready, model parity, callback settlement or admission.
+The named DNS callback remains pending at the bounded probe exit.
+
+A source build census retains **3,690** file inputs (**47,961,593 bytes**), **4**
+virtual-input metadata records and **55** direct network-module import edges.
+The scan includes DNS subpaths and finds no direct DNS edge; that does not prove
+absence of indirect/builtin routes or inactive owners. All **10,323** retained
+original-or-qualified source files remain exact. The four virtual bodies are not
+captured independently; their producer source/lock and metadata are retained.
+The graph build digest `3b1e3222d58626725a535c66fc65b498180b06a9ccf9017c8c92f0bb63e522e0`
+differs from qualified host `b5e50ce94846e29ea3db04ddab00f716208f21c0299263a30aee725c006ff9e9`.
+It is not selected as a host pin or claimed as a byte-identical reproduction.
+Source-bound owner/transport integration remains necessary before the closed
+shared-channel startup acknowledgment can qualify readiness.
+
+The investigation and repair share one unchanged no-spend hour: one heavy job,
+20 GiB free-disk floor, 8 GiB sampled individual RSS ceiling and 120-second cleanup
+reserve. Qualification readback completes at **3243.703 s**;
+maximum sampled individual RSS is **2,924,232,704 bytes**
+and minimum sampled free disk **47,102,808,064 bytes**.
+Samples are not global/GPU quotas. The missing-scratch setup failure, invalid UDP
+positive control, preflight corrections and compile error remain recorded.
+Review is in-session. Private evidence is in
+`runs/pilot-startup-transport-2026-11-16/`, especially
+`qualification-readback.json`, `routes-udp-bind-readback.json`, `bundle-metafile.json`
+and `bundle-source-readback.json`. No provider call, model download or release
+signing occurs. Original user untracked files and required datasets/models/backups
+remain unchanged. Complete transport/timer coverage and durable startup
+acknowledgment remain open; paid trials and release/signing stay gated.
+Publication, cache retirement and retained replay are recorded below when finished.
+
 ## Source-built capture profile qualification — 2026-11-16
 
 **The separately pinned source-built capture profile passes its actual no-provider

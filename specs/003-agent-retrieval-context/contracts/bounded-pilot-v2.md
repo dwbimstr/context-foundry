@@ -1280,7 +1280,7 @@ fresh versus reused gates and the pre-launch resource pause. This qualifies the
 fixed source diagnostic only. Transport/timer completeness and durable startup
 acknowledgment below remain unimplemented admission conditions.
 
-**Selected journal-readback prerequisite, 2026-11-16 — implementation/qualification pending.**
+**Selected journal-readback prerequisite, 2026-11-16 — qualified at seal/finish; startup acknowledgment still unimplemented.**
 Before implementing the durable startup acknowledgment, strengthen the existing
 Rust `Journal::digest`, already consumed by probe seals and final receipts. Bind
 readback to the writer's same device/inode and verify complete bounded JSONL,
@@ -1301,6 +1301,13 @@ packet outside its hooks, and early loader registration does not intercept that
 builtin import. Source-bound transport ownership/inventory and the shared-channel
 closed revision remain required; no full startup admission, paid or signing
 authority is granted by this readback repair.
+
+The [landed Rust journal/seal owner](../../../src/pilot_capture.rs) and
+[actual probe consumer](../../../tests/pilot_capture.rs) now implement/qualify
+this prerequisite. The [dated receipt](../../../docs/validation.md#journal-attestation-readback-and-transport-census--2026-11-16)
+records native red/green, fresh versus reused checks and the named DNS/loader
+counterexamples. The graph is a source census, not complete runtime coverage or
+reproducible-build proof. No generic-fence adoption or v2 readiness follows.
 
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
