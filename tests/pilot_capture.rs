@@ -329,7 +329,7 @@ async fn current_host_startup_owners_have_native_controls() {
         }
         if let Some(path) = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT") {
             let out = PathBuf::from(format!("{}-warmup-controls", PathBuf::from(path).display()));
-            fixture_private_dir(&out).unwrap();
+            fixture_private_dirs(&out).unwrap();
             fixture_private_write(
                 out.join(format!("{kind}.json")),
                 serde_json::to_vec_pretty(&result).unwrap(),
