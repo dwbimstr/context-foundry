@@ -1436,7 +1436,7 @@ owns actual CLI, mutation, gate, resource and cleanup evidence. The incremental
 [upstream patch](../../../docs/references/omp-startup-settings-retirement.patch)
 retains source/module/test identity and intentional differences.
 
-**Selected fixed empty-auth lifecycle round, 2026-11-16.** After the settings
+**Selected fixed empty-auth lifecycle round, 2026-11-16 — qualified at the fixed startup boundary.** After the settings
 round's terminal receipt, use a fresh 90-minute no-spend round with one heavy job,
 20 GiB free-disk floor, 8 GiB sampled individual RSS ceiling and 120-second cleanup
 reserve. Ordinary close may return before OAuth refresh completes; it cannot
@@ -1458,7 +1458,11 @@ Bind the receipt to the exact sealed SDK session/registry/auth instance and carr
 it through the existing channel/journal with append-failure checks. No general
 OAuth, physical FD-release or complete startup admission claim follows. Other
 owners, complete inventory and durable prefix acknowledgment remain required;
-paid execution and release signing stay gated.
+paid execution and release signing stay gated. The
+[dated receipt](../../../docs/validation.md#fixed-empty-auth-startup-retirement--2026-11-16)
+owns native/source/gate/retention evidence; the
+[upstream patch](../../../docs/references/omp-startup-empty-auth.patch) retains
+source/module/test identity and intentional differences.
 
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association

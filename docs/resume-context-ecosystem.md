@@ -654,9 +654,13 @@ and dated paragraphs below are history.
     The settings fix/records are published with full fresh-clone readback. New
     build/MSRV/SDK caches are pruned; retained units, channel/startup cases and
     both legacy-source consumers pass directly afterward. Restoration inputs remain.
-    Auth-store/OAuth lifetime, telemetry/update/logging, trusted-extension and
-    daemon-presence ownership still need complete integration before the full
-    inventory and prefix acknowledgment/Ready echo. Admission remains HOLD.
+    The [fixed empty-auth lifecycle](validation.md#fixed-empty-auth-startup-retirement--2026-11-16)
+    now enforces the selected credential exclusion from construction and retires
+    the original admitted calls/store, with native held/error/refusal controls and
+    six persistence cases. General OAuth and physical FD release are not accepted
+    by this empty profile. Complete inventory, telemetry/update/logging, trusted-
+    extension and daemon-presence ownership plus prefix acknowledgment/Ready echo
+    remain open; full admission stays HOLD.
     Discovery retirement code/records are published with full fresh-clone readback.
     New build/MSRV caches are pruned; units, channel, four startup persistence cases
     and both legacy-source consumers pass directly afterward. Exact source inputs

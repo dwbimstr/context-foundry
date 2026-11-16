@@ -1,5 +1,127 @@
 # Validation
 
+## Fixed empty-auth startup retirement — 2026-11-16
+
+**The explicit startup-only profile now enforces empty auth from construction,
+joins its original admitted work and closes the original local store before
+journaling HOLD. Full startup admission remains open.** Code `a0797d4f0b1a3512105691484bf9a80804118fa4`
+follows the [selected contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission)
+under a fresh shared 90-minute no-spend deadline after the settings round's terminal
+receipt, with one heavy job, 20 GiB free disk, 8 GiB sampled individual RSS and a
+120-second cleanup reserve.
+
+The [incremental upstream MIT patch](references/omp-startup-empty-auth.patch)
+targets `can1357/oh-my-pi@24439066040e006eb08da7b204f0ac41c79d2de9`, after the
+existing caller/auth/refusal/restricted/catalog/settings patches. Its module/test
+pointers and intentional differences remain with that reference. The separate
+`--startup-empty-auth` flag requires `--restrict-tools`; only the explicit Foundry
+startup diagnostic selects it. Ambient environment cannot select this profile.
+Ordinary auth capabilities and default discovery arguments remain outside it.
+
+The profile keeps the **actual local SQLite store**, with scalar row-count checks
+that do not export credential values. Brokers are refused before config commands,
+token-file resolution or remote-store construction. Stored credentials, foreign
+backends and unsupported namespace operations refuse; a reload rejects material
+before adopting it or emitting credential events. One bounded auth-specific owner
+wraps the finite supported startup calls, preserves their exact original returned
+promises, and joins them plus completion observers before closing the original
+store. Cached references remain guarded. A fresh lookup observes a replaced method
+while earlier references retain their original function, preserving JavaScript
+lookup semantics. Ownership is bounded to **4,096** starts.
+
+Source metadata remains available after retirement. The real completion consumer
+still obtains no OAuth identity and the local store's original usage observer is a
+no-op; an unexpected observer hook refuses. These calls do not manufacture a key,
+identity or usage report. The native database rejects fresh SQL after original
+close. This is logical native-store retirement, **not physical FD release or a
+general OAuth/broker drain**. Those broader behaviors are not required or accepted
+for the selected empty pilot profile.
+
+The SDK binds the exact original auth instance through a weak reference alongside
+the original session/registry. It requires original auth/settings-link retirement
+first. Wrong manager/registry/auth identity, premature/repeated retirement and new
+work through retained namespace references refuse. The source host is pinned at
+`076d29ae16569fee44cc47e89a72569f3643eaa60005fbfc052fb1c0913055a1`. All **10,331** source/native inputs are hashed before
+and after compilation. The public patch reproduces **12** changed/new files exactly;
+every restoration input in the B5 master, exact overlays and native master is
+hash-verified. Reconstruction/reinstallation has not been rerun after pruning.
+The three capture pins remain unchanged; this artifact is startup-only.
+
+**Seven compiled-CLI controls** pass. Four successful runs cover ordinary auth,
+empty-profile retirement, a held original continuation and original failure. The
+held caller receives the exact original promise; the parent controls release, and
+its filesystem completion marker/source trace precede retirement. The ordinary
+resolver positive control writes its marker; fixed-profile late operations cannot
+invoke it. Eight late operations refuse. Model metadata remains exactly
+`83aac156b7678be8faab3ca2d09fbf4e9773214fc968f1c4a13839dc718317c9` in all four.
+The other three cases refuse a real seeded credential row, broker configuration
+and missing restriction flag before SDK readiness. Parent wait observes exit 1
+without forced cleanup and with each owned group gone. Bun's fatal-startup path
+omits its JavaScript exit callback; these three traces are exactly the installation
+record, with the independent parent exit/refusal proof. Successful cases retain
+the complete normal-exit trace. No case sends a prompt or contacts a provider.
+This does not qualify full generation/tool behavior under a future v2 profile.
+
+The final SDK matrix passes **615/0** across **54** files, including auth, original
+broker/refresh behavior, main/CLI/default compatibility, restricted SDK and the new
+owner/completion tests. Four counterfactuals fail as intended:
+
+- no-join: **8/3** passes/failures.
+- no-admission: **10/1** passes/failures.
+- no-broker: **10/1** passes/failures.
+- no-close: **7/4** passes/failures.
+
+The controls remove original joining, namespace admission, early broker refusal
+and original-store close respectively. Source type checks pass. Earlier **512/0**
+and **513/0** matrices and their manifests remain as dated checkpoints; they do not
+replace the final input matrix.
+
+Rust validates closed auth metadata after settings retirement and journals it
+before the incomplete-inventory halt. Decoder/order controls reject missing/false
+facts, invalid counts and premature/duplicate reports. All **six** actual startup
+persistence cases pass: normal **ten-record HOLD**, refusal/catalog/settings/auth
+append failures and terminal-HOLD append failure. Failed persistence grants no
+successful receipt or reusable claim. No Ready, permit, counter, generation or
+compatibility seal is created.
+
+Four affected gates are fresh on the committed implementation: formatting, pilot
+all-target Clippy, **113/0** pilot units (**1** ignored) and actual Rust **1.90**
+pilot all-target checking. Four default-feature gates reuse **258** identical
+effective inputs. All five current-host consumers, **36/0** frozen compatibility
+(**10** explicit diagnostics ignored), both legacy-source consumers and seven
+channel cases pass fresh. The legacy source conversation retains two requests,
+**29** usage mutation refusals and **25** trace mutation refusals. No retrieval,
+real-provider economics or task-quality improvement is claimed.
+
+Retained failures include source-transform/fixture quoting errors and initial type
+mismatches. The first native held fixture missed the original cached method: it
+shows no hold marker and false promise identity. That is not a passing drain
+control. The proxy lookup correction has its own regression and final native held/
+error proof. The next controller incorrectly required Bun's omitted exit callback
+on fatal startup; its raw expected store refusal/parent exit remain and the final
+negative criteria use exact installation-only traces plus independently reaped
+known refusal. No product assertion, deadline or resource limit is relaxed.
+Successful guarded phases sample at least **27,908,456,448
+bytes** free disk and at most **2,170,880,000 bytes**
+individual RSS; these are sampled bounds, not global/GPU quotas.
+
+Before Rust qualification, the duplicate source/dependency/package-cache trees
+and **22** generated native copies are pruned after full restoration/open-file
+checks; **759** other stage files remain exact. The retained source manifest refers
+to the one pinned native master, with no redundant native entry. New Rust-cache
+cleanup/publication/replay are recorded below when completed. Original user files,
+corpora, models, outcomes and encrypted backups remain intact. Rejected retrieval
+candidates are not run, selected or published.
+
+Private evidence: `runs/pilot-auth-store-lifecycle-2026-11-16/`, including
+`protocol.json`, `sdk-completion-qualified-execution.json`, `native-auth-readback-final.json`,
+`startup-qualified-evidence/`, `qualification-readback.json`, `retained-source.json`,
+`restore-source.py` and resource-prune receipts. Older wrappers have expired clocks.
+The complete inventory, telemetry/update/logging, trusted-extension and daemon-
+presence ownership plus durable prefix acknowledgment/Ready echo remain open.
+Paid runs, model acquisition, training, release signing and v2/T006 execution
+remain gated. Review is in-session.
+
 ## Source-owned settings retirement — 2026-11-16
 
 **The startup diagnostic now retires original settings work and the original CLI
