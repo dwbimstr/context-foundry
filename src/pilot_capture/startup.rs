@@ -70,6 +70,15 @@ pub enum ChildMessage {
         operations: u32,
         rejections: u32,
     },
+    SettingsRetired {
+        auth_listener_retired: bool,
+        settings_retired: bool,
+        originals_joined: bool,
+        callbacks_joined: bool,
+        timers_retired: bool,
+        operations: u32,
+        rejections: u32,
+    },
     Fault {
         code: Fault,
     },
@@ -196,6 +205,26 @@ impl ChannelState {
         {
             return Err(ProtocolFault("startup_catalog_unqualified"));
         }
+        if let ChildMessage::SettingsRetired {
+            auth_listener_retired,
+            settings_retired,
+            originals_joined,
+            callbacks_joined,
+            timers_retired,
+            operations,
+            rejections,
+        } = &h.msg
+            && (!auth_listener_retired
+                || !settings_retired
+                || !originals_joined
+                || !callbacks_joined
+                || !timers_retired
+                || *operations == 0
+                || *operations > 4096
+                || rejections > operations)
+        {
+            return Err(ProtocolFault("startup_settings_unqualified"));
+        }
         Ok(Some(Inbound {
             seq: h.seq,
             msg: h.msg,
@@ -266,6 +295,7 @@ struct ObservedOwners {
     warmup: bool,
     restrictions: bool,
     catalog: bool,
+    settings: bool,
 }
 impl ObservedOwners {
     fn accept(&mut self, message: &ChildMessage) -> Result<(), ProtocolFault> {
@@ -297,12 +327,18 @@ impl ObservedOwners {
                 }
                 self.catalog = true;
             }
+            ChildMessage::SettingsRetired { .. } => {
+                if !self.catalog || self.settings {
+                    return Err(ProtocolFault("startup_settings_order"));
+                }
+                self.settings = true;
+            }
             ChildMessage::Fault { .. } => return Err(ProtocolFault("startup_child_fault")),
         }
         Ok(())
     }
     fn complete(&self) -> bool {
-        self.warmup && self.restrictions && self.catalog
+        self.warmup && self.restrictions && self.catalog && self.settings
     }
 }
 
@@ -351,6 +387,9 @@ async fn observe(a: ObservationAdmission) -> Result<ObservationReceipt, CaptureF
                     }
                     ChildMessage::CatalogRetired { .. } => {
                         journal.append("startup_catalog_retired",json!({"child_seq":inbound.seq,"catalog":inbound.msg}))?;
+                    }
+                    ChildMessage::SettingsRetired { .. } => {
+                        journal.append("startup_settings_retired",json!({"child_seq":inbound.seq,"settings":inbound.msg}))?;
                     }
                     ChildMessage::Fault { .. } => return Err(fault(FaultClass::Protocol,"startup_child_fault")),
                     }
@@ -578,6 +617,47 @@ mod tests {
     }
 
     #[test]
+    fn startup_settings_requires_original_joins_and_bounded_source_operations() {
+        let valid = json!({"type":"settings_retired","auth_listener_retired":true,"settings_retired":true,"originals_joined":true,"callbacks_joined":true,"timers_retired":true,"operations":1,"rejections":0});
+        for field in [
+            "auth_listener_retired",
+            "settings_retired",
+            "originals_joined",
+            "callbacks_joined",
+            "timers_retired",
+        ] {
+            let mut bad = valid.clone();
+            bad[field] = json!(false);
+            let msg = serde_json::from_value::<ChildMessage>(bad).unwrap();
+            assert!(
+                ChannelState::new(identity())
+                    .read(&mut frame(1, msg).as_slice())
+                    .is_err()
+            );
+            let mut missing = valid.clone();
+            missing.as_object_mut().unwrap().remove(field);
+            assert!(serde_json::from_value::<ChildMessage>(missing).is_err());
+        }
+        for (operations, rejections) in [(0, 0), (4097, 0), (1, 2)] {
+            let mut bad = valid.clone();
+            bad["operations"] = json!(operations);
+            bad["rejections"] = json!(rejections);
+            let msg = serde_json::from_value::<ChildMessage>(bad).unwrap();
+            assert!(
+                ChannelState::new(identity())
+                    .read(&mut frame(1, msg).as_slice())
+                    .is_err()
+            );
+        }
+        let msg = serde_json::from_value::<ChildMessage>(valid).unwrap();
+        assert!(
+            ChannelState::new(identity())
+                .read(&mut frame(1, msg).as_slice())
+                .is_ok()
+        );
+    }
+
+    #[test]
     fn startup_owner_order_rejects_duplicates_and_attempts_after_settlement() {
         let warmup = ChildMessage::OwnerSettled {
             owner: Owner::ModelConnectionWarmup,
@@ -596,7 +676,16 @@ mod tests {
             operations: 1,
             rejections: 0,
         };
-        for early in [&warmup, &restrictions, &catalog] {
+        let settings = ChildMessage::SettingsRetired {
+            auth_listener_retired: true,
+            settings_retired: true,
+            originals_joined: true,
+            callbacks_joined: true,
+            timers_retired: true,
+            operations: 1,
+            rejections: 0,
+        };
+        for early in [&warmup, &restrictions, &catalog, &settings] {
             assert!(ObservedOwners::default().accept(early).is_err());
         }
         let mut state = ObservedOwners::default();
@@ -610,8 +699,12 @@ mod tests {
         state.accept(&restrictions).unwrap();
         assert!(state.accept(&restrictions).is_err());
         assert!(!state.complete());
+        assert!(state.accept(&settings).is_err());
         state.accept(&catalog).unwrap();
+        assert!(!state.complete());
+        state.accept(&settings).unwrap();
         assert!(state.complete());
+        assert!(state.accept(&settings).is_err());
         assert!(state.accept(&catalog).is_err());
         assert!(state.accept(&attempt()).is_err());
         let mut bounded = ObservedOwners::default();

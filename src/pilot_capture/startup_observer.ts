@@ -41,7 +41,7 @@ function createStartupObserver() {
  });
  return Object.freeze({
   channel,
-  bind(pi: { on(event: string, callback: (event: unknown, ctx: any) => Promise<void>): void }, sealRestricted: (manager: unknown, registry: unknown) => unknown, retireCatalog: (manager: unknown, registry: unknown) => Promise<unknown>) {
+  bind(pi: { on(event: string, callback: (event: unknown, ctx: any) => Promise<void>): void }, sealRestricted: (manager: unknown, registry: unknown) => unknown, retireCatalog: (manager: unknown, registry: unknown) => Promise<unknown>, retireSettings: (manager: unknown, registry: unknown) => Promise<unknown>) {
    if (bound || channel.quiet) startupFail(); bound = true;
    pi.on("session_start", async (_event, ctx) => {
     if (channel.quiet) return;
@@ -58,6 +58,11 @@ function createStartupObserver() {
     catch { channel.send({type:"fault",code:"unclassified"}); startupFail(); }
     if (!startupExact(catalog,["discovery_retired","originals_joined","callbacks_joined","timers_retired","operations","rejections"]) || catalog.discovery_retired !== true || catalog.originals_joined !== true || catalog.callbacks_joined !== true || catalog.timers_retired !== true || !Number.isInteger(catalog.operations) || catalog.operations < 1 || catalog.operations > 4096 || !Number.isInteger(catalog.rejections) || catalog.rejections < 0 || catalog.rejections > catalog.operations) startupFail();
     if (!channel.quiet && !channel.send({type:"catalog_retired",...catalog})) startupFail();
+    let settings: any;
+    try { settings = await retireSettings(ctx.sessionManager, ctx.modelRegistry); }
+    catch { channel.send({type:"fault",code:"unclassified"}); startupFail(); }
+    if (!startupExact(settings,["auth_listener_retired","settings_retired","originals_joined","callbacks_joined","timers_retired","operations","rejections"]) || settings.auth_listener_retired !== true || settings.settings_retired !== true || settings.originals_joined !== true || settings.callbacks_joined !== true || settings.timers_retired !== true || !Number.isInteger(settings.operations) || settings.operations < 1 || settings.operations > 4096 || !Number.isInteger(settings.rejections) || settings.rejections < 0 || settings.rejections > settings.operations) startupFail();
+    if (!channel.quiet && !channel.send({type:"settings_retired",...settings})) startupFail();
    });
   },
  });
@@ -71,7 +76,7 @@ if (startupOwner === undefined) {
 export default async function observeStartup(pi: { on(event: string, callback: (event: unknown, ctx: any) => Promise<void>): void }): Promise<void> {
  // Only the late trusted-extension loader resolves host SDK imports. The early
  // preload owns the channel and receives this exact source binding afterward.
- const { sealRestrictedStartup, retireRestrictedStartupCatalog } = await import("@oh-my-pi/pi-coding-agent");
- if (typeof sealRestrictedStartup !== "function" || typeof retireRestrictedStartupCatalog !== "function") startupFail();
- startupOwner!.bind(pi, sealRestrictedStartup, retireRestrictedStartupCatalog);
+ const { sealRestrictedStartup, retireRestrictedStartupCatalog, retireRestrictedStartupSettings } = await import("@oh-my-pi/pi-coding-agent");
+ if (typeof sealRestrictedStartup !== "function" || typeof retireRestrictedStartupCatalog !== "function" || typeof retireRestrictedStartupSettings !== "function") startupFail();
+ startupOwner!.bind(pi, sealRestrictedStartup, retireRestrictedStartupCatalog, retireRestrictedStartupSettings);
 }

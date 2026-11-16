@@ -1,0 +1,591 @@
+Experimental source-owned settings persistence retirement; not applied by Context Foundry.
+Target: can1357/oh-my-pi @ 24439066040e006eb08da7b204f0ac41c79d2de9
+Owner: 003 T006, bounded-pilot-v2 startup observation and admission.
+Requires the existing caller/auth/refusal/restricted patches and
+omp-startup-discovery-retirement.patch.
+Modules: Settings::retireStartupPersistence, concrete reload/save callers;
+main::Settings.init, sdk::retireRestrictedStartupSettings.
+Tests: startup-settings-owner.test.ts; existing settings/auth/restricted SDK suites.
+Difference: one opt-in persistence owner established at Settings construction.
+It closes public mutations/reloads and watching, joins the original admitted reloads,
+rescopes, saves and completion observers, preserves staged writes, then cancels timers.
+Original CLI auth/settings link retirement precedes this drain. No second session
+link is created when the CLI supplies both authStorage and modelRegistry.
+The restricted owner refuses derived settings clones/overlays; ordinary use is unchanged.
+At most 4096 operation starts. Bind to the exact already sealed session/registry/settings.
+No auth-store physical descriptor close, general OAuth drain, complete startup inventory,
+Ready, transport permission, paid execution or release signing is established.
+
+MIT License
+
+Copyright (c) 2025 Mario Zechner
+Copyright (c) 2025-2026 Can Bölük
+Copyright (c) 2026 Stencil Labs, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+diff --git a/packages/coding-agent/src/config/settings.ts b/packages/coding-agent/src/config/settings.ts
+--- a/packages/coding-agent/src/config/settings.ts
++++ b/packages/coding-agent/src/config/settings.ts
+@@ -157,6 +157,8 @@
+ };
+ 
+ export interface SettingsOptions {
++	/** Own the fixed restricted CLI persistence lifecycle from construction. */
++	ownStartupPersistence?: boolean;
+ 	/** Current working directory for project settings discovery */
+ 	cwd?: string;
+ 	/** Agent directory for config.yml/config.yaml storage */
+@@ -706,6 +708,65 @@
+ 	/** Legacy `lastChangelogVersion` captured from config.yml during migration (now a marker file). */
+ 	#legacyLastChangelogVersion?: string;
+ 
++	#startupOwner:
++		| { state: "open" | "closing" | "closed"; pending: Set<Promise<void>>; operations: number; rejections: number }
++		| undefined;
++
++	#assertStartupOpen(): void {
++		if (this.#startupOwner && this.#startupOwner.state !== "open") throw new Error("Settings startup owner retired");
++	}
++
++	/** Concrete settings operations keep their original promise and completion observer. */
++	#ownStartupWork<T>(start: () => Promise<T>, admitted = false): Promise<T> {
++		const owner = this.#startupOwner;
++		if (!owner) return start();
++		if (owner.state === "closed" || (!admitted && owner.state !== "open") || owner.operations === 4096)
++			throw new Error("Settings startup owner retired or operation bound exceeded");
++		owner.operations++;
++		let original: Promise<T>;
++		try {
++			original = start();
++		} catch (error) {
++			owner.rejections++;
++			throw error;
++		}
++		const completion = Promise.allSettled([original]).then(([result]) => {
++			if (result.status === "rejected") owner.rejections++;
++			owner.pending.delete(completion);
++		});
++		owner.pending.add(completion);
++		return original;
++	}
++
++	/** One-use close of this exact persistence owner; no auth-store/FD claim. */
++	async retireStartupPersistence() {
++		const owner = this.#startupOwner;
++		if (!owner || owner.state !== "open" || this.#mirror || this.#parent || this.#savesCancelled)
++			throw new Error("Settings startup owner unavailable or already retired");
++		owner.state = "closing";
++		this.stopWatching();
++		clearTimeout(this.#saveTimer);
++		this.#saveTimer = undefined;
++		clearTimeout(this.#projectSaveTimer);
++		this.#projectSaveTimer = undefined;
++		// A factory can re-enter retirement before its original has registered.
++		await Promise.resolve();
++		while (owner.pending.size) await Promise.all([...owner.pending]);
++		// Preserve staged writes after all already-admitted reload/rescope work.
++		await this.#ownStartupWork(() => this.#flushBody(), true);
++		while (owner.pending.size) await Promise.all([...owner.pending]);
++		this.cancelPendingSaves();
++		owner.state = "closed";
++		return Object.freeze({
++			settings_retired: true as const,
++			originals_joined: true as const,
++			callbacks_joined: true as const,
++			timers_retired: true as const,
++			operations: owner.operations,
++			rejections: owner.rejections,
++		});
++	}
++
+ 	/** Pending save (debounced) */
+ 	#saveTimer?: NodeJS.Timeout;
+ 	#savePromise?: Promise<void>;
+@@ -732,6 +793,8 @@
+ 	#layerListeners = new Set<() => void>();
+ 
+ 	private constructor(options: SettingsOptions = {}) {
++		if (options.ownStartupPersistence)
++			this.#startupOwner = { state: "open", pending: new Set(), operations: 0, rejections: 0 };
+ 		this.#cwd = path.normalize(options.cwd ?? getProjectDir());
+ 		this.#agentDir = path.normalize(options.agentDir ?? getAgentDir());
+ 		this.#configPath = options.inMemory ? null : path.join(this.#agentDir, MAIN_CONFIG_FILENAMES[0]);
+@@ -863,6 +926,7 @@
+ 	 * @throws Error when `overrides` names an unknown setting or a value its definition rejects.
+ 	 */
+ 	overlay(overrides: Readonly<Record<string, unknown>> = {}, options: { derived?: boolean } = {}): Settings {
++		if (this.#startupOwner) throw new Error("Settings startup owner cannot be cloned or overlaid");
+ 		const child = new Settings({ inMemory: true, cwd: this.#cwd, agentDir: this.#agentDir, overrides });
+ 		child.#storage = this.#storage;
+ 		child.#parent = this;
+@@ -1008,6 +1072,7 @@
+ 	 * @throws Error when this instance is not a {@link mirror}.
+ 	 */
+ 	applyMirrorState(state: SettingsMirrorState): void {
++		this.#assertStartupOpen();
+ 		if (!this.#mirror) throw new Error("Settings.applyMirrorState expects a worker mirror");
+ 		if (state.generation <= this.#mirrorGeneration) return;
+ 		const previous = this.#mirrorGeneration < 0 ? undefined : this.#snapshot();
+@@ -1110,6 +1175,7 @@
+ 	 * @throws Error when the value does not fit the definition's type or fails its `items`/`validate` check.
+ 	 */
+ 	writeValue(setting: AnySetting, value: unknown, layer: "global" | "override"): void {
++		this.#assertStartupOpen();
+ 		if (this.#mirror) return this.#forward(this.#mirror, { op: "writeValue", id: setting.id, value, layer });
+ 		setting.assertWritable(value);
+ 		if (layer === "override" && setting === cfgModelRoles) {
+@@ -1137,6 +1203,7 @@
+ 	 * the default — supply the value.
+ 	 */
+ 	unsetGlobalValue(setting: AnySetting): void {
++		this.#assertStartupOpen();
+ 		if (this.#mirror) return this.#forward(this.#mirror, { op: "unsetGlobalValue", id: setting.id });
+ 		const current = getByPath(this.#global, setting.segments);
+ 		if (current === undefined && !this.#softPins.has(setting)) return;
+@@ -1157,6 +1224,7 @@
+ 	 * @throws Error when `setting` is not a record or the entry fails the definition's `validate` check.
+ 	 */
+ 	writeEntry(setting: AnySetting, key: string, value: unknown): void {
++		this.#assertStartupOpen();
+ 		if (setting.type !== "record") throw new Error(`Setting ${setting.id} is not a record`);
+ 		if (this.#mirror) return this.#forward(this.#mirror, { op: "writeEntry", id: setting.id, key, value });
+ 		if (value !== undefined) setting.assertWritable({ [key]: value });
+@@ -1187,6 +1255,7 @@
+ 	 * @throws Error when `setting` is not a list or the resulting list fails its `items`/`validate` check.
+ 	 */
+ 	writeMember(setting: AnySetting, item: string, { member }: { member: boolean }): void {
++		this.#assertStartupOpen();
+ 		if (setting.type !== "array") throw new Error(`Setting ${setting.id} is not a list`);
+ 		if (this.#mirror) return this.#forward(this.#mirror, { op: "writeMember", id: setting.id, item, member });
+ 		const list = getByPath(this.#global, setting.segments);
+@@ -1224,6 +1293,7 @@
+ 	 * override/clear ends it.
+ 	 */
+ 	pinDefaultValue(setting: AnySetting): void {
++		this.#assertStartupOpen();
+ 		if (this.#mirror) return this.#forward(this.#mirror, { op: "pinDefaultValue", id: setting.id });
+ 		const value = setting.default;
+ 		if (value === undefined || this.isConfigured(setting)) return;
+@@ -1250,6 +1320,7 @@
+ 
+ 	/** Registry plumbing behind `Setting.clearOverride`: drops the runtime override of `setting`. */
+ 	clearOverrideValue(setting: AnySetting): void {
++		this.#assertStartupOpen();
+ 		if (this.#mirror) return this.#forward(this.#mirror, { op: "clearOverrideValue", id: setting.id });
+ 		if (setting === cfgModelRoles) {
+ 			this.#savedRuntimeModelRoleOverrides.clear();
+@@ -1331,6 +1402,7 @@
+ 	 * by {@link stopWatching} / {@link cancelPendingSaves}.
+ 	 */
+ 	startWatching(): void {
++		this.#assertStartupOpen();
+ 		if (this.#watchingFiles || !this.#persist || this.#savesCancelled || globalInstance !== this) return;
+ 		this.#watchingFiles = true;
+ 		this.#syncFileWatchers();
+@@ -1464,7 +1536,11 @@
+ 		this.#watchReloadTimer.unref();
+ 	}
+ 
+-	async #reloadFromWatch(): Promise<void> {
++	#reloadFromWatch(): Promise<void> {
++		return this.#ownStartupWork(() => this.#reloadFromWatchBody(), true);
++	}
++
++	async #reloadFromWatchBody(): Promise<void> {
+ 		if (!this.#watchingFiles) return;
+ 		try {
+ 			await this.#exclusive("keep-last-good", () => this.#reloadPersistedLayers("keep-last-good"));
+@@ -1479,7 +1555,11 @@
+ 	 * Flush any pending saves to disk.
+ 	 * Call before exit to ensure all changes are persisted.
+ 	 */
+-	async flush(): Promise<void> {
++	flush(): Promise<void> {
++		return this.#ownStartupWork(() => this.#flushBody());
++	}
++
++	async #flushBody(): Promise<void> {
+ 		if (this.#mirror) return this.#forwardRefresh(this.#mirror, { op: "flush" });
+ 		if (this.#saveTimer) {
+ 			clearTimeout(this.#saveTimer);
+@@ -1511,6 +1591,7 @@
+ 	 * @throws Error when a configured value fails its definition's `validate` check.
+ 	 */
+ 	async cloneForCwd(cwd: string): Promise<Settings> {
++		if (this.#startupOwner) throw new Error("Settings startup owner cannot be cloned or overlaid");
+ 		if (this.#mirror) return this.#mirror.cloneForCwd(cwd);
+ 		let cloned: Settings;
+ 		if (this.#parent) {
+@@ -1555,7 +1636,11 @@
+ 	 * @throws Error when a source fails to load or a value fails its definition's
+ 	 * `validate` check; the previous layers stay in effect.
+ 	 */
+-	async reloadFromDisk(options?: { includeParents?: boolean }): Promise<void> {
++	reloadFromDisk(options?: { includeParents?: boolean }): Promise<void> {
++		return this.#ownStartupWork(() => this.#reloadFromDiskBody(options));
++	}
++
++	async #reloadFromDiskBody(options?: { includeParents?: boolean }): Promise<void> {
+ 		if (this.#mirror) {
+ 			return this.#forwardRefresh(this.#mirror, {
+ 				op: "reloadFromDisk",
+@@ -1593,7 +1678,7 @@
+ 		const keepLastGood = mode === "keep-last-good";
+ 		for (;;) {
+ 			try {
+-				await this.flush();
++				await this.#flushBody();
+ 			} catch (error) {
+ 				// The failed writes stay pending for the next flush and are re-applied over the
+ 				// layers read below, so an unwritable config never blocks a reload or reverts them.
+@@ -1741,7 +1826,11 @@
+ 	 * @throws Error when a value configured for the new scope fails its definition's
+ 	 * `validate` check; the instance then stays on its previous scope.
+ 	 */
+-	async reloadForCwd(cwd: string): Promise<void> {
++	reloadForCwd(cwd: string): Promise<void> {
++		return this.#ownStartupWork(() => this.#reloadForCwdBody(cwd));
++	}
++
++	async #reloadForCwdBody(cwd: string): Promise<void> {
+ 		if (this.#mirror) return this.#forwardRefresh(this.#mirror, { op: "reloadForCwd", cwd });
+ 		const normalized = path.normalize(cwd);
+ 		for (let active = this.#activeReload; active; active = this.#activeReload) {
+@@ -1755,7 +1844,7 @@
+ 		this.#activeReload = entry;
+ 		try {
+ 			if (normalized === this.#cwd) return;
+-			await this.flush();
++			await this.#flushBody();
+ 			const project = this.#persist ? await this.#readProjectSettings(true, { cwd: normalized }) : undefined;
+ 			const candidate: OwnLayers = {
+ 				global: this.#global,
+@@ -2002,6 +2091,7 @@
+ 	 * stale skip in place.
+ 	 */
+ 	setModelRole(role: ModelRole | string, modelId: string | undefined): void {
++		this.#assertStartupOpen();
+ 		if (this.#mirror) return this.#forward(this.#mirror, { op: "setModelRole", role, modelId });
+ 		const prev = cfgModelRoles.get(this);
+ 		// Re-setting the persisted role (or clearing an absent one) stages no config.yml rewrite;
+@@ -2048,6 +2138,7 @@
+ 	 * Set a model role in the current project's settings layer.
+ 	 */
+ 	setProjectModelRole(role: ModelRole | string, modelId: string): void {
++		this.#assertStartupOpen();
+ 		if (this.#mirror) return this.#forward(this.#mirror, { op: "setProjectModelRole", role, modelId });
+ 		this.#setProjectModelRoleValue(role, modelId);
+ 		this.#captureRuntimeModelRoleOverride(role);
+@@ -2057,6 +2148,7 @@
+ 	 * Clear a model role from the current project's settings layer.
+ 	 */
+ 	clearProjectModelRole(role: ModelRole | string): void {
++		this.#assertStartupOpen();
+ 		if (this.#mirror) return this.#forward(this.#mirror, { op: "clearProjectModelRole", role });
+ 		this.#setProjectModelRoleValue(role, null);
+ 		this.#captureRuntimeModelRoleOverride(role);
+@@ -2167,6 +2259,7 @@
+ 	 * Override model roles (helper for modelRoles record).
+ 	 */
+ 	overrideModelRoles(roles: ReadOnlyDict<string>): void {
++		this.#assertStartupOpen();
+ 		if (this.#mirror) return this.#forward(this.#mirror, { op: "overrideModelRoles", roles: { ...roles } });
+ 		const next = this.#modelRolesFromLayer(this.#overrides);
+ 		for (const [role, modelId] of Object.entries(roles)) {
+@@ -2182,7 +2275,11 @@
+ 	// Loading
+ 	// ─────────────────────────────────────────────────────────────────────────
+ 
+-	async #load(): Promise<Settings> {
++	#load(): Promise<Settings> {
++		return this.#ownStartupWork(() => this.#loadBody(), true);
++	}
++
++	async #loadBody(): Promise<Settings> {
+ 		// Project settings discovery is independent of the persist chain, while
+ 		// the persist steps themselves remain sequential. Wait for both branches
+ 		// to settle so simultaneous failures produce one catchable error without
+@@ -3852,15 +3949,20 @@
+ 	}
+ 
+ 	#queueSave(): void {
++		if (this.#startupOwner && this.#startupOwner.state !== "open") return;
+ 		if (!this.#persist || !this.#configPath) return;
+ 
+ 		// Debounce: wait 100ms for more changes
+ 		clearTimeout(this.#saveTimer);
+ 		this.#saveTimer = setTimeout(() => {
+ 			this.#saveTimer = undefined;
+-			this.#chainSave().catch(err => {
+-				logger.warn("Settings: background save failed", { error: String(err) });
+-			});
++			this.#ownStartupWork(
++				() =>
++					this.#chainSave().catch(err => {
++						logger.warn("Settings: background save failed", { error: String(err) });
++					}),
++				true,
++			);
+ 		}, 100);
+ 	}
+ 
+@@ -3869,13 +3971,17 @@
+ 	 * made after a save's snapshot is still pending when that save adopts the file.
+ 	 */
+ 	#chainSave(): Promise<void> {
++		return this.#ownStartupWork(() => this.#chainSaveBody(), true);
++	}
++
++	#chainSaveBody(): Promise<void> {
+ 		const previousSave = this.#savePromise;
+ 		const savePromise = previousSave ? previousSave.then(() => this.#saveNow()) : this.#saveNow();
+ 		this.#savePromise = savePromise;
+ 		const settle = () => {
+ 			if (this.#savePromise === savePromise) this.#savePromise = undefined;
+ 		};
+-		savePromise.then(settle, settle);
++		this.#ownStartupWork(() => savePromise.then(settle, settle), true);
+ 		return savePromise;
+ 	}
+ 
+@@ -4101,6 +4207,7 @@
+ 	}
+ 
+ 	#queueProjectSave(): void {
++		if (this.#startupOwner && this.#startupOwner.state !== "open") return;
+ 		if (!this.#persist) return;
+ 
+ 		clearTimeout(this.#projectSaveTimer);
+@@ -4108,19 +4215,27 @@
+ 			this.#projectSaveTimer = undefined;
+ 			const savePromise = this.#saveProjectNow();
+ 			this.#projectSavePromise = savePromise;
+-			savePromise
+-				.catch(err => {
+-					logger.warn("Settings: background project save failed", { error: String(err) });
+-				})
+-				.finally(() => {
+-					if (this.#projectSavePromise === savePromise) {
+-						this.#projectSavePromise = undefined;
+-					}
+-				});
++			this.#ownStartupWork(
++				() =>
++					savePromise
++						.catch(err => {
++							logger.warn("Settings: background project save failed", { error: String(err) });
++						})
++						.finally(() => {
++							if (this.#projectSavePromise === savePromise) {
++								this.#projectSavePromise = undefined;
++							}
++						}),
++				true,
++			);
+ 		}, 100);
+ 	}
+ 
+-	async #saveProjectNow(): Promise<void> {
++	#saveProjectNow(): Promise<void> {
++		return this.#ownStartupWork(() => this.#saveProjectNowBody(), true);
++	}
++
++	async #saveProjectNowBody(): Promise<void> {
+ 		if (this.#savesCancelled || !this.#persist || this.#modifiedProjectModelRoles.size === 0) return;
+ 
+ 		const projectConfigPath = path.join(getProjectAgentDir(this.#cwd), "config.yml");
+diff --git a/packages/coding-agent/src/main.ts b/packages/coding-agent/src/main.ts
+--- a/packages/coding-agent/src/main.ts
++++ b/packages/coding-agent/src/main.ts
+@@ -1973,7 +1973,11 @@
+ 		// main config file during auth discovery.
+ 		const settingsPromise = deps.settings
+ 			? Promise.resolve(deps.settings)
+-			: logger.time("settings:init", Settings.init, { cwd, configFiles: parsedArgs.config });
++			: logger.time("settings:init", Settings.init, {
++					cwd,
++					configFiles: parsedArgs.config,
++					ownStartupPersistence: parsedArgs.restrictTools === true,
++				});
+ 		settingsPromise.catch(() => {});
+ 		const authStoragePromise = logger.time("discoverAuthStorage", async () =>
+ 			(deps.discoverAuthStorage ?? discoverAuthStorage)(undefined, { settings: await settingsPromise }),
+diff --git a/packages/coding-agent/src/sdk.ts b/packages/coding-agent/src/sdk.ts
+--- a/packages/coding-agent/src/sdk.ts
++++ b/packages/coding-agent/src/sdk.ts
+@@ -196,6 +196,7 @@
+ } from "./session/agent-session";
+ import type { AgentSessionDisposeOptions } from "./session/agent-session-types";
+ import {
++	bindCliAuthStorageSettingsSync,
+ 	createAuthStorageSettingsSync,
+ 	discoverAuthStorage as discoverAuthStorageFromConfig,
+ 	type EffectiveSettingsScope,
+@@ -1079,6 +1080,32 @@
+ 	)
+ 		throw new Error("Restricted catalog owner identity mismatch");
+ 	return await registry.retireStartupDiscovery();
++}
++
++/** Retire the original CLI auth/settings link and exact settings persistence owner. */
++export async function retireRestrictedStartupSettings(sessionManager: unknown, modelRegistry: unknown) {
++	const owner = restrictedOwner,
++		session = owner?.session.deref(),
++		registry = owner?.registry.deref();
++	if (
++		!restrictedSealed ||
++		restrictedStarts !== 1 ||
++		!session ||
++		session.isDisposed ||
++		session.sessionManager !== sessionManager ||
++		!registry ||
++		registry !== modelRegistry ||
++		session.settings !== Settings.instance
++	)
++		throw new Error("Restricted settings owner identity mismatch");
++	const link = bindCliAuthStorageSettingsSync(session.settings);
++	const auth = await link.retire(registry.authStorage);
++	if (auth.initial_resolver_joined !== true || auth.chain_joined !== true)
++		throw new Error("Restricted auth/settings link did not retire");
++	return Object.freeze({
++		auth_listener_retired: true as const,
++		...(await session.settings.retireStartupPersistence()),
++	});
+ }
+ 
+ /** Result from createAgentSession */
+diff --git a/packages/coding-agent/test/startup-settings-owner.test.ts b/packages/coding-agent/test/startup-settings-owner.test.ts
+new file mode 100644
+--- /dev/null
++++ b/packages/coding-agent/test/startup-settings-owner.test.ts
+@@ -0,0 +1,113 @@
++import { afterEach, expect, spyOn, test } from "bun:test";
++import fs from "node:fs";
++import os from "node:os";
++import path from "node:path";
++import { Settings } from "../src/config/settings";
++const roots: string[] = [];
++afterEach(() => {
++	for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
++});
++async function fixture(owned = true) {
++	const root = fs.mkdtempSync(path.join(os.tmpdir(), "omp-settings-owner-"));
++	roots.push(root);
++	const agentDir = path.join(root, "agent"),
++		cwd = path.join(root, "first"),
++		next = path.join(root, "next");
++	for (const dir of [agentDir, cwd, next]) fs.mkdirSync(dir, { recursive: true });
++	fs.writeFileSync(path.join(agentDir, "config.yml"), "retry:\n  enabled: false\n");
++	const settings = await Settings.loadIsolated({ cwd, agentDir, ownStartupPersistence: owned });
++	return { settings, root, agentDir, cwd, next };
++}
++async function turns() {
++	for (let i = 0; i < 20; i++) await Promise.resolve();
++}
++test("retirement joins an original reload and queued rescope before closing persistence", async () => {
++	const f = await fixture();
++	const entered = Promise.withResolvers<void>(),
++		release = Promise.withResolvers<void>(),
++		queuedEntered = Promise.withResolvers<void>(),
++		queuedRelease = Promise.withResolvers<void>();
++	const read = fs.promises.readFile;
++	let held = false;
++	const spy = spyOn(fs.promises, "readFile").mockImplementation((async (...args: Parameters<typeof read>) => {
++		const original = Reflect.apply(read, fs.promises, args);
++		if (!held && String(args[0]) === path.join(f.agentDir, "config.yml")) {
++			held = true;
++			entered.resolve();
++			await release.promise;
++		}
++		if (String(args[0]) === path.join(f.next, ".omp/config.yml")) {
++			queuedEntered.resolve();
++			await queuedRelease.promise;
++		}
++		return await original;
++	}) as typeof read);
++	try {
++		const original = f.settings.reloadFromDisk();
++		await entered.promise;
++		const queued = f.settings.reloadForCwd(f.next);
++		let done = false;
++		const retirement = f.settings.retireStartupPersistence().then(r => {
++			done = true;
++			return r;
++		});
++		await turns();
++		expect(done).toBe(false);
++		expect(f.settings.getCwd()).toBe(f.cwd);
++		expect(() => f.settings.reloadFromDisk()).toThrow("retired");
++		release.resolve();
++		await queuedEntered.promise;
++		await turns();
++		expect(done).toBe(false);
++		queuedRelease.resolve();
++		await Promise.all([original, queued]);
++		const receipt = await retirement;
++		expect(f.settings.getCwd()).toBe(f.next);
++		expect(receipt.originals_joined).toBe(true);
++		expect(receipt.callbacks_joined).toBe(true);
++		expect(receipt.operations).toBeGreaterThanOrEqual(4);
++		expect(() => f.settings.reloadForCwd(f.cwd)).toThrow("retired");
++		expect(() => f.settings.flush()).toThrow("retired");
++		expect(() => f.settings.startWatching()).toThrow("retired");
++		expect(() => f.settings.setModelRole("default", "synthetic/model")).toThrow("retired");
++		expect(() => f.settings.setProjectModelRole("default", "synthetic/model")).toThrow("retired");
++		expect(() => f.settings.overrideModelRoles({ default: "synthetic/model" })).toThrow("retired");
++		await expect(f.settings.retireStartupPersistence()).rejects.toThrow("retired");
++	} finally {
++		release.resolve();
++		queuedRelease.resolve();
++		spy.mockRestore();
++		f.settings.cancelPendingSaves();
++	}
++});
++test("retirement preserves pending staged global and project writes", async () => {
++	const f = await fixture();
++	f.settings.setModelRole("default", "synthetic/global");
++	f.settings.setProjectModelRole("slow", "synthetic/project");
++	const receipt = await f.settings.retireStartupPersistence();
++	expect(fs.readFileSync(path.join(f.agentDir, "config.yml"), "utf8")).toContain("synthetic/global");
++	expect(fs.readFileSync(path.join(f.cwd, ".omp/config.yml"), "utf8")).toContain("synthetic/project");
++	expect(receipt.settings_retired).toBe(true);
++	expect(receipt.timers_retired).toBe(true);
++});
++test("original reload failure stays visible and is counted before retirement", async () => {
++	const f = await fixture();
++	fs.writeFileSync(path.join(f.agentDir, "config.yml"), "[bad");
++	await expect(f.settings.reloadFromDisk()).rejects.toThrow();
++	const receipt = await f.settings.retireStartupPersistence();
++	expect(receipt.rejections).toBeGreaterThan(0);
++});
++test("unowned settings cannot attest retirement and retain normal reload behavior", async () => {
++	const f = await fixture(false);
++	await expect(f.settings.retireStartupPersistence()).rejects.toThrow("unavailable");
++	await f.settings.reloadFromDisk();
++	await f.settings.reloadForCwd(f.next);
++	expect(f.settings.getCwd()).toBe(f.next);
++	f.settings.cancelPendingSaves();
++});
++test("owned persisted settings refuse additional derived owners", async () => {
++	const f = await fixture();
++	expect(() => f.settings.overlay()).toThrow("cannot be cloned");
++	await expect(f.settings.cloneForCwd(f.next)).rejects.toThrow("cannot be cloned");
++	await f.settings.retireStartupPersistence();
++});

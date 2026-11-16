@@ -1418,6 +1418,20 @@ The complete
 startup inventory and prefix acknowledgment/Ready echo remain required; a catalog
 receipt alone cannot grant admission. Paid execution and release signing stay gated.
 
+**Selected settings lifecycle round, 2026-11-16.** After the catalog round's
+terminal receipt, use one fresh 90-minute no-spend round, one heavy job, a 20 GiB
+disk floor, 8 GiB sampled individual RSS ceiling and 120-second cleanup reserve.
+The concrete gap is queued settings reload/rescope work surviving timer cancellation.
+Own original persistence/reload operations and their completion observers from
+construction in the restricted CLI profile; stop watching and close future admission
+before joining them. Preserve ordinary settings behavior outside that opt-in profile.
+Bind retirement to the exact already-sealed session, registry and settings instance.
+Qualify held originals, queued work, errors and late starts at the native boundary;
+an empty pending-count snapshot or quiet interval cannot establish settlement.
+Keep auth-store lifetime, other startup owners and the durable prefix acknowledgment
+open until their own original-work evidence and integration pass. This selected
+repair cannot deliver Ready or authorize paid execution or release signing.
+
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
 and a complete startup-owner inventory: catalog/discovery, credential refresh,
