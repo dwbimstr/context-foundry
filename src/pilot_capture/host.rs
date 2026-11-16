@@ -128,7 +128,7 @@ pub const SOURCE_QUALIFICATION_OMP_SHA256: &str =
     "b5e50ce94846e29ea3db04ddab00f716208f21c0299263a30aee725c006ff9e9";
 
 pub const STARTUP_OBSERVATION_OMP_SHA256: &str =
-    "00e24e41653873b7c1e51552c3686a7fc2099b918e877b202ee4788161107432";
+    "ac27541702668959592bca9d01d7b7db231be244b2d3016964c143497f0ac659";
 pub const STARTUP_OBSERVER_SOURCE: &[u8] = concat!(
     include_str!("bridge_channel.ts"),
     "\n",
@@ -627,7 +627,10 @@ impl Host {
             &spec.deny,
             &spec.deny_literals,
         )?;
-        let args = omp_args(&paths);
+        let mut args = omp_args(&paths);
+        if startup_observation {
+            args.push("--restrict-tools".into());
+        }
 
         let (c2r_read, c2r_write) =
             std::io::pipe().map_err(|_| fault(FaultClass::Bootstrap, "pipe_create_failed"))?;

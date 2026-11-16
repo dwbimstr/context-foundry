@@ -56,6 +56,12 @@ pub enum ChildMessage {
     OwnerSettled {
         owner: Owner,
     },
+    RestrictionsSettled {
+        tool_names: Vec<String>,
+        mcp_disabled: bool,
+        memory_disabled: bool,
+        credential_usage_joined: bool,
+    },
     Fault {
         code: Fault,
     },
@@ -151,6 +157,19 @@ impl ChannelState {
         {
             return Err(ProtocolFault("startup_route_unclassified"));
         }
+        if let ChildMessage::RestrictionsSettled {
+            tool_names,
+            mcp_disabled,
+            memory_disabled,
+            credential_usage_joined,
+        } = &h.msg
+            && (!mcp_disabled
+                || !memory_disabled
+                || !credential_usage_joined
+                || tool_names != &["edit", "read"])
+        {
+            return Err(ProtocolFault("startup_restrictions_unqualified"));
+        }
         Ok(Some(Inbound {
             seq: h.seq,
             msg: h.msg,
@@ -238,6 +257,8 @@ async fn observe(a: ObservationAdmission) -> Result<ObservationReceipt, CaptureF
     let (host, mut events) =
         host::Host::launch(&spec).map_err(|e| journal.admission_refusal("startup_launch", e))?;
     let mut attempts = 0;
+    let mut warmup_done = false;
+    let mut restrictions_done = false;
     let result: Result<(), CaptureFault> = tokio::time::timeout_at(deadline, async {
         journal.append("host_launched", json!({"pid":host.launch.pid,"bridge_sha256":host.launch.bridge_sha256,"policy_sha256":host.launch.policy_sha256}))?;
         loop {
@@ -253,9 +274,14 @@ async fn observe(a: ObservationAdmission) -> Result<ObservationReceipt, CaptureF
                         attempts += 1;
                     }
                     ChildMessage::OwnerSettled { .. } => {
-                        if attempts == 0 { return Err(fault(FaultClass::Protocol,"startup_owner_without_attempt")); }
+                        if attempts == 0 || warmup_done { return Err(fault(FaultClass::Protocol,"startup_owner_order")); }
                         journal.append("startup_owner_settled",json!({"child_seq":inbound.seq,"owner":Owner::ModelConnectionWarmup}))?;
-                        return Err(fault(FaultClass::Authority,"startup_inventory_unqualified"));
+                        warmup_done = true;
+                    }
+                    ChildMessage::RestrictionsSettled { .. } => {
+                        if restrictions_done || !warmup_done { return Err(fault(FaultClass::Protocol,"startup_restrictions_order")); }
+                        journal.append("startup_restrictions_settled",json!({"child_seq":inbound.seq,"restrictions":inbound.msg}))?;
+                        restrictions_done = true;
                     }
                     ChildMessage::Fault { .. } => return Err(fault(FaultClass::Protocol,"startup_child_fault")),
                 },
@@ -263,6 +289,7 @@ async fn observe(a: ObservationAdmission) -> Result<ObservationReceipt, CaptureF
                 Some(host::HostEvent::BridgeFault(e)) => return Err(fault(FaultClass::Protocol,e.0)),
                 _ => return Err(fault(FaultClass::Protocol,"startup_unexpected_event")),
             }
+            if warmup_done && restrictions_done { return Err(fault(FaultClass::Authority,"startup_inventory_unqualified")); }
         }
     }).await.unwrap_or_else(|_|Err(fault(FaultClass::Deadline,"startup_observation_deadline")));
     let terminal = result
@@ -407,6 +434,39 @@ mod tests {
                 .is_err()
         );
     }
+    #[test]
+    fn startup_restrictions_require_all_owner_facts_and_the_exact_tools() {
+        for (mcp_disabled, memory_disabled, credential_usage_joined, tool_names) in [
+            (false, true, true, vec!["edit".into(), "read".into()]),
+            (true, false, true, vec!["edit".into(), "read".into()]),
+            (true, true, false, vec!["edit".into(), "read".into()]),
+            (true, true, true, vec!["read".into()]),
+        ] {
+            let message = ChildMessage::RestrictionsSettled {
+                mcp_disabled,
+                memory_disabled,
+                credential_usage_joined,
+                tool_names,
+            };
+            assert!(
+                ChannelState::new(identity())
+                    .read(&mut frame(1, message).as_slice())
+                    .is_err()
+            );
+        }
+        let message = ChildMessage::RestrictionsSettled {
+            mcp_disabled: true,
+            memory_disabled: true,
+            credential_usage_joined: true,
+            tool_names: vec!["edit".into(), "read".into()],
+        };
+        assert!(
+            ChannelState::new(identity())
+                .read(&mut frame(1, message).as_slice())
+                .is_ok()
+        );
+    }
+
     #[test]
     fn startup_routes_and_attempt_ids_fail_closed() {
         for (id, hostname, port) in [

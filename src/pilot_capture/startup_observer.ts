@@ -41,13 +41,18 @@ function createStartupObserver() {
  });
  return Object.freeze({
   channel,
-  bind(pi: { on(event: string, callback: () => void): void }) {
+  bind(pi: { on(event: string, callback: (event: unknown, ctx: any) => Promise<void>): void }, sealRestricted: (manager: unknown, registry: unknown) => unknown) {
    if (bound || channel.quiet) startupFail(); bound = true;
-   pi.on("session_start", () => {
+   pi.on("session_start", async (_event, ctx) => {
     if (channel.quiet) return;
     if (settled || pending.size || next === 0) startupFail();
+    let restriction: any;
+    try {
+     restriction = sealRestricted(ctx.sessionManager, ctx.modelRegistry);
+    } catch { channel.send({type:"fault",code:"unclassified"}); startupFail(); }
+    if (!startupExact(restriction,["tool_names","mcp_disabled","memory_disabled","credential_usage_joined"]) || restriction.mcp_disabled !== true || restriction.memory_disabled !== true || restriction.credential_usage_joined !== true || JSON.stringify(restriction.tool_names) !== JSON.stringify(["edit","read"])) startupFail();
     settled = true;
-    if (!channel.send({type:"owner_settled",owner:"model_connection_warmup"})) startupFail();
+    if (!channel.send({type:"owner_settled",owner:"model_connection_warmup"}) || !channel.send({type:"restrictions_settled",...restriction})) startupFail();
    });
   },
  });
@@ -58,6 +63,10 @@ if (startupOwner === undefined) {
  startupOwner = createStartupObserver();
  Object.defineProperty(globalThis,STARTUP_STATE,{value:startupOwner,configurable:false,writable:false});
 } else if (startupOwner.channel !== getCaptureChannel()) startupFail();
-export default function observeStartup(pi: { on(event: string, callback: () => void): void }): void {
- startupOwner!.bind(pi);
+export default async function observeStartup(pi: { on(event: string, callback: (event: unknown, ctx: any) => Promise<void>): void }): Promise<void> {
+ // Only the late trusted-extension loader resolves host SDK imports. The early
+ // preload owns the channel and receives this exact source binding afterward.
+ const { sealRestrictedStartup } = await import("@oh-my-pi/pi-coding-agent");
+ if (typeof sealRestrictedStartup !== "function") startupFail();
+ startupOwner!.bind(pi, sealRestrictedStartup);
 }

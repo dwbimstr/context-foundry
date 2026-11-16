@@ -1,0 +1,570 @@
+Experimental explicit restricted-startup SDK ownership; not applied by Context Foundry.
+Target: can1357/oh-my-pi @ 24439066040e006eb08da7b204f0ac41c79d2de9
+Owner: 003 T006, bounded-pilot-v2 startup observation and admission.
+Requires omp-startup-connection-warmups.patch and omp-startup-auth-retirement.patch.
+The qualified source host also includes omp-startup-refusal.patch.
+Modules: coding-agent main.ts::buildSessionOptions/loadTrustedSessionExtensions,
+sdk.ts::createAgentSession/sealRestrictedStartup, startup-connection-warmups.ts.
+Tests: startup-connection-warmups.test.ts and cli-restricted-startup.test.ts.
+Difference: opt-in --restrict-tools requires explicit --tools; restricted startup
+binds only explicitly trusted prepared extension factories to the real SDK session.
+The one-use identity seal proves tool/MCP/memory restrictions and joining the original
+credential-usage prefetch. Ordinary --tools keeps its existing behavior.
+Five original connection warm-up owners and their original observer are preserved.
+This does not close every startup owner, grant Ready, enable capture, authorize
+paid execution, or establish complete network interception. No release signing.
+Qualification and intentional limits: docs/validation.md, restricted startup inventory.
+
+MIT License
+
+Copyright (c) 2025 Mario Zechner
+Copyright (c) 2025-2026 Can Bölük
+Copyright (c) 2026 Stencil Labs, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+diff --git a/packages/coding-agent/src/cli/args.ts b/packages/coding-agent/src/cli/args.ts
+--- a/packages/coding-agent/src/cli/args.ts
++++ b/packages/coding-agent/src/cli/args.ts
+@@ -80,6 +80,8 @@
+ 	models?: string[];
+ 	tools?: string[];
+ 	noTools?: boolean;
++	/** Restrict SDK initialization to the explicitly selected tools. */
++	restrictTools?: boolean;
+ 	noLsp?: boolean;
+ 	noPty?: boolean;
+ 	hooks?: string[];
+@@ -364,6 +366,8 @@
+ 			result.noSession = true;
+ 		} else if (arg === "--no-tools") {
+ 			result.noTools = true;
++		} else if (arg === "--restrict-tools") {
++			result.restrictTools = true;
+ 		} else if (arg === "--no-lsp") {
+ 			result.noLsp = true;
+ 		} else if (arg === "--no-pty") {
+diff --git a/packages/coding-agent/src/cli/flag-tables.ts b/packages/coding-agent/src/cli/flag-tables.ts
+--- a/packages/coding-agent/src/cli/flag-tables.ts
++++ b/packages/coding-agent/src/cli/flag-tables.ts
+@@ -354,6 +354,7 @@
+ 	"--from-codex",
+ 	"--no-session",
+ 	"--no-tools",
++	"--restrict-tools",
+ 	"--no-lsp",
+ 	"--no-pty",
+ 	"--hide-thinking",
+diff --git a/packages/coding-agent/src/main.ts b/packages/coding-agent/src/main.ts
+--- a/packages/coding-agent/src/main.ts
++++ b/packages/coding-agent/src/main.ts
+@@ -71,7 +71,7 @@
+ } from "./discovery/helpers";
+ import { injectOmpExtensionCliRoots } from "./discovery/omp-extension-roots";
+ import { formatExtensionLoadNotifications } from "./extensibility/extensions/load-errors";
+-import { loadExtensions } from "./extensibility/extensions/loader";
++import { ExtensionRuntime, importExtensionModule, loadExtensions } from "./extensibility/extensions/loader";
+ import { ExtensionRunner } from "./extensibility/extensions/runner";
+ import type { ExtensionUIContext } from "./extensibility/extensions/types";
+ import {
+@@ -537,6 +537,7 @@
+ 	options: Pick<CreateAgentSessionOptions, "additionalExtensionPaths">,
+ 	cwd: string,
+ 	eventBus: EventBus,
++	prepareOnly = false,
+ ) {
+ 	const paths = options.additionalExtensionPaths ?? [];
+ 	for (const trustedPath of paths) {
+@@ -549,6 +550,19 @@
+ 		if (!stat.isFile()) {
+ 			throw new Error(`Trusted extension must be a module file, not a directory: ${trustedPath}`);
+ 		}
++	}
++	if (prepareOnly) {
++		const preparedExtensions = await Promise.all(
++			paths.map(extensionPath => importExtensionModule(extensionPath, cwd)),
++		);
++		return {
++			extensions: [],
++			errors: preparedExtensions.flatMap(prepared =>
++				prepared.error ? [{ path: prepared.path, error: prepared.error }] : [],
++			),
++			runtime: new ExtensionRuntime(),
++			preparedExtensions,
++		};
+ 	}
+ 	return loadExtensions(paths, cwd, eventBus);
+ }
+@@ -1736,6 +1750,12 @@
+ 		options.titleSystemPrompt = titleSystemPrompt;
+ 	}
+ 
++	// `--tools` chooses active tools; restriction also suppresses automatic
++	// MCP/memory admission at the existing SDK boundary.
++	if (parsed.restrictTools) {
++		if (!parsed.tools || parsed.tools.length === 0) throw new Error("--restrict-tools requires --tools");
++		options.restrictToolNames = true;
++	}
+ 	// Tools
+ 	if (parsed.noTools) {
+ 		options.toolNames = parsed.tools && parsed.tools.length > 0 ? parsed.tools : [];
+@@ -2481,7 +2501,7 @@
+ 			// string-flag value such as `--target @notes.md` is the flag's value, not a
+ 			// file — and the same result is handed to createAgentSession via
+ 			// `preloadedExtensions` so the discovery work is not repeated.
+-			if (isInteractive && !parsedArgs.trustedExtensions?.length) {
++			if (isInteractive && !sessionOptions.restrictToolNames && !parsedArgs.trustedExtensions?.length) {
+ 				startupExtensions = sessionOptions.extensions = [
+ 					...(sessionOptions.extensions ?? []),
+ 					createWarpEventBridgeExtension(),
+@@ -2499,11 +2519,25 @@
+ 				parsedArgs.unrecognizedFlags.length === 0 &&
+ 				!parsedArgs.tools?.length &&
+ 				!(parsedArgs.continue || parsedArgs.resume || parsedArgs.fork || parsedArgs.restore || foreignSource);
+-			const extensionsResult = parsedArgs.trustedExtensions?.length
+-				? { ...(await loadTrustedSessionExtensions(sessionOptions, cwd, eventBus)), deferredPaths: [] }
+-				: await loadSessionExtensions(sessionOptions, cwd, settingsInstance, eventBus, {
+-						deferStartupSafe: deferStartupSafeExtensions,
+-					});
++			const extensionsResult = sessionOptions.restrictToolNames
++				? {
++						...(await loadTrustedSessionExtensions(
++							{
++								additionalExtensionPaths: parsedArgs.trustedExtensions?.length
++									? sessionOptions.additionalExtensionPaths
++									: [],
++							},
++							cwd,
++							eventBus,
++							true,
++						)),
++						deferredPaths: [],
++					}
++				: parsedArgs.trustedExtensions?.length
++					? { ...(await loadTrustedSessionExtensions(sessionOptions, cwd, eventBus)), deferredPaths: [] }
++					: await loadSessionExtensions(sessionOptions, cwd, settingsInstance, eventBus, {
++							deferStartupSafe: deferStartupSafeExtensions,
++						});
+ 			const extensionFlagSink: ExtensionFlagSink = {
+ 				getFlags: () => ExtensionRunner.aggregateFlags(extensionsResult.extensions),
+ 				setFlagValue: (name, value) => {
+@@ -2615,7 +2649,9 @@
+ 			const startupContext = {
+ 				eventBus,
+ 				subagentEventBus,
+-				preloadedExtensions: extensionsResult,
++				...(sessionOptions.restrictToolNames
++					? { preloadedPreparedExtensions: extensionsResult.preparedExtensions }
++					: { preloadedExtensions: extensionsResult }),
+ 				deferredExtensionPaths: extensionsResult.deferredPaths,
+ 				// Validation waits for background refresh and the first interactive frame.
+ 				deferRetryFallbackValidation: true,
+diff --git a/packages/coding-agent/src/sdk.ts b/packages/coding-agent/src/sdk.ts
+--- a/packages/coding-agent/src/sdk.ts
++++ b/packages/coding-agent/src/sdk.ts
+@@ -1027,10 +1027,49 @@
+ 	}
+ }
+ 
++/** Source-owned result of the SDK's actual restricted initialization. */
++export interface RestrictedStartupReceipt {
++	readonly tool_names: readonly string[];
++	readonly mcp_disabled: true;
++	readonly memory_disabled: true;
++}
++export interface SealedRestrictedStartupReceipt extends RestrictedStartupReceipt {
++	readonly credential_usage_joined: true;
++}
++let restrictedStarts = 0;
++let restrictedSealed = false;
++let restrictedOwner:
++	| { session: WeakRef<AgentSession>; registry: WeakRef<ModelRegistry>; receipt: SealedRestrictedStartupReceipt }
++	| undefined;
++
++/** One-use binding for the fixed CLI's exact manager and registry. */
++export function sealRestrictedStartup(sessionManager: unknown, modelRegistry: unknown): SealedRestrictedStartupReceipt {
++	const owner = restrictedOwner;
++	const session = owner?.session.deref();
++	if (
++		restrictedSealed ||
++		restrictedStarts !== 1 ||
++		!owner ||
++		!session ||
++		session.isDisposed ||
++		session.sessionManager !== sessionManager ||
++		owner.registry.deref() !== modelRegistry ||
++		session.memoryEnabled ||
++		JSON.stringify(session.getActiveToolNames().slice().sort()) !== JSON.stringify(owner.receipt.tool_names)
++	) {
++		throw new Error("Restricted startup owner identity or state mismatch");
++	}
++	restrictedSealed = true;
++	return owner.receipt;
++}
++
+ /** Result from createAgentSession */
+ export interface CreateAgentSessionResult {
+ 	/** The created session */
+ 	session: AgentSession;
++	/** Present only after the actual restricted MCP/memory guards complete. */
++	startupRestrictions?: RestrictedStartupReceipt;
++	startupPreparation?: Readonly<{ credential_usage_joined: boolean }>;
+ 	/** Extensions result (loaded extensions + runtime) */
+ 	extensionsResult: LoadExtensionsResult;
+ 	/** Update tool UI context (interactive mode) */
+@@ -1944,6 +1983,9 @@
+  * ```
+  */
+ export async function createAgentSession(options: CreateAgentSessionOptions = {}): Promise<CreateAgentSessionResult> {
++	if (restrictedSealed) throw new Error("Restricted startup owner sealed");
++	restrictedStarts = Math.min(2, restrictedStarts + 1);
++	if (restrictedStarts !== 1) restrictedOwner = undefined;
+ 	registerLocalInferenceApi();
+ 	const extensionRoots = options.extensionRoots?.();
+ 	const explicit = extensionRoots?.explicit ?? options.additionalExtensionPaths ?? [];
+@@ -1952,12 +1994,26 @@
+ }
+ 
+ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Promise<CreateAgentSessionResult> {
+-	return await withStartupConnectionWarmups(startWarmup => createAgentSessionBody(options, startWarmup));
++	if (restrictedSealed) throw new Error("Restricted startup owner sealed");
++	const result = await withStartupConnectionWarmups(
++		(startWarmup, startUsage) => createAgentSessionBody(options, startWarmup, startUsage),
++		options.restrictToolNames === true,
++	);
++	if (result.startupRestrictions && result.startupPreparation?.credential_usage_joined === true) {
++		if (options.modelRegistry && restrictedStarts === 1)
++			restrictedOwner = {
++				session: new WeakRef(result.session),
++				registry: new WeakRef(options.modelRegistry),
++				receipt: Object.freeze({ ...result.startupRestrictions, credential_usage_joined: true }),
++			};
++	}
++	return result;
+ }
+ 
+ async function createAgentSessionBody(
+ 	options: CreateAgentSessionOptions,
+ 	startWarmup: (model: Model) => void,
++	startUsage: (provider: string, operation: () => Promise<void>) => void,
+ ): Promise<CreateAgentSessionResult> {
+ 	if (options.systemPromptTemplate !== undefined && options.customSystemPrompt !== undefined) {
+ 		throw new Error("systemPromptTemplate cannot be combined with a literal custom system prompt");
+@@ -2366,20 +2422,13 @@
+ 		// the selector owns eligibility and still chooses/pins the account at request
+ 		// time. A preliminary model can change after extensions register, so this
+ 		// must never validate or commit credentials for it.
+-		void logger
+-			.time("prefetchCredentialUsage", () =>
+-				modelRegistry.authStorage.keys.prefetchUsage(resolvedModel.provider, providerSessionId, {
+-					baseUrl: resolvedModel.baseUrl,
+-					modelId: resolvedModel.id,
+-					accountIds: resolvedModel.accountAccess && Object.keys(resolvedModel.accountAccess),
+-				}),
+-			)
+-			.catch(error => {
+-				logger.debug("Startup credential usage prefetch failed", {
+-					provider: resolvedModel.provider,
+-					error: String(error),
+-				});
+-			});
++		startUsage(resolvedModel.provider, () =>
++			modelRegistry.authStorage.keys.prefetchUsage(resolvedModel.provider, providerSessionId, {
++				baseUrl: resolvedModel.baseUrl,
++				modelId: resolvedModel.id,
++				accountIds: resolvedModel.accountAccess && Object.keys(resolvedModel.accountAccess),
++			}),
++		);
+ 	}
+ 
+ 	// Re-derives the thinking level whenever startup settles on a different
+@@ -5949,8 +5998,17 @@
+ 		startDeferredMCPDiscovery?.(session);
+ 
+ 		startupCleanup.move();
++		const startupRestrictions: RestrictedStartupReceipt | undefined =
++			restrictToolNames && !enableMCP && mcpManager === undefined && !session.memoryEnabled
++				? Object.freeze({
++						tool_names: Object.freeze(session.getActiveToolNames().slice().sort()),
++						mcp_disabled: true,
++						memory_disabled: true,
++					})
++				: undefined;
+ 		return {
+ 			session,
++			startupRestrictions,
+ 			extensionsResult,
+ 			setToolUIContext,
+ 			mcpManager: ownedMcpManager ?? (mcpManager instanceof MCPManager ? mcpManager : undefined),
+diff --git a/packages/coding-agent/src/startup-connection-warmups.ts b/packages/coding-agent/src/startup-connection-warmups.ts
+--- a/packages/coding-agent/src/startup-connection-warmups.ts
++++ b/packages/coding-agent/src/startup-connection-warmups.ts
+@@ -1,14 +1,30 @@
+ import type { Model } from "@oh-my-pi/pi-ai";
+ import { prewarmModelConnection } from "@oh-my-pi/pi-ai/providers/connection-prewarm";
++import { logger } from "@oh-my-pi/pi-utils";
+ import type { CreateAgentSessionResult } from "./sdk";
+ 
+ /** Own the five SDK startup call sites without serializing their work. */
+ export async function withStartupConnectionWarmups(
+-	operation: (start: (model: Model) => void) => Promise<CreateAgentSessionResult>,
++	operation: (
++		start: (model: Model) => void,
++		startUsage: (provider: string, operation: () => Promise<void>) => void,
++	) => Promise<CreateAgentSessionResult>,
++	joinCredentialUsage = false,
+ ): Promise<CreateAgentSessionResult> {
+ 	const pending: Promise<void>[] = [];
+ 	let calls = 0;
+ 	let sealed = false;
++	let usage: [Promise<void>, Promise<void>] | undefined;
++	const startUsage = (provider: string, operation: () => Promise<void>): void => {
++		if (sealed || usage) throw new Error("SDK startup usage prefetch sealed or repeated");
++		const original = operation();
++		const observer = logger
++			.time("prefetchCredentialUsage", () => original)
++			.catch(error => {
++				logger.debug("Startup credential usage prefetch failed", { provider, error: String(error) });
++			});
++		usage = [original, observer];
++	};
+ 	const start = (model: Model): void => {
+ 		if (sealed) throw new Error("SDK startup connection warm-ups sealed");
+ 		if (calls === 5) throw new Error("SDK startup connection warm-up bound exceeded");
+@@ -28,16 +44,19 @@
+ 	let bodyFailed = false;
+ 	let primaryError: unknown;
+ 	try {
+-		result = await operation(start);
++		result = await operation(start, startUsage);
+ 	} catch (error) {
+ 		bodyFailed = true;
+ 		primaryError = error;
+ 	}
+ 	sealed = true;
+-	const settled = await Promise.allSettled(pending);
++	const settled = await Promise.allSettled([...pending, ...(joinCredentialUsage && usage ? usage : [])]);
+ 	if (bodyFailed) throw primaryError;
+ 	if (!result) throw new Error("SDK startup session result missing");
+-	const failure = settled.find(outcome => outcome.status === "rejected");
++	const usageJoined =
++		joinCredentialUsage && (!usage || settled.slice(pending.length).every(outcome => outcome.status === "fulfilled"));
++	result.startupPreparation = Object.freeze({ credential_usage_joined: usageJoined });
++	const failure = settled.slice(0, pending.length).find(outcome => outcome.status === "rejected");
+ 	if (failure?.status === "rejected") {
+ 		try {
+ 			await result.session.dispose();
+diff --git a/packages/coding-agent/test/cli-restricted-startup.test.ts b/packages/coding-agent/test/cli-restricted-startup.test.ts
+new file mode 100644
+--- /dev/null
++++ b/packages/coding-agent/test/cli-restricted-startup.test.ts
+@@ -0,0 +1,103 @@
++import { expect, test } from "bun:test";
++import fs from "node:fs";
++import os from "node:os";
++import path from "node:path";
++const base = new URL("../src/", import.meta.url).pathname;
++const helper = new URL("./helpers/agent-session-setup.ts", import.meta.url).pathname;
++const program = `
++import { parseArgs } from ${JSON.stringify(base + "cli/args.ts")};
++import { VALUELESS_FLAGS } from ${JSON.stringify(base + "cli/flag-tables.ts")};
++import { buildSessionOptions } from ${JSON.stringify(base + "main.ts")};
++import { createAgentSession, sealRestrictedStartup } from ${JSON.stringify(base + "sdk.ts")};
++import { ModelRegistry } from ${JSON.stringify(base + "config/model-registry.ts")};
++import { Settings } from ${JSON.stringify(base + "config/settings.ts")};
++import { SessionManager } from ${JSON.stringify(base + "session/session-manager.ts")};
++import { createInMemoryAuthStorage } from ${JSON.stringify(helper)};
++const mode=process.argv[1], cwd=process.env.CF_RESTRICTED_WORKSPACE;
++process.chdir(cwd);
++const auth=createInMemoryAuthStorage();
++const registry=new ModelRegistry(auth,cwd+'/models.yml');
++registry.registerProvider('restriction-fixture',{baseUrl:'http://127.0.0.1:9',api:'openai-completions',apiKey:'synthetic-local-only',models:[{id:'synthetic',name:'Synthetic',reasoning:false,input:['text'],cost:{input:0,output:0,cacheRead:0,cacheWrite:0},contextWindow:8192,maxTokens:1024}]},'<restriction-fixture>');
++const settings=Settings.isolated();settings.setModelRole('default','restriction-fixture/synthetic');
++const manager=SessionManager.inMemory(cwd);
++const flags=[...(mode==='missing-tools'?[]:['--tools','read,edit']),'--no-context-files','--no-skills','--no-rules','--no-title','--no-lsp','--no-pty'];
++if(mode!=='baseline') flags.push('--restrict-tools');
++const parsed=parseArgs(flags);
++let options;
++try{options=await buildSessionOptions(parsed,[],manager,registry,settings,()=>{});}
++catch(error){if(mode==='missing-tools' && error.message==='--restrict-tools requires --tools'){auth.close();console.log(JSON.stringify({invalidToolsRefused:true}));process.exit(0);}throw error;}
++if(mode==='missing-tools') throw Error('missing tool list accepted');
++Object.assign(options,{cwd,agentDir:cwd,authStorage:auth,modelRegistry:registry,settings,sessionManager:manager,model:registry.find('restriction-fixture','synthetic'),disableExtensionDiscovery:true,extensions:[],skills:[],rules:[],contextFiles:[],promptTemplates:[],slashCommands:[],skipPythonPreflight:true,enableLsp:false,enableMCP:mode==='inherited'});
++let inheritedReads=0;
++if(mode==='inherited') Object.defineProperty(options,'mcpManager',{get(){inheritedReads++;throw Error('inherited MCP must not be read');}});
++const result=await createAgentSession(options);
++let wrongManager=false,wrongRegistry=false,duplicate=false,late=false,ambiguous=false,disposedRefused=false,sealed,second;
++if(mode==='identity') {try{sealRestrictedStartup({},registry);}catch{wrongManager=true;}try{sealRestrictedStartup(manager,{});}catch{wrongRegistry=true;}}
++if(mode==='ambiguous') {
++ second=await createAgentSession({...options,agentId:'second-fixture',sessionManager:SessionManager.inMemory(cwd)});
++ try{sealRestrictedStartup(manager,registry);}catch{ambiguous=true;}
++}
++if(mode==='disposed'){await result.session.dispose();try{sealRestrictedStartup(manager,registry);}catch{disposedRefused=true;}}
++if(mode!=='baseline' && mode!=='ambiguous' && mode!=='disposed') {
++ sealed=sealRestrictedStartup(manager,registry);
++ try{sealRestrictedStartup(manager,registry);}catch{duplicate=true;}
++ if(mode==='late') {try{await createAgentSession(options);}catch{late=true;}}
++}
++const output={mode,flagClassified:VALUELESS_FLAGS.has('--restrict-tools'),restrict:options.restrictToolNames===true,memoryEnabled:result.session.memoryEnabled,receipt:result.startupRestrictions??null,sealed:sealed??null,inheritedReads,wrongManager,wrongRegistry,duplicate,late,ambiguous,disposedRefused};
++if(second) await second.session.dispose();
++await result.session.dispose();registry.clearSourceRegistrations('<restriction-fixture>');auth.close();
++console.log(JSON.stringify(output));
++`;
++for (const mode of [
++	"baseline",
++	"restricted",
++	"inherited",
++	"identity",
++	"late",
++	"ambiguous",
++	"missing-tools",
++	"disposed",
++]) {
++	test(`CLI restriction reaches real SDK session: ${mode}`, async () => {
++		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cli-restricted-startup-"));
++		try {
++			const child = Bun.spawn([process.execPath, "-e", program, mode], {
++				env: { ...process.env, CF_RESTRICTED_WORKSPACE: dir },
++				stdout: "pipe",
++				stderr: "pipe",
++			});
++			const [exit, stdout, stderr] = await Promise.all([
++				child.exited,
++				new Response(child.stdout).text(),
++				new Response(child.stderr).text(),
++			]);
++			if (exit !== 0) throw new Error(`child ${mode} exit ${exit}: ${stderr}`);
++			expect(stderr).toBe("");
++			if (mode === "missing-tools") {
++				expect(JSON.parse(stdout)).toEqual({ invalidToolsRefused: true });
++				return;
++			}
++			const value = JSON.parse(stdout),
++				restricted = mode !== "baseline";
++			expect(value.flagClassified).toBe(true);
++			expect(value.restrict).toBe(restricted);
++			expect(value.memoryEnabled).toBe(!restricted);
++			expect(value.inheritedReads).toBe(0);
++			const receipt = { tool_names: ["edit", "read"], mcp_disabled: true, memory_disabled: true };
++			expect(value.receipt).toEqual(restricted ? receipt : null);
++			expect(value.sealed).toEqual(
++				restricted && mode !== "ambiguous" && mode !== "disposed"
++					? { ...receipt, credential_usage_joined: true }
++					: null,
++			);
++			expect(value.duplicate).toBe(restricted && mode !== "ambiguous" && mode !== "disposed");
++			expect(value.disposedRefused).toBe(mode === "disposed");
++			expect(value.ambiguous).toBe(mode === "ambiguous");
++			expect(value.late).toBe(mode === "late");
++			expect(value.wrongManager).toBe(mode === "identity");
++			expect(value.wrongRegistry).toBe(mode === "identity");
++		} finally {
++			fs.rmSync(dir, { recursive: true, force: true });
++		}
++	}, 15000);
++}
+diff --git a/packages/coding-agent/test/startup-connection-warmups.test.ts b/packages/coding-agent/test/startup-connection-warmups.test.ts
+--- a/packages/coding-agent/test/startup-connection-warmups.test.ts
++++ b/packages/coding-agent/test/startup-connection-warmups.test.ts
+@@ -256,3 +256,86 @@
+ 	expect(error.error).toBe(cleanup);
+ 	expect(error.suppressed).toBe(failure);
+ });
++
++test("restricted startup joins the original usage prefetch before returning", async () => {
++	const held = deferred(),
++		value = result();
++	const work = observe(
++		withStartupConnectionWarmups(async (_warmup, usage) => {
++			usage("fixture", () => held.promise);
++			return value;
++		}, true),
++	);
++	await turn();
++	expect(work.state.done).toBe(false);
++	held.resolve();
++	const done = await work.outcome;
++	expect(done.value).toBe(value);
++	expect(value.startupPreparation).toEqual({ credential_usage_joined: true });
++});
++
++test("restricted startup preserves the primary body error after joining usage", async () => {
++	const held = deferred(),
++		primary = new Error("original primary");
++	const work = observe(
++		withStartupConnectionWarmups(async (_warmup, usage) => {
++			usage("fixture", () => held.promise);
++			throw primary;
++		}, true),
++	);
++	await turn();
++	expect(work.state.done).toBe(false);
++	held.resolve();
++	expect((await work.outcome).error).toBe(primary);
++});
++
++test("failed usage remains best effort but cannot attest a successful restricted preparation", async () => {
++	const held = deferred(),
++		value = result();
++	const work = observe(
++		withStartupConnectionWarmups(async (_warmup, usage) => {
++			usage("fixture", () => held.promise);
++			return value;
++		}, true),
++	);
++	held.reject(new Error("synthetic usage refusal"));
++	expect((await work.outcome).value).toBe(value);
++	expect(value.startupPreparation).toEqual({ credential_usage_joined: false });
++});
++
++test("ordinary startup retains nonblocking best-effort usage behavior", async () => {
++	const held = deferred(),
++		value = result();
++	const done = await withStartupConnectionWarmups(async (_warmup, usage) => {
++		usage("fixture", () => held.promise);
++		return value;
++	});
++	expect(done).toBe(value);
++	expect(value.startupPreparation).toEqual({ credential_usage_joined: false });
++	held.resolve();
++	await turn();
++});
++
++test("repeated and late usage factories are rejected before starting work", async () => {
++	let starts = 0,
++		late!: (provider: string, operation: () => Promise<void>) => void;
++	const value = result();
++	await withStartupConnectionWarmups(async (_warmup, usage) => {
++		late = usage;
++		usage("fixture", async () => {
++			starts++;
++		});
++		expect(() =>
++			usage("fixture", async () => {
++				starts++;
++			}),
++		).toThrow();
++		return value;
++	}, true);
++	expect(() =>
++		late("fixture", async () => {
++			starts++;
++		}),
++	).toThrow();
++	expect(starts).toBe(1);
++});

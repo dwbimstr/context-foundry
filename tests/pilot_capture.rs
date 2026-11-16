@@ -97,7 +97,7 @@ fn source_startup_refusal_is_durable_and_incomplete_inventory_never_admits() {
     for (name, fail_after) in [
         ("normal", None),
         ("refusal-write", Some(2)),
-        ("halt-write", Some(4)),
+        ("halt-write", Some(5)),
     ] {
         let e = env();
         let run_dir = e._root.path().join("startup-observation");
@@ -134,6 +134,12 @@ fn source_startup_refusal_is_durable_and_incomplete_inventory_never_admits() {
             assert_eq!(
                 rows.iter()
                     .filter(|r| r["kind"] == "startup_owner_settled")
+                    .count(),
+                1
+            );
+            assert_eq!(
+                rows.iter()
+                    .filter(|r| r["kind"] == "startup_restrictions_settled")
                     .count(),
                 1
             );

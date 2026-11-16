@@ -1353,6 +1353,31 @@ Ready, counters, permits, preview or generation. No v1 fallback is possible in
 this explicit diagnostic. This integration is a prerequisite to the full prefix/
 acknowledgment exchange below, whose inventory and execution gates remain intact.
 
+**Inventory completion round, 2026-11-16 — in progress.** A new no-spend
+90-minute round starts after the refusal round ends, with one heavy job, the same
+20 GiB disk floor / 8 GiB sampled individual RSS ceiling and 120-second cleanup
+reserve. Complete the source-bound owner inventory before allowing its prefix
+acknowledgment. The first traced gap is CLI tool selection: expose the SDK's
+existing `restrictToolNames` as explicit `--restrict-tools` requiring `--tools`,
+and pass it only to the newly pinned owned startup qualifier. The existing SDK
+guards then exclude MCP inheritance/discovery and memory startup/controllers;
+ordinary tool selection retains its current meaning. A one-use source API binds
+its actual resulting session manager, model registry, active tools, disabled MCP
+state and `memoryEnabled` to an immutable receipt. Seal prevents another SDK
+session from reopening those startup owners. Wrong/ambiguous/repeated bindings
+refuse. The child reports those facts over the same closed channel; Rust must
+validate and journal them. Qualify positive unrestricted controls, restricted
+controls and mutation refusal at the real CLI boundary. This report alone cannot
+stand in for catalog/auth/settings/telemetry/update/extension owner evidence.
+The same source inspection finds one unowned credential-usage prefetch in SDK
+startup. Extend the existing bounded caller owner to join that original promise
+and its logging observer for restricted sessions, including primary-error exits.
+Keep ordinary unbound prefetch behavior. Failed/unjoined preparation cannot seal
+the restricted receipt. A second/concurrent SDK creation makes the single-session
+binding ambiguous; sealing must refuse and block later starts. Keep identity
+references weak so ordinary SDK use cannot retain a disposed session.
+Missing inventory still records HOLD; no paid, signing or v2 execution gate changes.
+
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
 and a complete startup-owner inventory: catalog/discovery, credential refresh,
