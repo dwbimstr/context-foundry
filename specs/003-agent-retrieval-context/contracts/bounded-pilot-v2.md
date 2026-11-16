@@ -615,6 +615,40 @@ The [dated lifetime receipt](../../../docs/validation.md#native-warm-up-refusal-
 records the actual-bridge red on `91d0c34`, rejected destruction candidate, native
 listener removal, all current/frozen consumers and eight gates on `61a286f`.
 
+**Selected known native warm-up deadline gate, 2026-11-15 — implementation pending.**
+The native listener-release probe now binds the original 10,000 ms AbortSignal to
+exactly one refused canonical Anthropic HEAD. Baseline session-start observation
+still sees it pending. An awaiting native control observes its original timeout
+and detaches its own listener; per-instance listener observation also passes.
+RPC Ready arrives independently, so qualification must inspect the capture bridge's
+Ready itself. This is one known native deadline, not complete owner settlement.
+
+Extend the existing preload only: preserve the native timeout's receiver,
+arguments and returned signal; observe add/remove on that signal alone. Bind the
+SDK callback's exact identity only during synchronous error delivery for the known
+request, after its real removal. Await the original timeout event, verify native
+TimeoutError and remove the observer before capture Ready. A bounded 12-second
+helper deadline must be cleared in every outcome. Missing/duplicate/foreign work,
+an unfinished deadline or a repeat seal refuses; a known restart after sealing
+exits 75 before IO. Do not replace or shorten the native timer, prime the SDK
+throttle cache, swallow exceptions or add a successful network response.
+
+Reuse the existing bounded diagnostic sequence for three closed metadata states:
+listener_released, deadline_elapsed, sealed, each naming native_timeout_ms=10000.
+Keep 20 attempts and 8192 bytes; allow at most 25 total rows. No new channel,
+worker, log, dependency or v1 protocol. This joins the identified signal's deadline
+and observers, not the discarded prewarm promise or every native timer.
+
+First require those states at the actual capture-bridge Ready, before any prompt.
+The existing code must fail with zero fixture POSTs and normal, reaped cleanup.
+Then repair and require the complete owned tool conversation, same native model,
+trace mutation controls, actual SDK controls for early/duplicate/missing/unfinished
+work and restart, all current/frozen consumers, lint and eight gates. Reuse the
+offline hour, 120-second cleanup reserve, one heavy job, 20 GiB disk floor and 8 GiB
+sampled individual RSS bound. Retain red/green, publish reviewed public changes,
+and prune only verified new build/duplicate extraction caches. Complete startup
+admission, paid runs, signing and releases stay gated.
+
 **Selected project MCP exclusion for the fixed qualifier, 2026-11-15 — implemented and locally qualified.**
 The selected diagnostic profile exposes only read/edit tools and has no admitted
 project MCP server. Actual SDK controls nevertheless execute an owned project

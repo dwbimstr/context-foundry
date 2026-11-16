@@ -652,6 +652,7 @@ async fn qualify_current_host_history(
     let mut observations = Vec::<Value>::new();
     let mut projections = Vec::<Vec<u8>>::new();
     let mut startup_before_prompt: Option<Vec<u8>> = None;
+    let mut startup_at_ready: Option<Vec<u8>> = None;
     let mut native_model_sha = None;
     let mut native_warmup_deadline_readback = false;
     let mut bridge_fault = None;
@@ -689,6 +690,15 @@ async fn qualify_current_host_history(
                             || active_tools != ["edit", "read"]
                         {
                             return Err("bridge settings differ");
+                        }
+                        if owned_catalog {
+                            startup_at_ready = std::fs::read(host_root.join("startup.jsonl")).ok();
+                            let ready = startup_at_ready.as_deref().map_or(Value::Null, |bytes| {
+                                current_startup_probe_rows(bytes, None)
+                            });
+                            if ready["valid"] != true || ready["warmup_settled"] != true {
+                                return Err("native warmup deadline unfinished at capture Ready");
+                            }
                         }
                         bridge = true;
                     }
@@ -1011,6 +1021,7 @@ async fn qualify_current_host_history(
         fixture_private_write(out.join("capture-result.json"),serde_json::to_vec_pretty(&json!({"capture_error":failure,"bridge_fault":bridge_fault,
             "captured_requests":requests.len(),"owned_fixture_http_requests":fixture.as_ref().map_or(0,|fx|fx.seen().len()),
             "native_model_sha256":native_model_sha,"native_warmup_deadline_readback":native_warmup_deadline_readback,
+            "native_warmup_settled_at_ready":startup_at_ready.as_deref().is_some_and(|bytes| current_startup_probe_rows(bytes,None)["warmup_settled"]==true),
             "normal_exit":exit.normal,"exit_code":exit.code,"stderr_bytes":exit.stderr_bytes,"stderr_sha256":exit.stderr_sha256,
             "forced":exit.forced,"group_gone":exit.group_gone})).unwrap()).unwrap();
         if let Some(fx)=&fixture {
@@ -1047,11 +1058,14 @@ async fn qualify_current_host_history(
         if let Some(bytes) = bytes.filter(|_| observed["valid"] == true) {
             let prefix = startup_before_prompt.as_deref().unwrap_or_default();
             let prefix_matches = !prefix.is_empty() && bytes.starts_with(prefix);
-            let before = prefix
-                .iter()
-                .filter(|b| **b == b'\n')
-                .count()
-                .saturating_sub(1);
+            let before = current_startup_probe_rows(prefix, None)["observed_attempts"]
+                .as_u64()
+                .unwrap_or_default();
+            let ready = startup_at_ready.as_deref().unwrap_or_default();
+            observed["settled_at_ready"] = json!(
+                bytes.starts_with(ready)
+                    && current_startup_probe_rows(ready, None)["warmup_settled"] == true
+            );
             observed["before_prompt_prefix_matches"] = json!(prefix_matches);
             observed["observed_before_prompt_attempts"] = json!(before);
             observed["observed_after_prompt_attempts"] = json!(
@@ -1091,6 +1105,7 @@ async fn qualify_current_host_history(
             if let Some(out) = &evidence_root {
                 fixture_private_write(out.join("startup.jsonl"), bytes).unwrap();
                 fixture_private_write(out.join("startup-before-prompt.jsonl"), prefix).unwrap();
+                fixture_private_write(out.join("startup-at-ready.jsonl"), ready).unwrap();
             }
         }
         if let Some(out) = &evidence_root {
@@ -1294,6 +1309,11 @@ fn current_startup_probe(bytes: &[u8]) -> Value {
 
 /// Negative native controls name their expected exit; ordinary capture keeps zero.
 fn current_startup_probe_exit(bytes: &[u8], expected_exit: u8) -> Value {
+    current_startup_probe_rows(bytes, Some(expected_exit))
+}
+
+// None validates a live prefix; only the capture consumer requires sealed warmup.
+fn current_startup_probe_rows(bytes: &[u8], expected_exit: Option<u8>) -> Value {
     let invalid = || json!({"valid":false});
     if bytes.len() > 8192 || bytes.last() != Some(&b'\n') {
         return invalid();
@@ -1303,7 +1323,7 @@ fn current_startup_probe_exit(bytes: &[u8], expected_exit: u8) -> Value {
     };
     let rows: Result<Vec<Value>, _> = text.lines().map(serde_json::from_str).collect();
     let Ok(rows) = rows else { return invalid() };
-    if !(2..=22).contains(&rows.len()) {
+    if !(if expected_exit.is_some() { 2 } else { 1 }..=25).contains(&rows.len()) {
         return invalid();
     }
     let keys = |row: &Value, wanted: &[&str]| {
@@ -1316,18 +1336,40 @@ fn current_startup_probe_exit(bytes: &[u8], expected_exit: u8) -> Value {
     ) || rows[0]["kind"] != "installed"
         || rows[0]["runtime"] != "1.4.4"
         || rows[0]["workspace_restored"] != true
-        || !keys(rows.last().unwrap(), &["sequence", "kind", "code"])
-        || rows.last().unwrap()["kind"] != "exit"
-        || rows.last().unwrap()["code"] != expected_exit
+        || expected_exit.is_some_and(|exit| {
+            !keys(rows.last().unwrap(), &["sequence", "kind", "code"])
+                || rows.last().unwrap()["kind"] != "exit"
+                || rows.last().unwrap()["code"] != exit
+        })
     {
         return invalid();
     }
+    let mut attempts = 0;
+    let mut known_attempts = 0;
+    let mut warmup = 0;
     for (index, row) in rows.iter().enumerate() {
         if row["sequence"].as_u64() != Some(index as u64) {
             return invalid();
         }
-        if index == 0 || index == rows.len() - 1 {
+        if index == 0 || (expected_exit.is_some() && index == rows.len() - 1) {
             continue;
+        }
+        if row["kind"] == "warmup" {
+            let states = ["listener_released", "deadline_elapsed", "sealed"];
+            if !keys(row, &["sequence", "kind", "state", "native_timeout_ms"])
+                || warmup >= states.len()
+                || row["state"] != states[warmup]
+                || row["native_timeout_ms"] != 10000
+                || known_attempts != 1
+            {
+                return invalid();
+            }
+            warmup += 1;
+            continue;
+        }
+        attempts += 1;
+        if attempts > 20 {
+            return invalid();
         }
         if !keys(
             row,
@@ -1372,8 +1414,17 @@ fn current_startup_probe_exit(bytes: &[u8], expected_exit: u8) -> Value {
         {
             return invalid();
         }
+        if row["transport"] == "agent_add_request"
+            && row["method"] == "HEAD"
+            && row["scheme"] == "https:"
+            && row["host"] == "api.anthropic.com"
+            && row["port"] == ""
+            && row["route"] == "anthropic_connection_prewarm"
+        {
+            known_attempts += 1;
+        }
     }
-    json!({"valid":true,"runtime":"1.4.4","observed_attempts":rows.len()-2,"rows":rows,"complete_startup_admission":false})
+    json!({"valid":true,"runtime":"1.4.4","observed_attempts":attempts,"warmup_settled":warmup==3,"rows":rows,"complete_startup_admission":false})
 }
 
 /// Compare the current host's actual native ledger with the accepted fixture wire
