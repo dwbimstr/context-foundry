@@ -87,6 +87,7 @@ pub(super) async fn control(
     let watchdog = kind.starts_with("watchdog-");
     let resolver = kind.starts_with("resolver-");
     let settings_chain = kind.starts_with("settings-chain-");
+    let retirement = kind.starts_with("retirement-");
     let config = if telemetry {
         super::telemetry::configuration(config, kind)
     } else if marketplace && kind != "marketplace-owned" {
@@ -141,6 +142,8 @@ pub(super) async fn control(
                 include_bytes!("resolver_witness.mjs").as_slice()
             } else if settings_chain {
                 include_bytes!("settings_chain_witness.mjs").as_slice()
+            } else if retirement {
+                include_bytes!("retirement_witness.mjs").as_slice()
             } else if warmup {
                 include_bytes!("warmup_witness.mjs").as_slice()
             } else if telemetry {
@@ -187,7 +190,7 @@ pub(super) async fn control(
         host::QUALIFICATION_STARTUP_PROBE.to_vec()
     };
     super::fixture_private_write(root.join("bridge/startup_probe.ts"), &probe).unwrap();
-    if auth {
+    if auth || retirement {
         super::fixture_private_write(
             root.join("bridge/startup_auth.ts"),
             host::QUALIFICATION_STARTUP_AUTH,
@@ -231,6 +234,7 @@ pub(super) async fn control(
             || watchdog
             || resolver
             || settings_chain
+            || retirement
         {
             String::new()
         } else {
@@ -323,11 +327,12 @@ pub(super) async fn control(
     let started = tokio::time::Instant::now();
     let mut watchdog_initial = None;
     let mut short_initial = None;
-    let state_timeout = Duration::from_secs(if watchdog || resolver || settings_chain {
-        45
-    } else {
-        20
-    });
+    let state_timeout =
+        Duration::from_secs(if watchdog || resolver || settings_chain || retirement {
+            45
+        } else {
+            20
+        });
     let captured = tokio::time::timeout(state_timeout, async {
         let mut ready = false;
         let mut total = 0;
@@ -371,7 +376,7 @@ pub(super) async fn control(
                         .map_err(|_| "RPC write")?;
                     continue;
                 }
-                if resolver || settings_chain {
+                if resolver || settings_chain || retirement {
                     short_initial = Some(value["data"].clone());
                     tokio::time::sleep(Duration::from_secs(12)).await;
                     child
@@ -410,7 +415,7 @@ pub(super) async fn control(
                 }
                 return Ok(value["data"].clone());
             }
-            if (resolver || settings_chain)
+            if (resolver || settings_chain || retirement)
                 && value["type"] == "response"
                 && value["id"] == "resolver-after"
             {
@@ -507,7 +512,8 @@ pub(super) async fn control(
             || marketplace
             || watchdog
             || resolver
-            || settings_chain)
+            || settings_chain
+            || retirement)
             && let Some(path) = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT")
         {
             let path = std::path::PathBuf::from(format!(
@@ -529,6 +535,8 @@ pub(super) async fn control(
                     "resolver"
                 } else if settings_chain {
                     "settings-chain"
+                } else if retirement {
+                    "retirement"
                 } else {
                     "telemetry"
                 }
@@ -593,9 +601,11 @@ pub(super) async fn control(
         "resolver_witness_sha256":resolver.then(|| pilot_capture::sha256_hex(&std::fs::read(root.join("bridge/witness.mjs")).unwrap())),
         "settings_chain_second_state":settings_chain && short_initial.is_some(),
         "settings_chain_witness_sha256":settings_chain.then(|| pilot_capture::sha256_hex(&std::fs::read(root.join("bridge/witness.mjs")).unwrap())),
+        "retirement_second_state":retirement && short_initial.is_some(),
+        "retirement_witness_sha256":retirement.then(|| pilot_capture::sha256_hex(&std::fs::read(root.join("bridge/witness.mjs")).unwrap())),
         "native_module_cleanup":native_module_cleanup,
         "config_sha256":pilot_capture::sha256_hex(&config),
-        "auth_sha256":auth.then(|| pilot_capture::sha256_hex(host::QUALIFICATION_STARTUP_AUTH)),
+        "auth_sha256":(auth || retirement).then(|| pilot_capture::sha256_hex(host::QUALIFICATION_STARTUP_AUTH)),
         "memory_sha256":memory.then(|| pilot_capture::sha256_hex(host::QUALIFICATION_STARTUP_MEMORY)),
         "logging_sha256":(warmup || logging).then(|| pilot_capture::sha256_hex(host::QUALIFICATION_STARTUP_LOGGING)),
         "native_model_sha256":pilot_capture::sha256_hex(&serde_json::to_vec(&state["model"]).unwrap()),

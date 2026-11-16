@@ -212,3 +212,87 @@ process.on("exit", code => {
 	record({ kind: "exit", code });
 	fs.closeSync(fd);
 });
+
+// Original CLI auth owner only. No credential values or replacement sync handle.
+type AuthPair = { source: Promise<unknown>; returned: Promise<unknown>; done: boolean; rejected: boolean };
+const authAddDescriptor = Object.getOwnPropertyDescriptor(Set.prototype, "add")!;
+const authCatchDescriptor = Object.getOwnPropertyDescriptor(Promise.prototype, "catch")!;
+const authThenDescriptor = Object.getOwnPropertyDescriptor(Promise.prototype, "then")!;
+const authAdd = authAddDescriptor.value, authCatch = authCatchDescriptor.value, authThen = authThenDescriptor.value;
+const authHas = Set.prototype.has, authDelete = Set.prototype.delete;
+const authSubscriptions: { set: Set<unknown>; callback: unknown }[] = [];
+const authInitial: AuthPair[] = [], authPending: AuthPair[] = [];
+let authBound = false, authRetiring = false, authRetired = false, authFailed = false;
+function authRefuse(): never {
+ authFailed = true;
+ if (authRetired) fail(75);
+ throw new Error("owned auth retirement refused");
+}
+function authHash(callback: unknown, cap: number): string | undefined {
+ if (typeof callback !== "function") return;
+ const source = Function.prototype.toString.call(callback);
+ if (source.length > cap) return;
+ return new Bun.CryptoHasher("sha256").update(source).digest("hex");
+}
+function authFrame(fragment: string): boolean { return (new Error().stack ?? "").includes(fragment); }
+function authWatch(source: Promise<unknown>, returned: Promise<unknown>): AuthPair {
+ if (!(source instanceof Promise) || !(returned instanceof Promise)) return authRefuse();
+ const pair = { source, returned, done: false, rejected: false };
+ Reflect.apply(authThen, source, [() => {}, () => { pair.rejected = true; }]);
+ Reflect.apply(authThen, returned, [() => { pair.done = true; }, () => { pair.rejected = true; }]);
+ return pair;
+}
+Object.defineProperty(Set.prototype, "add", { ...authAddDescriptor, value: function (this: Set<unknown>, ...args: unknown[]) {
+ const target = authHash(args[0], 1024) === "ada5cdc854c45871bde0164645643391deae2672cb41dc2f6360ec797c33aef8" &&
+  authFrame("at aee (/$bunfs/root/chunks/cli-3yasrrk4.js:115:21)");
+ if (target && (authRetired || authFailed || authSubscriptions.length >= 4 ||
+  authSubscriptions.some(x => x.set === this) || (authSubscriptions.length && authSubscriptions[0].callback !== args[0]))) return authRefuse();
+ const returned = Reflect.apply(authAdd, this, args);
+ if (target) {
+  if (!(this instanceof Set) || returned !== this) return authRefuse();
+  authSubscriptions.push({ set: this, callback: args[0] });
+ }
+ return returned;
+} });
+Object.defineProperty(Promise.prototype, "catch", { ...authCatchDescriptor, value: function (this: Promise<unknown>, ...args: unknown[]) {
+ const target = typeof args[0] === "function" && Function.prototype.toString.call(args[0]).replace(/\s/g, "") === "()=>null" &&
+  authFrame("at aee (/$bunfs/root/chunks/cli-3yasrrk4.js:87:22)");
+ if (target && (authRetired || authFailed || authInitial.length !== 0)) return authRefuse();
+ const returned = Reflect.apply(authCatch, this, args);
+ if (target) authInitial.push(authWatch(this, returned));
+ return returned;
+} });
+Object.defineProperty(Promise.prototype, "then", { ...authThenDescriptor, value: function (this: Promise<unknown>, ...args: unknown[]) {
+ const target = authHash(args[0], 256) === "73e10fcea65a780ac7077e5857e780e8442086c285b36d9c75c345e4e634602c" &&
+  authFrame("at <anonymous> (/$bunfs/root/chunks/cli-3yasrrk4.js:118:15)");
+ if (target && (authRetired || authFailed || authPending.length >= 8)) return authRefuse();
+ const returned = Reflect.apply(authThen, this, args);
+ if (target) authPending.push(authWatch(this, returned));
+ return returned;
+} });
+Object.defineProperty(globalThis, Symbol.for("context-foundry.qualification.auth"), { value: Object.freeze({
+ bind() {
+  if (authBound || authFailed || authInitial.length !== 1 || authSubscriptions.length !== 4 ||
+   authSubscriptions.some(x => !Reflect.apply(authHas, x.set, [x.callback]))) return authRefuse();
+  authBound = true;
+  record({ kind: "auth", state: "registered", subscriptions: 4 });
+ },
+ async retire(closeOriginal: () => void) {
+  if (!authBound || authRetiring || authRetired || authFailed) return authRefuse();
+  authRetiring = true;
+  for (const entry of authSubscriptions) {
+   if (!Reflect.apply(authDelete, entry.set, [entry.callback]) || Reflect.apply(authHas, entry.set, [entry.callback])) return authRefuse();
+  }
+  // Removing a registration does not cancel its already queued microtask.
+  await new Promise<void>(resolve => setImmediate(resolve));
+  const count = authPending.length, pairs = [...authInitial, ...authPending];
+  try { await Promise.all(pairs.flatMap(pair => [pair.source, pair.returned])); } catch { return authRefuse(); }
+  if (authFailed || authPending.length !== count || pairs.some(pair => !pair.done || pair.rejected)) return authRefuse();
+  closeOriginal();
+  if (authFailed) return authRefuse();
+  authRetired = true;
+  record({ kind: "auth", state: "retired", subscriptions: 4, continuations: count, initial_resolver_joined: true, store_closed: true });
+  authSubscriptions.length = 0; authInitial.length = 0; authPending.length = 0;
+  return Object.freeze({ subscriptions: 4, continuations: count, initial_resolver_joined: true, store_closed: true });
+ },
+}) });

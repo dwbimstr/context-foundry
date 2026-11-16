@@ -194,6 +194,73 @@ async fn current_host_startup_owners_have_native_controls() {
         }
     }
     for kind in [
+        "retirement-active",
+        "retirement-retire",
+        "retirement-queued",
+    ] {
+        let root = base.join(format!("{kind} control with spaces"));
+        let report = startup::control(&omp, &root, &e.workspace, &config, &models, kind).await;
+        assert_owned_private_tree(
+            &root,
+            Some(Path::new(
+                "home/.omp/natives/18.18.1/pi_natives.darwin-arm64.node",
+            )),
+        );
+        if let Some(path) = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT") {
+            let out = PathBuf::from(format!(
+                "{}-retirement-controls",
+                PathBuf::from(path).display()
+            ));
+            fixture_private_dirs(&out).unwrap();
+            fixture_private_write(
+                out.join(format!("{kind}.json")),
+                serde_json::to_vec_pretty(&report).unwrap(),
+            )
+            .unwrap();
+        }
+        let retired = kind != "retirement-active";
+        let queued = kind == "retirement-queued";
+        assert_eq!(report["connections"], 0);
+        assert_eq!(report["retirement_second_state"], true);
+        assert_eq!(
+            report["retirement_witness_sha256"],
+            pilot_capture::sha256_hex(include_bytes!("pilot_capture/retirement_witness.mjs"))
+        );
+        assert_eq!(report["trace"]["auth_retired"], retired);
+        let witness = &report["witness"];
+        assert_eq!(witness["actual_receiver"], true);
+        assert_eq!(witness["restored"], true);
+        assert_eq!(witness["final_value"], 10);
+        assert_eq!(witness["override_after"], false);
+        assert_eq!(
+            witness["policy_calls"],
+            if queued {
+                json!([10, 10])
+            } else if retired {
+                json!([])
+            } else {
+                json!([11, 10])
+            }
+        );
+        if retired {
+            assert_eq!(witness["no_future_work"], true);
+            assert_eq!(
+                witness["retired"],
+                json!({"subscriptions":4,"continuations":if queued {2} else {0},"initial_resolver_joined":true,"store_closed":true})
+            );
+        }
+        if queued {
+            assert_eq!(witness["pending_before_remove"], 1);
+        }
+        let pairs = witness["pairs"].as_array().unwrap();
+        assert_eq!(pairs.len(), if retired && !queued { 0 } else { 2 });
+        for pair in pairs {
+            assert_eq!(pair["source_fulfilled"], true);
+            assert_eq!(pair["return_fulfilled"], true);
+            assert_eq!(pair["rejected"], false);
+        }
+    }
+    for kind in [
         "settings-chain-baseline",
         "settings-chain-serial",
         "settings-chain-coalesced",
@@ -1494,6 +1561,7 @@ async fn qualify_current_host_history(
                 bytes.starts_with(ready)
                     && current_startup_probe_rows(ready, None)["warmup_settled"] == true
                     && current_startup_probe_rows(ready, None)["logging_quiesced"] == true
+                    && current_startup_probe_rows(ready, None)["auth_retired"] == true
             );
             observed["before_prompt_prefix_matches"] = json!(prefix_matches);
             observed["observed_before_prompt_attempts"] = json!(before);
@@ -1577,11 +1645,44 @@ async fn qualify_current_host_history(
                         .push(current_startup_probe(encode(&changed).as_bytes())["valid"] == false);
                 }
             }
+            let auth: Vec<_> = rows
+                .iter()
+                .enumerate()
+                .filter(|(_, row)| row["kind"] == "auth")
+                .map(|(i, _)| i)
+                .collect();
+            if auth.len() == 2 {
+                for (position, key, value) in [
+                    (auth[0], "subscriptions", json!(3)),
+                    (auth[1], "store_closed", json!(false)),
+                    (auth[1], "initial_resolver_joined", json!(false)),
+                    (auth[1], "continuations", json!(9)),
+                    (auth[1], "body", json!("forbidden")),
+                ] {
+                    let mut changed = rows.clone();
+                    changed[position][key] = value;
+                    controls
+                        .push(current_startup_probe(encode(&changed).as_bytes())["valid"] == false);
+                }
+                for duplicate in [false, true] {
+                    let mut changed = rows.clone();
+                    if duplicate {
+                        changed.insert(auth[0], rows[auth[0]].clone());
+                    } else {
+                        changed.remove(auth[0]);
+                    }
+                    for (i, row) in changed.iter_mut().enumerate() {
+                        row["sequence"] = json!(i);
+                    }
+                    controls
+                        .push(current_startup_probe(encode(&changed).as_bytes())["valid"] == false);
+                }
+            }
             observed["mutation_controls_rejected"] = json!(controls.iter().filter(|x| **x).count());
             observed["valid"] = json!(
                 prefix_matches
                     && observed["settled_at_ready"] == true
-                    && controls.len() == 16
+                    && controls.len() == 23
                     && controls.iter().all(|x| *x)
             );
             if let Some(out) = &evidence_root {
@@ -1830,6 +1931,7 @@ fn current_startup_probe_rows(bytes: &[u8], expected_exit: Option<u8>) -> Value 
     let mut known_attempts = 0;
     let mut warmup = 0;
     let mut logging_quiesced = false;
+    let mut auth = 0;
     for (index, row) in rows.iter().enumerate() {
         if row["sequence"].as_u64() != Some(index as u64) {
             return invalid();
@@ -1845,6 +1947,40 @@ fn current_startup_probe_rows(bytes: &[u8], expected_exit: Option<u8>) -> Value 
                 return invalid();
             }
             logging_quiesced = true;
+            continue;
+        }
+        if row["kind"] == "auth" {
+            if row["subscriptions"] != 4 {
+                return invalid();
+            }
+            match row["state"].as_str() {
+                Some("registered")
+                    if auth == 0 && keys(row, &["sequence", "kind", "state", "subscriptions"]) =>
+                {
+                    auth = 1
+                }
+                Some("retired")
+                    if auth == 1
+                        && keys(
+                            row,
+                            &[
+                                "sequence",
+                                "kind",
+                                "state",
+                                "subscriptions",
+                                "continuations",
+                                "initial_resolver_joined",
+                                "store_closed",
+                            ],
+                        )
+                        && row["continuations"].as_u64().is_some_and(|n| n <= 8)
+                        && row["initial_resolver_joined"] == true
+                        && row["store_closed"] == true =>
+                {
+                    auth = 2
+                }
+                _ => return invalid(),
+            }
             continue;
         }
         if row["kind"] == "warmup" {
@@ -1918,7 +2054,7 @@ fn current_startup_probe_rows(bytes: &[u8], expected_exit: Option<u8>) -> Value 
             known_attempts += 1;
         }
     }
-    json!({"valid":true,"runtime":"1.4.4","observed_attempts":attempts,"warmup_settled":warmup==3,"logging_quiesced":logging_quiesced,"rows":rows,"complete_startup_admission":false})
+    json!({"valid":true,"runtime":"1.4.4","observed_attempts":attempts,"warmup_settled":warmup==3,"logging_quiesced":logging_quiesced,"auth_retired":auth==2,"rows":rows,"complete_startup_admission":false})
 }
 
 /// Compare the current host's actual native ledger with the accepted fixture wire

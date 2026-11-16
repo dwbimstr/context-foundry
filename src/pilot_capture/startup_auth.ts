@@ -2,7 +2,12 @@
 // createAgentSession starts this original call; session_start seals its result.
 // This covers no refresh/polling owner and never reads or retains credential values.
 export async function installOwnedPrefetchGuard() {
-	const { AuthStorage } = await import("@oh-my-pi/pi-ai");
+	const { AuthStorage, SqliteAuthCredentialStore } = await import("@oh-my-pi/pi-ai");
+	const lifecycle = (globalThis as unknown as Record<symbol, {
+		bind(): void; retire(closeOriginal: () => void): Promise<unknown>;
+	}>)[Symbol.for("context-foundry.qualification.auth")];
+	if (!lifecycle || typeof lifecycle.bind !== "function" || typeof lifecycle.retire !== "function") throw new Error("owned auth lifecycle unavailable");
+	lifecycle.bind();
 	const descriptor = Object.getOwnPropertyDescriptor(AuthStorage.prototype, "keys");
 	if (typeof descriptor?.get !== "function") throw new Error("owned prefetch getter unavailable");
 	const originalGet = descriptor.get;
@@ -17,6 +22,7 @@ export async function installOwnedPrefetchGuard() {
 	let rejected = false;
 	let sourceChecks = 0;
 	let nonOauthChecks = 0;
+	let retirementStarted = false;
 	function refuse(): never {
 		failed = true;
 		if (sealed) process.exit(75);
@@ -80,6 +86,31 @@ export async function installOwnedPrefetchGuard() {
 				pending || rejected || sourceChecks !== 1 || nonOauthChecks !== 1) return refuse();
 			sealed = true;
 			return Object.freeze({ calls, completed, source_checks: sourceChecks, non_oauth_checks: nonOauthChecks });
+		},
+		async retire(auth: unknown) {
+			if (!sealed || failed || retirementStarted || !(auth instanceof AuthStorage) || auth.keys !== receiver) return refuse();
+			retirementStarted = true;
+			return lifecycle.retire(() => {
+				const close = Object.getOwnPropertyDescriptor(SqliteAuthCredentialStore.prototype, "close");
+				const poll = Object.getOwnPropertyDescriptor(SqliteAuthCredentialStore.prototype, "pollExternalChanges");
+				const authClose = Object.getOwnPropertyDescriptor(AuthStorage.prototype, "close");
+				if (typeof close?.value !== "function" || !close.configurable || typeof poll?.value !== "function" || typeof authClose?.value !== "function") return refuse();
+				let closing = false, storeCalls = 0, closedWrapper = false;
+				Object.defineProperty(SqliteAuthCredentialStore.prototype, "close", { ...close, value: function (...args: unknown[]) {
+					if (!closing) return Reflect.apply(close.value, this, args);
+					if (++storeCalls !== 1 || !(this instanceof SqliteAuthCredentialStore) || args.length !== 0 ||
+						typeof Reflect.apply(poll.value, this, []) !== "boolean") return refuse();
+					const returned = Reflect.apply(close.value, this, args);
+					if (returned !== undefined) return refuse();
+					// Version/revision queries only; never read credential rows.
+					try { Reflect.apply(poll.value, this, []); } catch { closedWrapper = true; }
+					return returned;
+				} });
+				let returned;
+				try { closing = true; returned = Reflect.apply(authClose.value, auth, []); }
+				finally { closing = false; Object.defineProperty(SqliteAuthCredentialStore.prototype, "close", close); }
+				if (returned !== undefined || storeCalls !== 1 || !closedWrapper) return refuse();
+			});
 		},
 	});
 }

@@ -617,7 +617,7 @@ function exactTools(tools: unknown): tools is string[] {
 	);
 }
 
-let ownedPrefetch: { seal(keys: unknown): unknown } | undefined;
+let ownedPrefetch: { seal(keys: unknown): unknown; retire(auth: unknown): Promise<unknown> } | undefined;
 let ownedMemory: { seal(settings: unknown, registry: unknown): unknown } | undefined;
 
 async function onSessionStart(pi: PiApi, ctxValue: unknown): Promise<void> {
@@ -658,6 +658,7 @@ async function onSessionStart(pi: PiApi, ctxValue: unknown): Promise<void> {
 			const auth = (ctx.modelRegistry as { authStorage?: { keys?: unknown } } | undefined)?.authStorage;
 			if (!ownedPrefetch || !auth) throw new Error("owned prefetch owner unavailable");
 			ownedPrefetch.seal(auth.keys);
+			await ownedPrefetch.retire(auth);
             const warmup = (globalThis as unknown as Record<symbol, unknown>)[Symbol.for("context-foundry.qualification.warmup")];
             if (!isObj(warmup) || typeof warmup.seal !== "function") throw new Error("owned warmup owner unavailable");
             await warmup.seal();
