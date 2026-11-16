@@ -87,7 +87,8 @@ pub(super) async fn control(
     let watchdog = kind.starts_with("watchdog-");
     let resolver = kind.starts_with("resolver-");
     let settings_chain = kind.starts_with("settings-chain-");
-    let retirement = kind.starts_with("retirement-");
+    let source_retirement = kind.starts_with("source-retirement-");
+    let retirement = kind.starts_with("retirement-") || source_retirement;
     let config = if telemetry {
         super::telemetry::configuration(config, kind)
     } else if marketplace && kind != "marketplace-owned" {
@@ -142,6 +143,8 @@ pub(super) async fn control(
                 include_bytes!("resolver_witness.mjs").as_slice()
             } else if settings_chain {
                 include_bytes!("settings_chain_witness.mjs").as_slice()
+            } else if source_retirement {
+                include_bytes!("source_auth_witness.mjs").as_slice()
             } else if retirement {
                 include_bytes!("retirement_witness.mjs").as_slice()
             } else if warmup {
@@ -297,6 +300,9 @@ pub(super) async fn control(
         .stderr(Stdio::piped())
         .process_group(0)
         .kill_on_drop(true);
+    if source_retirement {
+        command.env("CF_PILOT_CATALOG", "owned-source-fixed-v1");
+    }
     if telemetry {
         command
             .env("CF_OWNED_OTLP_AUTHORITY", addr.to_string())
@@ -549,7 +555,11 @@ pub(super) async fn control(
             super::fixture_private_write(path.join(format!("{kind}-startup.jsonl")), &bytes)
                 .unwrap();
         }
-        let trace = super::current_startup_probe_exit(&bytes, if restart { 75 } else { 0 });
+        let trace = if source_retirement {
+            super::startup_probe_rows(&bytes, Some(0), true)
+        } else {
+            super::current_startup_probe_exit(&bytes, if restart { 75 } else { 0 })
+        };
         assert_eq!(trace["valid"], true);
         trace
     };

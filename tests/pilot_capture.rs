@@ -82,32 +82,26 @@ async fn source_host_owned_catalog_preserves_full_history() {
     assert_eq!(report["native_warmup_deadline_readback"], true);
 }
 
-/// Native controls for the Agent route, credential prefetch and off-memory start.
-/// Raw sockets remain a bypass; injected OAuth metadata is not OAuth integration.
-#[tokio::test]
-#[ignore = "needs explicit CF_PILOT_CURRENT_OMP; no-provider current-host diagnostic"]
-async fn current_host_startup_owners_have_native_controls() {
-    use pilot_capture::host::{CatalogProfile, Host, HostEvent, HostSpec, RpcEvent};
+async fn startup_control_configuration(
+    omp: &Path,
+    base: &Path,
+    workspace: &Path,
+    catalog: pilot_capture::host::CatalogProfile,
+) -> (Vec<u8>, Vec<u8>) {
+    use pilot_capture::host::{Host, HostEvent, HostSpec, RpcEvent};
     use pilot_capture::protocol::{ChannelIdentity, ChildMessage, CloseReason, ParentMessage};
     use std::time::Duration;
-    let omp = PathBuf::from(std::env::var_os("CF_PILOT_CURRENT_OMP").expect("explicit owned host"));
-    assert_eq!(
-        pilot_capture::sha256_hex(&std::fs::read(&omp).unwrap()),
-        pilot_capture::host::QUALIFICATION_OMP_SHA256
-    );
-    let e = env();
-    let base = std::fs::canonicalize(e._root.path()).unwrap();
     // Obtain configuration from its real owner rather than duplicating provider
     // inventory or adding a test-only network override to the product launcher.
     let spec = HostSpec {
-        omp: omp.clone(),
+        omp: omp.to_path_buf(),
         root: base.join("actual host with spaces"),
-        workspace: e.workspace.clone(),
+        workspace: workspace.to_path_buf(),
         real_home: std::env::var_os("HOME").unwrap().into(),
-        deny: vec![base.clone()],
+        deny: vec![base.to_path_buf()],
         deny_literals: vec![],
         identity: ChannelIdentity::new("startup-control".into(), "configuration".into()).unwrap(),
-        catalog: CatalogProfile::OwnedQualification,
+        catalog,
     };
     let (host, mut events) = Host::launch(&spec).unwrap();
     let config = std::fs::read(host.paths.agent.join("config.yml")).unwrap();
@@ -146,6 +140,109 @@ async fn current_host_startup_owners_have_native_controls() {
         .await;
     let (_, exit) = host.finish(events, Duration::from_secs(30)).await;
     assert!(ready.is_ok_and(|v| v.is_ok()) && exit.normal && !exit.forced && exit.group_gone);
+    (config, models)
+}
+
+#[tokio::test]
+#[ignore = "needs explicit CF_PILOT_SOURCE_OMP; no-provider source-auth diagnostic"]
+async fn source_host_auth_lifecycle_has_native_controls() {
+    let omp = PathBuf::from(std::env::var_os("CF_PILOT_SOURCE_OMP").expect("explicit source host"));
+    assert_eq!(
+        pilot_capture::sha256_hex(&std::fs::read(&omp).unwrap()),
+        pilot_capture::host::SOURCE_QUALIFICATION_OMP_SHA256
+    );
+    let e = env();
+    let base = std::fs::canonicalize(e._root.path()).unwrap();
+    let (config, models) = startup_control_configuration(
+        &omp,
+        &base,
+        &e.workspace,
+        pilot_capture::host::CatalogProfile::SourceQualification,
+    )
+    .await;
+    for kind in [
+        "source-retirement-active",
+        "source-retirement-retire",
+        "source-retirement-queued",
+    ] {
+        let root = base.join(format!("{kind} control with spaces"));
+        let report = startup::control(&omp, &root, &e.workspace, &config, &models, kind).await;
+        if let Some(path) = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT") {
+            let out = PathBuf::from(format!(
+                "{}-source-auth-controls",
+                PathBuf::from(path).display()
+            ));
+            fixture_private_dirs(&out).unwrap();
+            fixture_private_write(
+                out.join(format!("{kind}.json")),
+                serde_json::to_vec_pretty(&report).unwrap(),
+            )
+            .unwrap();
+        }
+        assert_owned_private_tree(
+            &root,
+            Some(Path::new(
+                "home/.omp/natives/18.18.1/pi_natives.darwin-arm64.node",
+            )),
+        );
+        assert_eq!(report["connections"], 0);
+        assert_eq!(report["retirement_second_state"], true);
+        assert_eq!(
+            report["native_model_sha256"],
+            "83aac156b7678be8faab3ca2d09fbf4e9773214fc968f1c4a13839dc718317c9"
+        );
+        assert_eq!(
+            report["retirement_witness_sha256"],
+            pilot_capture::sha256_hex(include_bytes!("pilot_capture/source_auth_witness.mjs"))
+        );
+        let retired = kind != "source-retirement-active";
+        assert_eq!(report["trace"]["auth_retired"], retired);
+        let witness = &report["witness"];
+        assert_eq!(witness["actual_receiver"], true);
+        assert_eq!(witness["restored"], true);
+        assert_eq!(witness["final_value"], 10);
+        assert_eq!(witness["override_after"], false);
+        assert_eq!(
+            witness["policy_calls"],
+            if kind == "source-retirement-queued" {
+                json!([10])
+            } else if retired {
+                json!([])
+            } else {
+                json!([11, 10])
+            }
+        );
+        if retired {
+            assert_eq!(witness["retired"], true);
+            assert_eq!(witness["no_future_work"], true);
+            assert_eq!(
+                witness["policy_calls_at_retirement"],
+                witness["policy_calls"]
+            );
+        }
+    }
+}
+
+/// Native controls for the Agent route, credential prefetch and off-memory start.
+/// Raw sockets remain a bypass; injected OAuth metadata is not OAuth integration.
+#[tokio::test]
+#[ignore = "needs explicit CF_PILOT_CURRENT_OMP; no-provider current-host diagnostic"]
+async fn current_host_startup_owners_have_native_controls() {
+    use pilot_capture::host::CatalogProfile;
+    let omp = PathBuf::from(std::env::var_os("CF_PILOT_CURRENT_OMP").expect("explicit owned host"));
+    assert_eq!(
+        pilot_capture::sha256_hex(&std::fs::read(&omp).unwrap()),
+        pilot_capture::host::QUALIFICATION_OMP_SHA256
+    );
+    let e = env();
+    let base = std::fs::canonicalize(e._root.path()).unwrap();
+    let (config, models) = startup_control_configuration(
+        &omp,
+        &base,
+        &e.workspace,
+        CatalogProfile::OwnedQualification,
+    )
+    .await;
     let mut marketplace_reports = Vec::new();
     for kind in [
         "marketplace-enabled",
@@ -1921,11 +2018,6 @@ async fn qualify_current_host_history(
         "{report}"
     );
     report
-}
-
-/// Diagnostic-format validation only; this never establishes owner coverage or admission.
-fn current_startup_probe(bytes: &[u8]) -> Value {
-    current_startup_probe_exit(bytes, 0)
 }
 
 /// Negative native controls name their expected exit; ordinary capture keeps zero.
