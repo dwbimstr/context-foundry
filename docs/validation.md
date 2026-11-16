@@ -1,5 +1,74 @@
 # Validation
 
+## Shared early capture channel qualification — 2026-11-16
+
+**The early source-profile preload and later capture extension now use one
+channel owner. Complete startup admission remains HOLD.** This is the first
+implementation slice of 003 T006's [selected startup exchange](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission),
+qualified at `2b77d3ac56a11bb3cfaf7f87ac7371f171f63e33`. The requested stateless-host fix `98157db`
+was already published; it is not awaiting this push.
+
+[`bridge_channel.ts`](../src/pilot_capture/bridge_channel.ts) owns the exact FIFO
+identities, both sequence counters, bounded framing/decoder, writes and terminal
+state formerly inside the extension. Separate loaders obtain the same frozen
+object; they cannot reset its counters, attach a second reader, attach after
+termination or reuse it with a changed launch/pipe identity. This avoids creating
+a second transport for early startup. The extension keeps model/tool/relay
+semantics. V1 messages, all three host pins and execution authority remain unchanged.
+A truncated frame tail after Close now refuses with exit 72 instead of being
+silently ignored at EOF.
+
+The embedded bridge digest covers the entire executable source: channel owner plus
+extension. Only the explicitly selected source profile materializes and imports an
+additional exact copy before CLI startup. Actual-consumer assertions check its
+bytes, mode 0600, presence and launch environment; other profiles have no early
+module. This creates the shared owner early, but does not start an early startup
+exchange or claim before-IO observation.
+
+A durable [native framing test](../tests/pilot_capture/channel.rs) uses the pinned
+runtime, real inherited FIFOs and network-denied preload. Its seven cases cover
+clean two-loader operation with continuous sequence in both directions, replay,
+stale identity, oversized header, wrong version, early EOF and a truncated tail
+after Close. It also rejects changed launch identity and duplicate attachment.
+Forcing the late loader to create a new owner fails the test with `channel owner
+changed`; restoring reuse passes. Red source/receipt and green evidence remain
+private. These low-level controls exit in the preload; they do not prove CLI
+startup settlement, inventory completeness or parent-journal acknowledgment.
+
+Four affected gates are fresh: formatting, pilot all-target Clippy, **105/0** pilot
+units (**1** ignored), and actual Rust 1.90 pilot all-target checking. Four default-
+feature gates reuse **258** exact effective input files from their retained receipt;
+`pilot-capture` and its integration fixtures are excluded from those commands.
+This is four fresh checks plus four scoped reuses, not eight fresh runs.
+
+All **five** current-host consumers are freshly run, including the long native
+startup-owner matrix. Frozen compatibility passes **36/0**, with **9** explicit
+diagnostics ignored. Both source-profile consumers pass: the actual two-generation
+conversation and native auth lifecycle controls. The complete model digest remains
+`53bec6f047bbd7eeab26c93c1a6dd6c0e4ccc30d50a29d79e416c28692d5a027`;
+**29** usage mutations and **25** startup-trace mutations are refused. The actual
+consumers complement the low-level framing controls; none grants v2 admission.
+
+The closed startup message revision, source-owned before-dispatch refusal,
+complete owner/transport inventory with callback/timer settlement, durable parent
+startup prefix and matching acknowledgment echo remain unimplemented/unqualified.
+No missing inventory or failed exchange may fall back to readiness. The rejected
+generic API fence remains rejected. T006 is unaccepted; v2 sample/task/funding
+freeze, paid execution and release signing remain gated. No retrieval/G2 gain or
+provider economics is claimed.
+
+One unchanged no-spend 90-minute budget covers this slice, with one heavy job,
+20 GiB free-disk floor, 8 GiB sampled individual RSS ceiling and a 120-second
+cleanup reserve. Qualification readback completes at **2062.609 s**;
+maximum sampled individual RSS is **2,004,467,712 bytes** and
+minimum sampled free disk is **38,408,605,696 bytes**.
+These are process/disk samples, not global or GPU quotas. Review is in-session.
+Private evidence: `runs/pilot-startup-channel-2026-11-16/`, including
+`qualification-readback.json`, `channel-reset-red-execution.json`, the eight
+`*-committed-execution.json` receipts and exact-input reuse manifest. No provider
+calls, spend, model download or release signing occur. Original user files remain
+exact. Publication, cache retirement and direct replay are recorded below when finished.
+
 ## Journal attestation readback and transport census — 2026-11-16
 
 **The existing journal's seal/finish attestation now checks the writer's committed

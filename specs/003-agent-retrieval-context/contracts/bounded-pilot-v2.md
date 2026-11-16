@@ -1309,7 +1309,11 @@ records native red/green, fresh versus reused checks and the named DNS/loader
 counterexamples. The graph is a source census, not complete runtime coverage or
 reproducible-build proof. No generic-fence adoption or v2 readiness follows.
 
-**Selected shared-channel implementation, 2026-11-16 — in progress; no admission granted.**
+**Selected shared-channel implementation, 2026-11-16 — channel slice qualified; exchange open.**
+The [shared-owner qualification](../../../docs/validation.md#shared-early-capture-channel-qualification--2026-11-16)
+accepts the extraction at its native framing and v1 consumer boundaries. It does
+not implement startup messages, before-dispatch refusal or durable acknowledgment,
+and grants no startup admission. The remaining exchange below is still required.
 Implement the exchange below through the existing Rust host/session/journal and
 one child channel object. The early preload and later bridge share its pipe
 identities, decoder, sequence numbers, close state and writes; neither can create

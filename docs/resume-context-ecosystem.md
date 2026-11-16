@@ -628,6 +628,12 @@ and dated paragraphs below are history.
     build/dependency trees are pruned while bundled source/notices and runnable
     evidence remain. Direct readback-owner, native probe and source-conversation
     replay pass after cleanup; ABI replay confirms the named DNS bypass again.
+    The [shared early capture channel](validation.md#shared-early-capture-channel-qualification--2026-11-16)
+    now qualifies one FIFO/sequence owner across the early source preload and later
+    extension, with fresh current/frozen/source consumers and explicit gate reuse.
+    This is the first exchange implementation slice. Source-owned pre-dispatch
+    refusal, closed startup messages, complete lifecycle inventory and durable
+    acknowledgment remain open; full startup admission stays HOLD.
     Source-profile code/records are published with full fresh-clone readback.
     New build/MSRV caches are pruned; both source consumers pass directly from
     the retained executable after cleanup. The source-profile receipt owns exact
