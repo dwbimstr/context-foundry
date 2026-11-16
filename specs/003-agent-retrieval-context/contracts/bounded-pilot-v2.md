@@ -1464,6 +1464,31 @@ owns native/source/gate/retention evidence; the
 [upstream patch](../../../docs/references/omp-startup-empty-auth.patch) retains
 source/module/test identity and intentional differences.
 
+**Selected daemon-presence lifecycle round, 2026-11-16.** After the fixed empty-auth
+round's terminal receipt, use one fresh 90-minute no-spend round with one heavy
+job, a 20 GiB disk floor, an 8 GiB sampled individual RSS ceiling and a 120-second
+cleanup reserve. The actual CLI awaits original project-presence registration but
+discards its returned handle; ordinary concurrent close can return before the
+original file removal finishes. Retain the original registration, real private
+presence file and exit cleanup. Give only the explicit restricted startup profile
+one source-owned presence lifetime from before registration. Close registration
+admission, join the original promise and its completion observer, and join the
+original idempotent cleanup before attesting retirement. Cached registration and
+close references must obey the same owner; failed registration/cleanup, ambiguous
+or repeated bindings cannot produce a successful receipt. Preserve the ordinary
+CLI's registration behavior. Use the existing source module, SDK binding, channel
+and journal rather than another worker, registry or background loop.
+
+Qualify held registration, concurrent/held removal, ordinary positive behavior,
+registration/cleanup failures, late-start and wrong-owner controls at the native
+CLI boundary, with parent file/normal-exit observations and counterfactual tests.
+Carry bounded metadata after auth retirement and before incomplete-inventory HOLD;
+include its journal append-failure boundary. Full startup inventory, telemetry/
+update/logging and trusted-extension ownership plus durable prefix acknowledgment/
+Ready echo remain required. No paid, signing or v2/T006 execution gate changes.
+The incremental [source patch](../../../docs/references/omp-startup-presence-retirement.patch)
+retains the original registration/cleanup, upstream identity and focused tests.
+
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
 and a complete startup-owner inventory: catalog/discovery, credential refresh,
