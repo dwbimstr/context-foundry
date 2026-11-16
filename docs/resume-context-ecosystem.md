@@ -572,6 +572,10 @@ and dated paragraphs below are history.
     rejected synthetic controls, the materialized no-await mutation and the whole
     owner regression pass, with three fresh affected checks and five unchanged
     gates explicitly reused ([resolver receipt](validation.md#original-native-credential-resolver-join--2026-11-16)).
+    Resolver tests/records through `2ba7b1c` are published with full
+    fresh-clone readback. New build/MSRV and duplicate extraction caches are pruned;
+    the complete owner consumer passes directly from its retained executable.
+    The resolver receipt owns retention, exact evidence checks and reuse scope.
     Application source is unchanged. Next qualify the original settings listener's
     later change chain and refresh/polling/close lifetimes; those remain open,
     along with the discarded warm-up promise, full coverage and durable acknowledgment.

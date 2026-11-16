@@ -57,6 +57,35 @@ remain open. No provider request, model download or spend. Paid runs, release
 signing and release publication remain gated; v2/T006 stays unfunded/unfrozen and
 execution locked.
 
+Tests/qualified records through `2ba7b1c` are published to experimental;
+a fresh clone matches all **418 tracked paths** by type, executable mode and bytes.
+GitHub readback reports zero workflow runs for that exact head. Main remains
+`d94b013`; publication head uses `[skip ci]`, with no workflow dispatch,
+release signing, release/tag or paid run. The new build/MSRV allocation falls from
+**3,301,994,496** to **35,774,464 bytes**, removing **10,423
+generated files** while retaining the private runnable 40-test executable and
+**197 other stage files** at exact hashes.
+The initial marker guard stopped before build deletion because MSRV logs share its
+target root. Pruning was narrowed to the generated Cargo subtrees; all four phase
+logs/receipts remain byte-identical at their original paths. Five duplicate native
+libraries are removed only after master equality and open/mapped-use checks;
+**180 other preflight files** remain exact.
+Combined reported allocation reduction is **3,821,780,992
+bytes (3.559 GiB)**; physical APFS reclamation is not inferred.
+
+The complete owner regression passes **without Cargo after cleanup** in
+**439.061 seconds**, including the original resolver
+pair, pending/rejection controls and every prior owner group. All **41** per-case
+native-library extractions are verified and retired after reaping. The retained
+executable's digest and 40-test inventory match; all source, earlier evidence and
+user-owned untracked bytes remain exact. Final allocations are target
+**92,450,816**, runs
+**7,602,810,880**, datasets
+**34,715,725,824 bytes**. Private evidence,
+archives, models, prepared stores and corpus/oracle/holdout inputs remain local.
+Qualification, publication, cleanup and replay remain within the stated hour;
+paid runs and release signing remain gated.
+
 ## Native startup watchdog and promise-hook limits — 2026-11-15
 
 **The original native watchdog is cancelled before handler entry; complete
