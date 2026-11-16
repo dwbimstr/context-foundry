@@ -1,6 +1,7 @@
 /**
  * Metadata-only diagnostic for the artifact-pinned, no-provider qualifier.
- * This file grants no admission. Its trace is not the capture journal, and
+ * The fixed qualifier gates capture Ready on one identified native deadline.
+ * This grants no full startup admission; its trace is not the capture journal.
  * The known Node HTTP Agent route is refused before its TCP connection.
  * Raw sockets and other transports remain outside this diagnostic's coverage.
  */
@@ -25,7 +26,7 @@ let attempts = 0;
 function record(event: Record<string, unknown>): void {
 	const line = Buffer.from(JSON.stringify({ sequence: sequence++, ...event }) + "\n");
 	bytes += line.length;
-	if (sequence > 22 || bytes > 8192) fail(74);
+	if (sequence > 25 || bytes > 8192) fail(74);
 	try {
 		let offset = 0;
 		while (offset < line.length) {
@@ -51,6 +52,101 @@ function observe(transport: string, input: unknown, method: unknown): void {
 		url.hostname === "catalog.stencil.so" && url.pathname === "/models.json.zstd" ? "shared_catalog" : "other";
 	record({ kind: "attempt", transport, method, scheme: url.protocol, host: url.hostname, port: url.port, route });
 }
+
+// Observe only instances returned by the original 10-second native timeout.
+// A signal is owned only when the SDK removes its exact callback while our
+// classified request error is delivered. No native timer is replaced or cancelled.
+const nativeTimeout = AbortSignal.timeout;
+const nativeAdd = AbortSignal.prototype.addEventListener;
+const nativeRemove = AbortSignal.prototype.removeEventListener;
+type NativeSignal = { listener?: EventListenerOrEventListenerObject | null; removed: boolean };
+const signals = new WeakMap<AbortSignal, NativeSignal>();
+let candidates = 0;
+let knownRequests = 0;
+let deliveringKnownRefusal = false;
+let bound: AbortSignal | undefined;
+let elapsed = false;
+let observerRemoved = false;
+let sealing = false;
+let sealed = false;
+let failed = false;
+let resolveDeadline!: () => void;
+const deadline = new Promise<void>(resolve => { resolveDeadline = resolve; });
+function refuseWarmup(): never {
+ failed = true;
+ if (sealed) return fail();
+ throw new Error("owned warmup refused");
+}
+function warmupState(state: string): void {
+ record({ kind: "warmup", state, native_timeout_ms: 10000 });
+}
+Object.defineProperty(AbortSignal, "timeout", {
+ configurable: false, writable: false,
+ value: function (this: typeof AbortSignal, ...args: Parameters<typeof AbortSignal.timeout>) {
+  const signal = Reflect.apply(nativeTimeout, this, args);
+  if (args.length !== 1 || args[0] !== 10000) return signal;
+  if (++candidates > 20) fail(74);
+  const state: NativeSignal = { removed: false };
+  signals.set(signal, state);
+  Object.defineProperty(signal, "addEventListener", {
+   configurable: false, writable: false,
+   value: function (this: AbortSignal, ...args: Parameters<AbortSignal["addEventListener"]>) {
+    if (this !== signal) return refuseWarmup();
+    if (args[0] === "abort") {
+     if (state.listener !== undefined || state.removed || typeof args[1] !== "function") return refuseWarmup();
+     state.listener = args[1];
+    }
+    return Reflect.apply(nativeAdd, this, args);
+   },
+  });
+  Object.defineProperty(signal, "removeEventListener", {
+   configurable: false, writable: false,
+   value: function (this: AbortSignal, ...args: Parameters<AbortSignal["removeEventListener"]>) {
+    if (this !== signal) return refuseWarmup();
+    const result = Reflect.apply(nativeRemove, this, args);
+    if (args[0] === "abort" && deliveringKnownRefusal) {
+     if (failed || sealing || sealed || bound || state.removed || !state.listener || args[1] !== state.listener || this.aborted) return refuseWarmup();
+     bound = this;
+     state.removed = true;
+     state.listener = undefined;
+     warmupState("listener_released");
+     const completed = () => {
+      Reflect.apply(nativeRemove, signal, ["abort", completed]);
+      observerRemoved = true;
+      if (failed || elapsed || !signal.aborted || signal.reason?.name !== "TimeoutError") return refuseWarmup();
+      elapsed = true;
+      warmupState("deadline_elapsed");
+      resolveDeadline();
+     };
+     Reflect.apply(nativeAdd, this, ["abort", completed, { once: true }]);
+    }
+    return result;
+   },
+  });
+  return signal;
+ },
+});
+Object.defineProperty(globalThis, Symbol.for("context-foundry.qualification.warmup"), {
+ configurable: false, writable: false,
+ value: Object.freeze({
+  async seal() {
+   if (failed || sealing || sealed || knownRequests !== 1 || !bound || !signals.get(bound)?.removed) return refuseWarmup();
+   sealing = true;
+   let timer: ReturnType<typeof setTimeout> | undefined;
+   try {
+    await Promise.race([deadline, new Promise<never>((_resolve, reject) => {
+     timer = setTimeout(() => reject(new Error("owned warmup deadline unfinished")), 12000);
+    })]);
+    if (failed || !elapsed || !observerRemoved || !bound.aborted || bound.reason?.name !== "TimeoutError") return refuseWarmup();
+   } catch { return refuseWarmup(); }
+   finally { if (timer !== undefined) clearTimeout(timer); }
+   sealed = true;
+   warmupState("sealed");
+   return Object.freeze({ known_requests: knownRequests, listener_released: true,
+    native_timeout_ms: 10000, deadline_elapsed: elapsed, observer_removed: observerRemoved });
+  },
+ }),
+});
 
 type FetchWithPreconnect = typeof globalThis.fetch & { preconnect?: (input: unknown) => unknown };
 const originalFetch = globalThis.fetch as FetchWithPreconnect;
@@ -90,12 +186,16 @@ for (const prototype of new Set([http.Agent.prototype, https.Agent.prototype])) 
 			const port = header === undefined && options.port !== undefined ? `:${options.port}` : "";
 			observe("agent_add_request", `${scheme}//${host}${port}${request.path ?? "/"}`, request.method);
 			if (typeof request.destroy !== "function" || typeof request.emit !== "function") fail();
+            const known = scheme === "https:" && host === "api.anthropic.com" && port === "" && request.method === "HEAD" && request.path === "/";
+            if (known && (sealed || failed || ++knownRequests !== 1)) return refuseWarmup();
 			// Bun's socketless request does not surface destroy(error). After
 			// construction, retire it and deliver the refusal to the SDK's error
 			// handler so it releases its abort listener. Never queue network IO.
 			queueMicrotask(() => {
 				request.destroy();
-				request.emit("error", new Error("CF_QUALIFICATION_STARTUP_REFUSED"));
+                deliveringKnownRefusal = known;
+                try { request.emit("error", new Error("CF_QUALIFICATION_STARTUP_REFUSED")); }
+                finally { deliveringKnownRefusal = false; }
 			});
 		},
 	});

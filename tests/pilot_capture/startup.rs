@@ -81,12 +81,16 @@ pub(super) async fn control(
     let auth = kind.starts_with("auth-");
     let memory = kind.starts_with("memory-");
     let telemetry = kind.starts_with("telemetry-");
+    let warmup = kind.starts_with("warmup-");
     let config = if telemetry {
         super::telemetry::configuration(config, kind)
     } else {
         config.to_vec()
     };
-    let restart = matches!(kind, "auth-restart" | "memory-restart");
+    let restart = matches!(
+        kind,
+        "auth-restart" | "memory-restart" | "warmup-restart" | "warmup-repeat-seal"
+    );
     for dir in [
         root.to_path_buf(),
         root.join("home"),
@@ -106,6 +110,8 @@ pub(super) async fn control(
                 include_bytes!("auth_witness.mjs").as_slice()
             } else if memory {
                 include_bytes!("memory_witness.mjs").as_slice()
+            } else if warmup {
+                include_bytes!("warmup_witness.mjs").as_slice()
             } else if telemetry {
                 include_bytes!("telemetry_witness.mjs").as_slice()
             } else {
@@ -115,7 +121,22 @@ pub(super) async fn control(
     ] {
         super::fixture_private_write(root.join(path), bytes).unwrap();
     }
-    let probe = if telemetry {
+    let probe = if warmup {
+        let mut source = std::str::from_utf8(host::QUALIFICATION_STARTUP_PROBE)
+            .unwrap()
+            .to_owned();
+        if kind == "warmup-missing" {
+            let marker = "args[0] !== 10000";
+            assert_eq!(source.matches(marker).count(), 1);
+            source = source.replace(marker, "args[0] !== 10001");
+        }
+        if kind == "warmup-unsettled" {
+            source = format!(
+                "const actualTimeout = AbortSignal.timeout; AbortSignal.timeout = function(ms) {{ return ms === 10000 ? new AbortController().signal : Reflect.apply(actualTimeout, this, [ms]); }};\n{source}"
+            );
+        }
+        source.into_bytes()
+    } else if telemetry {
         super::telemetry::preload()
     } else if kind == "stock" {
         b"process.chdir(process.env.CF_PILOT_PROBE_WORKSPACE); globalThis.fetch = async () => { throw new Error('CF_QUALIFICATION_STARTUP_REFUSED'); };\n".to_vec()
@@ -152,7 +173,7 @@ pub(super) async fn control(
         &[],
     )
     .unwrap()
-        + &if auth || memory {
+        + &if auth || memory || warmup {
             String::new()
         } else {
             format!(
@@ -273,8 +294,20 @@ pub(super) async fn control(
                 if !ready || value["success"] != true {
                     return Err("state refused");
                 }
+                if warmup {
+                    while !root.join("witness.json").is_file() {
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+                    }
+                }
                 tokio::time::sleep_until(
-                    started + Duration::from_secs(if telemetry { 3 } else { 7 }),
+                    started
+                        + Duration::from_secs(if warmup {
+                            14
+                        } else if telemetry {
+                            3
+                        } else {
+                            7
+                        }),
                 )
                 .await;
                 return Ok(value["data"].clone());
@@ -328,7 +361,7 @@ pub(super) async fn control(
         Value::Null
     } else {
         let bytes = std::fs::read(root.join("startup.jsonl")).unwrap();
-        if (auth || memory || telemetry)
+        if (auth || memory || telemetry || warmup)
             && let Some(path) = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT")
         {
             let path = std::path::PathBuf::from(format!(
@@ -338,6 +371,8 @@ pub(super) async fn control(
                     "auth"
                 } else if memory {
                     "memory"
+                } else if warmup {
+                    "warmup"
                 } else {
                     "telemetry"
                 }

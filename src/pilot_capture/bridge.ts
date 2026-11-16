@@ -657,6 +657,9 @@ async function onSessionStart(pi: PiApi, ctxValue: unknown): Promise<void> {
 			const auth = (ctx.modelRegistry as { authStorage?: { keys?: unknown } } | undefined)?.authStorage;
 			if (!ownedPrefetch || !auth) throw new Error("owned prefetch owner unavailable");
 			ownedPrefetch.seal(auth.keys);
+            const warmup = (globalThis as unknown as Record<symbol, unknown>)[Symbol.for("context-foundry.qualification.warmup")];
+            if (!isObj(warmup) || typeof warmup.seal !== "function") throw new Error("owned warmup owner unavailable");
+            await warmup.seal();
 		}
 		stage = "model_selection";
 		const model = observedModel(ctx);

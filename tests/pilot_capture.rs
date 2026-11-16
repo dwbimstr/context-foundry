@@ -301,6 +301,42 @@ async fn current_host_startup_owners_have_native_controls() {
         }
     }
     let mut telemetry_reports = Vec::new();
+    for kind in [
+        "warmup-success",
+        "warmup-missing",
+        "warmup-unsettled",
+        "warmup-repeat-seal",
+        "warmup-restart",
+    ] {
+        let result =
+            startup::control(&omp, &base.join(kind), &e.workspace, &config, &models, kind).await;
+        let expected = if matches!(kind, "warmup-missing" | "warmup-unsettled") {
+            "refused"
+        } else {
+            "sealed"
+        };
+        assert_eq!(
+            result["witness"]["outcome"], expected,
+            "warmup control: {kind}: {result}"
+        );
+        assert_eq!(result["connections"], 0);
+        if expected == "sealed" {
+            assert_eq!(
+                result["witness"]["summary"],
+                json!({"known_requests":1,"listener_released":true,"native_timeout_ms":10000,"deadline_elapsed":true,"observer_removed":true})
+            );
+            assert_eq!(result["trace"]["warmup_settled"], true);
+        }
+        if let Some(path) = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT") {
+            let out = PathBuf::from(format!("{}-warmup-controls", PathBuf::from(path).display()));
+            fixture_private_dir(&out).unwrap();
+            fixture_private_write(
+                out.join(format!("{kind}.json")),
+                serde_json::to_vec_pretty(&result).unwrap(),
+            )
+            .unwrap();
+        }
+    }
     for kind in ["telemetry-enabled", "telemetry-owned", "telemetry-disabled"] {
         let root = base.join(format!("{kind} control with spaces"));
         let report = startup::control(&omp, &root, &e.workspace, &config, &models, kind).await;
@@ -1099,9 +1135,41 @@ async fn qualify_current_host_history(
             let mut changed = rows.clone();
             changed.push(rows.last().unwrap().clone());
             controls.push(current_startup_probe(encode(&changed).as_bytes())["valid"] == false);
+            let states: Vec<_> = rows
+                .iter()
+                .enumerate()
+                .filter(|(_, row)| row["kind"] == "warmup")
+                .map(|(i, _)| i)
+                .collect();
+            if states.len() == 3 {
+                for (state, value) in [("native_timeout_ms", json!(1)), ("state", json!("unknown"))]
+                {
+                    let mut changed = rows.clone();
+                    changed[states[1]][state] = value;
+                    controls
+                        .push(current_startup_probe(encode(&changed).as_bytes())["valid"] == false);
+                }
+                for (target, source) in [
+                    (states[0], states[1]),
+                    (states[1], states[2]),
+                    (states[2], states[0]),
+                ] {
+                    let mut changed = rows.clone();
+                    changed[target]["state"] = rows[source]["state"].clone();
+                    controls
+                        .push(current_startup_probe(encode(&changed).as_bytes())["valid"] == false);
+                }
+                let mut changed = rows.clone();
+                changed[states[0]]["body"] = json!("forbidden");
+                controls.push(current_startup_probe(encode(&changed).as_bytes())["valid"] == false);
+            }
             observed["mutation_controls_rejected"] = json!(controls.iter().filter(|x| **x).count());
-            observed["valid"] =
-                json!(prefix_matches && controls.len() == 6 && controls.iter().all(|x| *x));
+            observed["valid"] = json!(
+                prefix_matches
+                    && observed["settled_at_ready"] == true
+                    && controls.len() == 12
+                    && controls.iter().all(|x| *x)
+            );
             if let Some(out) = &evidence_root {
                 fixture_private_write(out.join("startup.jsonl"), bytes).unwrap();
                 fixture_private_write(out.join("startup-before-prompt.jsonl"), prefix).unwrap();
