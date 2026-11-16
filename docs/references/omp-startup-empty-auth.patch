@@ -1,0 +1,890 @@
+Experimental fixed empty-auth startup retirement; not applied by Context Foundry.
+Target: can1357/oh-my-pi @ 24439066040e006eb08da7b204f0ac41c79d2de9
+Owner: 003 T006, bounded-pilot-v2 startup observation and admission.
+Requires prior caller/auth/refusal/restricted/catalog/settings patches.
+Modules: AuthStorage::retireStartupEmptyAuth; auth/startup-empty::EmptyStartupAuth;
+SqliteAuthCredentialStore scalar empty/closed checks; CredentialPool::reload;
+auth-broker/discover::resolveAuthBrokerConfig; CLI explicit flag and SDK original binding.
+Tests: startup-empty-auth.test.ts, original auth suites, main/CLI/restricted SDK suites.
+Difference: explicit --startup-empty-auth requires --restrict-tools. The actual local
+SQLite store and original supported calls remain; no facade or credential values are
+returned. Source guards reject material/broker/foreign backend and unsupported methods.
+The finite namespace owner joins original returned promises and completion observers,
+including cached references and fresh lookups after a supported instrumentation change.
+Metadata identity and local no-op usage completion consumers remain available after close.
+Unknown calls or policy violations cannot obtain a retirement receipt. At most 4096 starts.
+Ordinary auth remains outside the opt-in profile. The exact original auth instance is bound
+to the sealed SDK session/registry after original auth/settings-link retirement.
+No general OAuth drain, physical FD release, complete inventory, Ready, transport permission,
+paid execution or release signing is established. Native/source receipts are dated in validation.
+
+MIT License
+
+Copyright (c) 2025 Mario Zechner
+Copyright (c) 2025-2026 Can Bölük
+Copyright (c) 2026 Stencil Labs, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+diff --git a/packages/ai/src/auth-broker/discover.ts b/packages/ai/src/auth-broker/discover.ts
+--- a/packages/ai/src/auth-broker/discover.ts
++++ b/packages/ai/src/auth-broker/discover.ts
+@@ -37,6 +37,7 @@
+ }
+ 
+ export interface ResolveAuthBrokerConfigOptions {
++	requireEmptyAuth?: boolean;
+ 	agentDir?: string;
+ 	configValueResolver?: (config: string) => Promise<string | undefined>;
+ }
+@@ -383,6 +384,18 @@
+ 	options: ResolveAuthBrokerConfigOptions = {},
+ ): Promise<AuthBrokerClientConfig | null> {
+ 	const agentDir = options.agentDir ?? getAgentDir();
++	if (options.requireEmptyAuth) {
++		const raw = await readConfigYaml(agentDir);
++		if (
++			process.env.OMP_AUTH_BROKER_URL ||
++			process.env.OMP_AUTH_BROKER_TOKEN ||
++			process.env.OMP_AUTH_BROKER_ACCOUNT_POOL_FILE ||
++			raw.url ||
++			raw.token
++		)
++			throw new Error("Empty startup auth refuses broker configuration");
++		return null;
++	}
+ 	const resolveConfig = options.configValueResolver ?? defaultResolveConfigValue;
+ 
+ 	const envUrl = process.env.OMP_AUTH_BROKER_URL;
+@@ -514,7 +527,10 @@
+  */
+ export async function discoverAuthStorage(options: DiscoverAuthStorageOptions = {}): Promise<AuthStorage> {
+ 	const agentDir = options.agentDir ?? getAgentDir();
++	if (options.authStorageOptions?.startupEmptyAuth && options.accountPool)
++		throw new Error("Empty startup auth refuses account pools");
+ 	const brokerConfig = await resolveAuthBrokerConfig({
++		requireEmptyAuth: options.authStorageOptions?.startupEmptyAuth,
+ 		agentDir,
+ 		configValueResolver: options.configValueResolver,
+ 	});
+@@ -530,13 +546,19 @@
+ 		sourceLabel: options.sourceLabel,
+ 		accountPool: options.accountPool,
+ 	});
+-	const storage = new AuthStorage(store, {
+-		...options.authStorageOptions,
+-		configValueResolver: options.configValueResolver,
+-		sourceLabel,
+-		accountPolicies,
+-		defaultReservePct,
+-	});
++	let storage: AuthStorage;
++	try {
++		storage = new AuthStorage(store, {
++			...options.authStorageOptions,
++			configValueResolver: options.configValueResolver,
++			sourceLabel,
++			accountPolicies,
++			defaultReservePct,
++		});
++	} catch (error) {
++		if (options.authStorageOptions?.startupEmptyAuth) store.close();
++		throw error;
++	}
+ 	await storage.credentials.reload();
+ 	return storage;
+ }
+diff --git a/packages/ai/src/auth-storage.ts b/packages/ai/src/auth-storage.ts
+--- a/packages/ai/src/auth-storage.ts
++++ b/packages/ai/src/auth-storage.ts
+@@ -24,6 +24,7 @@
+  * await auth.credentials.reload();
+  * const apiKey = await auth.keys.get("anthropic", sessionId, { modelId });
+  */
++import { EmptyStartupAuth } from "./auth/startup-empty";
+ import { logger } from "@oh-my-pi/pi-utils";
+ import type { AuthAccountPolicyConfig } from "./auth-broker/discover";
+ import { SessionAffinity, type SessionRestrictions } from "./auth/affinity";
+@@ -138,50 +139,70 @@
+  */
+ export class AuthStorage {
+ 	readonly #backend: AuthStorageBackend;
++	#startup?: EmptyStartupAuth;
++	#startupStore?: SqliteAuthCredentialStore;
+ 
+ 	/** Serve every namespace from `backend` (cross-thread seam; see {@link AuthStorageBackend}). */
+ 	constructor(backend: AuthStorageBackend);
+ 	/** Compose the credential modules over `store` (the local, single-process path). */
+ 	constructor(store: AuthCredentialStore, options?: AuthStorageOptions);
+ 	constructor(source: AuthCredentialStore | AuthStorageBackend, options: AuthStorageOptions = {}) {
+-		this.#backend = isAuthStorageBackend(source) ? source : new LocalAuthStorageBackend(source, options);
++		if (options.startupEmptyAuth) {
++			if (isAuthStorageBackend(source) || !(source instanceof SqliteAuthCredentialStore))
++				throw new Error("Empty startup auth requires the original local SQLite store");
++			source.assertEmptyStartup();
++			this.#startupStore = source;
++			this.#startup = new EmptyStartupAuth(
++				() => source.assertEmptyStartup(),
++				() => {
++					if (
++						Object.keys(this.#backend.credentials.all()).length !== 0 ||
++						(source as AuthCredentialStore).recordObservedUsage !== undefined
++					)
++						this.#startup!.refuse();
++				},
++			);
++		}
++		this.#backend = isAuthStorageBackend(source)
++			? source
++			: new LocalAuthStorageBackend(source, options, this.#startup);
+ 	}
+ 
+ 	/** Stored credential rows, change/disable events, broker snapshot. */
+ 	get credentials(): CredentialsApi {
+-		return this.#backend.credentials;
++		return this.#startup?.wrap("credentials", this.#backend.credentials) ?? this.#backend.credentials;
+ 	}
+ 	/** Provider auth cascade and key overrides. */
+ 	get keys(): KeysApi {
+-		return this.#backend.keys;
++		return this.#startup?.wrap("keys", this.#backend.keys) ?? this.#backend.keys;
+ 	}
+ 	/** OAuth login, account access, listings, refresh. */
+ 	get oauth(): OAuthApi {
+-		return this.#backend.oauth;
++		return this.#startup?.wrap("oauth", this.#backend.oauth) ?? this.#backend.oauth;
+ 	}
+ 	/** Session → account pins. */
+ 	get sessions(): SessionsApi {
+-		return this.#backend.sessions;
++		return this.#startup?.wrap("sessions", this.#backend.sessions) ?? this.#backend.sessions;
+ 	}
+ 	/** Usage reports, header ingestion, history. */
+ 	get usage(): UsageApi {
+-		return this.#backend.usage;
++		return this.#startup?.wrap("usage", this.#backend.usage) ?? this.#backend.usage;
+ 	}
+ 	/** Model pool health and per-credential probes. */
+ 	get health(): HealthApi {
+-		return this.#backend.health;
++		return this.#startup?.wrap("health", this.#backend.health) ?? this.#backend.health;
+ 	}
+ 	/** Usage-limit marking and credential rotation. */
+ 	get limits(): LimitsApi {
+-		return this.#backend.limits;
++		return this.#startup?.wrap("limits", this.#backend.limits) ?? this.#backend.limits;
+ 	}
+ 	/** Saved rate-limit resets. */
+ 	get resets(): ResetsApi {
+-		return this.#backend.resets;
++		return this.#startup?.wrap("resets", this.#backend.resets) ?? this.#backend.resets;
+ 	}
+ 	/** Persisted rate-limit blocks (auth-broker server seam). */
+ 	get blocks(): BlocksApi {
+-		return this.#backend.blocks;
++		return this.#startup?.wrap("blocks", this.#backend.blocks) ?? this.#backend.blocks;
+ 	}
+ 
+ 	/**
+@@ -192,6 +213,7 @@
+ 	 * policy naming an absent account stays inactive and logs a warning.
+ 	 */
+ 	setAccountPolicies(config: AuthAccountPolicyConfig): void {
++		if (this.#startup) return this.#startup.own(() => this.#backend.setAccountPolicies(config));
+ 		this.#backend.setAccountPolicies(config);
+ 	}
+ 
+@@ -205,13 +227,19 @@
+ 	 * `store` is closed and the current store stays active.
+ 	 */
+ 	replaceStore(store: AuthCredentialStore, options: { sourceLabel?: string } = {}): Promise<void> {
++		this.assertStoreReconfigurationAllowed();
+ 		return this.#backend.replaceStore(store, options);
+ 	}
+ 
+ 	/** Open the SQLite store at `dbPath` and wrap it (standalone use, e.g. the pi-ai CLI). */
+ 	static async create(dbPath: string, options: AuthStorageOptions = {}): Promise<AuthStorage> {
+ 		const store = await SqliteAuthCredentialStore.open(dbPath);
+-		return new AuthStorage(store, options);
++		try {
++			return new AuthStorage(store, options);
++		} catch (error) {
++			if (options.startupEmptyAuth) store.close();
++			throw error;
++		}
+ 	}
+ 
+ 	/**
+@@ -220,7 +248,28 @@
+ 	 * keeps the store open until it has saved the rotated token.
+ 	 */
+ 	close(): void {
++		this.#startup?.abort();
+ 		this.#backend.close();
++	}
++
++	get startupEmptyProfile(): boolean {
++		return this.#startup !== undefined;
++	}
++
++	/** Used before the original settings link opens a replacement broker/store. */
++	assertStoreReconfigurationAllowed(): void {
++		this.#startup?.refuse();
++	}
++
++	/** One-use retirement for this original empty local store, not a general OAuth drain. */
++	async retireStartupEmptyAuth() {
++		const owner = this.#startup,
++			store = this.#startupStore;
++		if (!owner || !store) throw new Error("Empty startup auth owner unavailable");
++		return await owner.retire(() => {
++			this.#backend.close();
++			store.assertStartupClosed();
++		});
+ 	}
+ 
+ 	/**
+@@ -247,8 +296,10 @@
+ 	readonly #policies: AccountPolicies;
+ 	readonly #restrictions: SessionRestrictions = new Map();
+ 	#modules: AuthStorageModules;
+-
+-	constructor(store: AuthCredentialStore, options: AuthStorageOptions) {
++	readonly #startup?: EmptyStartupAuth;
++
++	constructor(store: AuthCredentialStore, options: AuthStorageOptions, startup?: EmptyStartupAuth) {
++		this.#startup = startup;
+ 		this.#options = options;
+ 		this.#overrides = new KeyOverrides(options.configValueResolver);
+ 		this.#policies = new AccountPolicies(options.accountPolicies ?? [], options.defaultReservePct);
+@@ -314,6 +365,7 @@
+ 		const blockHealth = new BlockStoreHealth(sourceLabel);
+ 		const strategies = options.rankingStrategyResolver ?? defaultRankingStrategy;
+ 		const pool = new CredentialPool(store, {
++			rejectNonEmptyStartup: this.#startup ? () => this.#startup!.refuse() : undefined,
+ 			policies,
+ 			blockHealth,
+ 			onReset: provider => {
+diff --git a/packages/ai/src/auth/pool.ts b/packages/ai/src/auth/pool.ts
+--- a/packages/ai/src/auth/pool.ts
++++ b/packages/ai/src/auth/pool.ts
+@@ -81,6 +81,8 @@
+ 
+ /** Dependencies for credential validation, corruption handling, and assignment reset. */
+ export interface CredentialPoolOptions {
++	/** Reject credential material before adopting it in the fixed empty profile. */
++	rejectNonEmptyStartup?: () => never;
+ 	policies: AccountPolicies;
+ 	blockHealth: BlockStoreHealth;
+ 	/** Called whenever a provider's credential set changed locally. */
+@@ -289,6 +291,7 @@
+ 			this.#options.blockHealth.handle(err);
+ 			throw err;
+ 		}
++		if (records.length && this.#options.rejectNonEmptyStartup) this.#options.rejectNonEmptyStartup();
+ 		const grouped = new Map<string, StoredCredential[]>();
+ 		for (const record of records) {
+ 			const list = grouped.get(record.provider) ?? [];
+diff --git a/packages/ai/src/auth/sqlite-credential-store.ts b/packages/ai/src/auth/sqlite-credential-store.ts
+--- a/packages/ai/src/auth/sqlite-credential-store.ts
++++ b/packages/ai/src/auth/sqlite-credential-store.ts
+@@ -2127,6 +2127,33 @@
+ 		return row?.revision ?? 0;
+ 	}
+ 
++	/** Scalar admission check; no credential values leave the original store. */
++	assertEmptyStartup(): void {
++		if (this.#closed) throw new Error("Startup credential store is closed");
++		const statement = this.#db.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM auth_credentials");
++		try {
++			if (statement.get()?.count !== 0) throw new Error("Startup credential store must be empty");
++		} finally {
++			statement.finalize();
++		}
++	}
++
++	/** Verify the original native wrapper and database reject new SQL after close. */
++	assertStartupClosed(): void {
++		if (!this.#closed) throw new Error("Startup credential store did not close");
++		try {
++			const statement = this.#db.query("SELECT 1");
++			try {
++				statement.get();
++			} finally {
++				statement.finalize();
++			}
++		} catch {
++			return;
++		}
++		throw new Error("Startup credential database still accepts SQL");
++	}
++
+ 	close(): void {
+ 		if (this.#closed) return;
+ 		this.#closed = true;
+diff --git a/packages/ai/src/auth/startup-empty.ts b/packages/ai/src/auth/startup-empty.ts
+new file mode 100644
+--- /dev/null
++++ b/packages/ai/src/auth/startup-empty.ts
+@@ -0,0 +1,122 @@
++/** The explicit empty pilot profile, not a general credential/OAuth lifecycle. */
++const metadata: Record<string, readonly string[]> = {
++	oauth: ["identity"],
++	usage: ["observe"],
++	credentials: ["providers", "credentials", "get", "list", "has", "hasOAuth", "hasSubscription", "getOAuth", "all"],
++	keys: ["source", "keyless", "describe"],
++};
++const admitted: Record<string, readonly string[]> = {
++	credentials: ["reload", "onDisabled", "onGeneration"],
++	keys: ["prefetchUsage", "setResolver", "clearConfig", "removeConfig", "removeRuntime"],
++	sessions: ["inherit"],
++	usage: ["removeProvider"],
++};
++export class EmptyStartupAuth {
++	#state: "open" | "closing" | "closed" = "open";
++	#failed = false;
++	#pending = new Set<Promise<void>>();
++	#operations = 0;
++	#rejections = 0;
++	#namespaces = new WeakMap<object, object>();
++	constructor(
++		private readonly checkEmpty: () => void,
++		private readonly checkCache: () => void,
++	) {}
++	refuse(): never {
++		this.#failed = true;
++		throw new Error("Empty startup auth operation or material refused");
++	}
++	abort(): void {
++		if (this.#state !== "closed") {
++			this.#failed = true;
++			this.#state = "closed";
++		}
++	}
++	assertOpen(): void {
++		if (this.#state !== "open" || this.#failed) this.refuse();
++	}
++	own<T>(start: () => T): T {
++		this.assertOpen();
++		this.checkEmpty();
++		if (this.#operations === 4096) this.refuse();
++		this.#operations++;
++		let original: T;
++		try {
++			original = start();
++		} catch (error) {
++			this.#rejections++;
++			throw error;
++		}
++		if (original instanceof Promise) {
++			const completion = Promise.allSettled([original]).then(([outcome]) => {
++				if (outcome.status === "rejected") this.#rejections++;
++				this.#pending.delete(completion);
++			});
++			this.#pending.add(completion);
++		}
++		return original;
++	}
++	wrap<T extends object>(name: string, target: T): T {
++		const previous = this.#namespaces.get(target);
++		if (previous) return previous as T;
++		const methods = new Map<PropertyKey, { original: unknown; wrapped: (...args: unknown[]) => unknown }>();
++		const proxy = new Proxy(target, {
++			get: (receiver, property) => {
++				const value = Reflect.get(receiver, property, receiver);
++				if (typeof value !== "function") return value;
++				const previous = methods.get(property);
++				if (previous?.original === value) return previous.wrapped;
++				const sourceOf = (provider: unknown) => {
++					const method: unknown = Reflect.get(receiver, "source", receiver);
++					if (typeof method !== "function") return this.refuse();
++					return Reflect.apply(method, receiver, [provider, { env: "aliases" }]);
++				};
++				const wrapped = (...args: unknown[]) => {
++					this.checkCache();
++					const key = typeof property === "string" ? property : "";
++					// Source metadata reads do not start auth work and remain available after close.
++					if (metadata[name]?.includes(key)) {
++						if (name === "keys" && typeof args[0] === "string" && sourceOf(args[0]) !== undefined) this.refuse();
++						return Reflect.apply(value, receiver, args);
++					}
++					if (!admitted[name]?.includes(key)) this.refuse();
++					if (
++						name === "keys" &&
++						key === "prefetchUsage" &&
++						(typeof args[0] !== "string" || sourceOf(args[0]) !== undefined)
++					)
++						this.refuse();
++					return this.own(() => Reflect.apply(value, receiver, args));
++				};
++				methods.set(property, { original: value, wrapped });
++				return wrapped;
++			},
++			set: () => this.refuse(),
++			defineProperty: () => this.refuse(),
++			deleteProperty: () => this.refuse(),
++			setPrototypeOf: () => this.refuse(),
++		});
++		this.#namespaces.set(target, proxy);
++		return proxy;
++	}
++	async retire(closeOriginal: () => void) {
++		this.assertOpen();
++		this.#state = "closing";
++		await Promise.resolve();
++		while (this.#pending.size) await Promise.all([...this.#pending]);
++		if (this.#failed || this.#state !== "closing") this.refuse();
++		this.checkEmpty();
++		this.checkCache();
++		closeOriginal();
++		this.#state = "closed";
++		return Object.freeze({
++			empty_auth: true as const,
++			auth_retired: true as const,
++			originals_joined: true as const,
++			callbacks_joined: true as const,
++			store_closed: true as const,
++			operations: this.#operations,
++			rejections: this.#rejections,
++		});
++	}
++}
+diff --git a/packages/ai/src/auth/types.ts b/packages/ai/src/auth/types.ts
+--- a/packages/ai/src/auth/types.ts
++++ b/packages/ai/src/auth/types.ts
+@@ -339,6 +339,8 @@
+ 
+ /** Configuration supplied when constructing credential storage. */
+ export type AuthStorageOptions = {
++	/** Explicit fixed empty-auth startup qualification; ordinary auth is unchanged. */
++	startupEmptyAuth?: boolean;
+ 	usageProviderResolver?: (provider: Provider) => UsageProvider | undefined;
+ 	rankingStrategyResolver?: (provider: Provider) => CredentialRankingStrategy | undefined;
+ 	accountPolicies?: AuthAccountPolicies;
+diff --git a/packages/coding-agent/src/cli/args.ts b/packages/coding-agent/src/cli/args.ts
+--- a/packages/coding-agent/src/cli/args.ts
++++ b/packages/coding-agent/src/cli/args.ts
+@@ -82,6 +82,7 @@
+ 	noTools?: boolean;
+ 	/** Restrict SDK initialization to the explicitly selected tools. */
+ 	restrictTools?: boolean;
++	startupEmptyAuth?: boolean;
+ 	noLsp?: boolean;
+ 	noPty?: boolean;
+ 	hooks?: string[];
+@@ -366,6 +367,8 @@
+ 			result.noSession = true;
+ 		} else if (arg === "--no-tools") {
+ 			result.noTools = true;
++		} else if (arg === "--startup-empty-auth") {
++			result.startupEmptyAuth = true;
+ 		} else if (arg === "--restrict-tools") {
+ 			result.restrictTools = true;
+ 		} else if (arg === "--no-lsp") {
+diff --git a/packages/coding-agent/src/cli/flag-tables.ts b/packages/coding-agent/src/cli/flag-tables.ts
+--- a/packages/coding-agent/src/cli/flag-tables.ts
++++ b/packages/coding-agent/src/cli/flag-tables.ts
+@@ -355,6 +355,7 @@
+ 	"--no-session",
+ 	"--no-tools",
+ 	"--restrict-tools",
++	"--startup-empty-auth",
+ 	"--no-lsp",
+ 	"--no-pty",
+ 	"--hide-thinking",
+diff --git a/packages/coding-agent/src/main.ts b/packages/coding-agent/src/main.ts
+--- a/packages/coding-agent/src/main.ts
++++ b/packages/coding-agent/src/main.ts
+@@ -1852,6 +1852,8 @@
+ 		await logger.time("initTheme:initial", ensureTheme);
+ 
+ 		const parsedArgs = parsed;
++		if (parsedArgs.startupEmptyAuth && !parsedArgs.restrictTools)
++			throw new Error("--startup-empty-auth requires --restrict-tools");
+ 		try {
+ 			await logger.time("applyStartupCwd", applyStartupCwd, parsedArgs);
+ 		} catch (error: unknown) {
+@@ -1980,7 +1982,10 @@
+ 				});
+ 		settingsPromise.catch(() => {});
+ 		const authStoragePromise = logger.time("discoverAuthStorage", async () =>
+-			(deps.discoverAuthStorage ?? discoverAuthStorage)(undefined, { settings: await settingsPromise }),
++			(deps.discoverAuthStorage ?? discoverAuthStorage)(undefined, {
++				settings: await settingsPromise,
++				...(parsedArgs.startupEmptyAuth ? { authStorageOptions: { startupEmptyAuth: true } } : {}),
++			}),
+ 		);
+ 		authStoragePromise.catch(() => {});
+ 		let authStorage: AuthStorage;
+diff --git a/packages/coding-agent/src/sdk.ts b/packages/coding-agent/src/sdk.ts
+--- a/packages/coding-agent/src/sdk.ts
++++ b/packages/coding-agent/src/sdk.ts
+@@ -1040,7 +1040,13 @@
+ let restrictedStarts = 0;
+ let restrictedSealed = false;
+ let restrictedOwner:
+-	| { session: WeakRef<AgentSession>; registry: WeakRef<ModelRegistry>; receipt: SealedRestrictedStartupReceipt }
++	| {
++			session: WeakRef<AgentSession>;
++			registry: WeakRef<ModelRegistry>;
++			auth: WeakRef<AuthStorage>;
++			settingsRetired?: true;
++			receipt: SealedRestrictedStartupReceipt;
++	  }
+ 	| undefined;
+ 
+ /** One-use binding for the fixed CLI's exact manager and registry. */
+@@ -1055,6 +1061,7 @@
+ 		session.isDisposed ||
+ 		session.sessionManager !== sessionManager ||
+ 		owner.registry.deref() !== modelRegistry ||
++		owner.auth.deref() !== owner.registry.deref()?.authStorage ||
+ 		session.memoryEnabled ||
+ 		JSON.stringify(session.getActiveToolNames().slice().sort()) !== JSON.stringify(owner.receipt.tool_names)
+ 	) {
+@@ -1089,6 +1096,7 @@
+ 		registry = owner?.registry.deref();
+ 	if (
+ 		!restrictedSealed ||
++		!owner ||
+ 		restrictedStarts !== 1 ||
+ 		!session ||
+ 		session.isDisposed ||
+@@ -1102,10 +1110,34 @@
+ 	const auth = await link.retire(registry.authStorage);
+ 	if (auth.initial_resolver_joined !== true || auth.chain_joined !== true)
+ 		throw new Error("Restricted auth/settings link did not retire");
+-	return Object.freeze({
++	const receipt = Object.freeze({
+ 		auth_listener_retired: true as const,
+ 		...(await session.settings.retireStartupPersistence()),
+ 	});
++	owner.settingsRetired = true;
++	return receipt;
++}
++
++/** Retire only the exact original auth instance after its original settings link is gone. */
++export async function retireRestrictedStartupAuth(sessionManager: unknown, modelRegistry: unknown) {
++	const owner = restrictedOwner,
++		session = owner?.session.deref(),
++		registry = owner?.registry.deref(),
++		auth = owner?.auth.deref();
++	if (
++		!restrictedSealed ||
++		restrictedStarts !== 1 ||
++		!owner?.settingsRetired ||
++		!session ||
++		session.isDisposed ||
++		session.sessionManager !== sessionManager ||
++		!registry ||
++		registry !== modelRegistry ||
++		!auth ||
++		registry.authStorage !== auth
++	)
++		throw new Error("Restricted auth owner identity or state mismatch");
++	return await auth.retireStartupEmptyAuth();
+ }
+ 
+ /** Result from createAgentSession */
+@@ -2049,6 +2081,7 @@
+ 			restrictedOwner = {
+ 				session: new WeakRef(result.session),
+ 				registry: new WeakRef(options.modelRegistry),
++				auth: new WeakRef(options.authStorage ?? options.modelRegistry.authStorage),
+ 				receipt: Object.freeze({ ...result.startupRestrictions, credential_usage_joined: true }),
+ 			};
+ 	}
+diff --git a/packages/coding-agent/src/session/auth-broker-config.ts b/packages/coding-agent/src/session/auth-broker-config.ts
+--- a/packages/coding-agent/src/session/auth-broker-config.ts
++++ b/packages/coding-agent/src/session/auth-broker-config.ts
+@@ -188,7 +188,11 @@
+ 	const settings = "settings" in scope ? scope.settings : scope;
+ 	if (scope === settings && cliOwner?.bound) throw new Error("CLI auth owner already bound");
+ 	const agentDir = settings.getAgentDir();
+-	const resolveOptions = { agentDir, configValueResolver: resolveConfigValue };
++	const resolveOptions = {
++		agentDir,
++		configValueResolver: resolveConfigValue,
++		requireEmptyAuth: authStorage.startupEmptyProfile,
++	};
+ 	// Snapshot the connection `authStorage` was opened with, before any edit lands.
+ 	const initialBroker = resolveAuthBrokerConfigShared(resolveOptions);
+ 	let activeBroker: Promise<AuthBrokerClientConfig | null> = initialBroker.catch(() => null);
+@@ -205,6 +209,7 @@
+ 	};
+ 
+ 	const applyBroker = async () => {
++		authStorage.assertStoreReconfigurationAllowed();
+ 		const previous = await activeBroker;
+ 		try {
+ 			// `set()` persists on a debounce; the resolver reads config.yml.
+diff --git a/packages/coding-agent/test/startup-empty-auth.test.ts b/packages/coding-agent/test/startup-empty-auth.test.ts
+new file mode 100644
+--- /dev/null
++++ b/packages/coding-agent/test/startup-empty-auth.test.ts
+@@ -0,0 +1,249 @@
++import { afterEach, expect, spyOn, test } from "bun:test";
++import fs from "node:fs";
++import os from "node:os";
++import path from "node:path";
++import { type AuthCredentialStore, AuthStorage, SqliteAuthCredentialStore } from "@oh-my-pi/pi-ai";
++import { resolveAuthBrokerConfig } from "@oh-my-pi/pi-ai/auth-broker/discover";
++import { recordCredentialPin } from "../src/session/credential-pin";
++import { SessionManager } from "../src/session/session-manager";
++const roots: string[] = [];
++afterEach(() => {
++	for (const p of roots.splice(0)) fs.rmSync(p, { recursive: true, force: true });
++});
++async function fixture(owned = true) {
++	const root = fs.mkdtempSync(path.join(os.tmpdir(), "startup-empty-auth-"));
++	roots.push(root);
++	const store = await SqliteAuthCredentialStore.open(path.join(root, "auth.db"));
++	return { root, store, auth: new AuthStorage(store, { startupEmptyAuth: owned }) };
++}
++async function turns() {
++	for (let i = 0; i < 20; i++) await Promise.resolve();
++}
++test("retirement owns the exact original namespace promise and a held callback", async () => {
++	const f = await fixture(),
++		keys = f.auth.keys,
++		proto = Object.getPrototypeOf(keys),
++		original = proto.prefetchUsage,
++		gate = Promise.withResolvers<void>();
++	let captured: Promise<void> | undefined;
++	const spy = spyOn(proto, "prefetchUsage").mockImplementation(function (this: unknown, ...args: unknown[]) {
++		captured = (async () => {
++			await Reflect.apply(original, this, args);
++			await gate.promise;
++		})();
++		return captured;
++	});
++	try {
++		const pending = keys.prefetchUsage("anthropic");
++		expect(pending).toBe(captured!);
++		let done = false;
++		const retirement = f.auth.retireStartupEmptyAuth().then(r => {
++			done = true;
++			return r;
++		});
++		await turns();
++		expect(done).toBe(false);
++		f.store.assertEmptyStartup();
++		expect(() => keys.prefetchUsage("anthropic")).toThrow("refused");
++		// Late operations are rejected, but do not reopen the owner. Use another fixture
++		// below for the successful receipt, since violations invalidate this attempt.
++		gate.resolve();
++		await pending;
++		await expect(retirement).rejects.toThrow("refused");
++	} finally {
++		gate.resolve();
++		spy.mockRestore();
++		f.auth.close();
++	}
++});
++test("a successful held original finishes before the native store closes", async () => {
++	const f = await fixture(),
++		keys = f.auth.keys,
++		proto = Object.getPrototypeOf(keys),
++		original = proto.prefetchUsage,
++		gate = Promise.withResolvers<void>();
++	let captured: Promise<void> | undefined;
++	const spy = spyOn(proto, "prefetchUsage").mockImplementation(function (this: unknown, ...args: unknown[]) {
++		captured = (async () => {
++			await Reflect.apply(original, this, args);
++			await gate.promise;
++		})();
++		return captured;
++	});
++	try {
++		const pending = keys.prefetchUsage("anthropic");
++		expect(pending).toBe(captured!);
++		let done = false;
++		const retirement = f.auth.retireStartupEmptyAuth().then(r => {
++			done = true;
++			return r;
++		});
++		await turns();
++		expect(done).toBe(false);
++		f.store.assertEmptyStartup();
++		gate.resolve();
++		await pending;
++		const receipt = await retirement;
++		expect(receipt).toEqual({
++			empty_auth: true,
++			auth_retired: true,
++			originals_joined: true,
++			callbacks_joined: true,
++			store_closed: true,
++			operations: 1,
++			rejections: 0,
++		});
++		f.store.assertStartupClosed();
++		expect(keys.source("anthropic")).toBeUndefined();
++		expect(() => keys.prefetchUsage("anthropic")).toThrow("refused");
++		await expect(f.auth.retireStartupEmptyAuth()).rejects.toThrow("refused");
++	} finally {
++		gate.resolve();
++		spy.mockRestore();
++		f.auth.close();
++	}
++});
++test("original rejection stays visible, joins and closes the empty native store", async () => {
++	const f = await fixture(),
++		keys = f.auth.keys,
++		proto = Object.getPrototypeOf(keys),
++		failure = Error("synthetic original failure");
++	const spy = spyOn(proto, "prefetchUsage").mockImplementation(() => Promise.reject(failure));
++	try {
++		await expect(keys.prefetchUsage("anthropic")).rejects.toBe(failure);
++		const r = await f.auth.retireStartupEmptyAuth();
++		expect(r.rejections).toBe(1);
++		f.store.assertStartupClosed();
++	} finally {
++		spy.mockRestore();
++		f.auth.close();
++	}
++});
++test("fixed profile rejects material before adopting it, ordinary auth retains it", async () => {
++	const f = await fixture(false);
++	await f.auth.credentials.set("synthetic", { type: "api_key", key: "synthetic-local-only" });
++	expect(() => new AuthStorage(f.store, { startupEmptyAuth: true })).toThrow("must be empty");
++	f.auth.close();
++});
++test("broker exclusion precedes config command and token resolution", async () => {
++	const root = fs.mkdtempSync(path.join(os.tmpdir(), "startup-broker-refusal-"));
++	roots.push(root);
++	fs.writeFileSync(
++		path.join(root, "config.yml"),
++		"auth:\n  broker:\n    url: '!never-run'\n    token: '!never-run'\n",
++	);
++	let calls = 0;
++	await expect(
++		resolveAuthBrokerConfig({
++			agentDir: root,
++			requireEmptyAuth: true,
++			configValueResolver: async () => {
++				calls++;
++				throw Error("must not resolve");
++			},
++		}),
++	).rejects.toThrow("refuses broker");
++	expect(calls).toBe(0);
++});
++test("credential mutation, resolver and usage work are refused before callbacks", async () => {
++	const f = await fixture();
++	let calls = 0;
++	f.auth.keys.setResolver(async () => {
++		calls++;
++		return "synthetic-local-only";
++	});
++	expect(() => f.auth.keys.setConfig("synthetic", "!never-run")).toThrow("refused");
++	expect(() => f.auth.keys.get("synthetic")).toThrow("refused");
++	expect(() => f.auth.usage.reports()).toThrow("refused");
++	expect(() => f.auth.oauth.refresh(0)).toThrow("refused");
++	expect(calls).toBe(0);
++	await expect(f.auth.retireStartupEmptyAuth()).rejects.toThrow("refused");
++	f.auth.close();
++});
++test("unowned auth refuses the new receipt and preserves normal credentials", async () => {
++	const f = await fixture(false);
++	f.auth.keys.setRuntime("synthetic", "synthetic-local-only");
++	expect(await f.auth.keys.get("synthetic")).toBe("synthetic-local-only");
++	await expect(f.auth.retireStartupEmptyAuth()).rejects.toThrow("unavailable");
++	f.auth.close();
++});
++
++test("foreign backend is rejected before an empty-profile wrapper can be created", async () => {
++	const f = await fixture(false);
++	expect(() => new AuthStorage(f.auth as unknown as AuthCredentialStore, { startupEmptyAuth: true })).toThrow(
++		"original local SQLite",
++	);
++	f.auth.close();
++});
++test("ordinary broker resolution remains live outside the empty profile", async () => {
++	const root = fs.mkdtempSync(path.join(os.tmpdir(), "startup-broker-positive-"));
++	roots.push(root);
++	fs.writeFileSync(
++		path.join(root, "config.yml"),
++		"auth:\n  broker:\n    url: '!owned-url'\n    token: '!owned-token'\n",
++	);
++	let calls = 0;
++	const result = await resolveAuthBrokerConfig({
++		agentDir: root,
++		configValueResolver: async value => {
++			calls++;
++			return value.includes("url") ? "http://127.0.0.1:9" : "synthetic-local-only";
++		},
++	});
++	expect(result?.url).toBe("http://127.0.0.1:9");
++	expect(calls).toBe(2);
++});
++
++test("a fresh namespace lookup observes a replaced original method", async () => {
++	const f = await fixture(),
++		keys = f.auth.keys,
++		old = keys.prefetchUsage,
++		proto = Object.getPrototypeOf(keys),
++		real = proto.prefetchUsage,
++		gate = Promise.withResolvers<void>();
++	let captured: Promise<void> | undefined;
++	const spy = spyOn(proto, "prefetchUsage").mockImplementation(function (this: unknown, ...args: unknown[]) {
++		captured = (async () => {
++			await Reflect.apply(real, this, args);
++			await gate.promise;
++		})();
++		return captured;
++	});
++	try {
++		expect(keys.prefetchUsage).not.toBe(old);
++		const p = keys.prefetchUsage("anthropic");
++		expect(p).toBe(captured!);
++		let done = false;
++		const retirement = f.auth.retireStartupEmptyAuth().then(r => {
++			done = true;
++			return r;
++		});
++		await turns();
++		expect(done).toBe(false);
++		gate.resolve();
++		await p;
++		await retirement;
++		f.store.assertStartupClosed();
++	} finally {
++		gate.resolve();
++		spy.mockRestore();
++		f.auth.close();
++	}
++});
++
++test("retired empty auth preserves the native completion consumer without credential IO", async () => {
++	const f = await fixture();
++	await f.auth.keys.prefetchUsage("anthropic");
++	await f.auth.retireStartupEmptyAuth();
++	const manager = SessionManager.inMemory(f.root);
++	f.auth.usage.observe({
++		provider: "anthropic",
++		model: "synthetic-model",
++		usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
++	});
++	recordCredentialPin(f.auth, manager, "synthetic-session", "anthropic");
++	expect(manager.getCredentialPins().size).toBe(0);
++	expect(f.auth.oauth.identity("anthropic", "synthetic-session")).toBeUndefined();
++	f.store.assertStartupClosed();
++	f.auth.close();
++});

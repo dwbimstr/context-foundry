@@ -79,6 +79,15 @@ pub enum ChildMessage {
         operations: u32,
         rejections: u32,
     },
+    AuthRetired {
+        empty_auth: bool,
+        auth_retired: bool,
+        originals_joined: bool,
+        callbacks_joined: bool,
+        store_closed: bool,
+        operations: u32,
+        rejections: u32,
+    },
     Fault {
         code: Fault,
     },
@@ -225,6 +234,26 @@ impl ChannelState {
         {
             return Err(ProtocolFault("startup_settings_unqualified"));
         }
+        if let ChildMessage::AuthRetired {
+            empty_auth,
+            auth_retired,
+            originals_joined,
+            callbacks_joined,
+            store_closed,
+            operations,
+            rejections,
+        } = &h.msg
+            && (!empty_auth
+                || !auth_retired
+                || !originals_joined
+                || !callbacks_joined
+                || !store_closed
+                || *operations == 0
+                || *operations > 4096
+                || rejections > operations)
+        {
+            return Err(ProtocolFault("startup_auth_unqualified"));
+        }
         Ok(Some(Inbound {
             seq: h.seq,
             msg: h.msg,
@@ -296,6 +325,7 @@ struct ObservedOwners {
     restrictions: bool,
     catalog: bool,
     settings: bool,
+    auth: bool,
 }
 impl ObservedOwners {
     fn accept(&mut self, message: &ChildMessage) -> Result<(), ProtocolFault> {
@@ -333,12 +363,18 @@ impl ObservedOwners {
                 }
                 self.settings = true;
             }
+            ChildMessage::AuthRetired { .. } => {
+                if !self.settings || self.auth {
+                    return Err(ProtocolFault("startup_auth_order"));
+                }
+                self.auth = true;
+            }
             ChildMessage::Fault { .. } => return Err(ProtocolFault("startup_child_fault")),
         }
         Ok(())
     }
     fn complete(&self) -> bool {
-        self.warmup && self.restrictions && self.catalog && self.settings
+        self.warmup && self.restrictions && self.catalog && self.settings && self.auth
     }
 }
 
@@ -390,6 +426,9 @@ async fn observe(a: ObservationAdmission) -> Result<ObservationReceipt, CaptureF
                     }
                     ChildMessage::SettingsRetired { .. } => {
                         journal.append("startup_settings_retired",json!({"child_seq":inbound.seq,"settings":inbound.msg}))?;
+                    }
+                    ChildMessage::AuthRetired { .. } => {
+                        journal.append("startup_auth_retired",json!({"child_seq":inbound.seq,"auth":inbound.msg}))?;
                     }
                     ChildMessage::Fault { .. } => return Err(fault(FaultClass::Protocol,"startup_child_fault")),
                     }
@@ -658,6 +697,47 @@ mod tests {
     }
 
     #[test]
+    fn startup_auth_requires_original_joins_and_bounded_source_operations() {
+        let valid = json!({"type":"auth_retired","empty_auth":true,"auth_retired":true,"originals_joined":true,"callbacks_joined":true,"store_closed":true,"operations":1,"rejections":0});
+        for field in [
+            "empty_auth",
+            "auth_retired",
+            "originals_joined",
+            "callbacks_joined",
+            "store_closed",
+        ] {
+            let mut bad = valid.clone();
+            bad[field] = json!(false);
+            let msg = serde_json::from_value::<ChildMessage>(bad).unwrap();
+            assert!(
+                ChannelState::new(identity())
+                    .read(&mut frame(1, msg).as_slice())
+                    .is_err()
+            );
+            let mut missing = valid.clone();
+            missing.as_object_mut().unwrap().remove(field);
+            assert!(serde_json::from_value::<ChildMessage>(missing).is_err());
+        }
+        for (operations, rejections) in [(0, 0), (4097, 0), (1, 2)] {
+            let mut bad = valid.clone();
+            bad["operations"] = json!(operations);
+            bad["rejections"] = json!(rejections);
+            let msg = serde_json::from_value::<ChildMessage>(bad).unwrap();
+            assert!(
+                ChannelState::new(identity())
+                    .read(&mut frame(1, msg).as_slice())
+                    .is_err()
+            );
+        }
+        let msg = serde_json::from_value::<ChildMessage>(valid).unwrap();
+        assert!(
+            ChannelState::new(identity())
+                .read(&mut frame(1, msg).as_slice())
+                .is_ok()
+        );
+    }
+
+    #[test]
     fn startup_owner_order_rejects_duplicates_and_attempts_after_settlement() {
         let warmup = ChildMessage::OwnerSettled {
             owner: Owner::ModelConnectionWarmup,
@@ -685,7 +765,16 @@ mod tests {
             operations: 1,
             rejections: 0,
         };
-        for early in [&warmup, &restrictions, &catalog, &settings] {
+        let auth = ChildMessage::AuthRetired {
+            empty_auth: true,
+            auth_retired: true,
+            originals_joined: true,
+            callbacks_joined: true,
+            store_closed: true,
+            operations: 1,
+            rejections: 0,
+        };
+        for early in [&warmup, &restrictions, &catalog, &settings, &auth] {
             assert!(ObservedOwners::default().accept(early).is_err());
         }
         let mut state = ObservedOwners::default();
@@ -702,8 +791,12 @@ mod tests {
         assert!(state.accept(&settings).is_err());
         state.accept(&catalog).unwrap();
         assert!(!state.complete());
+        assert!(state.accept(&auth).is_err());
         state.accept(&settings).unwrap();
+        assert!(!state.complete());
+        state.accept(&auth).unwrap();
         assert!(state.complete());
+        assert!(state.accept(&auth).is_err());
         assert!(state.accept(&settings).is_err());
         assert!(state.accept(&catalog).is_err());
         assert!(state.accept(&attempt()).is_err());

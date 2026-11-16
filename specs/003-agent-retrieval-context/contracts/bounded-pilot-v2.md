@@ -1436,6 +1436,30 @@ owns actual CLI, mutation, gate, resource and cleanup evidence. The incremental
 [upstream patch](../../../docs/references/omp-startup-settings-retirement.patch)
 retains source/module/test identity and intentional differences.
 
+**Selected fixed empty-auth lifecycle round, 2026-11-16.** After the settings
+round's terminal receipt, use a fresh 90-minute no-spend round with one heavy job,
+20 GiB free-disk floor, 8 GiB sampled individual RSS ceiling and 120-second cleanup
+reserve. Ordinary close may return before OAuth refresh completes; it cannot
+attest retirement. General OAuth/broker drain remains outside the selected empty
+pilot profile. Enforce that profile from construction through a separate explicit
+CLI option requiring restricted startup, preserving ordinary auth behavior.
+Keep the actual SQLite credential store and original supported startup calls;
+refuse stored credentials, brokers, foreign backends and unsupported credential/
+network work before admission. Own original admitted promises and completion
+observers, including callers retaining a namespace reference. Close admission,
+join those originals and close the original store before reporting retirement.
+Preserve bounded metadata reads required by the native model/session interface.
+Use a small auth-specific owner; a general promise hook or background drain loop
+would add broader coordination without enforcing the selected credential boundary.
+Qualify real native initialization/model identity, held originals, failures,
+stored-credential/broker refusal, original-operation identity, late calls and
+counterfactual controls. A quiet trace or empty pending snapshot is insufficient.
+Bind the receipt to the exact sealed SDK session/registry/auth instance and carry
+it through the existing channel/journal with append-failure checks. No general
+OAuth, physical FD-release or complete startup admission claim follows. Other
+owners, complete inventory and durable prefix acknowledgment remain required;
+paid execution and release signing stay gated.
+
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
 and a complete startup-owner inventory: catalog/discovery, credential refresh,

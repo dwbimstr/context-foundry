@@ -41,7 +41,7 @@ function createStartupObserver() {
  });
  return Object.freeze({
   channel,
-  bind(pi: { on(event: string, callback: (event: unknown, ctx: any) => Promise<void>): void }, sealRestricted: (manager: unknown, registry: unknown) => unknown, retireCatalog: (manager: unknown, registry: unknown) => Promise<unknown>, retireSettings: (manager: unknown, registry: unknown) => Promise<unknown>) {
+  bind(pi: { on(event: string, callback: (event: unknown, ctx: any) => Promise<void>): void }, sealRestricted: (manager: unknown, registry: unknown) => unknown, retireCatalog: (manager: unknown, registry: unknown) => Promise<unknown>, retireSettings: (manager: unknown, registry: unknown) => Promise<unknown>, retireAuth: (manager: unknown, registry: unknown) => Promise<unknown>) {
    if (bound || channel.quiet) startupFail(); bound = true;
    pi.on("session_start", async (_event, ctx) => {
     if (channel.quiet) return;
@@ -63,6 +63,11 @@ function createStartupObserver() {
     catch { channel.send({type:"fault",code:"unclassified"}); startupFail(); }
     if (!startupExact(settings,["auth_listener_retired","settings_retired","originals_joined","callbacks_joined","timers_retired","operations","rejections"]) || settings.auth_listener_retired !== true || settings.settings_retired !== true || settings.originals_joined !== true || settings.callbacks_joined !== true || settings.timers_retired !== true || !Number.isInteger(settings.operations) || settings.operations < 1 || settings.operations > 4096 || !Number.isInteger(settings.rejections) || settings.rejections < 0 || settings.rejections > settings.operations) startupFail();
     if (!channel.quiet && !channel.send({type:"settings_retired",...settings})) startupFail();
+    let auth: any;
+    try { auth = await retireAuth(ctx.sessionManager, ctx.modelRegistry); }
+    catch { channel.send({type:"fault",code:"unclassified"}); startupFail(); }
+    if (!startupExact(auth,["empty_auth","auth_retired","originals_joined","callbacks_joined","store_closed","operations","rejections"]) || auth.empty_auth !== true || auth.auth_retired !== true || auth.originals_joined !== true || auth.callbacks_joined !== true || auth.store_closed !== true || !Number.isInteger(auth.operations) || auth.operations < 1 || auth.operations > 4096 || !Number.isInteger(auth.rejections) || auth.rejections < 0 || auth.rejections > auth.operations) startupFail();
+    if (!channel.quiet && !channel.send({type:"auth_retired",...auth})) startupFail();
    });
   },
  });
@@ -76,7 +81,7 @@ if (startupOwner === undefined) {
 export default async function observeStartup(pi: { on(event: string, callback: (event: unknown, ctx: any) => Promise<void>): void }): Promise<void> {
  // Only the late trusted-extension loader resolves host SDK imports. The early
  // preload owns the channel and receives this exact source binding afterward.
- const { sealRestrictedStartup, retireRestrictedStartupCatalog, retireRestrictedStartupSettings } = await import("@oh-my-pi/pi-coding-agent");
- if (typeof sealRestrictedStartup !== "function" || typeof retireRestrictedStartupCatalog !== "function" || typeof retireRestrictedStartupSettings !== "function") startupFail();
- startupOwner!.bind(pi, sealRestrictedStartup, retireRestrictedStartupCatalog, retireRestrictedStartupSettings);
+ const { sealRestrictedStartup, retireRestrictedStartupCatalog, retireRestrictedStartupSettings, retireRestrictedStartupAuth } = await import("@oh-my-pi/pi-coding-agent");
+ if (typeof sealRestrictedStartup !== "function" || typeof retireRestrictedStartupCatalog !== "function" || typeof retireRestrictedStartupSettings !== "function" || typeof retireRestrictedStartupAuth !== "function") startupFail();
+ startupOwner!.bind(pi, sealRestrictedStartup, retireRestrictedStartupCatalog, retireRestrictedStartupSettings, retireRestrictedStartupAuth);
 }
