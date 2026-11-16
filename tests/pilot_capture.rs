@@ -17,6 +17,8 @@
 mod fixture;
 #[path = "pilot_capture/startup.rs"]
 mod startup;
+#[path = "pilot_capture/telemetry.rs"]
+mod telemetry;
 
 use std::path::{Path, PathBuf};
 
@@ -296,6 +298,59 @@ async fn current_host_startup_owners_have_native_controls() {
                 serde_json::to_vec_pretty(&report).unwrap(),
             )
             .unwrap();
+        }
+    }
+    let mut telemetry_reports = Vec::new();
+    for kind in ["telemetry-enabled", "telemetry-owned", "telemetry-disabled"] {
+        let root = base.join(format!("{kind} control with spaces"));
+        let report = startup::control(&omp, &root, &e.workspace, &config, &models, kind).await;
+        assert_owned_private_tree(
+            &root,
+            Some(Path::new(
+                "home/.omp/natives/18.18.1/pi_natives.darwin-arm64.node",
+            )),
+        );
+        assert_eq!(&report["native_model_sha256"], auth_model.as_ref().unwrap());
+        assert_eq!(report["witness"]["globals_stable"], true);
+        if let Some(path) = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT") {
+            let path = PathBuf::from(format!(
+                "{}-telemetry-controls",
+                PathBuf::from(path).display()
+            ));
+            fixture_private_dirs(&path).unwrap();
+            fixture_private_write(
+                path.join(format!("{kind}.json")),
+                serde_json::to_vec_pretty(&report).unwrap(),
+            )
+            .unwrap();
+        }
+        telemetry_reports.push(report);
+    }
+    for (index, report) in telemetry_reports.iter().enumerate() {
+        let enabled = index == 0;
+        assert_eq!(
+            report["witness"]["export_setting"], enabled,
+            "owned telemetry exclusion: {telemetry_reports:?}"
+        );
+        for provider in ["trace", "metric", "log"] {
+            assert_eq!(
+                report["witness"][format!("{provider}_provider_present")],
+                enabled
+            );
+        }
+        let requests = report["otlp"]["requests"].as_array().unwrap();
+        if enabled {
+            for route in ["/v1/traces", "/v1/logs", "/v1/metrics"] {
+                assert!(requests.iter().any(|r| r["path"] == route
+                    && r["marker"] == true
+                    && r["accepted"] == true
+                    && r["chunked"] == true));
+            }
+            assert!(requests.iter().all(|r| r["accepted"] == true));
+            assert!(report["connections"].as_u64().unwrap() >= 1);
+        } else {
+            assert!(requests.is_empty());
+            assert_eq!(report["connections"], 0);
         }
     }
     assert_eq!(

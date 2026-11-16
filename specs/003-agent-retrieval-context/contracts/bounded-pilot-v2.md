@@ -749,6 +749,53 @@ records native baseline/observer, actual-bridge expected red, nine SDK memory
 controls and all current/frozen consumers plus eight gates on `48822e9`.
 V2 remains unfunded/unfrozen; paid runs and signing remain gated.
 
+**Selected fixed-profile telemetry exclusion, 2026-11-15 — implementation pending.**
+The native on/off control now proves the existing `telemetry.otlpExportEnabled`
+setting before initialization. With the same owned OTLP endpoint supplied, enabled
+startup registers real trace, metric and log providers and delivers three synthetic
+markers to an independently instrumented loopback collector. Disabled startup
+registers none and sends nothing. Complete native models match; no prompt, provider
+request or real credential is used. Earlier address/framing/schema controls remain
+retained and are not full three-signal evidence. Late telemetry-module import is
+not the observation seam: the compiled registry omits coding-agent's root catch-all
+exports. Read actual versioned globals; logs use a numeric API selector of 1,
+not the npm version string. The owned collector must handle chunked requests.
+
+Set the existing export flag false in OwnedQualification's private configuration
+before host construction, and require its actual native Settings readback to remain
+false before bridge Ready. Ordinary capture/frozen v1 retain their configuration.
+Reuse the existing launcher, byte/digest owner, registry lookup and settings
+quiescence; no new exporter, startup module, proxy, protocol or runtime worker.
+This excludes registration of the current fixed profile's exporters; it neither
+drains an already active graph nor qualifies telemetry in future admitted profiles.
+
+Extend the real SDK owner control with an owned plain-HTTP OTLP collector using
+the existing Hyper library and bounded bodies. Its sole extra route is its exact
+numeric loopback address and the three OTLP paths under a test-only preload;
+keep provider warm-up refused. Record only route/method, framing, byte count,
+digest and marker presence, never headers or telemetry payloads. Obtain current
+configuration bytes from the actual Host launcher, then compare explicitly enabled,
+unmodified owned and explicitly disabled cases with endpoints held equivalent.
+First require the unmodified owned case to fail exclusion while both exporter
+controls are valid. Retain that executable, normal cleanup and all native rows.
+The green must preserve the complete model and all prior owner/conversation checks,
+pass frozen compatibility, lint and eight gates, then publish reviewed changes and
+prune only verified generated caches, retaining evidence/runnable red and green.
+Use the offline hour, 120-second cleanup reserve, one heavy job, 20 GiB disk floor
+and 8 GiB sampled individual RSS ceiling. Paid runs and signing remain gated.
+
+Source association: oh-my-pi `24439066040e006eb08da7b204f0ac41c79d2de9`,
+`main.ts::initTelemetryExport` before trusted factories,
+`telemetry-export.ts::initTelemetryExport` (blob
+`2b14605ed5ca47c66300fe787ba35b4e89ba03c3`),
+`telemetry-export-otlp.ts::registerProviders` (blob
+`4ab4a333b868fca4ac9d2c24d2a1189566e86831`) and
+`scripts/legacy-pi-virtual-module.ts::BUNDLED_PACKAGES` (blob
+`46e636cfcf05c365e93955b4a08346d161cd8378`). This is not reproducible-build
+proof or complete startup/transport settlement. Credential lifetimes, other owners,
+native timers and durable parent acknowledgment remain open; v2 stays unfunded/
+unfrozen and execution locked.
+
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
 and a complete startup-owner inventory: catalog/discovery, credential refresh,

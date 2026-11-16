@@ -80,6 +80,12 @@ pub(super) async fn control(
     use std::os::unix::process::CommandExt;
     let auth = kind.starts_with("auth-");
     let memory = kind.starts_with("memory-");
+    let telemetry = kind.starts_with("telemetry-");
+    let config = if telemetry {
+        super::telemetry::configuration(config, kind)
+    } else {
+        config.to_vec()
+    };
     let restart = matches!(kind, "auth-restart" | "memory-restart");
     for dir in [
         root.to_path_buf(),
@@ -92,7 +98,7 @@ pub(super) async fn control(
         super::fixture_private_dirs(dir).unwrap();
     }
     for (path, bytes) in [
-        ("agent/config.yml", config),
+        ("agent/config.yml", config.as_slice()),
         ("agent/models.yml", models),
         (
             "bridge/witness.mjs",
@@ -100,6 +106,8 @@ pub(super) async fn control(
                 include_bytes!("auth_witness.mjs").as_slice()
             } else if memory {
                 include_bytes!("memory_witness.mjs").as_slice()
+            } else if telemetry {
+                include_bytes!("telemetry_witness.mjs").as_slice()
             } else {
                 include_bytes!("startup_witness.mjs").as_slice()
             },
@@ -107,12 +115,14 @@ pub(super) async fn control(
     ] {
         super::fixture_private_write(root.join(path), bytes).unwrap();
     }
-    let probe = if kind == "stock" {
-        b"process.chdir(process.env.CF_PILOT_PROBE_WORKSPACE); globalThis.fetch = async () => { throw new Error('CF_QUALIFICATION_STARTUP_REFUSED'); };\n".as_slice()
+    let probe = if telemetry {
+        super::telemetry::preload()
+    } else if kind == "stock" {
+        b"process.chdir(process.env.CF_PILOT_PROBE_WORKSPACE); globalThis.fetch = async () => { throw new Error('CF_QUALIFICATION_STARTUP_REFUSED'); };\n".to_vec()
     } else {
-        host::QUALIFICATION_STARTUP_PROBE
+        host::QUALIFICATION_STARTUP_PROBE.to_vec()
     };
-    super::fixture_private_write(root.join("bridge/startup_probe.ts"), probe).unwrap();
+    super::fixture_private_write(root.join("bridge/startup_probe.ts"), &probe).unwrap();
     if auth {
         super::fixture_private_write(
             root.join("bridge/startup_auth.ts"),
@@ -127,7 +137,12 @@ pub(super) async fn control(
         )
         .unwrap();
     }
-    let mut counter = TcpCounter::new();
+    let mut counter = (!telemetry).then(TcpCounter::new);
+    let mut collector = telemetry.then(super::telemetry::Collector::new);
+    let addr = collector
+        .as_ref()
+        .map(|c| c.addr)
+        .unwrap_or_else(|| counter.as_ref().unwrap().addr);
     let policy = host::sandbox_policy(
         omp,
         root,
@@ -142,7 +157,7 @@ pub(super) async fn control(
         } else {
             format!(
                 "(allow network-outbound (remote ip \"localhost:{}\"))",
-                counter.addr.port()
+                addr.port()
             )
         };
     let mut command = tokio::process::Command::new(host::SANDBOX_EXEC);
@@ -191,7 +206,7 @@ pub(super) async fn control(
         .env("CF_STARTUP_WITNESS_KIND", kind)
         .env(
             "CF_STARTUP_WITNESS_URL",
-            format!("https://{}/owned-startup-witness", counter.addr),
+            format!("https://{addr}/owned-startup-witness"),
         )
         .env("CF_STARTUP_WITNESS_RESULT", root.join("witness.json"))
         .stdin(Stdio::piped())
@@ -199,6 +214,17 @@ pub(super) async fn control(
         .stderr(Stdio::piped())
         .process_group(0)
         .kill_on_drop(true);
+    if telemetry {
+        command
+            .env("CF_OWNED_OTLP_AUTHORITY", addr.to_string())
+            .env("OTEL_EXPORTER_OTLP_ENDPOINT", format!("http://{addr}"))
+            .env("OTEL_TRACES_EXPORTER", "otlp")
+            .env("OTEL_METRICS_EXPORTER", "otlp")
+            .env("OTEL_LOGS_EXPORTER", "otlp")
+            .env("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf")
+            .env("OTEL_BSP_SCHEDULE_DELAY", "500")
+            .env("OTEL_BLRP_SCHEDULE_DELAY", "500");
+    }
     // SAFETY: umask is async-signal-safe and runs only in the child before exec.
     unsafe {
         command.as_std_mut().pre_exec(|| {
@@ -247,7 +273,10 @@ pub(super) async fn control(
                 if !ready || value["success"] != true {
                     return Err("state refused");
                 }
-                tokio::time::sleep_until(started + Duration::from_secs(7)).await;
+                tokio::time::sleep_until(
+                    started + Duration::from_secs(if telemetry { 3 } else { 7 }),
+                )
+                .await;
                 return Ok(value["data"].clone());
             }
         }
@@ -266,7 +295,14 @@ pub(super) async fn control(
             child.wait().await.unwrap()
         }
     };
-    let connections = counter.finish();
+    let otlp = collector
+        .as_mut()
+        .map(|c| c.finish())
+        .unwrap_or(Value::Null);
+    let connections = counter
+        .as_mut()
+        .map(TcpCounter::finish)
+        .unwrap_or_else(|| otlp["connections"].as_u64().unwrap() as usize);
     // SAFETY: signal zero only checks the owned process group after wait/reap.
     let group_gone = unsafe { libc::kill(-pid, 0) } == -1
         && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
@@ -292,13 +328,19 @@ pub(super) async fn control(
         Value::Null
     } else {
         let bytes = std::fs::read(root.join("startup.jsonl")).unwrap();
-        if (auth || memory)
+        if (auth || memory || telemetry)
             && let Some(path) = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT")
         {
             let path = std::path::PathBuf::from(format!(
                 "{}-{}-controls",
                 std::path::PathBuf::from(path).display(),
-                if auth { "auth" } else { "memory" }
+                if auth {
+                    "auth"
+                } else if memory {
+                    "memory"
+                } else {
+                    "telemetry"
+                }
             ));
             super::fixture_private_dirs(&path).unwrap();
             super::fixture_private_write(path.join(format!("{kind}-startup.jsonl")), &bytes)
@@ -309,9 +351,10 @@ pub(super) async fn control(
         trace
     };
     json!({"case":kind,"connections":connections,"witness":witness,
+        "otlp":otlp,"config_sha256":pilot_capture::sha256_hex(&config),
         "auth_sha256":auth.then(|| pilot_capture::sha256_hex(host::QUALIFICATION_STARTUP_AUTH)),
         "memory_sha256":memory.then(|| pilot_capture::sha256_hex(host::QUALIFICATION_STARTUP_MEMORY)),
         "native_model_sha256":pilot_capture::sha256_hex(&serde_json::to_vec(&state["model"]).unwrap()),
-        "probe_sha256":pilot_capture::sha256_hex(probe),"trace":trace,
+        "probe_sha256":pilot_capture::sha256_hex(&probe),"trace":trace,
         "normal_exit":exit.success(),"exit_code":exit.code(),"group_gone":group_gone,"forced":false,"no_prompt":true,"provider_calls":0})
 }
