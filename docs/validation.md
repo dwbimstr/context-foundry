@@ -4,7 +4,8 @@
 
 **The original native watchdog is cancelled before handler entry; complete
 startup admission remains HOLD.** Qualification completed 2026-11-16 on test source
-`b9c7104`; application source remains unchanged. Initial feasibility follows. In pinned OMP18.18.1 / Bun1.4.4, its original 10-second
+`b9c7104`; application source remains unchanged. Initial feasibility follows.
+In pinned OMP18.18.1 / Bun1.4.4, its original 10-second
 handle is pending in the early trusted factory and cancelled once by the
 session-start readback. Holding that factory eleven seconds makes the actual callback emit
 one notice, after which normal cancellation prevents the later notice. The three
@@ -34,7 +35,8 @@ runs/pilot-watchdog-owner-2026-11-15/.
 
 Three completed preflight native-library extractions match the retained master
 byte-for-byte and by digest and have no open/mapped use; only these duplicates are
-removed after preserving every other preflight file. The qualification below uses the stated one-hour resource bounds and two
+removed after preserving every other preflight file. The qualification below uses
+the stated one-hour resource bounds and two
 outer test threads. Existing conversation/settings/usage and frozen evidence are
 reused only with exact unchanged-input checks. Complete startup admission remains
 HOLD; paid runs and release signing remain gated.
@@ -85,6 +87,38 @@ enforcement. Review is in-session. Original credential resolver/settings-sync/
 refresh lifetimes, the discarded warm-up promise, complete transport coverage and
 durable parent acknowledgment remain open. No provider call, model download or
 spend; paid runs and release signing stay gated.
+
+The qualified tests/records through `b963af3` are published to
+experimental, with full type/executable-mode/byte readback of **416 tracked paths**
+from a fresh clone. Main remains `d94b013`; no release signing, tag/release, paid
+request or workflow dispatch. After cache-marker, open-file and system-library
+dependency checks, the new build/MSRV cache falls from **8,442,396,672** to
+**35,524,608 allocated bytes**. **11,755 generated files**
+are removed, retaining one runnable 40-test integration executable; all
+**228 other stage files** keep exact hashes.
+Earlier runnable red/green executables and private masters remain in their existing
+roots. Combined with the three verified duplicate preflight libraries, this stage
+reduces allocation by **8,740,208,640 bytes (8.140 GiB)**. This is du allocation, not inferred
+physical APFS reclamation. Temporary per-case SDK copy retirement is not added to
+that number.
+
+The complete current owner test passes **directly from the retained executable
+without Cargo** after cleanup in **395.363 seconds**.
+It retains the [0,1,2] native notice controls, precise handler-entry snapshots,
+materialized witness digest, both equal model readbacks and every previous owner
+group. The executable's digest/40-test inventory and embedded witness bytes match;
+all application/test source and user-owned untracked bytes remain exact. The
+post-cleanup owner cases retire their own verified SDK copies after reaping.
+This is a fresh owner replay, not a repeated conversation or frozen suite.
+Qualification and final readback remain within the stated shared hour across the
+calendar boundary. Final allocations: target
+**92,450,816**, runs
+**7,561,998,336**, datasets
+**34,715,725,824 bytes**. Evidence, archives,
+models, prepared stores, corpus/oracle/holdout data and native masters remain local.
+Original credential/warm-up lifetimes, full transport coverage and durable parent
+acknowledgment stay open. Paid runs, release signing and release publication remain
+gated.
 
 ## Fixed-profile marketplace update exclusion — 2026-11-15
 

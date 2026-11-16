@@ -561,6 +561,10 @@ and dated paragraphs below are history.
     Three affected gate checks are fresh after the entry refinement; five unchanged
     checks and the unchanged conversation/frozen runtime receipts are reused.
     The watchdog receipt owns that evidence and temporary-library cleanup.
+    Watchdog tests/records through `b963af3` are published with
+    full fresh-clone readback. The new build/MSRV cache is pruned after verified
+    checks, preserving the executable/evidence; the full owner test passes directly
+    without Cargo after cleanup. The watchdog receipt owns retention and reuse scope.
     Native promise hooks cannot observe even the synthetic control on this artifact;
     the V8 hook throws NotImplementedError. Original promise work remains unqualified.
     Next qualify original credential settings/resolver/refresh lifetimes.
