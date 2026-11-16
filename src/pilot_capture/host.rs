@@ -500,7 +500,7 @@ impl Host {
         let config = match spec.catalog {
             CatalogProfile::HostDefault => CONFIG_YML.to_owned(),
             CatalogProfile::OwnedQualification => format!(
-                "{CONFIG_YML}\ndisabledProviders: {}\nmcp:\n  enableProjectConfig: false\n",
+                "{CONFIG_YML}\ndisabledProviders: {}\nmcp:\n  enableProjectConfig: false\n\ntelemetry:\n  otlpExportEnabled: false\n",
                 serde_json::to_string(QUALIFICATION_DISABLED_PROVIDERS)
                     .expect("literal provider inventory")
             ),

@@ -650,6 +650,8 @@ async function onSessionStart(pi: PiApi, ctxValue: unknown): Promise<void> {
 			// Cancellation closes watches/timers; the serialized strict reload also
 			// joins a reload already in flight before the final settings readback.
 			await settings.reloadFromDisk();
+			const { lookup } = await import("@oh-my-pi/pi-coding-agent/config/registry");
+			if (lookup("telemetry.otlpExportEnabled")?.get(settings) !== false) throw new Error("owned telemetry export enabled");
 			if (!ownedMemory) throw new Error("owned memory owner unavailable");
 			await ownedMemory.seal(settings, ctx.modelRegistry);
 			const auth = (ctx.modelRegistry as { authStorage?: { keys?: unknown } } | undefined)?.authStorage;
