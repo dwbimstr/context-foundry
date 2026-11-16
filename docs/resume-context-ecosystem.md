@@ -637,6 +637,11 @@ and dated paragraphs below are history.
     CLI append-failure and independent named-DNS controls. This startup-only
     revision cannot deliver capture Ready. Complete inventory/lifecycle evidence
     and the full prefix acknowledgment/Ready echo remain open; admission stays HOLD.
+    Refusal integration/records are published with full fresh-clone readback after
+    an SSH-clone timeout and HTTPS retry. New Rust and duplicate SDK/dependency
+    caches are pruned; units, channel controls, startup failure cases and the prior
+    source conversation pass from retained executables. Exact source restoration
+    inputs remain; the linked receipt separates pre-cleanup DNS proof from replay.
     Shared-channel code/records are published with full fresh-clone readback.
     Both new build trees are pruned; pilot units, native channel controls and the
     source conversation pass directly from retained binaries afterward. The linked

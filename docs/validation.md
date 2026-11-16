@@ -94,7 +94,41 @@ shared elapsed time is **4711.831 s**; maximum sampled individual RSS is
 **2,237,923,328 bytes**, minimum sampled free disk
 **36,093,038,592 bytes**, within the unchanged 8 GiB/20 GiB limits.
 These are sampled process/disk bounds, not global/GPU quotas. Review is in-session.
-Publication, cache retirement and retained replay are recorded below when finished.
+Code and acceptance records are published through `752cc1c`. The push
+succeeds, then its first fresh SSH clone times out during banner exchange. A live
+ref check confirms the pushed head and unchanged main; the deletion guard refuses
+to run without a completed publication receipt. A read-only HTTPS clone then
+passes full type/mode/byte readback of all **428** tracked files. Zero CI runs are
+observed, including a second check after retained replay. Only ten public code,
+synthetic-test, upstream-patch and existing-record files are included.
+
+Four generated trees are removed after open-file and exact-retention checks:
+Rust build/MSRV, the duplicate SDK/dependency tree and its package cache.
+**373** other files remain exact. Directory allocation falls from
+**5,521,084,416** to **454,057,984 bytes**, a reduction of
+**5,067,026,432 bytes**. Physical APFS reclamation is not inferred.
+The original 10,323-file source master, new compiled host, exact changed/new SDK
+files, notices/lock/package identities, public patch, source manifests and raw
+receipts remain. The retained restoration recipe requires exact manifest verification before any
+separately selected frozen-lockfile install/build. It is not executed after
+cleanup here; dependency installation and model acquisition are not implicit. The unbundled DNS control is **not**
+rerun after dependency cleanup; its prior source-hashed IO proof is retained.
+
+Direct replay without Cargo, the new SDK/dependency tree or build intermediates passes
+all **108** pilot units (**1** ignored), the seven-case native channel test, all
+three actual-CLI startup/HOLD/persistence cases and the existing two-generation
+source conversation. The latter preserves **29** usage and **25** trace mutations.
+Post-replay cleanup verifies **416** other files exactly; no duplicate
+native library needs deletion. All original user files and required datasets,
+models, source/artifact masters and backups remain retained.
+
+Post-cleanup readback completes at **5058.266 s** within the same original
+90-minute round. Target/runs/datasets allocations are **3,641,344 /
+10,837,721,088 / 34,715,725,824 bytes**. Private receipts include
+`publication-fix-failed.json`, `publication-fix.json`, `retained-source.json`,
+`cleanup-build-result.json`, `retained-execution.json` and
+`post-cleanup-readback.json`. The wrap-up remains active; complete startup
+admission, paid runs and signing retain their existing gates.
 
 ## Shared early capture channel qualification — 2026-11-16
 
