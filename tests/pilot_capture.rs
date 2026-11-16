@@ -1108,7 +1108,7 @@ async fn qualify_current_host_history(
                 observed["observed_attempts"]
                     .as_u64()
                     .unwrap()
-                    .saturating_sub(before as u64)
+                    .saturating_sub(before)
             );
             let mut controls = Vec::new();
             let rows = observed["rows"].as_array().unwrap().clone();
