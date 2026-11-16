@@ -67,7 +67,32 @@ Private evidence: `runs/pilot-startup-channel-2026-11-16/`, including
 `qualification-readback.json`, `channel-reset-red-execution.json`, the eight
 `*-committed-execution.json` receipts and exact-input reuse manifest. No provider
 calls, spend, model download or release signing occur. Original user files remain
-exact. Publication, cache retirement and direct replay are recorded below when finished.
+exact. Code and acceptance records are published through `5e74f0e`, with full
+fresh-clone type/mode/byte readback of all **425** tracked files, unchanged main
+and zero CI runs observed for the push (checked again after replay). The nine
+public files contain the shared owner/consumer changes, synthetic tests and existing
+records; private evidence, SDK source, binaries, models and tasks remain local.
+
+After open-file and exact retained-artifact checks, both new Rust build/MSRV trees
+are removed. **239** other evidence files remain byte-exact.
+Directory allocation falls from **3,698,896,896** to
+**217,747,456 bytes**, a reduction of **3,481,149,440 bytes**.
+This is an allocation reduction, not a claim about physical APFS reclamation.
+
+Direct replay without Cargo or build intermediates passes all **105** pilot units
+(**1** ignored), the seven-case channel test and the two-generation source
+conversation, including its **29** usage and **25** trace mutation refusals.
+Post-replay cleanup verifies **273** other files exactly; no duplicate
+native library needs deletion. Both build trees remain absent. All original user
+files, required datasets, models, source/artifact masters and backups are retained.
+
+Post-cleanup readback completes at **2268.036 s**, inside the same 90-minute
+budget. Target/runs/datasets allocations are **3,641,344 /
+10,383,228,928 / 34,715,725,824 bytes**. Private receipts include
+`publication-fix.json`, `cleanup-build-result.json`, `retained-execution.json`
+and `post-cleanup-readback.json` under the same run directory. The requested cache
+cleanup is complete for this slice. Full startup admission, paid runs and release
+signing retain their existing gates.
 
 ## Journal attestation readback and transport census — 2026-11-16
 

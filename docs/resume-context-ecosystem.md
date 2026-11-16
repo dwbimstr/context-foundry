@@ -634,6 +634,10 @@ and dated paragraphs below are history.
     This is the first exchange implementation slice. Source-owned pre-dispatch
     refusal, closed startup messages, complete lifecycle inventory and durable
     acknowledgment remain open; full startup admission stays HOLD.
+    Shared-channel code/records are published with full fresh-clone readback.
+    Both new build trees are pruned; pilot units, native channel controls and the
+    source conversation pass directly from retained binaries afterward. The linked
+    receipt owns allocation, retention, reuse and remaining exchange boundaries.
     Source-profile code/records are published with full fresh-clone readback.
     New build/MSRV caches are pruned; both source consumers pass directly from
     the retained executable after cleanup. The source-profile receipt owns exact
