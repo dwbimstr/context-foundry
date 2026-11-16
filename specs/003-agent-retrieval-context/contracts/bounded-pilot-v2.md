@@ -950,9 +950,9 @@ The [launcher](../../../src/pilot_capture/host.rs) owns the initial setting; the
 This excludes the fixed qualifier's task; it does not drain an active marketplace
 or establish full startup admission.
 
-**Selected native startup watchdog qualification, 2026-11-15 — tests implemented; qualification pending.**
+**Selected native startup watchdog qualification, 2026-11-15 — qualified 2026-11-16.**
 The actual pinned host's original 10,000 ms interval is pending in the early
-trusted factory and its exact handle is cleared before session_start. The callback
+trusted factory and its exact handle is cleared by the initial session-start readback. The callback
 and timer arguments are passed unchanged. Holding that factory for eleven seconds
 lets the actual callback print its startup notice before ordinary cancellation;
 two native state readbacks and normal exit still succeed. Source already stops
@@ -963,7 +963,7 @@ ordinary startup, delayed factory and deliberately suppressed native cancellatio
 for this exact identified handle. The last must keep its real interval pending
 and emit at least a second notice. Require the callback's observed fingerprint,
 initial pending handle, one cancellation attempt, actual cancellation only in the
-healthy cases, session_start snapshots and a second equal native model readback
+healthy cases, snapshots at handler entry before any registry await, and a second equal native model readback
 after a 22-second hold. Keep all existing deadlines; these new cases have their
 own 45-second bound. Parse only the exact paired native notice/log-path format;
 other controls still require empty stderr. No callback is invoked manually or
@@ -998,6 +998,14 @@ work. Do not introduce a generic promise tracker or claim a join. The original
 credential resolver/settings-sync/refresh lifetimes, discarded warm-up promise,
 full transport coverage and durable parent acknowledgment remain open; v2 stays
 unfunded/unfrozen and execution locked.
+
+The [dated watchdog receipt](../../../docs/validation.md#native-startup-watchdog-and-promise-hook-limits--2026-11-15)
+qualifies exact handler entry on `b9c7104` with original [preload observation](../../../tests/pilot_capture/watchdog_probe.ts),
+[SDK witness](../../../tests/pilot_capture/watchdog_witness.mjs) and the native
+consumer. The initial after-await readback and complete eight-gate run stay
+separate; five unaffected checks are reused, with three affected checks fresh.
+The helper also retires only hash/mode/owner-verified generated libraries after
+reaping, preserving all other private output checks. No application source changes.
 
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association

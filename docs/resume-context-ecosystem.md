@@ -2,7 +2,7 @@
 
 ## Current status — 2026-11-06
 
-Updated 2026-11-15. This section owns current status; other documents link here,
+Updated 2026-11-16. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
 - **Measurement.** G2 (388 questions over rust-lang/rust and oh-my-pi, run with
@@ -555,9 +555,12 @@ and dated paragraphs below are history.
     All current/frozen consumers and eight gates pass on `7863a44`;
     the marketplace receipt owns the green and resource-recovery evidence.
     The actual startup watchdog handle is observed pending early and cancelled
-    before session_start, with a native callback positive control. Durable normal,
-    delayed and cancellation-suppressed test qualification is pending
+    at handler entry, with real normal/delayed/cancellation-suppressed controls.
+    Qualification passes on `b9c7104`; application source is unchanged
     ([watchdog receipt](validation.md#native-startup-watchdog-and-promise-hook-limits--2026-11-15)).
+    Three affected gate checks are fresh after the entry refinement; five unchanged
+    checks and the unchanged conversation/frozen runtime receipts are reused.
+    The watchdog receipt owns that evidence and temporary-library cleanup.
     Native promise hooks cannot observe even the synthetic control on this artifact;
     the V8 hook throws NotImplementedError. Original promise work remains unqualified.
     Next qualify original credential settings/resolver/refresh lifetimes.

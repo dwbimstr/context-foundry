@@ -2,10 +2,11 @@
 
 ## Native startup watchdog and promise-hook limits — 2026-11-15
 
-**Native feasibility observes the real watchdog's cancellation; durable test
-qualification is pending.** In pinned OMP18.18.1 / Bun1.4.4, its original 10-second
-handle is pending in the early trusted factory and cancelled once before
-session_start. Holding that factory eleven seconds makes the actual callback emit
+**The original native watchdog is cancelled before handler entry; complete
+startup admission remains HOLD.** Qualification completed 2026-11-16 on test source
+`b9c7104`; application source remains unchanged. Initial feasibility follows. In pinned OMP18.18.1 / Bun1.4.4, its original 10-second
+handle is pending in the early trusted factory and cancelled once by the
+session-start readback. Holding that factory eleven seconds makes the actual callback emit
 one notice, after which normal cancellation prevents the later notice. The three
 native cases return two equal complete models, cross the original warm-up deadline
 and exit normally without a prompt or provider call. Callback and timer arguments
@@ -33,11 +34,57 @@ runs/pilot-watchdog-owner-2026-11-15/.
 
 Three completed preflight native-library extractions match the retained master
 byte-for-byte and by digest and have no open/mapped use; only these duplicates are
-removed after preserving every other preflight file. Fresh full owner controls,
-lint and eight gates are pending, with the stated one-hour resource bounds and two
+removed after preserving every other preflight file. The qualification below uses the stated one-hour resource bounds and two
 outer test threads. Existing conversation/settings/usage and frozen evidence are
 reused only with exact unchanged-input checks. Complete startup admission remains
 HOLD; paid runs and release signing remain gated.
+
+The initial witness on `3bd30be` read its session snapshot after a registry await.
+Its native owner test and all eight gates pass, but that snapshot alone cannot
+prove cancellation at handler entry. Review moved the snapshot before the await,
+bound the actual materialized witness digest to its compiled input, and reran the
+complete owner test on `b9c7104`. The earlier readback remains separate evidence.
+All application/gate source inputs (**138 files**) and every consumer body outside
+the owner test remain byte-identical. No runtime repair, provider policy, codec,
+launch configuration or dependency changes.
+
+The native ordinary/delayed/cancellation-suppressed cases produce **[0,1,2] real
+notices**. The first two actually clear the exact original handle; suppressing only
+that cancellation leaves it pending at handler entry and prints another notice.
+All three exit normally and return the same complete model twice, separated by a
+22-second hold. Thus normal exit alone is not settlement proof. Native callback
+and arguments are unchanged; raw bounded notices and their hashes are retained.
+The current witness is SHA256
+22b301d5d8f4b0cf79ec99f4f63ff4da278af5b3875d2fd6ad0944f6cd273d0f.
+
+The full native owner regression passes in **398.332 seconds**, including
+all previous Agent/raw, credential-prefetch, off-memory, warm-up, logging, telemetry
+and marketplace controls. After each case is reaped, the helper now verifies any
+recoverable SDK library's owner, strict private mode, size and canonical path,
+checks its exact retained-master digest, and removes only that generated copy.
+**38 copies** are retired in the qualified run instead of accumulating across
+serial cases. Private-mode checks for all other output still run. These temporary
+copies are not counted as additional final storage savings.
+
+All eight gates first pass on `3bd30be` in **1236.309 seconds**. After the
+integration-fixture refinement, formatting, pilot Clippy with all targets and the
+actual Rust1.90 pilot check run fresh on `b9c7104` and pass. The other **five**
+checks have unchanged effective inputs: the default feature excludes this macOS
+integration crate, and library-only pilot tests do not include its fixtures.
+Their accepted receipts are reused explicitly. Default totals are **1,319/0/35
+ignored**, pilot units **102/0/1 ignored**; existing assertions/deadlines and
+internal concurrency remain intact, with no new ignore. Conversation/settings/
+usage and frozen **33/0/7** runtime evidence from `7863a44` are reused on exact
+unchanged application, consumer and native-artifact inputs; they were not rerun.
+
+Receipt verification completes in **2887.015 seconds** within
+the shared hour. Maximum sampled individual RSS is
+**2045.906 MiB**; minimum observed free disk
+is **22.358 GiB**. These are samples, not global/GPU
+enforcement. Review is in-session. Original credential resolver/settings-sync/
+refresh lifetimes, the discarded warm-up promise, complete transport coverage and
+durable parent acknowledgment remain open. No provider call, model download or
+spend; paid runs and release signing stay gated.
 
 ## Fixed-profile marketplace update exclusion — 2026-11-15
 
