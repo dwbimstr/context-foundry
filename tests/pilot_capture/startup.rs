@@ -502,9 +502,35 @@ pub(super) async fn control(
     } else {
         Value::Null
     };
+    // Each serial case owns this recoverable extraction. Verify it before
+    // retiring the copy once its only child is reaped, rather than retaining
+    // several GiB of identical libraries until the outer TempDir is dropped.
+    let native_module_cleanup = {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let path = root.join("home/.omp/natives/18.18.1/pi_natives.darwin-arm64.node");
+        match std::fs::symlink_metadata(&path) {
+            Ok(metadata) => {
+                assert!(metadata.is_file() && std::fs::canonicalize(&path).unwrap() == path);
+                assert_eq!(metadata.uid(), unsafe { libc::getuid() });
+                assert_eq!(metadata.permissions().mode() & 0o7777, 0o700);
+                assert_eq!(metadata.len(), 111110320);
+                let digest = pilot_capture::sha256_hex(&std::fs::read(&path).unwrap());
+                assert_eq!(
+                    digest,
+                    "ee0bf26f4e88b0905611f761efcd6e73a0f2e55a9355e293b0251542dc8b900b"
+                );
+                std::fs::remove_file(&path).unwrap();
+                json!({"removed_after_reap":true,"bytes":metadata.len(),"mode":0o700,"sha256":digest})
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => Value::Null,
+            Err(error) => panic!("native extraction metadata: {error}"),
+        }
+    };
     json!({"case":kind,"connections":connections,"witness":witness,
         "otlp":otlp,"logging_io":logging_io,"watchdog_notices":watchdog_notices,"watchdog_second_state":watchdog_initial.is_some(),
         "watchdog_stderr_bytes":watchdog.then_some(stderr.len()),"watchdog_stderr_sha256":watchdog.then(|| pilot_capture::sha256_hex(&stderr)),
+        "watchdog_witness_sha256":watchdog.then(|| pilot_capture::sha256_hex(&std::fs::read(root.join("bridge/witness.mjs")).unwrap())),
+        "native_module_cleanup":native_module_cleanup,
         "config_sha256":pilot_capture::sha256_hex(&config),
         "auth_sha256":auth.then(|| pilot_capture::sha256_hex(host::QUALIFICATION_STARTUP_AUTH)),
         "memory_sha256":memory.then(|| pilot_capture::sha256_hex(host::QUALIFICATION_STARTUP_MEMORY)),

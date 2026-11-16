@@ -8,7 +8,7 @@ export default async function watchdogWitness(pi){
  if(Buffer.byteLength(serialized)>65536)throw new Error('watchdog model cap');
  pi.registerProvider('anthropic',{fetchDynamicModels:async()=>JSON.parse(serialized)});
  pi.on('session_start',async(_event,ctx)=>{
-  await ctx.modelRegistry.awaitInitialBackgroundRefresh();
   state.session=snapshot();
+  await ctx.modelRegistry.awaitInitialBackgroundRefresh();
  });
 }

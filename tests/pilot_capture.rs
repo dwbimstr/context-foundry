@@ -221,6 +221,10 @@ async fn current_host_startup_owners_have_native_controls() {
         assert_eq!(report["connections"], 0);
         assert_eq!(report["watchdog_second_state"], true);
         assert_eq!(
+            report["watchdog_witness_sha256"],
+            pilot_capture::sha256_hex(include_bytes!("pilot_capture/watchdog_witness.mjs"))
+        );
+        assert_eq!(
             report["native_model_sha256"],
             marketplace_reports[0]["native_model_sha256"]
         );
