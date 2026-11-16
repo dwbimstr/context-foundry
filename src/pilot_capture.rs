@@ -977,12 +977,64 @@ impl Journal {
     }
 
     fn digest(&self) -> Result<String, CaptureFault> {
-        let mut file = open_private_file(&self.path, PrivateArtifact::File)
+        use sha2::Digest;
+        use std::io::{BufRead, BufReader};
+        let file = open_private_file(&self.path, PrivateArtifact::File)
             .map_err(|_| persistence("journal_not_private"))?;
-        let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes)
+        let read_metadata = file
+            .metadata()
             .map_err(|_| persistence("journal_unreadable"))?;
-        Ok(sha256_hex(&bytes))
+        let write_metadata = self
+            .file
+            .metadata()
+            .map_err(|_| persistence("journal_unreadable"))?;
+        if read_metadata.dev() != write_metadata.dev()
+            || read_metadata.ino() != write_metadata.ino()
+        {
+            return Err(persistence("journal_identity_mismatch"));
+        }
+        let mismatch = || persistence("journal_history_mismatch");
+        let max_bytes = self
+            .records
+            .checked_mul(MAX_JOURNAL_RECORD_BYTES as u64 + 1)
+            .ok_or_else(mismatch)?;
+        if read_metadata.len() > max_bytes {
+            return Err(mismatch());
+        }
+        let mut reader = BufReader::new(file);
+        let mut digest = sha2::Sha256::new();
+        let mut seen = 0u64;
+        let mut previous = String::new();
+        loop {
+            let mut line = Vec::new();
+            let size = (&mut reader)
+                .take(MAX_JOURNAL_RECORD_BYTES as u64 + 2)
+                .read_until(b'\n', &mut line)
+                .map_err(|_| persistence("journal_unreadable"))?;
+            if size == 0 {
+                break;
+            }
+            seen = seen.checked_add(1).ok_or_else(mismatch)?;
+            if seen > self.records
+                || line.len() > MAX_JOURNAL_RECORD_BYTES + 1
+                || line.last() != Some(&b'\n')
+            {
+                return Err(mismatch());
+            }
+            digest.update(&line);
+            line.pop();
+            let record: Value = serde_json::from_slice(&line).map_err(|_| mismatch())?;
+            if record["seq"].as_u64() != Some(seen)
+                || record["prev"].as_str() != Some(previous.as_str())
+            {
+                return Err(mismatch());
+            }
+            previous = sha256_hex(&line);
+        }
+        if seen != self.records || previous != self.prev {
+            return Err(mismatch());
+        }
+        Ok(format!("{:x}", digest.finalize()))
     }
 }
 
@@ -4631,13 +4683,23 @@ impl Inner {
         };
         // The seal is the journal's terminal record: the handoff verifies
         // every sealed field against it and refuses any later record.
-        self.record(
+        if let Err(fault) = self.record(
             "probe_sealed",
             json!({"message_id": message_id, "counters": self.counters,
                    "attempt_seq": self.attempt_seq, "host_seq": self.host_seq,
                    "paid_started_ns": started, "paid_deadline_ns": deadline,
                    "boot_identity": self.boot_identity, "run_dir": self.run_dir}),
-        )?;
+        ) {
+            self.enter_halt(fault);
+            return Err(self.halt_record_error.unwrap_or(fault));
+        }
+        let journal_sha256 = match self.journal.digest() {
+            Ok(digest) => digest,
+            Err(fault) => {
+                self.enter_halt(fault);
+                return Err(self.halt_record_error.unwrap_or(fault));
+            }
+        };
         let implementation_sha256 = std::env::current_exe()
             .ok()
             .and_then(|p| file_sha256(&p, "implementation_unidentified").ok())
@@ -4651,7 +4713,7 @@ impl Inner {
             implementation_sha256,
             bridge_sha256: sha256_hex(host::BRIDGE_SOURCE),
             run_dir: self.run_dir.clone(),
-            journal_sha256: self.journal.digest()?,
+            journal_sha256,
             journal_records: self.journal.records,
             counters: self.counters,
             paid_started_ns: started,
