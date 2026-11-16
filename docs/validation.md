@@ -1,5 +1,62 @@
 # Validation
 
+## Source-built warm-up caller feasibility — 2026-11-16
+
+**A private source-built caller can await the original initial warm-up before
+session startup; no replacement host pin or complete repair is selected.** This
+is no-provider feasibility for 003 T006's [startup contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission).
+The shipped artifact and a separately built unmodified baseline both enter
+session_start while their original warm-up transport promise is deliberately
+pending. Changing the initial SDK call from `void` to `await` makes the candidate
+wait until the held local refusal is delivered. No promise is substituted or
+manually resolved, and no SDK export or global promise hook is replaced.
+
+All three native controls pass two state readbacks, normal exit and empty stderr.
+Their twelve-second hold starts at process launch; it does not by itself prove
+that a native deadline created later has elapsed. The complete model digest is unchanged at
+`83aac156b7678be8faab3ca2d09fbf4e9773214fc968f1c4a13839dc718317c9`.
+Shipped/baseline/candidate session_start occurs at **1464 / 981 / 5038 ms**;
+the respective held refusal is delivered at **5421 / 4943 / 4991 ms**.
+The test-only Agent refusal holds the existing request for four seconds without
+delegating network IO; the native runs deny network access and send no prompt.
+This diagnoses the initial caller's lifetime, not complete transport coverage.
+
+Source is oh-my-pi `24439066040e006eb08da7b204f0ac41c79d2de9`,
+[`sdk.ts::createAgentSessionScoped`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/sdk.ts#L2356)
+and [`connection-prewarm.ts::prewarmModelConnection`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/ai/src/providers/connection-prewarm.ts#L49).
+The upstream [connection-prewarm tests](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/ai/test/connection-prewarm.test.ts)
+were inspected, not run. A separate private tree verifies **10,320** materialized
+source/assets against Git blobs, including the declared Windows CRLF conversion;
+the original 6,816-file program reference remains exact. Bun **1.4.4** comes from
+the [official release](https://github.com/oven-sh/bun/releases/tag/bun-v1.4.4), with
+download and executable digests retained. Frozen-lock installation uses
+`--ignore-scripts`; the existing hash-verified native addon is reused. Compiler
+inputs, one-line patch, dependency lock and both executables are retained. These
+builds do not reproduce the shipped binary byte for byte. Bun produces local
+linker-generated ad hoc signatures without a team identity; release signing is
+not performed or authorized.
+
+The unchanged [capture consumer](../tests/pilot_capture.rs) refuses the candidate's
+different artifact digest before host launch: **0 passed / 1 failed**, exit 101.
+That refusal is not a green bridge test or a model/conversation qualification.
+No pin assertion is relaxed. The other four SDK warm-up sites and error-exit
+ownership remain unchanged. Full native conversation/usage, complete startup
+inventory, transport/timer coverage and durable parent acknowledgment remain open
+for any future source-built profile; current and frozen profiles retain their pins.
+
+The 45-minute preparation keeps raw mechanical failures and the excluded first
+candidate compile. Its final build binds unchanged before/after SDK digests. A
+cross-process deadline initially used Python3.9's process-relative monotonic clock;
+this is corrected to CLOCK_MONOTONIC without resetting the original start. Earlier
+remaining-time fields are invalid and excluded. Retrospective deadline reconciliation
+puts qualification/readback at **1228.105 seconds**, within the original bound;
+per-command resource receipts remain valid. Maximum sampled individual RSS is
+**3,118,235,648 bytes**, minimum observed free disk **37,884,841,984 bytes**.
+Samples are not global/GPU quotas. Private evidence is
+`runs/pilot-owned-host-feasibility-2026-11-16/`; review is in-session. No Rust product
+change or fresh Rust-gate run is claimed. Paid runs, release signing and T006/v2
+execution remain gated; complete startup admission stays HOLD.
+
 ## Wrap-up gate and cache readback — 2026-11-16
 
 **The requested stateless-host repair and subsequent qualified fixes are already

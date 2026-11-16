@@ -1175,6 +1175,25 @@ qualifies `3f972c9` with the actual bridge Ready red/green, original-owner
 consumers and frozen33/0/7. Four affected checks are fresh; four default-feature
 checks reuse unchanged effective inputs. No complete startup admission is granted.
 
+**Source-built caller feasibility, 2026-11-16 — initial call only, no new pin.**
+The [native comparison](../../../docs/validation.md#source-built-warm-up-caller-feasibility--2026-11-16)
+shows that a source-built SDK can await its original initial warm-up before
+session_start without more global promise hooks. Shipped and source-built
+baselines enter early under the same held-refusal control; the one-call candidate
+waits, with identical complete native model metadata. The current capture consumer
+correctly refuses that different artifact digest before launching it. This is
+feasibility, not a replacement host, complete repair or current-bridge acceptance.
+
+The next no-spend investigation is one bounded caller owner covering all five SDK
+startup warm-up sites and normal/error exits. Preserve original promises and error
+semantics; do not substitute a second invocation, quiet timer or pending-count
+snapshot. A separately bound profile would need source/patch/lock/runtime/native
+addon/binary identity and fresh actual-consumer conversation/usage/owner proof.
+Do not relax the existing host pin or carry native callback/frame fingerprints
+silently to another build. Current/frozen profiles and execution authority remain
+unchanged. Complete transport/timer coverage and durable acknowledgment remain
+required, independently of this caller-join feasibility.
+
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
 and a complete startup-owner inventory: catalog/discovery, credential refresh,

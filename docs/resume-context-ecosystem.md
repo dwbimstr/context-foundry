@@ -606,6 +606,12 @@ and dated paragraphs below are history.
     now pruned; the one still mapped by the IDE is preserved. The earlier rejected
     static-registration candidate is not selected again. Complete startup admission
     remains HOLD and the wrap-up remains active.
+    A [source-built caller comparison](validation.md#source-built-warm-up-caller-feasibility--2026-11-16)
+    now demonstrates an initial warm-up join without another global promise hook.
+    No replacement host pin is selected: the existing capture consumer refuses the
+    different artifact before launch. The next investigation is ownership across
+    all five SDK warm-up sites and success/error exits, followed by a separately
+    bound profile's real consumers. Current/frozen pins and paid/signing gates remain.
     Marketplace repair/records through `467bd45` are published
     with full fresh-clone readback. New build/MSRV cache is pruned after exact and
     open-file checks; runnable red/green and other evidence remain. All five current
