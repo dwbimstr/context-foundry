@@ -1,5 +1,72 @@
 # Validation
 
+## Original native settings-policy chain — 2026-11-16
+
+**The CLI's original reserve-policy continuations are identified and joined on
+`3ac1e4a`; complete startup admission remains HOLD.** This is a test-only
+qualification; application, bridge, launch configuration and dependencies are
+unchanged. A temporary native Promise.then observer retains each original source
+and return at the actual listener's registration frame, with the complete sync
+fingerprint and continuation callback SHA256
+73e10fcea65a780ac7077e5857e780e8442086c285b36d9c75c345e4e634602c.
+It passes the exact receiver, arguments and callback to the original method and
+returns its exact promise. The second native source equals the first native return.
+No second sync handle or AuthStorage is created.
+
+The unchanged control has no continuations or setter calls. Serial change/restore
+produces actual original setter calls with synthetic values **[11,10]**; a two-write
+coalesced burst produces **[12,10]**. Before each join the continuation is registered
+but its new setter call has not run; after awaiting the exact original pair, the
+setter has returned normally and both promises fulfilled. The setter's actual
+receiver is the session's existing AuthStorage, not a substitute. The original
+value and absence of a hard runtime override are restored (`hasRuntimeOverride`
+is false before and after); broader setting-layer identity is not inferred.
+Both exact method descriptors are restored at factory exit. No credential,
+account-policy entry or fulfilled promise value is serialized.
+
+Each case returns the same complete native model twice twelve seconds apart,
+crosses the original warm-up deadline and exits with empty stderr, no prompt and
+zero connections. The materialized native green/no-await comparison passes with
+the original await; removing only that await fails the completion assertion while
+both native model readbacks still complete. Normal exit alone does not establish
+this listener's completion.
+
+The [existing contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission),
+[SDK witness](../tests/pilot_capture/settings_chain_witness.mjs) and
+[native consumer](../tests/pilot_capture.rs) own this boundary. Associated upstream
+24439066040e006eb08da7b204f0ac41c79d2de9 paths are
+session/auth-broker-config.ts::createAuthStorageSettingsSync (blob
+e212c2a0766f5bfc9ce4c843b389431bbc9f7aa8), config/registry.ts::Derived.listen and
+AuthStorage::setAccountPolicies. The relevant settings-live-routing upstream test
+uses a separate sync handle; it is not executed. This consumer observes the
+already registered CLI listener. Source association is not reproducible-build
+proof, and setter-call completion does not establish account-routing efficacy or
+provider economics. Private probes/receipts are under
+runs/pilot-settings-chain-seam-2026-11-16/,
+runs/pilot-settings-chain-pending-2026-11-16/ and
+runs/pilot-settings-chain-owner-2026-11-16/.
+
+The whole current native owner regression passes in **570.760
+seconds including a cold build**. All prior groups remain, with **44** verified
+native-library copies retired after their cases are reaped. Fresh formatting,
+all-target pilot Clippy and actual Rust1.90 all-target pilot check pass. The five
+unchanged effective gates are explicitly reused after exact application, gate,
+consumer-body and artifact checks; no new ignore or relaxed previous deadline.
+Reused default totals remain **1,319/0/35 ignored**, pilot units **102/0/1 ignored**.
+Current conversation/settings/usage and frozen **33/0/7** receipts from `7863a44`
+are unchanged and reused, not rerun.
+
+Qualification/readback takes **881.998 seconds** within
+the stated offline hour with a 120-second cleanup reserve. Maximum sampled
+individual RSS is **1770.922 MiB**;
+minimum observed free disk **29.788 GiB**.
+These samples do not establish a global/GPU quota. Review is in-session. This
+qualifies the reserve-policy branch only: broker/store replacement, polling,
+refresh/close, the discarded warm-up promise, complete timer/transport coverage
+and durable parent acknowledgment remain open. No provider request, model download
+or spend. Paid runs, release signing and release publication remain gated;
+v2/T006 stays unfunded/unfrozen and execution locked.
+
 ## Original native credential-resolver join — 2026-11-16
 
 **The original initial resolver pair is identified and joined on `4682e9e`;

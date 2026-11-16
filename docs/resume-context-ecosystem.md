@@ -576,9 +576,15 @@ and dated paragraphs below are history.
     fresh-clone readback. New build/MSRV and duplicate extraction caches are pruned;
     the complete owner consumer passes directly from its retained executable.
     The resolver receipt owns retention, exact evidence checks and reuse scope.
-    Application source is unchanged. Next qualify the original settings listener's
-    later change chain and refresh/polling/close lifetimes; those remain open,
-    along with the discarded warm-up promise, full coverage and durable acknowledgment.
+    The original listener's reserve-policy branch is now joined on `3ac1e4a`.
+    Baseline/serial/coalesced controls, exact chain identity and actual setter
+    completion pass, including a no-await mutation that fails completion proof.
+    The whole native owner consumer and three fresh affected checks pass; five
+    unchanged gates and other consumer receipts are explicitly reused
+    ([settings-policy receipt](validation.md#original-native-settings-policy-chain--2026-11-16)).
+    Application source is unchanged. Next qualify broker/store replacement and
+    polling/refresh/close lifetimes; those remain open, along with the discarded
+    warm-up promise, full coverage and durable acknowledgment.
     Marketplace repair/records through `467bd45` are published
     with full fresh-clone readback. New build/MSRV cache is pruned after exact and
     open-file checks; runnable red/green and other evidence remain. All five current

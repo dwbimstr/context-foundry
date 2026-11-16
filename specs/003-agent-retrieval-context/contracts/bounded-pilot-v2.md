@@ -1061,7 +1061,7 @@ mutation fails its pending assertion. The whole owner regression and three
 fresh affected gates pass; five unchanged effective checks and other consumer
 receipts are explicitly reused. No application source or startup authority changes.
 
-**Selected original settings-policy chain qualification, 2026-11-16 — acceptance pending.**
+**Selected original settings-policy chain qualification, 2026-11-16 — locally qualified.**
 The original CLI listener keeps a private `pending` promise and extends it with
 `pending.then(...)` for each coalesced settings change. Its initial resolver join
 does not join these later continuations. A native feasibility control captures
@@ -1078,7 +1078,8 @@ Preserve every original receiver, argument, callback and returned promise. Befor
 each join require registration but no new policy effect; await the exact original
 pair and require its completion and actual setter effect. Check serial values
 [11,10], burst values [12,10], and source2 === return1. Restore the original value
-and runtime-override provenance. Restore both exact method descriptors at factory
+and runtime-override flag (`hasRuntimeOverride`); broader layer identity is not claimed.
+Restore both exact method descriptors at factory
 exit and compare the actual setter receiver to the session's existing AuthStorage.
 Record only bounded booleans, counts, fingerprints and these synthetic numeric
 policy values; never serialize credentials, policy entries or fulfilled values.
@@ -1105,6 +1106,14 @@ no-await mutation must fail before-effect/after-join assertions. Publish the pub
 tests/contract/records to experimental, prune only verified new build/extraction
 caches, retain the executable/evidence, and replay after cleanup without Cargo.
 Paid runs and release signing remain gated; v2/T006 stays execution locked.
+
+The [dated settings-policy receipt](../../../docs/validation.md#original-native-settings-policy-chain--2026-11-16)
+qualifies `3ac1e4a` with the original [SDK witness](../../../tests/pilot_capture/settings_chain_witness.mjs)
+and native consumer. Original continuations and setter returns are observed on
+the existing AuthStorage, with serial/coalesced controls and a failing materialized
+no-await mutation. The whole owner regression and three affected checks pass;
+five unchanged effective gates and other consumers are explicitly reused.
+No application source or startup admission authority changes.
 
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
