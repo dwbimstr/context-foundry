@@ -635,7 +635,15 @@ and dated paragraphs below are history.
     [source-owned durable refusal](validation.md#source-owned-durable-startup-refusal--2026-11-16)
     now journals the known SDK warm-up before transport construction, with real
     CLI append-failure and independent named-DNS controls. This startup-only
-    revision cannot deliver capture Ready. Complete inventory/lifecycle evidence
+    revision cannot deliver capture Ready. The subsequent
+    [restricted startup ownership](validation.md#restricted-startup-ownership--2026-11-16)
+    qualifies explicit CLI-to-SDK restrictions, the actual one-use session binding,
+    MCP/memory exclusion and original credential-usage preparation join. Native
+    unrestricted/restricted controls, persistence failures and fresh affected gates
+    pass; the receipt separates exact-input default-gate reuse and the disk-guard stop.
+    Complete catalog/discovery ownership, daemon-presence classification and remaining
+    lifecycle owners still need integration before the full prefix acknowledgment.
+    Complete inventory/lifecycle evidence
     and the full prefix acknowledgment/Ready echo remain open; admission stays HOLD.
     Refusal integration/records are published with full fresh-clone readback after
     an SSH-clone timeout and HTTPS retry. New Rust and duplicate SDK/dependency

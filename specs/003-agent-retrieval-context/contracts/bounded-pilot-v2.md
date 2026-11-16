@@ -1353,7 +1353,7 @@ Ready, counters, permits, preview or generation. No v1 fallback is possible in
 this explicit diagnostic. This integration is a prerequisite to the full prefix/
 acknowledgment exchange below, whose inventory and execution gates remain intact.
 
-**Inventory completion round, 2026-11-16 — in progress.** A new no-spend
+**Inventory completion round, 2026-11-16 — restricted-owner slice implemented; complete inventory remains open.** A new no-spend
 90-minute round starts after the refusal round ends, with one heavy job, the same
 20 GiB disk floor / 8 GiB sampled individual RSS ceiling and 120-second cleanup
 reserve. Complete the source-bound owner inventory before allowing its prefix
@@ -1377,6 +1377,12 @@ the restricted receipt. A second/concurrent SDK creation makes the single-sessio
 binding ambiguous; sealing must refuse and block later starts. Keep identity
 references weak so ordinary SDK use cannot retain a disposed session.
 Missing inventory still records HOLD; no paid, signing or v2 execution gate changes.
+Evidence and qualification limits live in the
+[current handoff](../../../docs/resume-context-ecosystem.md), with dated receipts in
+[validation](../../../docs/validation.md#restricted-startup-ownership--2026-11-16).
+The catalog/discovery waiter is not a complete lifecycle join. Include the awaited
+daemon project-presence registration and its exit cleanup in the remaining owner
+inventory; the initial categories above are not an exhaustive list.
 
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association

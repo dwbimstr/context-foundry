@@ -1,5 +1,110 @@
 # Validation
 
+## Restricted startup ownership — 2026-11-16
+
+**The startup-only host now proves its actual SDK tool/MCP/memory restrictions
+and joins the original credential-usage preparation. Complete startup admission
+remains HOLD.** Implementation `bccd28130d5322186ca8e23ee58c32a0dfbffcdc` follows
+003 T006's [selected startup contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission).
+The current/frozen/legacy-source capture pins and Live/funding locks are unchanged.
+
+Source inspection found that CLI `--tools read,edit` does not set SDK
+`restrictToolNames`. The [upstream MIT patch](references/omp-restricted-startup.patch),
+against `can1357/oh-my-pi@24439066040e006eb08da7b204f0ac41c79d2de9` with the existing
+caller/auth patches, exposes explicit `--restrict-tools` requiring `--tools`.
+Only `StartupObservation` passes it. Ordinary tool selection retains its behavior.
+Restricted initialization uses the existing SDK guards to exclude MCP inheritance
+and memory controllers. Only explicitly trusted extension factories are prepared
+by the CLI and then bound once by the SDK to its actual session; ambient extension
+discovery and the unrelated Warp bridge are excluded in this mode.
+
+`sdk.ts::sealRestrictedStartup` binds the actual live session manager, registry,
+active tools and disabled MCP/memory result. Weak identity references avoid retaining
+disposed sessions. A second/concurrent creation makes the binding ambiguous;
+wrong identities, disposed sessions and repeated seals refuse. Sealing prevents
+later SDK creation. The existing bounded warm-up owner also joins the original
+credential-usage prefetch and its logging observer for restricted sessions,
+including primary-error exits. Rejected/unjoined preparation cannot attest success;
+ordinary startup retains its best-effort behavior.
+
+The separate compiled diagnostic host is pinned at
+`ac27541702668959592bca9d01d7b7db231be244b2d3016964c143497f0ac659`. All **10,326** qualified source/native inputs are
+hashed before and after compilation. The public patch reproduces all seven
+changed/new SDK files exactly. The early observer receives the SDK sealing function
+from the late trusted-extension loader through the public package entrypoint;
+it does not resolve SDK imports from the early preload closure.
+The child sends four closed restriction fields over the existing channel.
+Rust validates/journals them after the original warm-up joins, then records
+`startup_inventory_unqualified`. No Ready, permit, generation or capture seal exists
+in this diagnostic. The normal journal has **seven** records. Real CLI refusal-append
+and terminal-HOLD-append failures retain consumed claims and return persistence
+errors without publishing a successful observation receipt; all three cases pass.
+
+Two actual compiled-CLI controls, same complete model digest
+`83aac156b7678be8faab3ca2d09fbf4e9773214fc968f1c4a13839dc718317c9`,
+send no prompt. Unrestricted startup starts the owned local MCP marker and has
+memory enabled; restricted startup starts neither and reports the exact four-field
+receipt. Wrong manager/registry, duplicate seal and later creation refuse. Both
+exit normally with their owned groups gone. These controls qualify those owners,
+not every startup route or transport.
+
+All **24** SDK tests pass: sixteen caller/preparation tests and eight fresh-child
+CLI-to-real-SDK cases. Two earlier 23-test mutation matrices have teeth: disabling
+the restriction yields **18 passes / 5 failures**; skipping the original usage join
+yields **20 passes / 3 failures**. The disposed-session case was added afterward.
+Focused SDK format/lint and all **4,852** source type checks pass.
+
+Four affected Rust gates are fresh: formatting, pilot all-target Clippy,
+**109/0** pilot units (**1** ignored), and actual Rust 1.90 pilot all-target checking.
+Formatting/Clippy/units began before the local commit; their complete effective
+pilot input hashes match its committed bytes. Four default-feature gates reuse
+**258** exact effective inputs from the linked receipt, not a new full repository
+run. All **five** current-host diagnostics and both legacy-source consumers pass
+fresh; frozen compatibility is **36/0**, with **10** diagnostics ignored. The native
+channel's seven cases pass. Legacy-source conversation preserves two requests,
+**29** usage and **25** trace mutation refusals. No retrieval or economics gain is claimed.
+
+Retained unsuccessful attempts expose real loader boundaries: restricted SDK startup
+intentionally discards CLI-bound instances, so prepared factories must bind in its
+actual context; the early preload cannot resolve late SDK imports; the SDK subpath
+is not a compiled-host package entrypoint. These attempts remain separate from the
+latest pinned artifact's green CLI readbacks. A later build is stopped at
+**20,865,634,304 bytes** free by the unchanged
+20 GiB reserve, exit **-2**, with no owned processes left.
+It has no test result. Other filesystem activity is not attributed to a cause.
+
+Before retrying, exact changed/new source, original source master, lock/package/
+license identities, native master and compiled host are retained. Open-file and
+byte checks then prune the duplicate SDK/dependency tree and package cache,
+reducing directory allocation by **1,582,190,592 bytes** while **326** other files
+remain exact. The original deadline and disk floor are unchanged. Qualified native
+checks then pass without those trees. The restoration recipe reconstructs exactly
+10,326 inputs before any separately bounded dependency install/build; it is retained
+but not executed after pruning in this round.
+
+A complete catalog/discovery owner remains open: `ModelRegistry.awaitBackgroundRefresh`
+joins only its current background-refresh promise, not every configured discovery,
+hydration, policy or initial-refresh owner. Quiet/pending counts cannot replace
+those joins. Auth/settings, telemetry/update and extension owners still need their
+complete source-bound inventory/lifecycle integration. Source inspection also finds
+`main.ts`'s awaited daemon project-presence registration and its exit cleanup;
+it must be classified rather than omitted from the inventory. Full durable prefix
+acknowledgment/Ready echo remains unimplemented. T006 stays unaccepted, v2 remains
+unfunded/unfrozen/execution locked, and the rejected generic API fence remains rejected.
+
+Private evidence is `runs/pilot-startup-inventory-2026-11-16/`, including
+`qualification-readback.json`, `sdk-green-execution.json`, both mutation receipts,
+`native-restriction-readback-qualified.json`, `startup-qualified-evidence/`,
+`resource-prune-result.json` and `retained-source.json`. Qualification readback at
+**4477.712 s** is within the same new 90-minute round.
+Successful qualification phases sample minimum free disk **21,693,460,480 bytes**
+and maximum individual RSS **2,899,263,488 bytes**;
+the stopped attempt is reported separately above. Sampling is not a global/GPU quota.
+Review is in-session. No provider call, spend, model acquisition, release signing,
+workflow dispatch or main/release change occurs.
+
+Publication, final cache retirement and retained replay are recorded below when finished.
+
 ## Source-owned durable startup refusal — 2026-11-16
 
 **The known SDK warm-up now waits for a durable Rust refusal before constructing
