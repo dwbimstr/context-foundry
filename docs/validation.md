@@ -99,8 +99,35 @@ files, required data/models, encrypted backups and other services remain untouch
 
 Complete transport/timer coverage and durable parent startup acknowledgment remain
 open. Complete startup admission, paid runs, release signing and v2/T006 execution
-stay gated; the wrap-up goal remains active. Publication, final cache retirement
-and retained-consumer replay are recorded below once completed.
+stay gated; the wrap-up goal remains active. The fix and records are published through `d3df73d`, with a fresh-clone
+type/mode/byte readback of all **423** tracked files; main is unchanged and the
+read-only workflow query reports zero CI runs for that push. The reviewed eleven
+paths contain public code, synthetic tests, the upstream patch and records;
+private evidence, models, tasks, credentials and binaries remain local.
+
+After publication, the two new build/MSRV cache trees are pruned after open-file
+checks. **10,799** other files remain exact; this second cleanup reduces
+directory allocation from **4,068,376,576** to
+**588,914,688 bytes**, by **3,479,461,888 bytes**.
+Together with the earlier dependency/cache retirement, the measured directory
+allocation reductions total **7,244,767,232 bytes**; physical APFS reclamation is not inferred.
+
+Both actual source consumers then pass directly from the retained executable,
+without Cargo or build intermediates, in **85.395 s**. The full model,
+**29** usage and **25** trace mutations, native auth identity/retirement and cleanup
+assertions still pass. The executable digest is
+`af09563f5e702127281a107330f1d7c99c1cdd5a73ed700f8abaca94e36009f6` and its dynamic libraries are system libraries, not retired
+build files. Source, lock, red/green executables, native master and raw evidence
+remain. No duplicate native-library copy remains to prune after replay;
+**10,832** other retained files remain exact.
+
+Post-cleanup readback completes at **3233.457 s** inside the original hour.
+Target/runs/datasets allocations are **3,641,344 / 9,660,985,344 /
+34,715,725,824 bytes**. The existing IDE-mapped target leaf is preserved;
+required datasets/models and encrypted backups remain unchanged. Private receipts
+are `publication-fix.json`, `cleanup-build-result.json`, `retained-execution.json`
+and `post-cleanup-readback.json` under the same run directory. Complete startup
+admission and the remaining paid/signing gates are unchanged.
 
 ## Source-built bounded startup caller owner — 2026-11-16
 

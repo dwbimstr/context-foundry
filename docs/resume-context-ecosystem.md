@@ -618,7 +618,11 @@ and dated paragraphs below are history.
     stays HOLD. Paid runs, release signing and v2/T006 execution stay gated.
     The linked source-profile receipt owns exact source/build identity, fresh
     versus reused checks, the pre-launch disk stop, publication and cache replay.
-    Earlier caller-owner publication and cleanup remain recorded in their receipt.
+    Source-profile code/records are published with full fresh-clone readback.
+    New build/MSRV caches are pruned; both source consumers pass directly from
+    the retained executable after cleanup. The source-profile receipt owns exact
+    retention and replay scope. Earlier caller-owner publication and cleanup
+    remain recorded in their receipt.
     Marketplace repair/records through `467bd45` are published
     with full fresh-clone readback. New build/MSRV cache is pruned after exact and
     open-file checks; runnable red/green and other evidence remain. All five current
