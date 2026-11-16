@@ -526,6 +526,13 @@ and dated paragraphs below are history.
     pruned after exact/open-file checks; runnable red/green diagnostics and all other
     evidence remain. All five current native diagnostics pass directly after cleanup
     without Cargo; the telemetry receipt owns counts and retention details.
+    The fixed qualifier now awaits the exact known native warm-up timeout before
+    capture Ready and verifies observer removal; it preserves the original timer.
+    The actual capture-Ready red precedes every prompt, and five new SDK controls,
+    all current/frozen consumers and eight gates pass on `13811cf`
+    ([native-deadline receipt](validation.md#known-native-warm-up-deadline-before-capture-ready--2026-11-15)).
+    The discarded prewarm promise, other native timers/owners, full transport
+    coverage and durable acknowledgment remain open; paid runs/signing stay gated.
     The settlement finding/design through `2238253` is published with full fresh-clone
     readback; ten redundant native-library copies are removed after byte/open-file
     checks, preserving all other evidence and the prior retained library.

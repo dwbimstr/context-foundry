@@ -615,7 +615,7 @@ The [dated lifetime receipt](../../../docs/validation.md#native-warm-up-refusal-
 records the actual-bridge red on `91d0c34`, rejected destruction candidate, native
 listener removal, all current/frozen consumers and eight gates on `61a286f`.
 
-**Selected known native warm-up deadline gate, 2026-11-15 — implementation pending.**
+**Selected known native warm-up deadline gate, 2026-11-15 — implemented and locally qualified.**
 The native listener-release probe now binds the original 10,000 ms AbortSignal to
 exactly one refused canonical Anthropic HEAD. Baseline session-start observation
 still sees it pending. An awaiting native control observes its original timeout
@@ -648,6 +648,12 @@ offline hour, 120-second cleanup reserve, one heavy job, 20 GiB disk floor and 8
 sampled individual RSS bound. Retain red/green, publish reviewed public changes,
 and prune only verified new build/duplicate extraction caches. Complete startup
 admission, paid runs, signing and releases stay gated.
+
+The [dated native-deadline receipt](../../../docs/validation.md#known-native-warm-up-deadline-before-capture-ready--2026-11-15) records actual capture-Ready red/green, five native controls, all current/frozen consumers and eight gates on `13811cf`. This joins the identified signal and observer, not the discarded prewarm promise.
+The existing [Rust host](../../../src/pilot_capture/host.rs) materializes the
+[preload](../../../src/pilot_capture/startup_probe.ts) and
+[bridge](../../../src/pilot_capture/bridge.ts); the
+[native Rust consumer](../../../tests/pilot_capture.rs) checks capture Ready.
 
 **Selected project MCP exclusion for the fixed qualifier, 2026-11-15 — implemented and locally qualified.**
 The selected diagnostic profile exposes only read/edit tools and has no admitted

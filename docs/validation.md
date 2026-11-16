@@ -1,5 +1,91 @@
 # Validation
 
+## Known native warm-up deadline before capture Ready — 2026-11-15
+
+**Capture Ready now waits for the identified native warm-up deadline and detached
+observer; complete startup admission stays HOLD.** Source `13811cf` implements the
+selected [owner contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission).
+This adds approximately ten seconds to the fixed owned qualifier's startup. Ordinary
+capture, frozen v1, provider policy and execution authority remain unchanged.
+
+The native preflight binds the exact original SDK abort callback to one refused
+canonical Anthropic HEAD. Its baseline session-start witness sees the original
+10,000 ms signal still pending. An awaiting witness sees the native timeout and
+observer removal. Per-instance observation also passes with the same complete model,
+two native state responses, empty stderr and normal cleanup. RPC Ready arrives
+independently before the awaiting witness; it is therefore not settlement proof.
+The regression observes the actual capture bridge's Ready before any prompt.
+
+On red source `afdfb00`, that Ready precedes deadline settlement. The native test
+fails for that reason, with zero Count/Messages fixture POSTs, normal zero host exit,
+no forced cleanup and a reaped group, in **91.103 seconds** including offline
+compilation. The runnable red executable remains retained. Initial private runner
+setup failures started no host. The first green native run
+passed the owned conversation, then stopped on an exclusive evidence-directory
+creation in the test fixture after its first warm-up control. That failed run is
+retained and excluded from the complete green qualification; source `607389b`
+uses the existing idempotent fixture helper.
+
+The preload preserves the original timeout call's receiver, arguments and exact
+returned signal. It observes listener registration/removal only on those returned
+10-second signal instances. During synchronous delivery of the known request's
+local error, it verifies removal of the exact original SDK callback, then binds its
+own once-only observer through the saved native method. The native TimeoutError
+must occur and that observer must detach. A 12-second helper deadline is cleared
+on every outcome before successful sealing/Ready. The native timer is neither
+cancelled nor replaced, and no throttle-cache priming or successful response is
+introduced. The existing Agent still refuses the original connection before IO.
+
+The same bounded metadata sequence records listener_released, deadline_elapsed
+and sealed with native_timeout_ms=10000. Its strict parser allows at most 25 rows,
+20 attempts and 8192 bytes. Twelve corruptions fail; live-prefix validation checks
+all three ordered states at capture Ready, before the later 12-second hold can
+mask an early Ready. There is no new channel, worker, log, dependency or wire
+revision. The original prewarm promise is discarded by the SDK and is **not joined
+by this repair**. Other native timers and owners remain unqualified.
+
+The primary source association remains oh-my-pi
+`24439066040e006eb08da7b204f0ac41c79d2de9`,
+`providers/connection-prewarm.ts::prewarmModelConnection` (native 10-second signal)
+and `providers/cowork-fetch.ts::sendCoworkRequest` (original abort callback and
+request-error release). Pinned blobs/tests remain with the existing [warm-up
+receipt](#native-warm-up-refusal-lifetime-repair--2026-11-15) and private upstream copies. Source association is not reproducible-build
+proof; native evidence uses the actual artifact-pinned OMP 18.18.1 / Bun 1.4.4.
+
+All **five current-host diagnostics pass** in **299.725 seconds** on `13811cf`.
+The actual owned two-generation tool conversation retains its complete model,
+four owned TLS POSTs, native synthetic usage and 29 usage corruptions. At capture
+Ready the real signal's deadline has elapsed and its observer has been removed.
+Five additional SDK controls produce sealed/refused/refused/sealed/sealed for
+success, missing binding, unfinished signal, repeated seal and repeated known
+request; exit codes are 0/0/0/75/75 with reaped groups and zero TCP-counter
+connections. Missing/unfinished controls inject faults and are not native timing
+proof. The restart is a direct canonical Agent request, not a replay of the SDK's
+throttled prewarm function. Existing stock/guard/raw counts [1,0,1], eight prefetch,
+nine off-memory, three telemetry, MCP exclusion and disk-edit controls remain green.
+Raw sockets remain an explicitly demonstrated bypass. No full transport fence is
+claimed.
+
+Frozen compatibility passes **33/0/7 ignored** in **295.798 seconds**, focused
+lint passes and all **eight gates pass** in **826.490 seconds**, including actual
+Rust **1.90.0**. Default outer totals are **1,319/0/35 ignored** and pilot units are
+**102/0/1 ignored**. No existing test assertion/deadline is relaxed or ignore added;
+the private retained-run command bound includes the five new SDK controls. Review
+is in-session. Synthetic messages/usage establish no real-provider economics.
+
+Evidence is private in `runs/pilot-warmup-deadline-2026-11-15/` and
+`runs/pilot-warmup-owner-2026-11-15/`: native preflight, proper red, source hashes,
+current/frozen consumers, strict trace controls, gates and resource receipts.
+Qualification finishes in **2442.168 seconds** within the offline
+hour, with 120-second cleanup reserve, one heavy job, 20 GiB disk floor and 8 GiB
+sampled individual RSS ceiling. Maximum sampled individual RSS is
+**1945.609 MiB**, minimum observed free disk is
+**33.359 GiB**; these are samples, not hard
+global/GPU memory enforcement. No spend, model download or real credential is used.
+Credential lifetimes, remaining owners, complete timer/transport coverage and
+durable parent acknowledgment remain open. V2 stays unfunded/unfrozen; paid runs,
+signing and release remain gated.
+
 ## Fixed-profile telemetry exporter exclusion — 2026-11-15
 
 **The owned qualifier excludes trace, metric and log exporter registration before
