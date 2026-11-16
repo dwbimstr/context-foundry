@@ -4,13 +4,20 @@ import {getBundledModel} from '@oh-my-pi/pi-catalog/models';
 import {AuthStorage} from '@oh-my-pi/pi-ai';
 import {Settings} from '@oh-my-pi/pi-coding-agent/config/settings';
 import {lookup} from '@oh-my-pi/pi-coding-agent/config/registry';
+import {bindCliAuthStorageSettingsSync} from '@oh-my-pi/pi-coding-agent/session/auth-broker-config';
 import {installOwnedPrefetchGuard} from './startup_auth.ts';
 export default async function sourceAuthWitness(pi){
  const kind=process.env.CF_STARTUP_WITNESS_KIND?.replace('source-retirement-','');
  if(!['active','retire','queued'].includes(kind))throw new Error('source auth control kind');
- const guard=await installOwnedPrefetchGuard(),settings=Settings.instance,setting=lookup('retry.usageReservePct');
+ const settings=Settings.instance,setting=lookup('retry.usageReservePct');
+ let wrong_settings_rejected=false,duplicate_binding_rejected=false;
+ try{bindCliAuthStorageSettingsSync(Object.create(Settings.prototype));}catch(error){wrong_settings_rejected=error?.message==='CLI auth owner unavailable';}
+ if(!wrong_settings_rejected)throw new Error('source auth identity accepted');
+ const guard=await installOwnedPrefetchGuard();
+ try{bindCliAuthStorageSettingsSync(settings);}catch(error){duplicate_binding_rejected=error?.message==='CLI auth owner unavailable';}
+ if(!duplicate_binding_rejected)throw new Error('source auth binding reused');
  if(!setting||settings.getAgentDir()!==process.env.PI_CODING_AGENT_DIR)throw new Error('source auth settings owner');
- const state={kind,policy_calls:[],actual_receiver:false,restored:false},receivers=[];
+ const state={kind,wrong_settings_rejected,duplicate_binding_rejected,policy_calls:[],actual_receiver:false,restored:false},receivers=[];
  const descriptor=Object.getOwnPropertyDescriptor(AuthStorage.prototype,'setAccountPolicies'),original=descriptor.value;
  Object.defineProperty(AuthStorage.prototype,'setAccountPolicies',{...descriptor,value:function(...args){
   if(state.policy_calls.length>=2)throw new Error('source auth policy cap');

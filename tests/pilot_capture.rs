@@ -198,6 +198,8 @@ async fn source_host_auth_lifecycle_has_native_controls() {
         let retired = kind != "source-retirement-active";
         assert_eq!(report["trace"]["auth_retired"], retired);
         let witness = &report["witness"];
+        assert_eq!(witness["wrong_settings_rejected"], true);
+        assert_eq!(witness["duplicate_binding_rejected"], true);
         assert_eq!(witness["actual_receiver"], true);
         assert_eq!(witness["restored"], true);
         assert_eq!(witness["final_value"], 10);

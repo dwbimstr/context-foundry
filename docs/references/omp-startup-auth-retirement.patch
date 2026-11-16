@@ -3,7 +3,6 @@
 # Requires omp-startup-connection-warmups.patch for the selected capture artifact.
 # Owner: 003 T006, bounded-pilot-v2 startup observation/admission contract.
 # Upstream license: https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/LICENSE
-# Copyright (c) 2025-2026 oh-my-pi contributors. MIT notice retained below.
 # MIT License
 # 
 # Copyright (c) 2025 Mario Zechner
