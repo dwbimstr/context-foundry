@@ -1280,6 +1280,28 @@ fresh versus reused gates and the pre-launch resource pause. This qualifies the
 fixed source diagnostic only. Transport/timer completeness and durable startup
 acknowledgment below remain unimplemented admission conditions.
 
+**Selected journal-readback prerequisite, 2026-11-16 — implementation/qualification pending.**
+Before implementing the durable startup acknowledgment, strengthen the existing
+Rust `Journal::digest`, already consumed by probe seals and final receipts. Bind
+readback to the writer's same device/inode and verify complete bounded JSONL,
+sequence, previous-record hashes, record count and the writer's last committed
+record digest. Stream the hash using the existing record bound; add no database,
+log or new replay authority. A valid unchanged journal retains its exact digest.
+On probe-seal append/readback failure, enter the existing monotonic halt and keep
+`probe_sealed` false; no successful receipt or later request may follow. Preserve
+consumed claims and return halt-persistence failures if that append also fails.
+
+Require red/green file corruption, truncation, appended-data and replacement
+controls, including the actual final-receipt consumer and frozen-host probe seal.
+Then run current/frozen consumers, the source conversation and affected Rust
+checks. Reuse default-feature gates only on exact effective inputs. This work uses
+the transport investigation's unchanged one-hour deadline and resource bounds.
+The generic transport fence is not selected: actual named DNS emits a loopback
+packet outside its hooks, and early loader registration does not intercept that
+builtin import. Source-bound transport ownership/inventory and the shared-channel
+closed revision remain required; no full startup admission, paid or signing
+authority is granted by this readback repair.
+
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
 and a complete startup-owner inventory: catalog/discovery, credential refresh,

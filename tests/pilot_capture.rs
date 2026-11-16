@@ -2595,6 +2595,69 @@ fn fixture_receipt(capture: &pilot_capture::SlotCapture, root: &Path) -> Indepen
 /// path, identity join and normal exit; then the clean probe-to-coding
 /// handoff preserves counters and the paid deadline.
 #[test]
+fn probe_seal_refuses_changed_journal_and_stays_halted() {
+    require_host();
+    for mutation in ["changed-prefix", "replacement", "truncation"] {
+        let e = env();
+        let fx = Fixture::start(vec![
+            Reply::Count(2048),
+            fixture::text_reply("msg_readback_probe", "PILOT_TRANSPORT_OK"),
+        ]);
+        let mut session =
+            CaptureSession::open(verification(&e, &fx, Scope::Probe, Default::default())).unwrap();
+        let capture = session
+            .run_slot(slot(&e, policy::PROBE_SLOT, policy::PROBE_INSTRUCTION))
+            .unwrap();
+        assert!(matches!(capture.disposition, Disposition::Completed { .. }));
+        assert_eq!(fx.seen().len(), 2);
+        let path = e.run_dir.join("journal.jsonl");
+        let bytes = std::fs::read(&path).unwrap();
+        match mutation {
+            "changed-prefix" => fixture_private_write(
+                &path,
+                String::from_utf8(bytes)
+                    .unwrap()
+                    .replacen("admitted", "modifiex", 1),
+            )
+            .unwrap(),
+            "replacement" => {
+                std::fs::rename(&path, e.run_dir.join("journal-original.jsonl")).unwrap();
+                fixture_private_write(&path, bytes).unwrap();
+            }
+            "truncation" => {
+                let end = bytes.iter().position(|&b| b == b'\n').unwrap() + 1;
+                fixture_private_write(&path, &bytes[..end]).unwrap();
+            }
+            _ => unreachable!(),
+        }
+        let fault = session.seal_probe(&capture).unwrap_err();
+        assert_eq!(fault.class, FaultClass::Persistence);
+        assert_eq!(session.halted().unwrap().class, FaultClass::Persistence);
+        assert_eq!(
+            session.seal_probe(&capture).unwrap_err().code,
+            "probe_session_halted"
+        );
+        assert_eq!(
+            session
+                .run_slot(slot(&e, policy::PROBE_SLOT, policy::PROBE_INSTRUCTION))
+                .unwrap_err()
+                .code,
+            "session_halted"
+        );
+        assert!(session.finish().is_err());
+        assert_eq!(fx.seen().len(), 2);
+        assert_eq!(
+            CaptureSession::open(verification(&e, &fx, Scope::Probe, Default::default()))
+                .err()
+                .unwrap()
+                .code,
+            "run_dir_claim_failed"
+        );
+        assert_absent_under(&e.run_dir, CANARY);
+    }
+}
+
+#[test]
 fn stage1_probe_end_to_end_and_clean_handoff() {
     require_host();
     let e = env();

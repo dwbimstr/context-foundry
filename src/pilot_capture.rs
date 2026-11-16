@@ -4913,6 +4913,66 @@ mod tests {
     }
 
     #[test]
+    fn journal_readback_validates_committed_chain() {
+        for mutation in ["first-record", "truncate", "foreign-tail", "unterminated"] {
+            let dir = fixture_private_tempdir().unwrap();
+            let path = dir.path().join("journal.jsonl");
+            let mut journal = Journal::create(&path, None).unwrap();
+            journal
+                .append("first", json!({"marker":"original"}))
+                .unwrap();
+            journal.append("last", json!({})).unwrap();
+            let bytes = fs::read(&path).unwrap();
+            assert_eq!(journal.digest().unwrap(), sha256_hex(&bytes));
+            let changed = match mutation {
+                "first-record" => String::from_utf8(bytes.clone())
+                    .unwrap()
+                    .replace("original", "modified")
+                    .into_bytes(),
+                "truncate" => bytes[..bytes.iter().position(|&b| b == b'\n').unwrap() + 1].to_vec(),
+                "foreign-tail" => {
+                    [bytes.as_slice(), b"{\"seq\":3,\"kind\":\"foreign\"}\n"].concat()
+                }
+                "unterminated" => bytes[..bytes.len() - 1].to_vec(),
+                _ => unreachable!(),
+            };
+            fixture_private_write(&path, changed).unwrap();
+            assert!(journal.digest().is_err(), "{mutation} was attested");
+        }
+    }
+
+    #[test]
+    fn journal_readback_binds_the_original_writer_inode() {
+        let dir = fixture_private_tempdir().unwrap();
+        let path = dir.path().join("journal.jsonl");
+        let mut journal = Journal::create(&path, None).unwrap();
+        journal.append("original", json!({})).unwrap();
+        let bytes = fs::read(&path).unwrap();
+        fs::rename(&path, dir.path().join("writer-original.jsonl")).unwrap();
+        fixture_private_write(&path, &bytes).unwrap();
+        assert!(journal.digest().is_err(), "a replacement file was attested");
+    }
+
+    #[test]
+    fn journal_readback_finish_refuses_unowned_history() {
+        let (session, _, _) = checker_owned_receipt_fixture();
+        let directory = session.inner.run_dir.parent().unwrap().to_path_buf();
+        let path = session.inner.journal.path.clone();
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(b"{\"kind\":\"unowned-tail\"}\n")
+            .unwrap();
+        let result = session.finish();
+        fs::remove_dir_all(directory).unwrap();
+        assert!(
+            result.is_err(),
+            "finish published a receipt for unowned history"
+        );
+    }
+
+    #[test]
     fn journal_chains_records_and_detects_tampering() {
         let dir = fixture_private_tempdir().unwrap();
         let path = dir.path().join("j.jsonl");
