@@ -547,9 +547,11 @@ and dated paragraphs below are history.
     identity/join remains unproved. Credential lifetimes, other owners, complete
     transport/timer coverage and durable acknowledgment stay open. Paid runs and
     signing remain gated.
-    Next, qualify initial marketplace autoUpdate=off: associated source defaults to
-    notify and captures it before trusted factories. The source notes are retained;
-    actual marketplace owner exclusion has not been demonstrated.
+    Native marketplace controls now confirm that initial off excludes the task,
+    while the current owned configuration and even a late off override run it.
+    Initial owned configuration and final readback repair are selected; native
+    regression and qualification are pending
+    ([marketplace receipt](validation.md#fixed-profile-marketplace-update-exclusion--2026-11-15)).
     Logging repair/records through `fe46c66` are published with full
     fresh-clone readback. New build/MSRV and five duplicate native libraries are
     pruned after exact/open-file checks; runnable red/green and all other evidence

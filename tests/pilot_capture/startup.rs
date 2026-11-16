@@ -83,8 +83,25 @@ pub(super) async fn control(
     let telemetry = kind.starts_with("telemetry-");
     let warmup = kind.starts_with("warmup-");
     let logging = kind.starts_with("logging-");
+    let marketplace = kind.starts_with("marketplace-");
     let config = if telemetry {
         super::telemetry::configuration(config, kind)
+    } else if marketplace && kind != "marketplace-owned" {
+        let mut config = std::str::from_utf8(config).unwrap().to_owned();
+        let off = "\nmarketplace:\n  autoUpdate: off\n";
+        let notify = "\nmarketplace:\n  autoUpdate: notify\n";
+        let selected = if kind == "marketplace-disabled" {
+            off
+        } else {
+            notify
+        };
+        if config.contains(off) {
+            config = config.replace(off, selected);
+        } else {
+            assert!(!config.contains("marketplace:"));
+            config.push_str(selected);
+        }
+        config.into_bytes()
     } else {
         config.to_vec()
     };
@@ -113,6 +130,8 @@ pub(super) async fn control(
                 include_bytes!("memory_witness.mjs").as_slice()
             } else if logging {
                 include_bytes!("logging_witness.mjs").as_slice()
+            } else if marketplace {
+                include_bytes!("marketplace_witness.mjs").as_slice()
             } else if warmup {
                 include_bytes!("warmup_witness.mjs").as_slice()
             } else if telemetry {
@@ -187,7 +206,7 @@ pub(super) async fn control(
         &[],
     )
     .unwrap()
-        + &if auth || memory || warmup || logging {
+        + &if auth || memory || warmup || logging || marketplace {
             String::new()
         } else {
             format!(
@@ -375,7 +394,7 @@ pub(super) async fn control(
         Value::Null
     } else {
         let bytes = std::fs::read(root.join("startup.jsonl")).unwrap();
-        if (auth || memory || telemetry || warmup || logging)
+        if (auth || memory || telemetry || warmup || logging || marketplace)
             && let Some(path) = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT")
         {
             let path = std::path::PathBuf::from(format!(
@@ -389,6 +408,8 @@ pub(super) async fn control(
                     "warmup"
                 } else if logging {
                     "logging"
+                } else if marketplace {
+                    "marketplace"
                 } else {
                     "telemetry"
                 }

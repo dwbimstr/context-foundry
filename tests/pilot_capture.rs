@@ -130,6 +130,69 @@ async fn current_host_startup_owners_have_native_controls() {
         .await;
     let (_, exit) = host.finish(events, Duration::from_secs(30)).await;
     assert!(ready.is_ok_and(|v| v.is_ok()) && exit.normal && !exit.forced && exit.group_gone);
+    let mut marketplace_reports = Vec::new();
+    for kind in [
+        "marketplace-enabled",
+        "marketplace-owned",
+        "marketplace-disabled",
+        "marketplace-late",
+    ] {
+        let root = base.join(format!("{kind} control with spaces"));
+        let report = startup::control(&omp, &root, &e.workspace, &config, &models, kind).await;
+        assert_owned_private_tree(
+            &root,
+            Some(Path::new(
+                "home/.omp/natives/18.18.1/pi_natives.darwin-arm64.node",
+            )),
+        );
+        if let Some(path) = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT") {
+            let out = PathBuf::from(format!(
+                "{}-marketplace-controls",
+                PathBuf::from(path).display()
+            ));
+            fixture_private_dirs(&out).unwrap();
+            fixture_private_write(
+                out.join(format!("{kind}.json")),
+                serde_json::to_vec_pretty(&report).unwrap(),
+            )
+            .unwrap();
+        }
+        marketplace_reports.push(report);
+    }
+    for (index, report) in marketplace_reports.iter().enumerate() {
+        let enabled = matches!(index, 0 | 3);
+        let witness = &report["witness"];
+        assert_eq!(
+            report["native_model_sha256"],
+            marketplace_reports[0]["native_model_sha256"]
+        );
+        assert_eq!(report["connections"], 0);
+        assert_eq!(witness["methods_restored"], true);
+        assert_eq!(witness["overflow"], false);
+        assert_eq!(
+            witness["factory_setting"],
+            if enabled { "notify" } else { "off" },
+            "initial marketplace exclusion: {marketplace_reports:?}"
+        );
+        assert_eq!(
+            witness["session_setting"],
+            if index == 0 { "notify" } else { "off" }
+        );
+        assert_eq!(
+            witness["original_promises_seen"],
+            if enabled { 2 } else { 0 }
+        );
+        let calls = witness["calls"].as_array().unwrap();
+        assert_eq!(calls.len(), if enabled { 2 } else { 0 });
+        if enabled {
+            assert_eq!(calls[0]["name"], "refreshStaleMarketplaces");
+            assert_eq!(calls[1]["name"], "checkForUpdates");
+            assert!(calls.iter().all(|call| call["native_receiver"] == true
+                && call["arguments"] == 0
+                && call["completed"] == true
+                && call["rejected"] == false));
+        }
+    }
     let mut reports = Vec::new();
     for kind in ["stock", "guarded", "raw"] {
         let root = base.join(format!("{kind} control with spaces"));
@@ -170,6 +233,10 @@ async fn current_host_startup_owners_have_native_controls() {
         reports[2]["native_model_sha256"]
     );
     assert_eq!(reports[0]["connections"], 1);
+    assert_eq!(
+        reports[0]["native_model_sha256"],
+        marketplace_reports[0]["native_model_sha256"]
+    );
     assert_eq!(reports[0]["witness"]["outcome"], "native_error");
     assert_eq!(reports[2]["connections"], 1);
     assert_eq!(reports[2]["witness"]["outcome"], "raw_open");

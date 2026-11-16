@@ -1,5 +1,37 @@
 # Validation
 
+## Fixed-profile marketplace update exclusion — 2026-11-15
+
+**Native feasibility identifies an unadmitted startup task; implementation and
+qualification are pending.** The current owned configuration defaults to notify.
+In the actual pinned OMP 18.18.1 / Bun 1.4.4, it invokes the native
+MarketplaceManager.refreshStaleMarketplaces and checkForUpdates; both original
+promises complete. Explicit notify does the same, while initial off excludes both
+calls. A trusted-factory change from notify to off still runs the task. All four
+controls preserve the complete native model, return two state responses, have
+empty stderr and exit normally without a prompt. Network is denied and spend is
+zero. A controller setup error started no host and remains recorded separately.
+
+The supported test observer wraps actual exported class methods, preserving the
+receiver, arguments and original return promise. The feasibility observer restores
+them after session observation; the committed regression extends observation
+through process exit. These controls do not establish full startup settlement,
+real-provider economics or arbitrary marketplace behavior.
+
+The [selected existing contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission)
+puts off in the owned launcher's initial settings and verifies the real readback
+before Ready. Late bridge mutation is insufficient: associated
+[main.ts](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/main.ts#L2393)
+captures options before trusted factories and schedules the task before RPC
+session_start. Native
+[scheduleMarketplaceAutoUpdate](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/extensibility/plugins/marketplace-auto-update.ts#L12)
+returns before import/construction for off. Verified source blobs, private native
+controls and command/resource receipts remain in
+runs/pilot-marketplace-feasibility-2026-11-15/ and
+runs/pilot-marketplace-owner-2026-11-15/. Source association is not a reproducible
+build. Current/frozen qualification and gates remain pending; complete startup
+admission, paid runs and release signing remain gated.
+
 ## Fixed-profile native logging quiescence — 2026-11-15
 
 **The owned qualifier retires the native buffered logger and joins its queued

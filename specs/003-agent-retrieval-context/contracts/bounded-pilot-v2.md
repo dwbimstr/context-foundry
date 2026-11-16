@@ -894,6 +894,52 @@ pass in a fresh offline-hour continuation with RUST_TEST_THREADS=4. Explicit
 concurrency tests and all assertions/deadlines remain intact. The receipt keeps
 both stages separate and records the forced cleanup of the interrupted run.
 
+**Selected fixed-profile marketplace exclusion, 2026-11-15 — implementation and qualification pending.**
+The actual current SDK runs refreshStaleMarketplaces and checkForUpdates with the
+existing owned configuration, whose initial marketplace.autoUpdate defaults to
+notify. Both original promises complete in the native observation. Explicit off
+excludes those calls with the same complete model, two state readbacks, empty
+stderr and normal exit. A trusted-factory change from notify to off still runs
+both calls: main captures the options before trusted factories. These private
+no-prompt controls are feasibility, not full startup admission.
+
+Set the existing marketplace.autoUpdate to off in the launcher's initial
+OwnedQualification configuration, before main captures it. Verify the actual
+native setting remains off in the bridge's existing final settings readback before
+Ready. Ordinary capture and frozen v1 keep their configuration. Reuse the existing
+launcher, byte/digest binding, registry lookup and settings quiescence. Add no
+startup owner, module, worker, table, transport or protocol. Excluding this fixed
+profile's unadmitted update task does not accept arbitrary marketplace use or
+drain an already running task.
+
+First extend the existing native owner regression using configuration from the
+real Host launcher: explicitly notify, unmodified owned, explicitly off and a late
+trusted-factory off override. A test-only observer wraps the actual exported
+MarketplaceManager methods through process exit, preserves receiver, arguments
+and original promise returns, and checks completion. The old owned case must fail
+exclusion after valid positive/off/late controls, with normal reaped cleanup, no
+prompt and network denied. Retain that runnable red. Then require repaired native
+controls, the complete owned two-generation conversation, all five current
+diagnostics, the complete nonignored frozen suite, focused lint and all eight
+gates. Use one offline hour, 120-second cleanup reserve, one heavy job, four outer
+test threads, a 20 GiB disk floor and 8 GiB sampled individual RSS ceiling; retain
+all failures. Publish reviewed public changes to experimental, then prune only
+verified new build/duplicate extraction caches while retaining evidence and
+runnable red/green. Paid runs and release signing remain gated.
+
+Source association: oh-my-pi 24439066040e006eb08da7b204f0ac41c79d2de9,
+main.ts::marketplaceAutoUpdateOptions/scheduleMarketplaceAutoUpdate (blob
+2bfe0b7230e9b3e30aebfd493a03bffb652cdfb3),
+modes/settings.ts::cfgMarketplaceAutoUpdate (blob
+f70b96cbab595a105f735f61eaac22fe065d6575), and
+extensibility/plugins/marketplace-auto-update.ts::scheduleMarketplaceAutoUpdate
+(blob 4f589ea7aaa636e6970ebdc56d3aa6c9b12388be). The off branch returns before
+dynamic import/construction; the other branch discards its async task. The native
+controls observe actual manager calls, not a quiet network proxy. Source
+association is not reproducible-build proof. Other startup owners, complete
+timer/transport coverage and durable parent acknowledgment remain open; v2 stays
+unfunded/unfrozen and execution locked.
+
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
 and a complete startup-owner inventory: catalog/discovery, credential refresh,
