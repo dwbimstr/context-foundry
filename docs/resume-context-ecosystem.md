@@ -649,6 +649,10 @@ and dated paragraphs below are history.
     cold storage; current continuation pins remain hot and older code can be restored.
     Auth/settings, telemetry/update/logging, trusted-extension and daemon-presence
     owners still need complete integration before the prefix acknowledgment/Ready echo.
+    Discovery retirement code/records are published with full fresh-clone readback.
+    New build/MSRV caches are pruned; units, channel, four startup persistence cases
+    and both legacy-source consumers pass directly afterward. Exact source inputs
+    and current continuation pins remain; older code is losslessly cold-stored.
     The restricted-owner fix/records are published with full fresh-clone readback.
     New build/MSRV trees and duplicate native libraries are pruned; units, channel,
     startup persistence controls and both legacy-source consumers pass directly

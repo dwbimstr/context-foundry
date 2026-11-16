@@ -125,7 +125,34 @@ does not durably classify every transport attempt. The full inventory and prefix
 acknowledgment/Ready echo remain open. T006 stays unaccepted and v2 remains
 unfunded/unfrozen/execution locked; paid runs and signing stay gated.
 
-Publication, final build-cache retirement and retained replay are recorded below when finished.
+Implementation and records are pushed through `e641b45` to
+`experimental/context-ecosystem`. A fresh HTTPS clone verifies all **430** tracked
+files by type/mode/bytes. Zero CI runs are observed and main remains `d94b013`.
+Only eight public code/test/reference/record paths are included; private artifacts,
+corpora, models, tasks, credentials and cold caches remain local.
+
+After publication, open-file and byte-retention checks remove the new build/MSRV
+trees and **0** duplicate native libraries. **822** other files remain
+exact; directory allocation falls from **3,947,876,352** to
+**462,680,064 bytes** at this phase. Unit/integration executables with
+only system dynamic-library dependencies are retained. Direct replay without
+Cargo, SDK dependencies or build intermediates passes all **111** pilot units
+(**1** ignored), seven channel cases, all **four** startup/HOLD/persistence cases and
+both legacy-source consumers. The source conversation retains its **29** usage
+and **25** trace mutation refusals. SDK/source type tests and the five CLI catalog
+controls are pre-prune evidence, not claimed as newly rerun after dependency cleanup.
+
+Post-replay cleanup verifies **875** other files exactly and removes
+**0** newly redundant native libraries. Combined directory-allocation reduction
+across cache cleanup and lossless cold storage is **8,721,285,120 bytes**. Physical
+APFS reclamation is not inferred. Target/runs/datasets allocation is
+**3,641,344 / 8,992,100,352 / 34,715,725,824 bytes**. Required original data,
+backup archives, exact restoration inputs and user files remain.
+Post-cleanup readback finishes at **4697.475 s** within the original round.
+`publication-fix.json`, `cleanup-build-result.json`, `retained-execution.json`,
+`cleanup-replay-result.json` and `post-cleanup-readback.json` retain the receipt.
+The wrap-up remains active. Complete startup inventory/acknowledgment, paid runs
+and release signing retain their stated gates.
 
 ## Restricted startup ownership — 2026-11-16
 
