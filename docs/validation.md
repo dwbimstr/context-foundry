@@ -1,5 +1,35 @@
 # Validation
 
+## Wrap-up gate and cache readback — 2026-11-16
+
+**The requested stateless-host repair and subsequent qualified fixes are already
+published through `bd7c2d1`; this continuation changes records and generated cache
+only.** A live remote readback confirms experimental at that head and main still
+at `d94b013`. Stateless source `98157db` is an ancestor. Runtime, test, script and
+dependency inputs are exact against qualified source `3f972c9`; the existing
+[retirement receipt](#fixed-profile-original-auth-retirement--2026-11-16) remains
+the gate evidence, including its four fresh affected checks and four explicitly
+reused default-feature gates. No build or native acceptance rerun is claimed here.
+The retained executable, all 223 preserved evidence files and original three
+user-owned untracked files pass fresh digest checks. The link check passes.
+
+The original target cleanup retained libraries mapped by live IDE helpers. A fresh
+open-file check now finds only one still mapped. After publication, exact inventory,
+digest and per-file open checks, **26** unused generated libraries are removed:
+**88,809,472 allocated bytes**. Target allocation falls from **92,450,816** to
+**3,641,344 bytes** (about 3.47 MiB). The mapped library and IDE helpers remain
+untouched. Runnable qualification binaries, raw evidence, models, datasets and
+backups remain retained. Directory reductions do not establish physical APFS
+reclamation. Private plan/readback: `runs/wrapup-gate-readback-2026-11-16/`.
+
+The proposed static canonical-registration route is the already rejected native
+candidate recorded [below](#owned-native-settings-quiescence--2026-11-15), not a
+new untested alternative. It is not repeated or landed. Original warm-up promise
+ownership, full transport/timer coverage and durable parent acknowledgment remain
+open; complete startup admission stays HOLD. No provider request, model download
+or spend; paid trials and release signing remain gated. The wrap-up goal remains
+active.
+
 ## Fixed-profile original auth retirement — 2026-11-16
 
 **The owned no-provider qualifier retires the original native auth owner before

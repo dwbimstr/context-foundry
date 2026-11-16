@@ -600,6 +600,12 @@ and dated paragraphs below are history.
     for this fixed profile; physical FD release and general OAuth drain are not
     claimed. Original warm-up promise identity, full transport/timer coverage and
     durable acknowledgment remain open; paid runs and release signing stay gated.
+    A fresh [gate/cache readback](validation.md#wrap-up-gate-and-cache-readback--2026-11-16)
+    confirms the stateless repair and qualified fixes are already published, with
+    unchanged acceptance inputs and retained evidence. Unused target libraries are
+    now pruned; the one still mapped by the IDE is preserved. The earlier rejected
+    static-registration candidate is not selected again. Complete startup admission
+    remains HOLD and the wrap-up remains active.
     Marketplace repair/records through `467bd45` are published
     with full fresh-clone readback. New build/MSRV cache is pruned after exact and
     open-file checks; runnable red/green and other evidence remain. All five current
