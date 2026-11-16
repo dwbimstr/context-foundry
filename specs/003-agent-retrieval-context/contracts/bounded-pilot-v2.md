@@ -1061,6 +1061,51 @@ mutation fails its pending assertion. The whole owner regression and three
 fresh affected gates pass; five unchanged effective checks and other consumer
 receipts are explicitly reused. No application source or startup authority changes.
 
+**Selected original settings-policy chain qualification, 2026-11-16 — acceptance pending.**
+The original CLI listener keeps a private `pending` promise and extends it with
+`pending.then(...)` for each coalesced settings change. Its initial resolver join
+does not join these later continuations. A native feasibility control captures
+the exact source and return, observes the real reserve-policy effect on the
+existing AuthStorage and confirms that the second source is the first return.
+Select bounded test-only controls in the existing owner regression: unchanged
+baseline, serial change/restore, and a two-write coalesced burst followed by restore.
+Do not invoke another settings sync or construct another AuthStorage.
+
+Bind the full native sync fingerprint and original continuation callback
+73e10fcea65a780ac7077e5857e780e8442086c285b36d9c75c345e4e634602c,
+plus its native registration frame. Retain at most two source/return pairs.
+Preserve every original receiver, argument, callback and returned promise. Before
+each join require registration but no new policy effect; await the exact original
+pair and require its completion and actual setter effect. Check serial values
+[11,10], burst values [12,10], and source2 === return1. Restore the original value
+and runtime-override provenance. Restore both exact method descriptors at factory
+exit and compare the actual setter receiver to the session's existing AuthStorage.
+Record only bounded booleans, counts, fingerprints and these synthetic numeric
+policy values; never serialize credentials, policy entries or fulfilled values.
+Require two equal complete native model readbacks twelve seconds apart, empty
+stderr, no prompt and zero connections under the fixed network-denied profile.
+The new cases use 45 seconds; other deadlines and assertions remain unchanged.
+
+Association is upstream 24439066040e006eb08da7b204f0ac41c79d2de9,
+`session/auth-broker-config.ts::createAuthStorageSettingsSync` (blob
+e212c2a0766f5bfc9ce4c843b389431bbc9f7aa8), `config/registry.ts::Derived.listen`
+and `AuthStorage::setAccountPolicies`. Relevant upstream
+`test/settings-live-routing.test.ts` exercises policy changes with a separate
+sync handle. It is not executed here; this consumer observes the CLI's already
+registered listener instead. Source association is not reproducible-build proof.
+This qualifies the reserve-policy branch only. Broker/store replacement, polling,
+refresh/close, complete startup/transport coverage and durable acknowledgment stay
+open; no runtime hook or product admission authority is added.
+
+Use the same offline hour, 120-second cleanup reserve, one heavy job, 20 GiB disk
+floor and 8 GiB sampled individual RSS ceiling. Run the whole native owner consumer
+and three affected gates fresh; reuse five unchanged effective gates and other
+consumer receipts only after exact input/body/artifact checks. A materialized
+no-await mutation must fail before-effect/after-join assertions. Publish the public
+tests/contract/records to experimental, prune only verified new build/extraction
+caches, retain the executable/evidence, and replay after cleanup without Cargo.
+Paid runs and release signing remain gated; v2/T006 stays execution locked.
+
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
 and a complete startup-owner inventory: catalog/discovery, credential refresh,

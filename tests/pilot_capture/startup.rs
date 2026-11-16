@@ -86,6 +86,7 @@ pub(super) async fn control(
     let marketplace = kind.starts_with("marketplace-");
     let watchdog = kind.starts_with("watchdog-");
     let resolver = kind.starts_with("resolver-");
+    let settings_chain = kind.starts_with("settings-chain-");
     let config = if telemetry {
         super::telemetry::configuration(config, kind)
     } else if marketplace && kind != "marketplace-owned" {
@@ -138,6 +139,8 @@ pub(super) async fn control(
                 include_bytes!("watchdog_witness.mjs").as_slice()
             } else if resolver {
                 include_bytes!("resolver_witness.mjs").as_slice()
+            } else if settings_chain {
+                include_bytes!("settings_chain_witness.mjs").as_slice()
             } else if warmup {
                 include_bytes!("warmup_witness.mjs").as_slice()
             } else if telemetry {
@@ -220,7 +223,15 @@ pub(super) async fn control(
         &[],
     )
     .unwrap()
-        + &if auth || memory || warmup || logging || marketplace || watchdog || resolver {
+        + &if auth
+            || memory
+            || warmup
+            || logging
+            || marketplace
+            || watchdog
+            || resolver
+            || settings_chain
+        {
             String::new()
         } else {
             format!(
@@ -311,8 +322,12 @@ pub(super) async fn control(
     let mut lines = BufReader::new(child.stdout.take().unwrap().take(1024 * 1024 + 1)).lines();
     let started = tokio::time::Instant::now();
     let mut watchdog_initial = None;
-    let mut resolver_initial = None;
-    let state_timeout = Duration::from_secs(if watchdog || resolver { 45 } else { 20 });
+    let mut short_initial = None;
+    let state_timeout = Duration::from_secs(if watchdog || resolver || settings_chain {
+        45
+    } else {
+        20
+    });
     let captured = tokio::time::timeout(state_timeout, async {
         let mut ready = false;
         let mut total = 0;
@@ -356,8 +371,8 @@ pub(super) async fn control(
                         .map_err(|_| "RPC write")?;
                     continue;
                 }
-                if resolver {
-                    resolver_initial = Some(value["data"].clone());
+                if resolver || settings_chain {
+                    short_initial = Some(value["data"].clone());
                     tokio::time::sleep(Duration::from_secs(12)).await;
                     child
                         .stdin
@@ -395,12 +410,15 @@ pub(super) async fn control(
                 }
                 return Ok(value["data"].clone());
             }
-            if resolver && value["type"] == "response" && value["id"] == "resolver-after" {
+            if (resolver || settings_chain)
+                && value["type"] == "response"
+                && value["id"] == "resolver-after"
+            {
                 if value["success"] != true
-                    || resolver_initial.as_ref().map(|state| &state["model"])
+                    || short_initial.as_ref().map(|state| &state["model"])
                         != Some(&value["data"]["model"])
                 {
-                    return Err("resolver state changed");
+                    return Err("owner state changed");
                 }
                 return Ok(value["data"].clone());
             }
@@ -481,7 +499,15 @@ pub(super) async fn control(
         Value::Null
     } else {
         let bytes = std::fs::read(root.join("startup.jsonl")).unwrap();
-        if (auth || memory || telemetry || warmup || logging || marketplace || watchdog || resolver)
+        if (auth
+            || memory
+            || telemetry
+            || warmup
+            || logging
+            || marketplace
+            || watchdog
+            || resolver
+            || settings_chain)
             && let Some(path) = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT")
         {
             let path = std::path::PathBuf::from(format!(
@@ -501,6 +527,8 @@ pub(super) async fn control(
                     "watchdog"
                 } else if resolver {
                     "resolver"
+                } else if settings_chain {
+                    "settings-chain"
                 } else {
                     "telemetry"
                 }
@@ -561,8 +589,10 @@ pub(super) async fn control(
         "otlp":otlp,"logging_io":logging_io,"watchdog_notices":watchdog_notices,"watchdog_second_state":watchdog_initial.is_some(),
         "watchdog_stderr_bytes":watchdog.then_some(stderr.len()),"watchdog_stderr_sha256":watchdog.then(|| pilot_capture::sha256_hex(&stderr)),
         "watchdog_witness_sha256":watchdog.then(|| pilot_capture::sha256_hex(&std::fs::read(root.join("bridge/witness.mjs")).unwrap())),
-        "resolver_second_state":resolver_initial.is_some(),
+        "resolver_second_state":resolver && short_initial.is_some(),
         "resolver_witness_sha256":resolver.then(|| pilot_capture::sha256_hex(&std::fs::read(root.join("bridge/witness.mjs")).unwrap())),
+        "settings_chain_second_state":settings_chain && short_initial.is_some(),
+        "settings_chain_witness_sha256":settings_chain.then(|| pilot_capture::sha256_hex(&std::fs::read(root.join("bridge/witness.mjs")).unwrap())),
         "native_module_cleanup":native_module_cleanup,
         "config_sha256":pilot_capture::sha256_hex(&config),
         "auth_sha256":auth.then(|| pilot_capture::sha256_hex(host::QUALIFICATION_STARTUP_AUTH)),

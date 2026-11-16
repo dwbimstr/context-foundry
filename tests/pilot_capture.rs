@@ -193,6 +193,110 @@ async fn current_host_startup_owners_have_native_controls() {
                 && call["rejected"] == false));
         }
     }
+    for kind in [
+        "settings-chain-baseline",
+        "settings-chain-serial",
+        "settings-chain-coalesced",
+    ] {
+        let root = base.join(format!("{kind} control with spaces"));
+        let report = startup::control(&omp, &root, &e.workspace, &config, &models, kind).await;
+        assert_owned_private_tree(
+            &root,
+            Some(Path::new(
+                "home/.omp/natives/18.18.1/pi_natives.darwin-arm64.node",
+            )),
+        );
+        if let Some(path) = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT") {
+            let out = PathBuf::from(format!(
+                "{}-settings-chain-controls",
+                PathBuf::from(path).display()
+            ));
+            fixture_private_dirs(&out).unwrap();
+            fixture_private_write(
+                out.join(format!("{kind}.json")),
+                serde_json::to_vec_pretty(&report).unwrap(),
+            )
+            .unwrap();
+        }
+        assert_eq!(report["connections"], 0);
+        assert_eq!(report["settings_chain_second_state"], true);
+        assert_eq!(
+            report["native_model_sha256"],
+            marketplace_reports[0]["native_model_sha256"]
+        );
+        assert_eq!(
+            report["settings_chain_witness_sha256"],
+            pilot_capture::sha256_hex(include_bytes!("pilot_capture/settings_chain_witness.mjs"))
+        );
+        let witness = &report["witness"];
+        for field in ["restored", "actual_auth_class", "actual_auth_receiver"] {
+            assert_eq!(witness[field], true, "{kind}: {field}");
+        }
+        assert_eq!(witness["overflow"], false);
+        assert_eq!(
+            witness["native_sync_sha256"],
+            "25f681643c58b0b08a43f839ab6760b76ab1cbd65e5ff3ba61d110fff8c03ca9"
+        );
+        assert_eq!(witness["before_value"], 10);
+        assert_eq!(witness["after_value"], 10);
+        assert_eq!(witness["override_before"], false);
+        assert_eq!(witness["override_after"], false);
+        let changed = kind != "settings-chain-baseline";
+        assert_eq!(
+            witness["before_joins"],
+            if changed {
+                json!([{"pair_count":1,"policy_calls":0,"last_derived_fulfilled":false},{"pair_count":2,"policy_calls":1,"last_derived_fulfilled":false}])
+            } else {
+                json!([])
+            }
+        );
+        assert_eq!(
+            witness["chain_continuity"],
+            if changed {
+                json!([null, true])
+            } else {
+                json!([])
+            }
+        );
+        for phase in ["after_join", "session_entry", "rows"] {
+            let rows = witness[phase].as_array().unwrap();
+            assert_eq!(rows.len(), if changed { 2 } else { 0 });
+            for row in rows {
+                assert_eq!(
+                    row["callback_sha256"],
+                    "73e10fcea65a780ac7077e5857e780e8442086c285b36d9c75c345e4e634602c"
+                );
+                for field in [
+                    "source_is_promise",
+                    "derived_is_promise",
+                    "source_fulfilled",
+                    "derived_fulfilled",
+                ] {
+                    assert_eq!(row[field], true);
+                }
+                for field in ["source_rejected", "derived_rejected"] {
+                    assert_eq!(row[field], false);
+                }
+            }
+        }
+        let calls = witness["policy_calls"].as_array().unwrap();
+        assert_eq!(calls.len(), if changed { 2 } else { 0 });
+        for (index, call) in calls.iter().enumerate() {
+            assert_eq!(call["native_receiver"], true);
+            assert_eq!(call["arguments"], 1);
+            assert_eq!(call["return_undefined"], true);
+            assert_eq!(
+                call["default_reserve_pct"],
+                if index == 1 {
+                    10
+                } else if kind == "settings-chain-serial" {
+                    11
+                } else {
+                    12
+                }
+            );
+        }
+    }
     for kind in ["resolver-joined", "resolver-pending", "resolver-rejected"] {
         let root = base.join(format!("{kind} control with spaces"));
         let report = startup::control(&omp, &root, &e.workspace, &config, &models, kind).await;
