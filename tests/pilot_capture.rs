@@ -337,6 +337,54 @@ async fn current_host_startup_owners_have_native_controls() {
             .unwrap();
         }
     }
+    for kind in ["logging-enabled", "logging-stop-only", "logging-owned"] {
+        let result =
+            startup::control(&omp, &base.join(kind), &e.workspace, &config, &models, kind).await;
+        let witness = &result["witness"];
+        assert_eq!(result["connections"], 0);
+        assert_eq!(witness["before"]["timers"].as_array().unwrap().len(), 1);
+        assert_eq!(witness["before"]["timers"][0]["pending"], true);
+        assert_eq!(witness["before"]["immediates"].as_array().unwrap().len(), 1);
+        assert_eq!(witness["before"]["immediates"][0]["pending"], true);
+        assert_eq!(
+            witness["factory"]["immediates"][0]["pending"],
+            kind != "logging-owned"
+        );
+        assert_eq!(
+            witness["tail"],
+            json!({"events":1,"unwound":1,"disposed":1,"expected":true})
+        );
+        assert_eq!(result["logging_io"]["before_marker"], true);
+        assert_eq!(
+            result["logging_io"]["after_marker"],
+            kind == "logging-enabled"
+        );
+        if kind == "logging-enabled" {
+            assert_eq!(witness["timers"][0]["fired"], 1);
+            assert_eq!(witness["timers"][0]["cleared"], 0);
+        } else {
+            assert_eq!(witness["timers"].as_array().unwrap().len(), 1);
+            assert_eq!(witness["timers"][0]["fired"], 0);
+            assert_eq!(witness["timers"][0]["cleared"], 1);
+        }
+        assert_eq!(result["trace"]["logging_quiesced"], kind == "logging-owned");
+        assert_eq!(
+            result["logging_sha256"],
+            pilot_capture::sha256_hex(pilot_capture::host::QUALIFICATION_STARTUP_LOGGING)
+        );
+        if let Some(path) = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT") {
+            let out = PathBuf::from(format!(
+                "{}-logging-controls",
+                PathBuf::from(path).display()
+            ));
+            fixture_private_dirs(&out).unwrap();
+            fixture_private_write(
+                out.join(format!("{kind}.json")),
+                serde_json::to_vec_pretty(&result).unwrap(),
+            )
+            .unwrap();
+        }
+    }
     for kind in ["telemetry-enabled", "telemetry-owned", "telemetry-disabled"] {
         let root = base.join(format!("{kind} control with spaces"));
         let report = startup::control(&omp, &root, &e.workspace, &config, &models, kind).await;
@@ -626,6 +674,23 @@ async fn qualify_current_host_history(
     let startup_probe_sha = host.launch.startup_probe_sha256.clone();
     let startup_auth_sha = host.launch.startup_auth_sha256.clone();
     let startup_memory_sha = host.launch.startup_memory_sha256.clone();
+    let startup_logging_sha = host.launch.startup_logging_sha256.clone();
+    assert_eq!(
+        startup_logging_sha,
+        owned_catalog.then(|| pilot_capture::sha256_hex(host::QUALIFICATION_STARTUP_LOGGING))
+    );
+    assert_eq!(
+        host.paths.root.join("bridge/startup_logging.ts").exists(),
+        owned_catalog
+    );
+    if owned_catalog {
+        assert_eq!(
+            startup_logging_sha,
+            Some(pilot_capture::sha256_hex(
+                &std::fs::read(host.paths.root.join("bridge/startup_logging.ts")).unwrap()
+            ))
+        );
+    }
     assert_eq!(
         startup_memory_sha,
         owned_catalog
@@ -1108,6 +1173,7 @@ async fn qualify_current_host_history(
             observed["settled_at_ready"] = json!(
                 bytes.starts_with(ready)
                     && current_startup_probe_rows(ready, None)["warmup_settled"] == true
+                    && current_startup_probe_rows(ready, None)["logging_quiesced"] == true
             );
             observed["before_prompt_prefix_matches"] = json!(prefix_matches);
             observed["observed_before_prompt_attempts"] = json!(before);
@@ -1170,11 +1236,32 @@ async fn qualify_current_host_history(
                 changed[states[0]]["body"] = json!("forbidden");
                 controls.push(current_startup_probe(encode(&changed).as_bytes())["valid"] == false);
             }
+            if let Some(logging) = rows.iter().position(|row| row["kind"] == "logging") {
+                for (key, value) in [("state", json!("unknown")), ("body", json!("forbidden"))] {
+                    let mut changed = rows.clone();
+                    changed[logging][key] = value;
+                    controls
+                        .push(current_startup_probe(encode(&changed).as_bytes())["valid"] == false);
+                }
+                for duplicate in [false, true] {
+                    let mut changed = rows.clone();
+                    if duplicate {
+                        changed.insert(logging, rows[logging].clone());
+                    } else {
+                        changed.remove(logging);
+                    }
+                    for (i, row) in changed.iter_mut().enumerate() {
+                        row["sequence"] = json!(i);
+                    }
+                    controls
+                        .push(current_startup_probe(encode(&changed).as_bytes())["valid"] == false);
+                }
+            }
             observed["mutation_controls_rejected"] = json!(controls.iter().filter(|x| **x).count());
             observed["valid"] = json!(
                 prefix_matches
                     && observed["settled_at_ready"] == true
-                    && controls.len() == 12
+                    && controls.len() == 16
                     && controls.iter().all(|x| *x)
             );
             if let Some(out) = &evidence_root {
@@ -1335,6 +1422,7 @@ async fn qualify_current_host_history(
         "startup_probe_sha256":startup_probe_sha,
         "startup_auth_sha256":startup_auth_sha,
         "startup_memory_sha256":startup_memory_sha,
+        "startup_logging_sha256":startup_logging_sha,
         "no_thread_field":no_thread, "validator_passed":request_passed,
         "validator_fault":admitted.as_ref().and_then(|r|r.as_ref().err()).map(ToString::to_string),
         "qualified_requests":if tool_followup {requests.len()} else {1},"missing_completion_control_rejected":negative_control,

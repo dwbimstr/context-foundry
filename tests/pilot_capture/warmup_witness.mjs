@@ -2,7 +2,9 @@
 import * as fs from "node:fs";
 import * as https from "node:https";
 import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
-export default function warmupWitness(pi) {
+import { quiesceOwnedLogging } from "./startup_logging.ts";
+export default async function warmupWitness(pi) {
+ await quiesceOwnedLogging();
  const kind = process.env.CF_STARTUP_WITNESS_KIND;
  const serialized = JSON.stringify([getBundledModel("anthropic", "claude-sonnet-5-5")]);
  if (Buffer.byteLength(serialized) > 65536) throw new Error("warmup fixture model cap");

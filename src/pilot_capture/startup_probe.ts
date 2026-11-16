@@ -26,7 +26,7 @@ let attempts = 0;
 function record(event: Record<string, unknown>): void {
 	const line = Buffer.from(JSON.stringify({ sequence: sequence++, ...event }) + "\n");
 	bytes += line.length;
-	if (sequence > 25 || bytes > 8192) fail(74);
+	if (sequence > 26 || bytes > 8192) fail(74);
 	try {
 		let offset = 0;
 		while (offset < line.length) {
@@ -68,6 +68,7 @@ let bound: AbortSignal | undefined;
 let elapsed = false;
 let observerRemoved = false;
 let sealing = false;
+let loggingDone = false;
 let sealed = false;
 let failed = false;
 let resolveDeadline!: () => void;
@@ -129,8 +130,13 @@ Object.defineProperty(AbortSignal, "timeout", {
 Object.defineProperty(globalThis, Symbol.for("context-foundry.qualification.warmup"), {
  configurable: false, writable: false,
  value: Object.freeze({
+  loggingQuiesced() {
+   if (failed || sealed || loggingDone) return refuseWarmup();
+   loggingDone = true;
+   record({ kind: "logging", state: "quiesced" });
+  },
   async seal() {
-   if (failed || sealing || sealed || knownRequests !== 1 || !bound || !signals.get(bound)?.removed) return refuseWarmup();
+   if (failed || sealing || sealed || !loggingDone || knownRequests !== 1 || !bound || !signals.get(bound)?.removed) return refuseWarmup();
    sealing = true;
    let timer: ReturnType<typeof setTimeout> | undefined;
    try {

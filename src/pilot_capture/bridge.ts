@@ -807,6 +807,13 @@ export default async function capture(pi: PiApi): Promise<void> {
 			throw new Error("pilot capture bridge: owned catalog unavailable");
 		}
 		try {
+            const { quiesceOwnedLogging } = await import("./startup_logging.ts");
+            await quiesceOwnedLogging();
+        } catch {
+            fault("settings");
+            throw new Error("pilot capture bridge: owned logging unavailable");
+        }
+		try {
 			const { installOwnedPrefetchGuard } = await import("./startup_auth.ts");
 			ownedPrefetch = await installOwnedPrefetchGuard();
 		} catch {

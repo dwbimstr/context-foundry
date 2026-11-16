@@ -82,6 +82,7 @@ pub(super) async fn control(
     let memory = kind.starts_with("memory-");
     let telemetry = kind.starts_with("telemetry-");
     let warmup = kind.starts_with("warmup-");
+    let logging = kind.starts_with("logging-");
     let config = if telemetry {
         super::telemetry::configuration(config, kind)
     } else {
@@ -110,6 +111,8 @@ pub(super) async fn control(
                 include_bytes!("auth_witness.mjs").as_slice()
             } else if memory {
                 include_bytes!("memory_witness.mjs").as_slice()
+            } else if logging {
+                include_bytes!("logging_witness.mjs").as_slice()
             } else if warmup {
                 include_bytes!("warmup_witness.mjs").as_slice()
             } else if telemetry {
@@ -121,7 +124,11 @@ pub(super) async fn control(
     ] {
         super::fixture_private_write(root.join(path), bytes).unwrap();
     }
-    let probe = if warmup {
+    let probe = if logging {
+        let mut source = host::QUALIFICATION_STARTUP_PROBE.to_vec();
+        source.extend_from_slice(include_bytes!("logging_probe.ts"));
+        source
+    } else if warmup {
         let mut source = std::str::from_utf8(host::QUALIFICATION_STARTUP_PROBE)
             .unwrap()
             .to_owned();
@@ -158,6 +165,13 @@ pub(super) async fn control(
         )
         .unwrap();
     }
+    if warmup || logging {
+        super::fixture_private_write(
+            root.join("bridge/startup_logging.ts"),
+            host::QUALIFICATION_STARTUP_LOGGING,
+        )
+        .unwrap();
+    }
     let mut counter = (!telemetry).then(TcpCounter::new);
     let mut collector = telemetry.then(super::telemetry::Collector::new);
     let addr = collector
@@ -173,7 +187,7 @@ pub(super) async fn control(
         &[],
     )
     .unwrap()
-        + &if auth || memory || warmup {
+        + &if auth || memory || warmup || logging {
             String::new()
         } else {
             format!(
@@ -361,7 +375,7 @@ pub(super) async fn control(
         Value::Null
     } else {
         let bytes = std::fs::read(root.join("startup.jsonl")).unwrap();
-        if (auth || memory || telemetry || warmup)
+        if (auth || memory || telemetry || warmup || logging)
             && let Some(path) = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT")
         {
             let path = std::path::PathBuf::from(format!(
@@ -373,6 +387,8 @@ pub(super) async fn control(
                     "memory"
                 } else if warmup {
                     "warmup"
+                } else if logging {
+                    "logging"
                 } else {
                     "telemetry"
                 }
@@ -385,10 +401,27 @@ pub(super) async fn control(
         assert_eq!(trace["valid"], true);
         trace
     };
+    let logging_io = if logging {
+        let files: Vec<_> = std::fs::read_dir(root.join("owned-logs"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        assert_eq!(files.len(), 1);
+        let path = &files[0];
+        let metadata = std::fs::symlink_metadata(path).unwrap();
+        assert!(metadata.is_file() && metadata.len() <= 1024 * 1024);
+        let bytes = std::fs::read(path).unwrap();
+        let text = std::str::from_utf8(&bytes).unwrap();
+        json!({"files":1,"bytes":bytes.len(),"sha256":pilot_capture::sha256_hex(&bytes),
+            "before_marker":text.contains("CF_OWNED_LOG_BEFORE_RETIRE"),"after_marker":text.contains("CF_OWNED_LOG_AFTER_RETIRE")})
+    } else {
+        Value::Null
+    };
     json!({"case":kind,"connections":connections,"witness":witness,
-        "otlp":otlp,"config_sha256":pilot_capture::sha256_hex(&config),
+        "otlp":otlp,"logging_io":logging_io,"config_sha256":pilot_capture::sha256_hex(&config),
         "auth_sha256":auth.then(|| pilot_capture::sha256_hex(host::QUALIFICATION_STARTUP_AUTH)),
         "memory_sha256":memory.then(|| pilot_capture::sha256_hex(host::QUALIFICATION_STARTUP_MEMORY)),
+        "logging_sha256":(warmup || logging).then(|| pilot_capture::sha256_hex(host::QUALIFICATION_STARTUP_LOGGING)),
         "native_model_sha256":pilot_capture::sha256_hex(&serde_json::to_vec(&state["model"]).unwrap()),
         "probe_sha256":pilot_capture::sha256_hex(&probe),"trace":trace,
         "normal_exit":exit.success(),"exit_code":exit.code(),"group_gone":group_gone,"forced":false,"no_prompt":true,"provider_calls":0})

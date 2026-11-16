@@ -41,6 +41,8 @@ pub const QUALIFICATION_STARTUP_PROBE: &[u8] = include_bytes!("startup_probe.ts"
 pub const QUALIFICATION_STARTUP_AUTH: &[u8] = include_bytes!("startup_auth.ts");
 /// Fixed off-memory owner check, only for the pinned owned qualifier.
 pub const QUALIFICATION_STARTUP_MEMORY: &[u8] = include_bytes!("startup_memory.ts");
+/// Owned qualifier's native logging retirement; never installed by ordinary capture.
+pub const QUALIFICATION_STARTUP_LOGGING: &[u8] = include_bytes!("startup_logging.ts");
 pub const SANDBOX_EXEC: &str = "/usr/bin/sandbox-exec";
 /// Exact owned extraction path of the pinned OMP 18.13.2 macOS arm64 host.
 /// This declares private executable metadata, not a per-request content hash.
@@ -250,6 +252,7 @@ pub struct LaunchRecord {
     pub startup_probe_sha256: Option<String>,
     pub startup_auth_sha256: Option<String>,
     pub startup_memory_sha256: Option<String>,
+    pub startup_logging_sha256: Option<String>,
     pub env_names: Vec<String>,
 }
 
@@ -544,6 +547,17 @@ impl Host {
             None
         };
 
+        let startup_logging_sha256 = if spec.catalog == CatalogProfile::OwnedQualification {
+            Some(materialize_source(
+                &root.join("bridge/startup_logging.ts"),
+                QUALIFICATION_STARTUP_LOGGING,
+                "startup_logging_unreadable",
+                "startup_logging_bytes_mismatch",
+            )?)
+        } else {
+            None
+        };
+
         let policy_text = sandbox_policy(
             &spec.omp,
             &root,
@@ -629,6 +643,7 @@ impl Host {
             startup_probe_sha256,
             startup_auth_sha256,
             startup_memory_sha256,
+            startup_logging_sha256,
             env_names: env.iter().map(|(k, _)| k.clone()).collect(),
         };
 
