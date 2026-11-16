@@ -1418,7 +1418,7 @@ The complete
 startup inventory and prefix acknowledgment/Ready echo remain required; a catalog
 receipt alone cannot grant admission. Paid execution and release signing stay gated.
 
-**Selected settings lifecycle round, 2026-11-16.** After the catalog round's
+**Selected settings lifecycle round, 2026-11-16 — qualified at the fixed startup boundary.** After the catalog round's
 terminal receipt, use one fresh 90-minute no-spend round, one heavy job, a 20 GiB
 disk floor, 8 GiB sampled individual RSS ceiling and 120-second cleanup reserve.
 The concrete gap is queued settings reload/rescope work surviving timer cancellation.
@@ -1431,6 +1431,10 @@ an empty pending-count snapshot or quiet interval cannot establish settlement.
 Keep auth-store lifetime, other startup owners and the durable prefix acknowledgment
 open until their own original-work evidence and integration pass. This selected
 repair cannot deliver Ready or authorize paid execution or release signing.
+The [dated receipt](../../../docs/validation.md#source-owned-settings-retirement--2026-11-16)
+owns actual CLI, mutation, gate, resource and cleanup evidence. The incremental
+[upstream patch](../../../docs/references/omp-startup-settings-retirement.patch)
+retains source/module/test identity and intentional differences.
 
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association

@@ -647,8 +647,13 @@ and dated paragraphs below are history.
     controls and the Rust catalog-journal append-failure boundary pass. The linked
     receipt separates fresh/reused gates, initially refused launches and lossless
     cold storage; current continuation pins remain hot and older code can be restored.
-    Auth/settings, telemetry/update/logging, trusted-extension and daemon-presence
-    owners still need complete integration before the prefix acknowledgment/Ready echo.
+    The [source-owned settings retirement](validation.md#source-owned-settings-retirement--2026-11-16)
+    now joins original reload/rescope/save work and the original CLI auth/settings
+    link before the startup HOLD record. Native held/error/late-start controls and
+    all five persistence cases pass; the receipt separates fresh gates and exact reuse.
+    Auth-store/OAuth lifetime, telemetry/update/logging, trusted-extension and
+    daemon-presence ownership still need complete integration before the full
+    inventory and prefix acknowledgment/Ready echo. Admission remains HOLD.
     Discovery retirement code/records are published with full fresh-clone readback.
     New build/MSRV caches are pruned; units, channel, four startup persistence cases
     and both legacy-source consumers pass directly afterward. Exact source inputs

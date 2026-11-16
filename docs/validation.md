@@ -1,5 +1,109 @@
 # Validation
 
+## Source-owned settings retirement — 2026-11-16
+
+**The startup diagnostic now retires original settings work and the original CLI
+auth/settings link before recording HOLD. Complete startup admission remains open.**
+Implementation `a28b729e8e477e7e59942e632351487fc5ccf9f2` follows the [selected contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission)
+in a fresh 90-minute no-spend round after the catalog round's terminal receipt.
+
+The [incremental upstream MIT patch](references/omp-startup-settings-retirement.patch)
+targets `can1357/oh-my-pi@24439066040e006eb08da7b204f0ac41c79d2de9`, after the
+existing auth/caller/refusal/restricted/catalog patches. Its module/test pointers
+and intentional differences remain with the patch. One opt-in `Settings` owner is
+established at construction in the restricted CLI profile. Retirement closes new
+mutations, reloads and watching; joins original admitted reload/rescope/save work
+and completion observers; preserves staged global/project writes; and cancels the
+remaining timers. Ownership is bounded to 4,096 starts. Derived settings owners
+are refused in this profile; ordinary settings outside it retain their behavior.
+The SDK binding requires the exact already-sealed session, registry and global
+settings instance. It first retires the CLI's original auth/settings link. This
+CLI supplies authStorage/modelRegistry, so the SDK's `ownsAuthStorage` condition
+excludes a second session link. No general OAuth drain or physical credential-store
+close is established by these facts.
+
+**Four compiled-CLI controls** pass: original watching applies a real config edit;
+restricted retirement; held original reload/queued rescope; and original read error.
+The held continuation cannot finish before the parent releases it. Its actual
+filesystem marker and source trace precede retirement. Wrong manager/registry,
+repeated retirement, seven late mutation/reload/watch operations and derived
+settings owners refuse. All four retain the complete native model digest
+`83aac156b7678be8faab3ca2d09fbf4e9773214fc968f1c4a13839dc718317c9`,
+send no prompt, exit normally and leave no owned group. The watching positive
+control changes only its synthetic retry setting; it is not the selected profile.
+
+The separate startup-only host is pinned at `bd77411fd9dc4385f4b4e5674f6c593ab44e997780c1eb474be18a1c1dad071c`. All **10,329**
+source/native inputs are hashed before and after compilation, and exact restoration
+from the retained B5 master, overlays and native master is verified. Applying the
+public patch reproduces its **four** changed/new files byte for byte. The three
+capture host pins remain unchanged. SDK evidence is **247/0** across nine files;
+the final formatted five-test owner suite passes again with type checking across
+**4,855** files. Each of three five-test mutations fails **4/1**: omitting joins,
+reopening synchronous mutation admission, and omitting queued rescope ownership.
+The queued-original test holds both actual reload bodies independently. Staged
+writes, original error reporting and unowned settings behavior are also covered.
+
+Rust validates the closed metadata and journals `startup_settings_retired` after
+catalog retirement. The owner-order check rejects early/duplicate reports; decoder
+controls refuse missing/false joins and invalid operation/rejection counts. The
+actual-host test passes **five** persistence cases: normal **nine-record HOLD**,
+refusal append failure, catalog append failure, new settings append failure and
+terminal-HOLD append failure. Failed persistence yields no successful receipt or
+reusable claim. No Ready, permit, counter, generation or compatibility seal exists.
+
+Four affected gates are fresh on the committed implementation: formatting, pilot
+all-target Clippy, **112/0** pilot units (**1** ignored) and actual Rust **1.90**
+pilot all-target checking. Four default-feature gates reuse **258** exact effective
+inputs; this is not a fresh full-repository run. All **five** current-host consumers,
+**36/0** frozen compatibility tests (**10** explicit diagnostics ignored), both legacy
+source consumers and seven channel cases pass fresh. The legacy source conversation
+still has two requests and rejects **29** usage and **25** trace mutations.
+No retrieval improvement, task-quality gain or real-provider economics is claimed.
+
+Retained failures include a missing scratch-directory setup, an overloaded test
+function type, one controller started before the compile manifest existed, two
+compilations stopped by the **20 GiB** disk floor and further preflight refusals.
+The first frozen suite is also interrupted at the disk floor; its SIGINT grace
+expires and the failure records forced cleanup with no owned processes remaining.
+The complete frozen suite then runs afresh on unchanged inputs. Final retention
+readback also catches a native-library manifest entry whose
+redundant copy was pruned. The original manifest is retained, the pinned master
+is byte-verified and the reference is repaired before publication. All failures are
+retained and superseded by green receipts, without changing acceptance,
+the shared deadline or resource limits. The legacy guard message mentions 512 MiB;
+this round overrides/enforces 20 GiB. Successful guarded phases have minimum sampled
+free disk **21,521,240,064 bytes** and
+maximum sampled individual RSS **3,327,344,640 bytes**,
+below the **8 GiB** ceiling. These sampled values are not global pressure measures.
+
+Recovery cleanup removes the redundant download cache and interrupted unqualified
+artifact after retaining its hash and original failure logs. Byte/mode-verified
+APFS file clones deduplicate unchanged public source, code and model copies while
+preserving their paths and independent future writes. Stale compiler intermediates
+inside two owned dataset fixture targets remove **13,464** files, totaling
+**3,295,457,280 allocated file bytes**; all **91** other target files remain exact.
+Four older task-owned temporary workspaces are matched to dated ownership
+receipts and their Foundry source manifests. Removing only their stale compiler
+intermediates removes **116,036** files totaling **38,805,032,960 allocated file
+bytes**; all **2,331** source/evidence/executable files outside that cache selection
+remain exact. No rejected candidate is executed, selected or published.
+Their stores, models, source and raw evidence remain intact. This is not a
+physical-reclamation claim. The source/dependency tree and **five** duplicate native
+libraries are also pruned after exact restoration/open-file checks; **249** other
+stage files remain exact. New Rust-cache cleanup and retained replay are recorded
+below when completed. Original user untracked files remain byte-identical.
+
+Private evidence/restoration: `runs/pilot-settings-lifecycle-2026-11-16/`, including
+`protocol.json`, guarded command receipts, `native-settings-readback.json`,
+`qualification-readback.json`, `retained-source.json`, `restore-source.py`,
+`source-clone-recovery.json`, `code-model-clone-recovery.json` and
+`old-dataset-cache-result.json` and `old-temp-cache-result.json`. Earlier round
+wrappers have expired clocks; do not run them. Source/dependency checks occurred before pruning; later retained replay
+is explicitly a runnable check. Paid/provider runs, model acquisition, training,
+release signing and v2/T006 execution remain gated. Auth-store/OAuth lifetime,
+telemetry/update/logging, trusted-extension and daemon-presence ownership plus the
+complete inventory and durable prefix acknowledgment/Ready echo remain open.
+
 ## Source-owned startup discovery retirement — 2026-11-16
 
 **Discovery timeout completion does not settle its original operation. The
