@@ -559,6 +559,11 @@ and dated paragraphs below are history.
     settings-sync handle, demand-driven pool polling and void asynchronous close;
     neither a second sync nor an empty snapshot can prove original work joined.
     Those source pins are retained; native completion remains unqualified.
+    Marketplace repair/records through `467bd45` are published
+    with full fresh-clone readback. New build/MSRV cache is pruned after exact and
+    open-file checks; runnable red/green and other evidence remain. All five current
+    diagnostics pass directly after cleanup without Cargo; the marketplace receipt
+    owns cache counts, lossless cold retention and restore/readback details.
     Logging repair/records through `fe46c66` are published with full
     fresh-clone readback. New build/MSRV and five duplicate native libraries are
     pruned after exact/open-file checks; runnable red/green and all other evidence

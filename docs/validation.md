@@ -95,6 +95,34 @@ or provider spend is used. Remaining credential lifetimes, other startup owners,
 complete timer/transport coverage and durable parent acknowledgment stay open.
 V2 remains unfunded/unfrozen; paid runs and release signing remain gated.
 
+The repair/records through `467bd45` are published to experimental;
+all **414 tracked paths** match a fresh clone by type, executable mode and bytes.
+Main remains `d94b013`; no release signing, tags/releases, paid request or workflow
+dispatch. After cache-marker, open-file and system-library-only dependency checks,
+the new build/MSRV cache falls from **8,442,441,728** to **35,467,264 allocated bytes**.
+Only **11,755 generated files** are removed, retaining
+the final standalone native test executable and the separate proper red. All
+**196 other stage files** retain exact hashes.
+Together with the earlier four duplicate SDK extractions and lossless cold-snapshot
+compression, allocation falls by
+**11,341,602,816 bytes (10.563 GiB)**.
+This is allocated size, not inferred physical APFS reclamation.
+
+All **five current native diagnostics pass directly from the retained final binary
+without Cargo** after cleanup, in **342.156 seconds**.
+The original-call marketplace matrix remains [2,0,0,2]. Both red/green digests and
+their 40-test inventories match, all code/test source is unchanged, user-owned
+untracked bytes remain exact, and all five gzip archive digests still match. The
+continuation and final readback finish within the stated hour; the initial partial
+stage remains separate. Final allocations: target
+**92,450,816**, runs
+**7,520,727,040**, datasets
+**34,715,725,824 bytes**. Evidence,
+models, canonical prepared stores, corpus/oracle/holdout data and native masters
+remain local. Original credential and other-owner lifetimes, full timer/transport
+coverage and durable parent acknowledgment remain open. Paid runs, release signing
+and release publication remain gated.
+
 ## Fixed-profile native logging quiescence — 2026-11-15
 
 **The owned qualifier retires the native buffered logger and joins its queued
