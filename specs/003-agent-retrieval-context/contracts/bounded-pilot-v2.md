@@ -1384,7 +1384,7 @@ The catalog/discovery waiter is not a complete lifecycle join. Include the await
 daemon project-presence registration and its exit cleanup in the remaining owner
 inventory; the initial categories above are not an exhaustive list.
 
-**Catalog lifecycle round, 2026-11-16 — selected, not qualified.** After the
+**Catalog lifecycle round, 2026-11-16 — original-operation retirement qualified in the fixed startup diagnostic; full inventory remains open.** After the
 restricted-owner round's terminal publication/cache receipt, start one new no-spend
 90-minute round with the same one-heavy-job, 20 GiB/8 GiB and 120-second cleanup
 bounds. Trace the original registry discovery operations, including nested runtime
@@ -1400,6 +1400,10 @@ catalog settlement report. Do not replace this with an empty catalog, static-onl
 registration, a pending-count snapshot, or changed model identity. Use one opt-in registry owner established at construction; keep the original
 operation and its completion observer, including raw work after a timeout race,
 response bodies and shared catalog requests after a subscriber stops waiting.
+Evidence and remaining acceptance are owned by the
+[current handoff](../../../docs/resume-context-ecosystem.md); the dated
+[retirement receipt](../../../docs/validation.md#source-owned-startup-discovery-retirement--2026-11-16)
+separates native original-operation proof from the still-open complete inventory.
 Bound ownership to 4,096 starts. Existing fetch-identity-scoped catalog sessions
 carry that same owner; this is source callback ownership, not a global transport
 fence. Close public discovery admission before draining. Reject mirrors and

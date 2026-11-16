@@ -641,8 +641,14 @@ and dated paragraphs below are history.
     MCP/memory exclusion and original credential-usage preparation join. Native
     unrestricted/restricted controls, persistence failures and fresh affected gates
     pass; the receipt separates exact-input default-gate reuse and the disk-guard stop.
-    Complete catalog/discovery ownership, daemon-presence classification and remaining
-    lifecycle owners still need integration before the full prefix acknowledgment.
+    The [source-owned discovery retirement](validation.md#source-owned-startup-discovery-retirement--2026-11-16)
+    now qualifies concrete original-operation ownership through timeout/body races
+    and detached catalog subscribers in the fixed profile. Native held/error
+    controls and the Rust catalog-journal append-failure boundary pass. The linked
+    receipt separates fresh/reused gates, initially refused launches and lossless
+    cold storage; current continuation pins remain hot and older code can be restored.
+    Auth/settings, telemetry/update/logging, trusted-extension and daemon-presence
+    owners still need complete integration before the prefix acknowledgment/Ready echo.
     The restricted-owner fix/records are published with full fresh-clone readback.
     New build/MSRV trees and duplicate native libraries are pruned; units, channel,
     startup persistence controls and both legacy-source consumers pass directly

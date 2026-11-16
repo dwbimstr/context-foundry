@@ -1,5 +1,132 @@
 # Validation
 
+## Source-owned startup discovery retirement — 2026-11-16
+
+**Discovery timeout completion does not settle its original operation. The
+startup-only qualifier now joins those originals before journaling catalog
+retirement and HOLD. Complete startup admission remains unqualified.** Implementation
+`b8738ef5a4242a1da20ac1aa0787d88b1f99e3e0` follows the [selected contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission)
+in one new 90-minute no-spend round after the preceding round's terminal receipt.
+
+The [incremental upstream MIT patch](references/omp-startup-discovery-retirement.patch)
+targets `can1357/oh-my-pi@24439066040e006eb08da7b204f0ac41c79d2de9`, after the
+existing caller/auth/refusal/restricted-startup patches. Named modules/tests and
+intentional differences are retained in it. One opt-in owner is established at
+`ModelRegistry` construction. Public discovery entry points close before draining;
+original provider operations and completion observers remain owned after a timeout,
+including post-header response bodies and shared catalog requests whose subscriber
+has aborted. Existing fetch-identity-scoped sessions carry that same owner.
+The ordinary timeout path retains its behavior. This is source callback ownership,
+not a global transport fence or permission. Ownership is bounded to 4,096 starts;
+unknown/mirrored/repeated bindings and unqualified Cursor native HTTP/2 discovery
+refuse. Static models and the fixed profile's preceding disabled-provider/model
+identities remain. No physical descriptor shutdown is claimed.
+
+An initial exact-function native control demonstrates the defect with pinned
+Bun 1.4.4 and an independent parent-owned UDP receiver: the timeout returns with
+zero packets and the original unfinished; releasing it subsequently produces one
+named-DNS request. This is the exact extracted source function, not a compiled CLI
+or complete transport proof. The later **five compiled-CLI controls** qualify the
+actual owner: fast baseline/restricted, held baseline/restricted, and restricted
+original failure. The ordinary background waiter returns with **0/2** originals
+complete and zero observed UDP requests. A parent-controlled release then permits
+two requests. Restricted retirement waits for **2/2** originals and both independent
+UDP observations before reporting completion, including the error case. Known
+failures remain bounded rejection counts; a retirement receipt is not a successful
+provider request. Both forms retain the same complete model digest
+`83aac156b7678be8faab3ca2d09fbf4e9773214fc968f1c4a13839dc718317c9`.
+All five send no prompt, exit normally and leave no owned group.
+
+The source host is pinned at
+`1d6bad5ae5c86ccc0b62aafd10d37a281f2c2f0aaf523e011b2c7a5af15653cf`. All **10,328** source/native inputs are hashed before
+and after compilation. Applying the public patch reproduces its **nine** changed/new
+files exactly; full reconstruction from the retained source master, exact overlays
+and native master is hash-verified. Three prior capture pins remain unchanged;
+this separate artifact is selected only for the startup diagnostic.
+
+SDK behavior evidence is **364/0** across seven files, followed by **37/0** focused
+tests after adding two exact SDK-to-registry identity cases. Only that test file
+changes between the two manifests. The catalog conditional-request regression is
+**38/0**. Source type checking covers **4,854** files. Three
+11-test mutations fail as intended: dropping original ownership gives
+**10/1**, dropping response-body ownership
+**10/1**, and reopening public admission during retirement
+**9/2** (passes/failures). Tests separately
+exercise primary-error identity, a held original, ignored abort, detached subscriber,
+reentrant retirement, exhausted ownership, unknown/mirrored ownership and late starts.
+
+The existing closed startup channel now carries the bound catalog retirement
+receipt after warm-up/restriction settlement. Rust requires all join facts, positive
+bounded operation counts and rejection counts no greater than starts. One local
+owner-order state rejects premature/duplicate reports and attempts after warm-up
+settlement. The actual-CLI test passes **four** cases: normal eight-record HOLD,
+refusal-append failure, new catalog-append failure and terminal-HOLD-append failure.
+Failures retain consumed claims and publish no successful observation receipt.
+No Ready, counter, permit, generation or compatibility seal is created.
+
+Four affected gates are fresh: formatting, pilot all-target Clippy, **111/0** pilot
+units (**1** ignored), and actual Rust 1.90 pilot all-target checking. The first four
+focused executions began before the local commit; complete pilot input hashes match
+its committed bytes. Four default-feature gates reuse **258** exact effective
+inputs; this is not a fresh full-repository run. All **five** current-host consumers,
+**36/0** frozen compatibility (**10** explicit diagnostics ignored), both legacy
+source consumers and seven channel cases pass fresh. The legacy source conversation
+retains two requests, **29** usage and **25** trace mutation refusals. No retrieval,
+provider economics or task-quality improvement is claimed.
+
+Retained failures include source transformation/setup errors, an overbroad native
+path guard placed in cache loading, and a read-only response-body fixture field.
+They are corrected before green type/behavior checks. The first compiled held
+controller fails its packet-count assertion after normal child exit; policy quote
+generation and distinct per-call DNS names are corrected. Its raw traces remain;
+no unsupported causal attribution is made from the missing initial parent counts.
+Four early Rust check attempts are refused before launch by the unchanged **20 GiB**
+reserve; they have no process/PID or test result. The driver's legacy error text
+mentions 512 MiB, but this round overrides/enforces 20 GiB. Disk snapshots fluctuate
+as low as about 13.1 GiB; the cause is unassigned and APFS physical reclamation is
+not inferred. The parent candidate is preserved in `parent-integration.patch`,
+restored to accepted bytes, then reapplied exactly when space recovers. The original
+round deadline, floor and acceptance requirements are never relaxed.
+
+Before Rust qualification, two duplicate SDK/dependency/package-cache trees and
+**8** identical generated native libraries are removed after open-file,
+source-restoration and byte checks; **421** other files remain exact.
+Directory allocation falls by **2,467,397,632 bytes**.
+Four older unit executables, then 38 older diagnostic/candidate executables, move
+to lossless cold storage. Every compressed stream is fully decompressed and hash/
+size checked before its original is removed; original mode/hash and restoration
+instructions remain in `cold-code-cache.json`, `cold-more-code.json` and
+`restore-cold-code.py`. The first cold pass verifies **4,933** other evidence files
+exactly; the second verifies all protected continuation pins. Current/frozen/source
+hosts, pinned Bun/native masters, continuation binaries and the latest accepted
+unit/integration executables stay hot. The cold phase reduces runs allocation by
+**2,768,801,792 bytes**. Original bytes remain recoverable; restore selected old
+executables before using their historical paths, and do not run expired-clock
+wrappers. Required corpora, datasets, models, transcripts, backup archives and the
+three original user files are preserved.
+
+Private evidence is `runs/pilot-catalog-lifecycle-2026-11-16/`, including
+`qualification-readback.json`, `timeout-witness-readback.json`,
+`sdk-qualified-execution.json`, `sdk-final-execution.json`,
+`native-restriction-readback.json`, each case's independent parent observations,
+`startup-qualified-evidence/`, the exact public-patch readback and cleanup receipts.
+Qualification completes at **4465.697 s** in the same 90-minute round.
+Successful guarded phases sample at least **22,972,784,640 bytes** free
+and at most **2,816,802,816 bytes** individual RSS. These are sampled
+process/disk bounds, not global/GPU quotas; refused launches are separate above.
+Review is in-session. No provider call, spend, model download, release signing,
+workflow dispatch or main/release change occurs.
+
+Other startup owners still require complete source-bound retirement/exclusion
+integration in this startup revision: auth/settings, telemetry/update/logging,
+extension initialization and daemon-presence cleanup. Existing controls from other
+profiles are not automatically the complete inventory. Catalog callback retirement
+does not durably classify every transport attempt. The full inventory and prefix
+acknowledgment/Ready echo remain open. T006 stays unaccepted and v2 remains
+unfunded/unfrozen/execution locked; paid runs and signing stay gated.
+
+Publication, final build-cache retirement and retained replay are recorded below when finished.
+
 ## Restricted startup ownership — 2026-11-16
 
 **The startup-only host now proves its actual SDK tool/MCP/memory restrictions
