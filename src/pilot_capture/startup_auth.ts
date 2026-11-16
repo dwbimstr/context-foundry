@@ -1,6 +1,7 @@
 // Owned qualifier only, pinned to OMP 18.18.1. The trusted factory runs before
 // createAgentSession starts this original call; session_start seals its result.
-// This covers no refresh/polling owner and never reads or retains credential values.
+// Fixed-profile retirement stops the original listener and closes its native store.
+// No credential values are read; physical FD release/general OAuth drain are not claimed.
 export async function installOwnedPrefetchGuard() {
 	const { AuthStorage, SqliteAuthCredentialStore } = await import("@oh-my-pi/pi-ai");
 	const lifecycle = (globalThis as unknown as Record<symbol, {
