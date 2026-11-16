@@ -116,7 +116,7 @@ pub const QUALIFICATION_OMP_SHA256: &str =
 
 /// Separate source-built diagnostic pin; source/patch identities are in validation.
 pub const SOURCE_QUALIFICATION_OMP_SHA256: &str =
-    "cd59e86cc512f27d6782c2f2c50b936ec3a47792e52e27695af1271220a6ea07";
+    "b5e50ce94846e29ea3db04ddab00f716208f21c0299263a30aee725c006ff9e9";
 
 impl CatalogProfile {
     pub fn is_owned(self) -> bool {
