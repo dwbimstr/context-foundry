@@ -26,7 +26,8 @@
  * throws at load, so no Ready is sent. Exit codes: 70 channel EOF before close,
  * 71 channel write failure, 72 protocol violation or internal bridge failure.
  */
-import * as fs from "node:fs";
+declare const getCaptureChannel: typeof import("./bridge_channel").getCaptureChannel;
+type CaptureChannel = ReturnType<typeof getCaptureChannel>;
 import { createHash } from "node:crypto";
 import { streamAnthropic } from "@oh-my-pi/pi-ai/providers/register-builtins";
 
@@ -40,18 +41,12 @@ const EFFORT = "xhigh";
 const TOOL_NAMES: readonly string[] = ["read", "edit"];
 const SERVICE_TIER = "standard_only";
 const SYNTHETIC_KEY = "sk-ant-api03-cf-pilot-bridge-synthetic-not-a-key";
-const TX_FD = 3;
-const RX_FD = 4;
-const PROTOCOL_VERSION = 1;
 const MAX_HEADER_BYTES = 65536;
 const MAX_PAYLOAD_BYTES = 1048576;
 const U32_MAX = 0xffffffff;
 const TOOL_DECISION_TIMEOUT_MS = 20_000;
 const BLOCK_REASON = "Blocked by pilot capture admission";
-const EXIT_PARENT_GONE = 70;
-const EXIT_CHANNEL_WRITE = 71;
 const EXIT_PROTOCOL = 72;
-const IDENTITY = /^[A-Za-z0-9_.:-]{1,128}$/;
 const FAULT_CLASSES: ReadonlySet<string> = new Set([
 	"authority", "pins", "bootstrap", "protocol", "request_binding", "route", "counting", "usage", "retry",
 	"provider_limit_breach", "privacy", "persistence", "deadline", "checker_provenance", "cleanup",
@@ -125,24 +120,13 @@ interface PiApi {
 	getActiveTools(): unknown;
 	setServiceTier?: (family: string, tier: undefined) => void;
 }
-interface BunRuntime {
-	file(fd: number): { stream(): ReadableStream<Uint8Array> };
-}
 
 const encoder = new TextEncoder();
-const decoder = new TextDecoder("utf-8", { fatal: true });
-let session = "";
-let host = "";
+let transport: CaptureChannel | undefined;
 let loaded = false;
 let sessionStarted = false;
-let outSeq = 0;
-let inSeq = 0;
-/** No further outbound frames: close received, channel dead or terminal fault. */
-let quiet = false;
-let closed = false;
 let invocationSeq = 0;
 let fetchSeq = 0;
-let inBuf: Uint8Array = EMPTY;
 const controllers = new Set<AbortController>();
 const fetches = new Map<number, FetchEntry>();
 const pendingTools = new Map<string, PendingTool>();
@@ -170,17 +154,6 @@ function isPairList(v: unknown): v is HeaderPair[] {
 function isSignal(v: unknown): v is AbortSignal {
 	return isObj(v) && typeof v.aborted === "boolean" && typeof v.addEventListener === "function" && typeof v.removeEventListener === "function";
 }
-/** The fd is a FIFO whose inode is exactly the one Rust created and named in the environment. */
-function isChannel(fd: number, inode: string | undefined): boolean {
-	if (inode === undefined || !/^[0-9]{1,20}$/.test(inode)) return false;
-	try {
-		const st = fs.fstatSync(fd, { bigint: true });
-		// The pinned host's Bun reports bigint inodes as signed 64-bit values.
-		return st.isFIFO() && BigInt.asUintN(64, BigInt(st.ino)) === BigInt(inode);
-	} catch {
-		return false;
-	}
-}
 function isFrozenModel(m: unknown): m is FrozenModel {
 	return isObj(m) && m.provider === PROVIDER && m.id === MODEL && m.api === API && m.maxTokens === MAX_TOKENS;
 }
@@ -192,28 +165,9 @@ function abortError(): DOMException {
 
 /** Writes one whole frame. False when it would exceed the bounds or the channel is quiet. */
 function send(msg: ChildMessage, payload: Uint8Array = EMPTY): boolean {
-	if (quiet) return false;
-	const header = encoder.encode(JSON.stringify({ v: PROTOCOL_VERSION, session, host, seq: outSeq + 1, msg }));
-	if (header.length === 0 || header.length > MAX_HEADER_BYTES || payload.length > MAX_PAYLOAD_BYTES) return false;
-	const frame = new Uint8Array(8 + header.length + payload.length);
-	const view = new DataView(frame.buffer);
-	view.setUint32(0, header.length, true);
-	frame.set(header, 4);
-	view.setUint32(4 + header.length, payload.length, true);
-	frame.set(payload, 8 + header.length);
-	let offset = 0;
-	try {
-		while (offset < frame.length) {
-			const written = fs.writeSync(TX_FD, frame, offset, frame.length - offset);
-			if (!(written > 0)) throw new Error("channel write made no progress");
-			offset += written;
-		}
-	} catch {
-		terminate(EXIT_CHANNEL_WRITE);
-	}
-	outSeq += 1;
-	return true;
+	return transport?.send(msg, payload) ?? false;
 }
+function isQuiet(): boolean { return transport?.quiet ?? true; }
 
 function fault(code: FaultCode): void {
 	send({ type: "fault", code });
@@ -236,7 +190,7 @@ function abortInFlight(everyInvocation: boolean): void {
 }
 
 function terminate(exitCode: number): never {
-	quiet = true;
+	transport?.stop();
 	abortInFlight(true);
 	process.exit(exitCode);
 }
@@ -350,19 +304,7 @@ function onToolDecision(call: string, allow: boolean): void {
 
 // ---- Inbound channel (fd 4) ----
 
-function parseHeader(bytes: Uint8Array): ParentMessage {
-	let header: unknown;
-	try {
-		header = JSON.parse(decoder.decode(bytes));
-	} catch {
-		protocolFault();
-	}
-	if (!isObj(header) || !exactKeys(header, ["v", "session", "host", "seq", "msg"])) protocolFault();
-	if (header.v !== PROTOCOL_VERSION || header.session !== session || header.host !== host || header.seq !== inSeq + 1) {
-		protocolFault();
-	}
-	inSeq += 1;
-	const m = header.msg;
+function parseMessage(m: unknown): ParentMessage {
 	if (!isObj(m)) protocolFault();
 	switch (m.type) {
 		case "response_start":
@@ -395,9 +337,8 @@ function parseHeader(bytes: Uint8Array): ParentMessage {
 	protocolFault();
 }
 
-function handleFrame(headerBytes: Uint8Array, payload: Uint8Array): void {
-	if (closed) protocolFault();
-	const msg = parseHeader(headerBytes);
+function handleFrame(message: unknown, payload: Uint8Array): void {
+	const msg = parseMessage(message);
 	if ((msg.type === "response_data") !== payload.length > 0) protocolFault();
 	switch (msg.type) {
 		case "response_start":
@@ -411,64 +352,10 @@ function handleFrame(headerBytes: Uint8Array, payload: Uint8Array): void {
 		case "tool_decision":
 			return onToolDecision(msg.call, msg.allow);
 		case "close":
-			closed = true;
-			quiet = true;
+			transport?.close();
 			abortInFlight(false);
 			return;
 	}
-}
-
-function onChunk(chunk: Uint8Array): void {
-	if (inBuf.length === 0) {
-		inBuf = new Uint8Array(chunk);
-	} else {
-		const merged = new Uint8Array(inBuf.length + chunk.length);
-		merged.set(inBuf, 0);
-		merged.set(chunk, inBuf.length);
-		inBuf = merged;
-	}
-	let offset = 0;
-	while (inBuf.length - offset >= 4) {
-		const view = new DataView(inBuf.buffer, inBuf.byteOffset + offset, inBuf.length - offset);
-		const headerLen = view.getUint32(0, true);
-		if (headerLen === 0 || headerLen > MAX_HEADER_BYTES) protocolFault();
-		if (view.byteLength < 8 + headerLen) break;
-		const payloadLen = view.getUint32(4 + headerLen, true);
-		if (payloadLen > MAX_PAYLOAD_BYTES) protocolFault();
-		const total = 8 + headerLen + payloadLen;
-		if (view.byteLength < total) break;
-		const headerBytes = inBuf.subarray(offset + 4, offset + 4 + headerLen);
-		const payload = inBuf.slice(offset + 8 + headerLen, offset + total);
-		offset += total;
-		handleFrame(headerBytes, payload);
-	}
-	if (offset > 0) inBuf = inBuf.slice(offset);
-}
-
-function startReader(bun: BunRuntime): void {
-	const reader = bun.file(RX_FD).stream().getReader();
-	const pump = async (): Promise<void> => {
-		for (;;) {
-			let result: ReadableStreamReadResult<Uint8Array>;
-			try {
-				result = await reader.read();
-			} catch {
-				result = { done: true, value: undefined };
-			}
-			if (result.done) {
-				// After close, EOF is the normal end; before it, the parent is gone.
-				if (!closed) terminate(EXIT_PARENT_GONE);
-				return;
-			}
-			try {
-				onChunk(result.value);
-			} catch {
-				fault("internal");
-				terminate(EXIT_PROTOCOL);
-			}
-		}
-	};
-	void pump();
 }
 
 // ---- Custom API handler ----
@@ -509,7 +396,7 @@ function relayFetchFor(invocation: number, ctrl: AbortController): (input: unkno
 			ctrl.abort();
 			throw abortError();
 		};
-		if (quiet) {
+		if (isQuiet()) {
 			ctrl.abort();
 			throw abortError();
 		}
@@ -706,8 +593,8 @@ async function onToolCall(event: unknown): Promise<{ block: true; reason: string
 	} catch {
 		args = undefined;
 	}
-	if (quiet || typeof args !== "string" || args.length === 0 || !send({ type: "tool_check", call, name }, encoder.encode(args))) {
-		if (!quiet) fault("internal");
+	if (isQuiet() || typeof args !== "string" || args.length === 0 || !send({ type: "tool_check", call, name }, encoder.encode(args))) {
+		if (!isQuiet()) fault("internal");
 		blockedTools.add(call);
 		return block;
 	}
@@ -772,26 +659,13 @@ export default async function capture(pi: PiApi): Promise<void> {
 	if (loaded) throw new Error("pilot capture bridge: loaded twice");
 	loaded = true;
 	const env = process.env;
-	const sessionId = env.CF_PILOT_SESSION ?? "";
-	const hostId = env.CF_PILOT_HOST ?? "";
-	// Without valid identities and a FIFO on fd 3 nothing can be reported safely.
-	if (!IDENTITY.test(sessionId) || !IDENTITY.test(hostId) || env.CF_PILOT_TX_FD !== String(TX_FD) || !isChannel(TX_FD, env.CF_PILOT_TX_INO)) {
-		throw new Error("pilot capture bridge: invalid channel configuration");
-	}
-	session = sessionId;
-	host = hostId;
-	const bun: unknown = (globalThis as { Bun?: unknown }).Bun;
-	const bunOk = isObj(bun) && typeof bun.file === "function";
-	if (env.CF_PILOT_RX_FD !== String(RX_FD) || !isChannel(RX_FD, env.CF_PILOT_RX_INO) || env.CF_PILOT_API !== API || !bunOk) {
-		fault("config");
-		throw new Error("pilot capture bridge: invalid configuration");
-	}
+	transport = getCaptureChannel();
 	if (typeof streamAnthropic !== "function") {
 		fault("delegate_import");
 		throw new Error("pilot capture bridge: host delegate unavailable");
 	}
 	try {
-		startReader(bun as unknown as BunRuntime);
+		transport.attach(handleFrame, () => abortInFlight(true));
 	} catch {
 		fault("config");
 		throw new Error("pilot capture bridge: private channel unreadable");

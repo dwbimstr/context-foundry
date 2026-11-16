@@ -1309,6 +1309,27 @@ records native red/green, fresh versus reused checks and the named DNS/loader
 counterexamples. The graph is a source census, not complete runtime coverage or
 reproducible-build proof. No generic-fence adoption or v2 readiness follows.
 
+**Selected shared-channel implementation, 2026-11-16 — in progress; no admission granted.**
+Implement the exchange below through the existing Rust host/session/journal and
+one child channel object. The early preload and later bridge share its pipe
+identities, decoder, sequence numbers, close state and writes; neither can create
+a second connection or reset it. Extract transport ownership from the current
+bridge without changing v1 messages or native request/usage behavior. Bind the
+complete materialized bridge source, including that owner, to existing source
+provenance; keep private-mode and exact-source checks.
+
+The closed revision must reject ordinary Ready/capture frames until the required
+startup prefix is durable and a matching acknowledgment is echoed. Wire/state
+implementation or scripted positives cannot freeze an incomplete source/owner
+inventory. Missing qualification stays a named refusal before counters, permits
+or transmission. Couple the source warm-up owner to parent refusal before its
+transport/signal construction; do not revive the rejected blanket API fence.
+All current/frozen pins and authority remain unchanged until actual-consumer
+qualification selects a new source candidate. Work is bounded to one no-spend
+90-minute round, one heavy job, the existing 20 GiB/8 GiB resource limits and a
+120-second cleanup reserve. Retain red/green evidence and keep unfinished work
+explicitly unqualified; paid trials and release signing remain gated.
+
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
 and a complete startup-owner inventory: catalog/discovery, credential refresh,

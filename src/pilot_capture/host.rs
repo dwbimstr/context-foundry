@@ -33,7 +33,14 @@ use super::{
 
 /// The bridge source, embedded from the repository and materialized with
 /// its exact bytes into each private host root.
-pub const BRIDGE_SOURCE: &[u8] = include_bytes!("bridge.ts");
+pub const BRIDGE_SOURCE: &[u8] = concat!(
+    include_str!("bridge_channel.ts"),
+    "\n",
+    include_str!("bridge.ts")
+)
+.as_bytes();
+/// The same channel implementation loaded early by the source-profile preload.
+pub const CHANNEL_SOURCE: &[u8] = include_bytes!("bridge_channel.ts");
 /// Bounded startup metadata diagnostic, loaded only by the owned qualifier.
 /// It does not establish startup settlement or grant capture admission.
 pub const QUALIFICATION_STARTUP_PROBE: &[u8] = include_bytes!("startup_probe.ts");
@@ -535,6 +542,14 @@ impl Host {
             "bridge_unreadable",
             "bridge_bytes_mismatch",
         )?;
+        if spec.catalog == CatalogProfile::SourceQualification {
+            materialize_source(
+                &root.join("bridge/bridge_channel.ts"),
+                CHANNEL_SOURCE,
+                "channel_unreadable",
+                "channel_bytes_mismatch",
+            )?;
+        }
         let startup_probe_sha256 = if spec.catalog.is_owned() {
             Some(materialize_source(
                 &root.join("bridge/startup_probe.ts"),
@@ -597,6 +612,9 @@ impl Host {
         let tx_ino = fstat_ino(c2r_write.as_raw_fd())?;
         let rx_ino = fstat_ino(r2c_read.as_raw_fd())?;
         let mut env = host_env(&paths, &spec.identity, tx_ino, rx_ino);
+        if spec.catalog == CatalogProfile::SourceQualification {
+            env.push(("CF_PILOT_EARLY_CHANNEL".into(), "1".into()));
+        }
         if spec.catalog.is_owned() {
             env.push((
                 "CF_PILOT_CATALOG".into(),

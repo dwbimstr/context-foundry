@@ -13,6 +13,8 @@
 //! must still match the frozen host pin. The installed-host default is unchanged.
 #![cfg(all(feature = "pilot-capture", target_os = "macos"))]
 
+#[path = "pilot_capture/channel.rs"]
+mod channel;
 #[path = "pilot_capture/fixture.rs"]
 mod fixture;
 #[path = "pilot_capture/startup.rs"]
@@ -1257,6 +1259,26 @@ async fn qualify_current_host_history(
             .any(|name| name == "BUN_OPTIONS"),
         owned_catalog
     );
+    let channel_path = host.paths.root.join("bridge/bridge_channel.ts");
+    assert_eq!(channel_path.exists(), source_catalog);
+    assert_eq!(
+        host.launch
+            .env_names
+            .iter()
+            .any(|name| name == "CF_PILOT_EARLY_CHANNEL"),
+        source_catalog
+    );
+    if source_catalog {
+        use std::os::unix::fs::MetadataExt;
+        assert_eq!(
+            std::fs::read(&channel_path).unwrap(),
+            pilot_capture::host::CHANNEL_SOURCE
+        );
+        assert_eq!(
+            std::fs::metadata(&channel_path).unwrap().mode() & 0o777,
+            0o600
+        );
+    }
     let host_root = host.paths.root.clone();
     assert_eq!(
         pilot_capture::sha256_hex(&std::fs::read(host.paths.agent.join("config.yml")).unwrap()),

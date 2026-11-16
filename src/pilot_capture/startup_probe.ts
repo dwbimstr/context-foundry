@@ -70,6 +70,10 @@ let observerRemoved = false;
 let sealing = false;
 let loggingDone = false;
 const sourceProfile = process.env.CF_PILOT_CATALOG === "owned-source-fixed-v1";
+if (process.env.CF_PILOT_EARLY_CHANNEL === "1") {
+	const { getCaptureChannel } = await import("./bridge_channel.ts");
+	getCaptureChannel();
+}
 let sourceAuthBound = false, sourceAuthRetired = false;
 let sealed = false;
 let failed = false;
