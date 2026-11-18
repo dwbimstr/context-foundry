@@ -362,7 +362,7 @@ diff --git a/packages/coding-agent/test/startup-presence-owner.test.ts b/package
 new file mode 100644
 --- /dev/null
 +++ b/packages/coding-agent/test/startup-presence-owner.test.ts
-@@ -0,0 +1,277 @@
+@@ -0,0 +1,282 @@
 +import { afterEach, expect, test } from "bun:test";
 +import fs from "node:fs/promises";
 +import os from "node:os";
@@ -629,14 +629,19 @@ new file mode 100644
 +});
 +
 +test("owned registration cannot substitute a fake cleanup and obtain retirement", async () => {
-+ const m = await load(), s = await scope(), owner = m.ownStartupDaemonPresence();
-+ const presence = await m.registerDaemonProjectPresence(s.cwd, s.runtime), close = presence.close;
-+ let fakeCalls = 0;
-+ const replaced = Reflect.set(presence, "close", async () => { fakeCalls++; });
-+ const receipt = await m.retireStartupDaemonPresence(owner);
-+ expect(receipt.presence_removed).toBe(true);
-+ expect(fakeCalls).toBe(0);
-+ expect(await presenceFiles(s.runtime)).toEqual([]);
-+ expect(replaced).toBe(false);
-+ expect(presence.close).toBe(close);
++	const m = await load(),
++		s = await scope(),
++		owner = m.ownStartupDaemonPresence();
++	const presence = await m.registerDaemonProjectPresence(s.cwd, s.runtime),
++		close = presence.close;
++	let fakeCalls = 0;
++	const replaced = Reflect.set(presence, "close", async () => {
++		fakeCalls++;
++	});
++	const receipt = await m.retireStartupDaemonPresence(owner);
++	expect(receipt.presence_removed).toBe(true);
++	expect(fakeCalls).toBe(0);
++	expect(await presenceFiles(s.runtime)).toEqual([]);
++	expect(replaced).toBe(false);
++	expect(presence.close).toBe(close);
 +});
