@@ -41,6 +41,19 @@ above. No provider calls or spend occurred. Complete owner inventory and durable
 prefix acknowledgment remain open; paid runs, signing and release remain gated.
 
 
+
+The qualified implementation and records were pushed to
+`experimental/context-ecosystem` as `480679485b56885fe2b0854e84865969d590e081`.
+A fresh HTTPS clone matched all 438 tracked file bytes, types and executable modes;
+main was unchanged and no CI run was observed. After exact input retention and
+open-file checks, this round's source, dependency, Rust and MSRV caches and ten
+duplicate native copies were pruned. Stage allocation fell from **6,686,085,120**
+to **537,432,064 bytes**; this is not a physical APFS reclamation measurement.
+The necessary CLI leaf and runnable test artifacts remain. CLI, units, channel,
+startup and both legacy-source consumers passed again without the caches. A source
+restoration recipe and all 10,338 checked inputs remain; full reconstruction after
+pruning was not rerun.
+
 ## Native startup extension timeout boundary — 2026-11-18
 
 A network-denied control on the current source-built startup host

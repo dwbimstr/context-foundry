@@ -11,6 +11,7 @@ and dated paragraphs below are history.
   handler broadcast. Source, real-CLI held/timeout, persistence and compatibility
   checks passed without provider calls
   ([receipt](validation.md#source-owned-startup-extension-dispatch--2026-11-18)).
+  The qualified code and records were pushed, and cache-free replay passed.
   Arbitrary extension-spawned work, other events and timers, complete inventory
   and durable acknowledgment remain open; startup admission stays on HOLD.
 - **Native extension timeout, 2026-11-18.** On the pinned CLI, a synthetic held
