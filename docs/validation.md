@@ -1,5 +1,35 @@
 # Validation
 
+## T005 deep lexical placement census — 2026-11-18
+
+The retained 202-case depth probe was joined to its original placement traces.
+The exact dense/lexical selection and `Cut` source files match the pinned baseline
+binary commit; the existing cap-census checker replayed every selected placement
+outcome with its duplicate, per-file and 32-unit global rules. The current semantic
+path offers dense locations before lexical candidates.
+
+| Retained group | Cases | All 32 kept units dense | Mixed dense and lexical kept |
+| --- | ---: | ---: | ---: |
+| Primary file-absent misses | 33 | 32 | 1 |
+| Of those, target-covering raw lexical document at ranks 257–4,096 | 8 | 8 | 0 |
+| Located success controls | 169 | 164 | 5 |
+
+Each of the eight deeper target-covering documents also scores strictly below its
+query's raw 256th lexical document. For those cases, increasing the lexical window
+alone cannot place that target unit under the existing dense-first 32-unit cut:
+the 32 retained dense units already fill it. A changed lexical collection may
+still affect other metadata or outcomes; this observation is not a full response
+simulation or a quality claim. The one mixed file-absent case has no covering
+document in the first 4,096. Dense saturation also occurs in successful controls,
+so it does not by itself justify displacing dense evidence or select a ranking
+rule. Any future candidate needs its own bounded selection and unexposed acceptance
+evidence; T005 remains unaccepted.
+
+All selected trace hashes and their rank-output bindings were checked; no new
+retrieval, store or model query, provider call, spend or holdout access occurred.
+The method, source-identity check and aggregate are retained privately under
+`runs/t005-depth-placement-census-2026-11-18/`.
+
 ## T005 lexical depth diagnostic — 2026-11-18
 
 A bounded, no-model diagnostic reopened **copies** of the retained units7

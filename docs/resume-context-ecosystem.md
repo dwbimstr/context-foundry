@@ -5,6 +5,13 @@
 Updated 2026-11-16. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
+- **T005 deep lexical placement census, 2026-11-18.** The existing dense-first
+  cut filled all 32 units before lexical placement in all eight file-absent cases
+  with deeper target-covering documents, and in 164 of 169 successful controls.
+  Raising lexical depth alone cannot place those eight target units; the observation
+  does not select a displacement rule or establish quality
+  ([record](validation.md#t005-deep-lexical-placement-census--2026-11-18)).
+  T005 remains unaccepted, and the consumed holdout was not accessed.
 - **T005 lexical depth diagnostic, 2026-11-18.** A label-free deeper lexical
   probe reproduced all 202 selected baseline trace prefixes. Eight of 33
   file-absent misses had a target-name-covering document at raw ranks 513–4,096;
