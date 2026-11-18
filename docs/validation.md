@@ -1,5 +1,47 @@
 # Validation
 
+## T005 lexical depth diagnostic — 2026-11-18
+
+A bounded, no-model diagnostic reopened **copies** of the retained units7
+search indexes and reproduced the semantic path's raw tier-2 lexical query. The
+copies' 154 index files matched the checksum-verified cold-store manifests. The
+query helper received only 202 development question IDs, corpora and question
+texts; target paths and ranges were joined afterward. The original 256-document
+window, after the existing tier-1 suppression and ordering, matched all 202
+retained traces exactly. The selected cases were all 33 primary file-absent
+misses and all 169 located successes.
+
+| Raw lexical tier-2 rank | File-absent misses: target file | File-absent misses: document covering target name |
+| --- | ---: | ---: |
+| 1–256 | 0 | 0 |
+| 257–512 | 2 | 0 |
+| 513–1,024 | 5 | 1 |
+| 1,025–2,048 | 7 | 5 |
+| 2,049–4,096 | 6 | 2 |
+| Not in the first 4,096 | 13 | 25 |
+
+All 202 queries filled the 4,096-document probe window, so absence within it is
+not absence from the index. Of the 169 successful controls, 107 had a covering
+lexical document within the original raw window; success can also come from dense
+retrieval. For eight of 33 file-absent misses, a current-hash lexical document
+covering the target name is below the existing cutoff. A deeper raw candidate does
+not establish that the definition body survives deduplication, per-file/global
+caps and final packing, nor that it improves held-out quality or latency. No
+candidate or new acceptance set was selected; the consumed 400-case holdout was
+not accessed.
+
+The first label-side join failed its row-count assertion because its per-query
+body was misindented; the repair reran only that join against unchanged query
+output. Target source hashes were verified before and after. Both query processes
+exited naturally under native supervision with no observed model worker or
+provider calls. The offline Cargo build was not sampled by that supervisor, so no
+build RSS peak is claimed. After open-file checks, isolated source, build and
+verified index copies were removed; the stage fell from 1,988,923,392 to
+223,834,112 allocated bytes. The original cold archives, helper, query output and
+private rank evidence remain retained under
+`runs/t005-lexical-depth-2026-11-18/`. No spend or quality promotion occurred;
+T005 remains unaccepted.
+
 ## T005 lexical clause census — 2026-11-18
 
 The current semantic search calls the ordinary two-tier lexical collector with

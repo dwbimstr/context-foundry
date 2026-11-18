@@ -5,6 +5,13 @@
 Updated 2026-11-16. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
+- **T005 lexical depth diagnostic, 2026-11-18.** A label-free deeper lexical
+  probe reproduced all 202 selected baseline trace prefixes. Eight of 33
+  file-absent misses had a target-name-covering document at raw ranks 513–4,096;
+  25 had none in that window. This is candidate coverage, not delivered-body or
+  quality improvement, and no candidate was selected
+  ([record](validation.md#t005-lexical-depth-diagnostic--2026-11-18)). The
+  consumed holdout was not accessed; T005 remains unaccepted.
 - **T005 lexical clause census, 2026-11-18.** The first 20 eligible tier-2
   documents per retained success/no-cover case show no stopword-only documents
   in the 95 no-cover misses. This bounded tokenizer reconstruction is not a
