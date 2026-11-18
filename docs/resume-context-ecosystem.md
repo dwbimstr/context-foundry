@@ -5,6 +5,13 @@
 Updated 2026-11-16. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
+- **Restricted startup watchdog discovery, 2026-11-18.** A network-denied native
+  control observed an isolated synthetic `WATCHDOG.md` read before the restricted
+  extension receipt, even with `--no-context-files`. It sent no prompt; the result
+  does not establish model input, a policy violation or detached work
+  ([record](validation.md#restricted-startup-watchdog-discovery--2026-11-18)).
+  This discovery path belongs in the still-open startup owner inventory.
+
 - **Restricted startup raw timer counterexample, 2026-11-18.** On the retained
   source-built restricted host, a synthetic extension's raw timer callback fired
   after the extension-retirement receipt, despite managed-timer exclusion

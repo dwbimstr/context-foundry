@@ -1,5 +1,30 @@
 # Validation
 
+## Restricted startup watchdog discovery — 2026-11-18
+
+A network-denied native CLI control on the retained restricted source-built host
+(SHA-256 `c48ea3b5a2ec5376044da48de072ae8e961d91bb87e4614269b2f37297f64cbf`)
+placed a synthetic 28-byte `WATCHDOG.md` in its isolated workspace. A preload
+observed that exact file's `Bun.file(...).text()` resolve and returned its contents
+unchanged; the marker read occurred at trace sequence 4 and the extension-retirement
+receipt at 13. The normal host invocation included `--no-context-files`,
+`--no-rules`, `--no-extensions` and the restricted startup profile. The host exited
+normally with its process group gone. The first assertion mistakenly expected 27
+bytes; its failing receipt is retained, and the corrected 28-byte control passed.
+
+The retained source's `sdk.ts` starts `discoverWatchdogFiles` and
+`discoverAdvisorConfigs` separately from the `noContextFiles` branch, then awaits
+both in its startup `Promise.all`. The retained upstream
+`advisor/watchdog.ts::collectConfigCandidates` searches user and project ancestor
+paths; that source file's SHA-256 is
+`be117a4eb610f29c6c4cf7df11a4b448d48ecddc93400ed414b6788a0430025b`.
+This control establishes one synthetic file read, not an exhaustive path inventory,
+a model input, a policy violation, or a detached operation. No prompt or provider
+call occurred, and spend was zero. The private protocol, initial failed assertion,
+corrected readback and native trace are in
+`runs/pilot-startup-watchdog-discovery-2026-11-18/`. Account for this separate
+owner in startup qualification; complete inventory and admission remain on HOLD.
+
 ## Restricted startup raw timer counterexample — 2026-11-18
 
 A network-denied native CLI control on the retained source-built restricted
