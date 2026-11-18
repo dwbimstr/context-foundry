@@ -29,13 +29,29 @@ instrumented addon scenario. They do not reproduce an actual stalled kernel call
 or qualify the full host, its five-second race, owner settlement or admission.
 The retained implementation requests cancellation and aborts the async task on
 timeout; its own dropping test covers a yielding walk and explicitly excludes a
-syscall stalled in the device. A full-host control and a design that owns or
-excludes the underlying operation remain necessary.
+syscall stalled in the device.
+
+The source-built host diagnostic was then run with workspace-tree inclusion
+explicitly enabled, the same network denial and a held synthetic directory call.
+On two runs the selected third matching directory operation remained held while
+both the session-state witness and extension-retirement receipt occurred; each
+host exited normally after the controller released it. With tree inclusion off,
+only two matching directory operations preceded those events; holding the second
+operation instead prevented the witness until release. This supports attribution
+to the enabled tree path, but the interposer does not identify the source caller
+independently. The hold was before the OS call, not an actual stuck device. The
+witness uses the real restricted host and owner-retirement APIs, but not the
+capture journal or a startup-ack/Ready admission exchange. Thus it demonstrates
+that these selected retirement receipts do not prove the operation has ended; it
+does not prove generation was possible. The existing startup-inventory HOLD stays
+in force until the original operation is joined or excluded and the full host and
+journal boundary is qualified.
 
 Complete owner inventory and startup admission remain on HOLD. No provider call
 or spend occurred; source/hash and native-addon controls remain respectively in
 `runs/pilot-startup-inventory-census-2026-11-18/source-readback.json` and
-`runs/pilot-workspace-native-hold-2026-11-18/controls.json`.
+`runs/pilot-workspace-native-hold-2026-11-18/controls.json`; the full-host
+diagnostic readback is `runs/pilot-workspace-host-hold-2026-11-18/control-readback.json`.
 
 ## Ordered startup refusal receipts — 2026-11-18
 
