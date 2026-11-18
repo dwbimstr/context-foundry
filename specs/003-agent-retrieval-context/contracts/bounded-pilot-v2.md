@@ -1526,6 +1526,21 @@ Other update routes, logging, trusted-extension ownership, the full before-I/O
 inventory and durable prefix acknowledgment with matching Ready echo remain open.
 This does not admit startup or authorize paid runs, signing or release.
 
+**Selected startup logger ownership round, 2026-11-18.** One 90-minute
+no-provider round, one heavy job, a 20 GiB disk floor, an 8 GiB sampled
+per-process RSS ceiling and a 120-second cleanup reserve qualifies the explicit
+restricted startup profile. The original logger can reopen after a disable; the
+source-owned profile closes the real local transport and prevents subsequent
+transport, sink and forwarder reconfiguration. It retains and joins the original
+queued retention callbacks, temporarily referencing their unreferenced handles
+while waiting. Exact-session retirement follows marketplace retirement and is
+recorded by the existing journal. Native CLI, buffered-marker, held-callback,
+wrong-identity and guard counterfactual controls qualify this selected module;
+ordinary logging remains available outside the flag. See the [source patch](../../../docs/references/omp-startup-logging-owner.patch).
+This does not qualify arbitrary other logging implementations, trusted-extension
+work, plugin re-warm, complete inventory or durable acknowledgment/Ready echo.
+Startup admission, paid execution, signing and release remain gated.
+
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
 and a complete startup-owner inventory: catalog/discovery, credential refresh,
