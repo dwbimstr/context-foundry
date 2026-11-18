@@ -1464,7 +1464,7 @@ owns native/source/gate/retention evidence; the
 [upstream patch](../../../docs/references/omp-startup-empty-auth.patch) retains
 source/module/test identity and intentional differences.
 
-**Selected daemon-presence lifecycle round, 2026-11-16.** After the fixed empty-auth
+**Selected daemon-presence lifecycle round, 2026-11-16 — qualified at the fixed startup boundary on 2026-11-18.** After the fixed empty-auth
 round's terminal receipt, use one fresh 90-minute no-spend round with one heavy
 job, a 20 GiB disk floor, an 8 GiB sampled individual RSS ceiling and a 120-second
 cleanup reserve. The actual CLI awaits original project-presence registration but
@@ -1489,9 +1489,8 @@ Carry bounded metadata after auth retirement and before incomplete-inventory HOL
 include its journal append-failure boundary. Full startup inventory, telemetry/
 update/logging and trusted-extension ownership plus durable prefix acknowledgment/
 Ready echo remain required. No paid, signing or v2/T006 execution gate changes.
-The [dated checkpoint](../../../docs/validation.md#original-daemon-presence-candidate--2026-11-16)
-separates passing baseline evidence from the unqualified immutability correction
-and records the unchanged resource/time gate. Final acceptance/publication stay HOLD.
+The [dated qualification](../../../docs/validation.md#daemon-presence-immutable-handle-qualification--2026-11-18)
+records the corrected source, native controls, fresh gates and remaining admission limits.
 The incremental [source patch](../../../docs/references/omp-startup-presence-retirement.patch)
 retains the original registration/cleanup, upstream identity and focused tests.
 

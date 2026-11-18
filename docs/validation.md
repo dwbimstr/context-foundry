@@ -1,5 +1,32 @@
 # Validation
 
+## Daemon-presence immutable handle qualification — 2026-11-18
+
+The owned daemon-presence handle now prevents a caller from replacing its original
+cleanup method. Ordinary handles retain their prior API. Source commit
+`95cbdd2b60fd85fa10fe3b3ded560e1a13ae4a5c` corrects the mutation gap recorded in
+[the earlier checkpoint](#original-daemon-presence-candidate--2026-11-16). The
+corrected source host is `9852009f4bf50a3c1c5cc521092a34a0f6229ad473a313da3d768dc9f0deaf2a`. Its 10,332 source/native inputs are
+hash-verified before and after compilation, and the incremental reference patch
+applies to all six source files with exact resulting bytes.
+
+The final SDK matrix passes **635 tests, 0 failed**, across 57 files. Four
+counterfactual controls fail as intended. Seven compiled CLI controls pass,
+including held registration/removal, failures and flag refusal. Fresh Rust checks
+pass for formatting, pilot all-target Clippy, 114 pilot units (one ignored), seven
+startup persistence cases, channel controls, five current-host consumers, 36 frozen
+compatibility cases (10 ignored), both legacy-source consumers and Rust 1.90
+pilot all-target checking. Four default-feature gates reuse 258 identical effective
+inputs. These are no-provider diagnostics; no prompt or paid model call was made.
+
+The normal startup journal remains an **11-record HOLD**. Complete startup
+inventory, telemetry/update/logging, trusted-extension ownership and the durable
+prefix acknowledgment/Ready echo remain open. No general OAuth drain, daemon-server
+shutdown, physical FD release or full admission is claimed. Paid runs and release
+signing remain gated. Private evidence and the exact restoration input manifest
+are in `runs/pilot-presence-final-2026-11-18/`; reconstruction after pruning has
+not been run. Review is in-session.
+
 ## Original daemon-presence candidate — 2026-11-16
 
 **Implemented locally; final acceptance and publication are HOLD.** Baseline code

@@ -1,6 +1,6 @@
 Experimental source-owned project-presence retirement; not applied by Context Foundry.
-UNQUALIFIED handle-immutability candidate: baseline tests pass, but the final fix
-has not been compiled or run because the same-round disk guard refuses launch.
+The immutable-handle correction is qualified at the fixed startup boundary;
+complete startup admission remains HOLD.
 Target: can1357/oh-my-pi @ 24439066040e006eb08da7b204f0ac41c79d2de9
 Owner: 003 T006, bounded-pilot-v2 startup observation and admission.
 Requires prior caller/auth/refusal/restricted/catalog/settings/empty-auth patches.
