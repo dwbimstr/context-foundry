@@ -119,6 +119,7 @@ pub enum ChildMessage {
         handlers_joined: bool,
         callbacks_joined: bool,
         starts_closed: bool,
+        managed_timers_excluded: bool,
         handlers: u32,
     },
     Fault {
@@ -346,11 +347,13 @@ impl ChannelState {
             handlers_joined,
             callbacks_joined,
             starts_closed,
+            managed_timers_excluded,
             handlers,
         } = &h.msg
             && (!handlers_joined
                 || !callbacks_joined
                 || !starts_closed
+                || !managed_timers_excluded
                 || *handlers == 0
                 || *handlers > 64)
         {
@@ -944,8 +947,13 @@ mod tests {
 
     #[test]
     fn startup_extension_requires_joined_closed_bounded_and_exact_fields() {
-        let valid = json!({"type":"extension_retired","handlers_joined":true,"callbacks_joined":true,"starts_closed":true,"handlers":1});
-        for field in ["handlers_joined", "callbacks_joined", "starts_closed"] {
+        let valid = json!({"type":"extension_retired","handlers_joined":true,"callbacks_joined":true,"starts_closed":true,"managed_timers_excluded":true,"handlers":1});
+        for field in [
+            "handlers_joined",
+            "callbacks_joined",
+            "starts_closed",
+            "managed_timers_excluded",
+        ] {
             let mut bad = valid.clone();
             bad[field] = json!(false);
             let msg = serde_json::from_value::<ChildMessage>(bad).unwrap();
@@ -969,6 +977,7 @@ mod tests {
             "handlers_joined",
             "callbacks_joined",
             "starts_closed",
+            "managed_timers_excluded",
             "handlers",
         ] {
             let mut missing = valid.clone();
@@ -1183,6 +1192,7 @@ mod tests {
             handlers_joined: true,
             callbacks_joined: true,
             starts_closed: true,
+            managed_timers_excluded: true,
             handlers: 1,
         };
         for early in [

@@ -1582,6 +1582,20 @@ Arbitrary work spawned by extension code, other events, complete startup invento
 and durable acknowledgment/Ready echo remain open. Paid runs, signing and release
 remain gated.
 
+**Selected managed extension timer exclusion, 2026-11-18.** A native baseline
+on the pinned host observed a sanctioned `ctx.setTimeout` callback after the
+extension-dispatch receipt. In one 90-minute no-provider round, with one heavy job,
+a 20 GiB disk floor, an 8 GiB sampled individual RSS ceiling and a 120-second
+cleanup reserve, the existing restricted extension owner closes managed timer
+admission before a timer handle can be constructed. Earlier managed timer starts
+refuse owner installation, even after clearing; direct and cached timeout/interval
+calls refuse. The identity-bound extension receipt includes this closed fact and
+Rust validates it. Ordinary managed timers remain available without the owner.
+Source counterfactuals and real-CLI ordinary/owned controls cover this explicit
+profile; see the [source patch](../../../docs/references/omp-startup-managed-timer-exclusion.patch).
+Raw timers, arbitrary extension work, other events, complete inventory and durable
+acknowledgment/Ready echo remain open. Paid runs, signing and release remain gated.
+
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
 and a complete startup-owner inventory: catalog/discovery, credential refresh,
