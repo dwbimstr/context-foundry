@@ -123,13 +123,45 @@ The joint-power lower bound is `max(0, success_power + discovery_power - 1)`,
 without an assumption about dependence between endpoints. The conservative bound
 can be substantially less powerful than a task-specific paired method.
 
-The computation rejects malformed, infeasible or oversized inputs. Its model is
-unstratified and binary; it neither estimates unknown rates nor establishes that
-real tasks are independent or identically distributed. It does not address the
-full six-contrast matrix, other endpoint types, cost, latency, rights, host
-readiness or provider use. A future freeze must select and justify its actual
-analysis, task/stratum model, margins and schedule; this tool makes no freeze or
-execution decision. Tests run with `python3 scripts/test_pilot_v2_power.py`.
+A second input form replaces `task_counts`, `repetitions_per_task` and
+`scenarios` with explicit `designs`. Each design names fixed, disjoint task
+strata; each stratum supplies its own task count, repetition count and endpoint
+assumptions. This example is also synthetic and does not select a design:
+
+```json
+{
+  "overall_alpha": 0.05,
+  "confirmatory_contrasts": 3,
+  "noninferiority_margin": 0.1,
+  "required_discovery_gain": 0.0,
+  "designs": [{"name": "synthetic split", "strata": [
+    {"name": "first", "tasks": 40, "repetitions_per_task": 2,
+     "success": {"baseline": 0.7, "gain": 0.2, "loss": 0.1},
+     "discovery": {"baseline": 0.4, "gain": 0.3, "loss": 0.1}},
+    {"name": "second", "tasks": 60, "repetitions_per_task": 3,
+     "success": {"baseline": 0.8, "gain": 0.1, "loss": 0.1},
+     "discovery": {"baseline": 0.5, "gain": 0.2, "loss": 0.1}}
+  ]}]
+}
+```
+
+This form sums independent but not identically distributed task blocks across
+strata, with identical distributions assumed within each stratum. The pooled
+result weights strata by their fixed task counts; individual stratum sensitivity
+is reported separately. A pooled result does not establish a per-stratum guard.
+If any per-stratum or other additional comparison will support a claim, include
+it in `confirmatory_contrasts` before examining outcomes; the tool cannot infer
+which claims a future study will make. Within each task, repetitions are still
+modeled as perfectly correlated, not as independent tasks.
+
+The computation rejects malformed, infeasible or oversized inputs. Both forms
+are binary and assume independent task blocks; neither estimates unknown rates
+nor establishes the selected tasks' independence or within-stratum distribution.
+They do not address the full six-contrast matrix, other endpoint types, cost,
+latency, rights, host readiness or provider use. A future freeze must select and
+justify its actual analysis, task/stratum model, margins and schedule; this tool
+makes no freeze or execution decision. Tests run with
+`python3 scripts/test_pilot_v2_power.py`.
 
 The freeze must include an executable, deterministic power calculation, its
 assumptions and sensitivity table, the independent task count, repetitions,

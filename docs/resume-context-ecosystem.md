@@ -5,6 +5,11 @@
 Updated 2026-11-16. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
+- **Pilot v2 stratified power sensitivity, 2026-11-18.** The optional tool now
+  handles fixed task strata with distinct outcome assumptions and reports pooled
+  and per-stratum sensitivity ([record](validation.md#pilot-v2-stratified-power-sensitivity--2026-11-18)).
+  It has not selected or frozen a pilot; actual rates, task independence, contrasts,
+  costs, rights and host readiness remain open. Paid runs and signing stay gated.
 - **Pilot v2 power sensitivity tool, 2026-11-18.** An optional deterministic
   calculator now reports conservative paired-task sensitivity for explicitly
   supplied binary-outcome scenarios, with repetitions counted as task clusters

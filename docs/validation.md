@@ -1,5 +1,25 @@
 # Validation
 
+## Pilot v2 stratified power sensitivity — 2026-11-18
+
+The optional [pilot-v2 power tool](../scripts/pilot-v2-power.py) now also accepts
+fixed, disjoint task strata with distinct hypothetical paired binary-outcome
+rates and repetition counts. It computes the pooled task-count-weighted sensitivity
+and separate sensitivity for each stratum under independent task blocks and perfect
+within-task repetition correlation. These are floating-point sums of finite
+per-task distributions; the endpoint-dependence-free joint result remains a
+union-bound lower bound. Per-stratum claims require inclusion in the input's
+confirmatory contrast count. A pooled result cannot establish a stratum guard.
+
+Twelve standard-library tests pass, including exhaustive heterogeneous task-block
+enumeration, equivalence to the existing model when strata have identical rates,
+a heterogeneous noninferiority-boundary check, fixed task weighting, repetition
+accounting and invalid input. The earlier unstratified input remains supported.
+This is still a sensitivity aid, not a frozen or powered pilot: actual task
+independence, rates, contrast and stratum selection, cost, rights and host
+readiness remain unestablished. No model, provider, credential or paid run was
+used; paid execution and signing remain gated.
+
 ## Pilot v2 paired-task power sensitivity tool — 2026-11-18
 
 The unfunded v2 draft now has an optional deterministic sensitivity calculator

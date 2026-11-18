@@ -29,6 +29,84 @@ class PowerTests(unittest.TestCase):
         for actual, wanted in zip(power.difference_distribution(n, gain, loss), expected):
             self.assertAlmostEqual(actual, wanted, places=14)
 
+    def test_stratified_distribution_matches_exhaustive_tasks(self):
+        strata = [(2, 0.3, 0.2), (2, 0.1, 0.6)]
+        expected = [0.0] * 9
+        rates = [(0.3, 0.2)] * 2 + [(0.1, 0.6)] * 2
+        for outcomes in itertools.product((-1, 0, 1), repeat=4):
+            p = math.prod({-1: loss, 0: 1 - gain - loss, 1: gain}[value]
+                          for value, (gain, loss) in zip(outcomes, rates))
+            expected[sum(outcomes) + 4] += p
+        for actual, wanted in zip(power.stratified_distribution(strata), expected):
+            self.assertAlmostEqual(actual, wanted, places=14)
+
+    def test_identical_strata_equal_original_model_and_ignore_repetition_count(self):
+        original = example()
+        original['task_counts'] = [50]
+        scenario = original['scenarios'][0]
+        stratified = {key: original[key] for key in ('overall_alpha', 'confirmatory_contrasts',
+                                                     'noninferiority_margin', 'required_discovery_gain')}
+        stratified['designs'] = [{'name': 'split', 'strata': [
+            {'name': 'a', 'tasks': 20, 'repetitions_per_task': 1,
+             'success': scenario['success'], 'discovery': scenario['discovery']},
+            {'name': 'b', 'tasks': 30, 'repetitions_per_task': 9,
+             'success': scenario['success'], 'discovery': scenario['discovery']}]}]
+        a = power.calculate(original)['results'][0]
+        b = power.calculate(stratified)['results'][0]
+        for key in ('independent_tasks', 'success_power', 'discovery_power',
+                    'joint_power_lower_bound', 'one_sided_half_width'):
+            self.assertEqual(a[key], b[key])
+        self.assertEqual([v['tasks'] for v in b['strata']], [20, 30])
+        for row in b['strata']:
+            width = math.sqrt(-2 * math.log(power.calculate(stratified)['per_endpoint_tail_alpha']) / row['tasks'])
+            self.assertEqual(row['success_power'], power.endpoint_power(row['tasks'], scenario['success'], -0.1, width))
+        changed = power.calculate(stratified)['results'][0]
+        stratified['designs'][0]['strata'][1]['repetitions_per_task'] = 100
+        repeated = power.calculate(stratified)['results'][0]
+        self.assertEqual(changed['success_power'], repeated['success_power'])
+        self.assertEqual(changed['discovery_power'], repeated['discovery_power'])
+        self.assertEqual(changed['strata'][1]['success_power'], repeated['strata'][1]['success_power'])
+
+    def test_stratified_cli_uses_total_independent_tasks(self):
+        endpoint = {'baseline': 0.5, 'gain': 0.2, 'loss': 0.1}
+        data = {'overall_alpha': 0.05, 'confirmatory_contrasts': 3, 'noninferiority_margin': 0.1,
+                'required_discovery_gain': 0.0, 'designs': [{'name': 'synthetic', 'strata': [
+                    {'name': 'a', 'tasks': 10, 'repetitions_per_task': 1,
+                     'success': endpoint, 'discovery': endpoint},
+                    {'name': 'b', 'tasks': 15, 'repetitions_per_task': 5,
+                     'success': endpoint, 'discovery': endpoint}]}]}
+        path = Path(__file__).with_name('pilot-v2-power.py')
+        result = subprocess.run([sys.executable, str(path)], input=json.dumps(data),
+                                text=True, capture_output=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = json.loads(result.stdout)
+        self.assertEqual(output['results'][0]['independent_tasks'], 25)
+        self.assertEqual([x['tasks'] for x in output['results'][0]['strata']], [10, 15])
+        self.assertEqual(output['per_endpoint_tail_alpha'], 0.05 / 6)
+        self.assertFalse(output['execution_authorized'])
+
+    def test_heterogeneous_strata_null_boundary_and_invalid_design(self):
+        # Equal-size strata with differences +0.1 and -0.3 average to -0.1.
+        n, tail = 40, 0.025
+        width = math.sqrt(-2 * math.log(tail) / n)
+        distribution = power.stratified_distribution([(20, 0.2, 0.1), (20, 0.1, 0.4)])
+        rejection = math.fsum(p for i, p in enumerate(distribution) if (i - n) / n - width > -0.1)
+        self.assertLessEqual(rejection, tail + 1e-12)
+        data = {'overall_alpha': 0.05, 'confirmatory_contrasts': 1, 'noninferiority_margin': 0.1,
+                'required_discovery_gain': 0.0, 'designs': [{'name': 'x', 'strata': []}]}
+        with self.assertRaisesRegex(ValueError, 'strata'):
+            power.calculate(data)
+        endpoint = {'baseline': 0.5, 'gain': 0.1, 'loss': 0.1}
+        item = {'name': 'duplicate', 'tasks': 1, 'repetitions_per_task': 1,
+                'success': endpoint, 'discovery': endpoint}
+        data['designs'][0]['strata'] = [item, dict(item)]
+        with self.assertRaisesRegex(ValueError, 'stratum names'):
+            power.calculate(data)
+        data['designs'][0]['strata'][1]['name'] = 'other'
+        data['designs'][0]['strata'][1]['tasks'] = 1000
+        with self.assertRaisesRegex(ValueError, 'at most 1000'):
+            power.calculate(data)
+
     def test_extreme_pairs_and_cluster_repetition(self):
         a = example()
         a['task_counts'] = [100]
