@@ -38,6 +38,19 @@ owners, complete inventory and durable acknowledgment/Ready echo remain open;
 paid runs, signing and release remain gated.
 
 
+
+The qualified implementation and records were pushed to
+`experimental/context-ecosystem` as `439cceca83785b6169cd7d8e3b0e1654bbfaa3c5`.
+A fresh HTTPS clone matched all 436 tracked file bytes, types and executable modes;
+main was unchanged and no CI run was observed. After exact input retention and
+open-file checks, this round's source, dependency, Rust and MSRV caches and six
+duplicate native copies were pruned. Stage allocation fell from **6,238,601,216**
+to **533,254,144 bytes**; this is not a physical APFS reclamation measurement.
+The necessary CLI leaf and runnable test artifacts remain. CLI, units, channel,
+startup and both legacy-source consumers passed again without the caches. A source
+restoration recipe and all 10,336 checked inputs remain; full reconstruction after
+pruning was not rerun.
+
 ## Startup owner source census — 2026-11-18
 
 A partial source review followed the qualified marketplace round; it does not

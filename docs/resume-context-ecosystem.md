@@ -10,7 +10,8 @@ and dated paragraphs below are history.
   retention callbacks. Source and native CLI controls, startup persistence and
   compatibility gates passed without provider calls
   ([receipt](validation.md#source-owned-startup-logger--2026-11-18)). This is not
-  physical descriptor-release proof or complete startup admission; plugin re-warm,
+  physical descriptor-release proof or complete startup admission. The qualified
+  code and records were pushed, and cache-free replay passed; plugin re-warm,
   trusted-extension and other owners and the prefix acknowledgment remain open.
 - **Startup owner census, 2026-11-18.** Source inspection found that the awaited
   initial plugin-root preload has a detached cache-clear re-warm path, and that
