@@ -5,6 +5,13 @@
 Updated 2026-11-16. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
+- **Restricted startup held watchdog read, 2026-11-18.** In a network-denied
+  native control, the restricted host withheld its extension-retirement receipt
+  while a synthetic watchdog marker read was held before the OS call; the read
+  completed after release and retirement followed
+  ([record](validation.md#restricted-startup-held-watchdog-read--2026-11-18)).
+  This is one observed path, not complete inventory or admission.
+
 - **Restricted startup watchdog discovery, 2026-11-18.** A network-denied native
   control observed an isolated synthetic `WATCHDOG.md` read before the restricted
   extension receipt, even with `--no-context-files`. It sent no prompt; the result

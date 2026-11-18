@@ -1,5 +1,23 @@
 # Validation
 
+## Restricted startup held watchdog read — 2026-11-18
+
+A second network-denied native control used the same restricted source-built host
+and isolated `WATCHDOG.md` marker as the preceding discovery control. An
+instrumented `Bun.file(...).text()` held that exact marker operation **before**
+the original file read. The controller observed the held operation, waited 500 ms
+and verified that no extension-retirement receipt appeared, then released it.
+The original read completed at trace sequence 5 and the extension-retirement
+receipt followed at 14; the held event was sequence 4. The host exited normally
+and its process group was gone. No prompt or provider call occurred.
+
+This qualifies the observed ordering for one synthetic read on this host with a
+pre-read interposer. It does not establish cancellation behavior, a stalled kernel
+read, all watchdog/advisor discovery or complete startup settlement. The actual
+capture-journal acknowledgment path was not exercised. The private protocol,
+control and trace are retained in `runs/pilot-startup-watchdog-held-2026-11-18/`.
+The full inventory and admission remain on HOLD; spend was zero.
+
 ## Restricted startup watchdog discovery — 2026-11-18
 
 A network-denied native CLI control on the retained restricted source-built host
