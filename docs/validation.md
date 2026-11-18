@@ -30,6 +30,12 @@ prefix acknowledgment, the matching Ready echo or generation admission. Paid run
 signing and release remain gated. Local receipts and the source-built host are
 under `runs/pilot-workspace-owner-2026-11-18/`; native controls are under
 `runs/pilot-workspace-host-hold-2026-11-18/`.
+The qualified code and records were pushed to experimental and all 441 tracked
+files matched a fresh clone. The 10,339 source inputs were verified against their
+retained base, native master and 40-file overlay before removing the reconstructed
+source and build caches. The stage's allocated footprint fell from 4,911,001,600
+to 519,553,024 bytes. Seven retained-executable controls passed without rebuilding;
+source reconstruction after pruning was not rerun.
 
 ## Startup workspace scan census — 2026-11-18
 

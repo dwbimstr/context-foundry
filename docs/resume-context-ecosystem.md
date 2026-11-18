@@ -10,6 +10,7 @@ and dated paragraphs below are history.
   active; ordinary scanning remains available. The SDK regression, native
   controls, capture-journal path and selected gates pass
   ([record](validation.md#restricted-workspace-scan-exclusion--2026-11-18)).
+  The qualified slice was pushed and cache-free replay passed.
   This does not complete the owner inventory or enable startup admission; paid
   runs and signing remain gated.
 - **Startup workspace scan census, 2026-11-18.** Retained qualified host
