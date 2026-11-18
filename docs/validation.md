@@ -1,5 +1,41 @@
 # Validation
 
+## Startup owner source census — 2026-11-18
+
+A partial source review followed the qualified marketplace round; it does not
+freeze the complete owner inventory or establish runtime absence. The reviewed
+host is the source-built startup artifact `2e0bd355124880abd57b0001b1980c380558627536ccf1a852f18e4cc793ea0c`,
+reconstructed from 10,334 hash-checked inputs rooted in
+`can1357/oh-my-pi@24439066040e006eb08da7b204f0ac41c79d2de9` and the retained
+qualified patches. Foundry source was at `c1d88b8ea89a1db4d8ed628f31a40b75c36aafe8`.
+This was source inspection only: no host or workspace code, provider, model or
+prompt was run in the census.
+
+- `main.ts` awaits the original `preloadPluginRoots` before presence and session
+  creation. However, `discovery/helpers.ts::clearClaudePluginRootsCache` can start
+  a new unawaited preload. RPC's plugin-reload hook reaches that clear from
+  prompt-driven marketplace commands; source inspection does not establish that
+  this route runs during startup. The initial await alone does not establish a
+  closed owner or that later callbacks cannot start another preload.
+- The startup-observation profile is distinct from the older owned-qualification
+  profiles in [host.rs](../src/pilot_capture/host.rs): it does not select their
+  [logging helper](../src/pilot_capture/startup_logging.ts). The earlier logging
+  receipt therefore cannot by itself qualify the current startup-observation
+  logging lifetime or late reconfiguration.
+- Restricted startup imports the exact trusted extension module, then the SDK
+  awaits its prepared factory. These awaited calls do not by themselves prove
+  that work or callbacks created by the module or factory have retired. RPC also
+  registers a command-metadata listener whose update is detached; whether it fires
+  before the current HOLD was not tested.
+
+These are source-observed candidate owners and routes, not a runtime reproduction,
+a complete census, or evidence of a network bypass. Preserve the current
+`startup_inventory_unqualified` HOLD. Subsequent work must cover the original
+operation, callbacks and late-start paths at the actual selected host boundary;
+paid runs, signing and release remain gated. Private readback records exact file
+hashes, matched symbols and source coordinates.
+
+
 ## Source-owned marketplace exclusion — 2026-11-18
 
 The restricted startup diagnostic now closes the selected marketplace scheduler

@@ -5,6 +5,12 @@
 Updated 2026-11-16. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
+- **Startup owner census, 2026-11-18.** Source inspection found that the awaited
+  initial plugin-root preload has a detached cache-clear re-warm path, and that
+  the current startup-observation profile does not select the older logging helper.
+  Trusted-extension and RPC callback lifetimes also remain open. These are source
+  findings, not runtime reproductions or a complete inventory
+  ([census](validation.md#startup-owner-source-census--2026-11-18)).
 - **Startup marketplace exclusion, 2026-11-18.** The restricted diagnostic now
   owns and retires the original synchronous off scheduler; source, actual CLI,
   startup persistence and compatibility checks passed without provider calls
