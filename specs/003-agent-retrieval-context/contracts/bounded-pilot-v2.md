@@ -82,6 +82,55 @@ statistical design and launch pins; this matrix supplies none of those approvals
 
 ## Sample size and decision rule
 
+### Optional paired-task sensitivity tool
+
+[`scripts/pilot-v2-power.py`](../../../scripts/pilot-v2-power.py) is an unfrozen,
+no-provider planning aid for **binary paired task-level** success and discovery
+outcomes. It reads a JSON object on stdin; every margin, contrast count, task
+count, repetition count and hypothetical scenario must be explicit. For example,
+the following is synthetic input only, not a selected design or rate estimate:
+
+```json
+{
+  "overall_alpha": 0.05,
+  "confirmatory_contrasts": 3,
+  "noninferiority_margin": 0.1,
+  "required_discovery_gain": 0.0,
+  "task_counts": [100, 300],
+  "repetitions_per_task": 2,
+  "scenarios": [{
+    "name": "synthetic only",
+    "success": {"baseline": 0.7, "gain": 0.2, "loss": 0.1},
+    "discovery": {"baseline": 0.4, "gain": 0.3, "loss": 0.1}
+  }]
+}
+```
+
+For each endpoint, `gain` is the chance that only treatment passes and `loss`
+the chance that only control passes; both must be compatible with the control's
+`baseline` pass probability. To floating-point precision, the tool sums the exact
+finite distribution of independent, identically distributed task-block
+differences in `{-1, 0, 1}`.
+It models repetitions of a task as perfectly correlated and therefore counts each
+task once. This is one explicit sensitivity assumption, not a general model of
+within-task correlation. For each endpoint it tests whether a conservative
+one-sided lower bound exceeds the relevant null boundary: negative success margin
+or required discovery gain. The half-width is
+`sqrt(2 * ln(1 / tail_alpha) / independent_tasks)`, from
+[Hoeffding's bounded-difference inequality](https://doi.org/10.1080/01621459.1963.10500830).
+`tail_alpha` is the overall alpha divided by twice the declared contrast count.
+The joint-power lower bound is `max(0, success_power + discovery_power - 1)`,
+without an assumption about dependence between endpoints. The conservative bound
+can be substantially less powerful than a task-specific paired method.
+
+The computation rejects malformed, infeasible or oversized inputs. Its model is
+unstratified and binary; it neither estimates unknown rates nor establishes that
+real tasks are independent or identically distributed. It does not address the
+full six-contrast matrix, other endpoint types, cost, latency, rights, host
+readiness or provider use. A future freeze must select and justify its actual
+analysis, task/stratum model, margins and schedule; this tool makes no freeze or
+execution decision. Tests run with `python3 scripts/test_pilot_v2_power.py`.
+
 The freeze must include an executable, deterministic power calculation, its
 assumptions and sensitivity table, the independent task count, repetitions,
 stratum counts and every confirmatory contrast. An arbitrary small pilot or many

@@ -5,6 +5,12 @@
 Updated 2026-11-16. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
+- **Pilot v2 power sensitivity tool, 2026-11-18.** An optional deterministic
+  calculator now reports conservative paired-task sensitivity for explicitly
+  supplied binary-outcome scenarios, with repetitions counted as task clusters
+  ([record](validation.md#pilot-v2-paired-task-power-sensitivity-tool--2026-11-18)).
+  This is not a frozen analysis or selected sample; strata, tasks, rates, cost,
+  rights and actual host readiness remain open. Paid runs and signing stay gated.
 - **T005 deep lexical placement census, 2026-11-18.** The existing dense-first
   cut filled all 32 units before lexical placement in all eight file-absent cases
   with deeper target-covering documents, and in 164 of 169 successful controls.

@@ -1,5 +1,25 @@
 # Validation
 
+## Pilot v2 paired-task power sensitivity tool — 2026-11-18
+
+The unfunded v2 draft now has an optional deterministic sensitivity calculator
+for binary paired success and discovery outcomes. It sums finite per-task difference
+distributions to floating-point precision under user-supplied independent,
+identically distributed task assumptions and perfect within-task repetition correlation;
+it uses conservative bounded-difference lower confidence bounds and a union-bound
+lower bound on joint power. It explicitly takes the number of confirmatory
+contrasts and applies a Bonferroni allocation across both endpoint bounds. The
+method, synthetic input, assumptions and substantial limits are in the
+[v2 contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#optional-paired-task-sensitivity-tool).
+
+Eight standard-library tests pass, covering independent exhaustive enumeration,
+null-boundary examples, repetition accounting, exact decimal boundaries, invalid
+and duplicate input, underflow and CLI behavior. This is a planning aid, not the
+selected or frozen analysis: task/stratum dependence, other outcomes, rates, power
+targets, task/oracle selection, cost, host readiness and rights remain unresolved.
+No model, provider, credential or paid run was used. Paid execution and signing
+remain gated.
+
 ## T005 deep lexical placement census — 2026-11-18
 
 The retained 202-case depth probe was joined to its original placement traces.
