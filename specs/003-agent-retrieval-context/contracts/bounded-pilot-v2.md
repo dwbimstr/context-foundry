@@ -1596,6 +1596,16 @@ profile; see the [source patch](../../../docs/references/omp-startup-managed-tim
 Raw timers, arbitrary extension work, other events, complete inventory and durable
 acknowledgment/Ready echo remain open. Paid runs, signing and release remain gated.
 
+**Ordered refusal receipt repair, 2026-11-18.** The pinned runtime reproduced
+acceptance of duplicate or decreasing journal sequences, repeated digests and
+out-of-order attempt receipts. The existing child channel now requires the next
+pending attempt, a strictly increasing safe journal sequence and a well-formed prefix digest not seen earlier in this launch before resolving each refusal. Gaps in journal sequence
+remain valid because other records can intervene. Native framed-channel controls
+cover five negative cases and a valid gap. These child checks do not prove a
+disk write: the parent still appends, syncs and reads back the journal before each
+response. Complete owner inventory and the later durable acknowledgment/Ready echo
+remain open; incomplete inventory still halts and cannot grant generation.
+
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
 and a complete startup-owner inventory: catalog/discovery, credential refresh,

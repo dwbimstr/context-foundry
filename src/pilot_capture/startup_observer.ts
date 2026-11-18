@@ -9,7 +9,8 @@ const startupFail = (): never => process.exit(75);
 function createStartupObserver() {
  if (process.env.CF_PILOT_API !== "cf-pilot-startup-v2") startupFail();
  const channel = getCaptureChannel();
- let next = 0, bound = false, settled = false, pluginDone = false;
+ let next = 0, refused = 0, lastJournalSeq = 0, bound = false, settled = false, pluginDone = false;
+ const seenJournalDigests = new Set<string>();
  let consumeExtension: ((proof: unknown) => unknown) | undefined;
  const pending = new Map<number, { resolve: () => void; reject: () => void }>();
  const rejectAll = () => { for (const p of pending.values()) p.reject(); pending.clear(); };
@@ -21,10 +22,12 @@ function createStartupObserver() {
    channel.close(); rejectAll(); return;
   }
   if (message.type !== "startup_refused" || !Number.isSafeInteger(message.attempt) ||
-   !Number.isSafeInteger(message.journal_seq) || (message.journal_seq as number) <= 0 ||
-   typeof message.journal_sha256 !== "string" || !/^[a-f0-9]{64}$/.test(message.journal_sha256)) startupFail();
+   message.attempt !== refused + 1 || !Number.isSafeInteger(message.journal_seq) ||
+   (message.journal_seq as number) <= lastJournalSeq || typeof message.journal_sha256 !== "string" ||
+   !/^[a-f0-9]{64}$/.test(message.journal_sha256) || seenJournalDigests.has(message.journal_sha256)) startupFail();
   const waiting = pending.get(message.attempt as number);
   if (!waiting) startupFail();
+  refused = message.attempt as number; lastJournalSeq = message.journal_seq as number; seenJournalDigests.add(message.journal_sha256);
   pending.delete(message.attempt as number); waiting.resolve();
  }, rejectAll);
  Object.defineProperty(globalThis, Symbol.for("context-foundry.startup.extension-settled.v1"), {

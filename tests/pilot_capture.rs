@@ -19,6 +19,8 @@ mod channel;
 mod fixture;
 #[path = "pilot_capture/startup.rs"]
 mod startup;
+#[path = "pilot_capture/startup_receipts.rs"]
+mod startup_receipts;
 #[path = "pilot_capture/telemetry.rs"]
 mod telemetry;
 
