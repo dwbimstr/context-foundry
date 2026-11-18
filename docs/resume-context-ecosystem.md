@@ -5,6 +5,14 @@
 Updated 2026-11-16. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
+- **Restricted managed timer exclusion, 2026-11-18.** The prior native host let
+  a synthetic managed timeout fire after the extension receipt. The restricted
+  profile now rejects managed timeout and interval admission before construction,
+  with source, real-CLI, persistence and compatibility checks passing without
+  provider calls ([receipt](validation.md#restricted-startup-managed-timer-exclusion--2026-11-18)).
+  Raw timers and arbitrary extension work, complete inventory and durable
+  acknowledgment remain open; startup admission, paid runs, signing and release
+  remain gated.
 - **Startup extension dispatch ownership, 2026-11-18.** The restricted profile
   now tracks the exact original `session_start` handler and observer, refuses
   failure, timeout and late starts, and journals a one-use receipt after the

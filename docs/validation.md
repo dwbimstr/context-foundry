@@ -1,5 +1,43 @@
 # Validation
 
+## Restricted startup managed timer exclusion — 2026-11-18
+
+The restricted startup diagnostic now excludes the selected extension runner's
+sanctioned managed timers before handle construction. Code
+`f30c2eea033243bf014748db16ce7af6673f5ff6` and the [upstream MIT reference
+patch](references/omp-startup-managed-timer-exclusion.patch) target
+`can1357/oh-my-pi@24439066040e006eb08da7b204f0ac41c79d2de9` after the previously
+qualified startup patches. Foundry does not automatically apply that patch.
+
+A network-denied baseline on the prior pinned host scheduled `ctx.setTimeout` in
+a synthetic extension and observed its callback after the extension-dispatch
+receipt. The restricted source owner now refuses installation if any managed
+timer was previously scheduled, even if cleared, and rejects managed timeout and
+interval calls before native timer construction. Its identity-bound receipt adds
+`managed_timers_excluded`, which the existing channel and Rust journal validate.
+Ordinary managed timers remain available without the restricted owner. This is an
+explicit profile limitation; raw timers, arbitrary extension-spawned work, other
+extension events and the complete startup inventory remain unqualified.
+
+The source matrix passed **838/0** across **71** files. Eleven counterfactuals
+cover the previous extension owner plus timer owner installation, prior starts and
+both timer entry points; each failed as intended. Cached method references captured
+before ownership also refused. Five compiled-CLI controls passed: ordinary managed
+timer, owned timer refusals, held handler, handler timeout and invalid flags. The
+ordinary timer fired; the restricted timeout and interval calls were rejected and
+no managed callback fired. The handler timeout control uses the host's test setter
+at 150 ms. No prompt or provider call was made. Fresh checks passed formatting,
+pilot all-target Clippy, **119/0** pilot units (**1** ignored), Rust **1.90**
+all-target checking, five current-host consumers, **36/0** frozen compatibility
+(**10** ignored), both legacy-source consumers and seven channel controls. Four
+default gates reuse **258** identical effective inputs. Twelve startup persistence
+cases passed; the normal journal has **16** records and ends in
+`startup_inventory_unqualified`, with no Ready echo, permit or generation. Two
+byte-verified duplicate native copies from the baseline were removed after open-file
+checks. No provider calls or spend occurred. Complete inventory and durable
+acknowledgment remain open; paid runs, signing and release remain gated.
+
+
 ## Source-owned startup extension dispatch — 2026-11-18
 
 The restricted startup diagnostic now joins the selected original `session_start`
