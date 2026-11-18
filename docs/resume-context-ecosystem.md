@@ -665,6 +665,8 @@ and dated paragraphs below are history.
     now joins the original disabled initialization and rejects exporter activation
     in the explicit restricted diagnostic. Direct OTLP imports, general exporter
     drain and complete startup admission remain open.
+    The telemetry fix/records are pushed with full clone readback; new caches
+    are pruned and retained executables pass direct replay.
     The [daemon-presence handle fix](validation.md#daemon-presence-immutable-handle-qualification--2026-11-18)
     is qualified at the fixed startup boundary; removing its handle freeze makes
     the behavioral cleanup-substitution test fail. Full inventory, telemetry/update/

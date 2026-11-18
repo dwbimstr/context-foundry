@@ -43,6 +43,17 @@ The legacy conversation retains two requests, **29** usage mutation refusals and
 **25** trace mutation refusals. No retrieval improvement or real-provider economics
 is claimed.
 
+The implementation and qualification records were pushed to
+`experimental/context-ecosystem` as `e1f3058e2c00b2bf2d296c843aeee0a441c7f249`.
+A fresh HTTPS clone matched all 434 tracked file bytes, types and executable modes;
+main was unchanged and no CI run was observed. Source, dependency, Rust and MSRV
+caches were pruned after exact retention and open-file checks, along with five
+duplicate native copies. Stage allocation fell from **6,123,950,080** to
+**531,562,496 bytes**; this is not a physical APFS reclamation measurement. The
+needed CLI leaf and runnable test artifacts remain. Units, CLI, channel, startup
+and both legacy-source consumers pass again without the caches. Exact restoration
+inputs and a recipe remain; full reconstruction after pruning has not been rerun.
+
 The source host is `520ee05bdff74f88092462cf1d0eeaad38827c502a7fbba00e8c9e1529da618c`. All **10,333**
 source/native inputs are hashed before and after compilation and retained through
 the B5/native masters and exact overlays; the public patch applies with exact
