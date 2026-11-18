@@ -5,6 +5,12 @@
 Updated 2026-11-16. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
+- **T005 source overlap census, 2026-11-18.** A read-only census of retained
+  development cases found that literal question terms often occur somewhere in
+  the target file but seldom cover half the question terms near the target name
+  in no-cover misses. This is not a tokenizer or ranking test and selects no new
+  candidate ([record](validation.md#t005-literal-source-overlap-census--2026-11-18)).
+  T005 remains unaccepted; the consumed final set was not accessed.
 - **Restricted workspace-scan exclusion, 2026-11-18.** The source-built
   diagnostic refuses this scan when its restricted startup extension owner is
   active; ordinary scanning remains available. The SDK regression, native
@@ -19,8 +25,8 @@ and dated paragraphs below are history.
   timeout promise can settle while an instrumented native directory call is held
   before the OS call. The source-built restricted-host diagnostic likewise emitted
   selected retirement receipts while a matching operation was held. This is not
-  a stalled-kernel or capture-journal admission observation; a join-or-exclude
-  repair and full boundary qualification remain necessary
+  a stalled-kernel or capture-journal admission observation; the selected scan is
+  now excluded as recorded above, while full boundary qualification remains necessary
   ([record](validation.md#startup-workspace-scan-census--2026-11-18)).
   Complete startup admission, paid runs and signing remain gated.
 - **Ordered startup refusal receipts, 2026-11-18.** The child now rejects

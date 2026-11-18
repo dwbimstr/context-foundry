@@ -1,5 +1,32 @@
 # Validation
 
+## T005 literal source overlap census — 2026-11-18
+
+A read-only development census checked the retained 388 G2 questions and the
+prior current-baseline attribution against 330 source files, freshly verifying
+source hashes and reading them back unchanged. For a descriptive comparison it
+lowercased ASCII words of at least four letters, removed an explicit stoplist,
+and compared distinct question words with the target file and with a 2,048-byte
+window on each side of the target name. This is not Foundry's tokenizer, query
+plan or ranking; overlap is not a retrieval counterfactual.
+
+| Retained group | Cases | Any literal term in target file | At least half of terms near target name |
+| --- | ---: | ---: | ---: |
+| Located successes | 169 | 167 | 34 |
+| Misses with no eligible target-covering candidate | 95 | 93 | 3 |
+| Primary target-file-absent misses | 33 | 33 | 1 |
+
+The groups are descriptive and overlap; in particular, file-absent cases are not
+an independent sample. A term somewhere in a file need not identify the relevant
+unit, and low local overlap does not prove semantic retrieval or any proposed
+change will help. The observation argues against selecting a local literal-overlap
+rule without stronger source and ranking evidence. No candidate or new acceptance
+set was selected, and the consumed 400-case final set was not accessed. No store
+query, embedding, provider call or spend occurred. The aggregate, exact method and
+input hashes are retained in `runs/t005-literal-source-census-2026-11-18/`.
+T005 remains unaccepted; further development needs a separately bounded selection
+and unexposed acceptance evidence.
+
 ## Restricted workspace scan exclusion — 2026-11-18
 
 The source-built restricted diagnostic now refuses workspace-tree scanning at the
