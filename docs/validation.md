@@ -1,5 +1,39 @@
 # Validation
 
+## Source-owned marketplace exclusion — 2026-11-18
+
+The restricted startup diagnostic now closes the selected marketplace scheduler
+and records its original synchronous off call before incomplete-inventory HOLD.
+Code `bdfd1830c38b52b27a15e7bd19e9f3341ed76062` and the [upstream MIT reference
+patch](references/omp-startup-marketplace-exclusion.patch) target
+`can1357/oh-my-pi@24439066040e006eb08da7b204f0ac41c79d2de9` after the previously
+qualified startup patches. Foundry does not apply that reference automatically.
+
+The network-denied baseline showed that an enabled call after an off call could
+start detached refresh work. The explicit `--startup-no-marketplace` profile
+requires restricted tools, refuses later or enabled scheduling and requires frozen
+own data options before invoking the original off branch, which returns synchronously.
+Its exact owner retires after telemetry against the sealed session and registry.
+Ordinary updates outside the flag remain available. This does not establish a
+blanket network fence or cover other update routes, logging or trusted-extension
+ownership; complete before-I/O inventory and durable acknowledgment with matching
+Ready echo remain open.
+
+The source SDK matrix passed **660/0** across **60** files. Removing either the
+exclusion or immutable-options guard made its corresponding control fail. Four
+compiled CLI controls passed: ordinary off, owned off, enabled-setting refusal and
+invalid flags; successful controls preserved the pinned model metadata, and no
+prompt or provider call was made. Fresh affected checks passed formatting, pilot
+all-target Clippy, **116/0** pilot units (**1** ignored), Rust **1.90** all-target
+checking, five current-host consumers, **36/0** frozen compatibility (**10**
+ignored), both legacy-source consumers and seven channel controls. Four default
+feature gates reuse **258** identical effective inputs. Nine startup persistence
+cases passed; the normal journal has **13** records and ends in
+`startup_inventory_unqualified`, with no Ready, permit or generation. The round
+made zero provider calls and incurred no spend. Paid runs, signing and release
+remain gated.
+
+
 ## Source-owned telemetry exclusion — 2026-11-18
 
 **The explicit restricted startup diagnostic now prevents telemetry exporters
