@@ -1,5 +1,26 @@
 # Validation
 
+## Pilot v2 explicit task-block sensitivity — 2026-11-18
+
+The optional [pilot-v2 power tool](../scripts/pilot-v2-power.py) now accepts an
+explicit per-task probability distribution for each endpoint's sum of paired run
+differences. This permits sensitivity calculations under within-task dependence
+other than the existing perfect-correlation assumption, while keeping tasks as
+the independent units and retaining fixed stratum weights. It does not estimate
+that distribution or joint dependence between endpoints. The original input forms
+continue to work. Explicit distributions are bounded by repetitions, common-grid
+and operation limits and must contain unique feasible sums with probabilities
+adding exactly to one. The [contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#optional-paired-task-sensitivity-tool)
+records the method, a synthetic example and its limits.
+
+Seventeen standard-library tests pass, including exhaustive fractional block-mean
+enumeration, equivalence to the original perfect-correlation model, mixed-form
+CLI use, malformed/oversized distributions, and the earlier null and stratum
+checks. This does not select a sample, establish task independence or actual
+rates/correlation, freeze the analysis, qualify the host, or authorize execution.
+No model, provider, credential or paid run was used; paid execution and signing
+remain gated.
+
 ## Pilot v2 stratified power sensitivity — 2026-11-18
 
 The optional [pilot-v2 power tool](../scripts/pilot-v2-power.py) now also accepts

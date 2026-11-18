@@ -5,6 +5,12 @@
 Updated 2026-11-16. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
+- **Pilot v2 task-block sensitivity, 2026-11-18.** The optional power tool now
+  accepts explicit within-task paired-outcome distributions in addition to the
+  perfect-correlation assumption ([record](validation.md#pilot-v2-explicit-task-block-sensitivity--2026-11-18)).
+  The distributions are hypothetical inputs, not measured rates or a frozen
+  analysis. Task independence, contrasts, costs, rights and host readiness remain
+  open; paid runs and signing stay gated.
 - **Pilot v2 stratified power sensitivity, 2026-11-18.** The optional tool now
   handles fixed task strata with distinct outcome assumptions and reports pooled
   and per-stratum sensitivity ([record](validation.md#pilot-v2-stratified-power-sensitivity--2026-11-18)).

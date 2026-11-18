@@ -107,6 +107,100 @@ class PowerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'at most 1000'):
             power.calculate(data)
 
+    def test_explicit_block_distributions_match_exhaustive_fractional_means(self):
+        a = {'name': 'a', 'tasks': 2, 'repetitions_per_task': 2,
+             'success': {'outcomes': [{'difference_sum': -2, 'probability': 0.1},
+                                      {'difference_sum': 0, 'probability': 0.6},
+                                      {'difference_sum': 2, 'probability': 0.3}]}}
+        b = {'name': 'b', 'tasks': 1, 'repetitions_per_task': 3,
+             'success': {'outcomes': [{'difference_sum': -1, 'probability': 0.25},
+                                      {'difference_sum': 2, 'probability': 0.75}]}}
+        scale = power._block_scale([a, b], 'success')
+        self.assertEqual(scale, 6)
+        actual = power.block_distribution([a, b], 'success', scale)
+        expected = {}
+        for x, y, z in itertools.product(a['success']['outcomes'], a['success']['outcomes'], b['success']['outcomes']):
+            key = 3 * (x['difference_sum'] + y['difference_sum']) + 2 * z['difference_sum']
+            expected[key] = expected.get(key, 0.0) + x['probability'] * y['probability'] * z['probability']
+        self.assertEqual(set(actual), set(expected))
+        for key in expected:
+            self.assertAlmostEqual(actual[key], expected[key], places=14)
+
+    def test_heterogeneous_explicit_blocks_respect_null_boundary(self):
+        # Equal-size task strata have expected differences +0.1 and -0.3.
+        def item(label, values):
+            return {'name': label, 'tasks': 20, 'repetitions_per_task': 2,
+                    'success': {'outcomes': [{'difference_sum': d, 'probability': p} for d, p in values]}}
+        strata = [item('positive', [(-2, 0.1), (0, 0.7), (2, 0.2)]),
+                  item('negative', [(-2, 0.4), (0, 0.5), (2, 0.1)])]
+        tail = 0.025
+        width = math.sqrt(-2 * math.log(tail) / 40)
+        self.assertLessEqual(power.block_endpoint_power(strata, 'success', -0.1, width), tail + 1e-12)
+
+    def test_explicit_perfect_correlation_matches_legacy(self):
+        legacy = {'baseline': 0.5, 'gain': 0.2, 'loss': 0.1}
+        explicit = {'outcomes': [{'difference_sum': -2, 'probability': 0.1},
+                                 {'difference_sum': 0, 'probability': 0.7},
+                                 {'difference_sum': 2, 'probability': 0.2}]}
+        common = {'overall_alpha': 0.05, 'confirmatory_contrasts': 2, 'noninferiority_margin': 0.1,
+                  'required_discovery_gain': 0.0}
+        def design(endpoint):
+            return {**common, 'designs': [{'name': 'x', 'strata': [
+                {'name': 'a', 'tasks': 100, 'repetitions_per_task': 2,
+                 'success': endpoint, 'discovery': endpoint}]}]}
+        old = power.calculate(design(legacy))['results'][0]
+        new = power.calculate(design(explicit))['results'][0]
+        for key in ('success_power', 'discovery_power', 'joint_power_lower_bound'):
+            self.assertAlmostEqual(old[key], new[key], places=14)
+            self.assertAlmostEqual(old['strata'][0][key], new['strata'][0][key], places=14)
+
+    def test_explicit_blocks_work_through_cli_with_mixed_strata(self):
+        explicit = {'outcomes': [{'difference_sum': -2, 'probability': 0.1},
+                                 {'difference_sum': -1, 'probability': 0.2},
+                                 {'difference_sum': 0, 'probability': 0.4},
+                                 {'difference_sum': 1, 'probability': 0.2},
+                                 {'difference_sum': 2, 'probability': 0.1}]}
+        legacy = {'baseline': 0.5, 'gain': 0.2, 'loss': 0.1}
+        data = {'overall_alpha': 0.05, 'confirmatory_contrasts': 2, 'noninferiority_margin': 0.1,
+                'required_discovery_gain': 0.0, 'designs': [{'name': 'mixed', 'strata': [
+                    {'name': 'explicit', 'tasks': 10, 'repetitions_per_task': 2,
+                     'success': explicit, 'discovery': legacy},
+                    {'name': 'perfect', 'tasks': 10, 'repetitions_per_task': 3,
+                     'success': legacy, 'discovery': explicit}]}]}
+        path = Path(__file__).with_name('pilot-v2-power.py')
+        run = subprocess.run([sys.executable, str(path)], input=json.dumps(data),
+                             text=True, capture_output=True, check=False)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        output = json.loads(run.stdout)
+        self.assertEqual(output['results'][0]['independent_tasks'], 20)
+        self.assertEqual([x['tasks'] for x in output['results'][0]['strata']], [10, 10])
+        self.assertFalse(output['execution_authorized'])
+        # An infeasible calculation refuses before dynamic programming.
+        data['designs'][0]['strata'][0]['tasks'] = 500
+        data['designs'][0]['strata'][1]['tasks'] = 500
+        with self.assertRaisesRegex(ValueError, 'operation bound'):
+            power.calculate(data)
+
+    def test_explicit_blocks_fail_closed(self):
+        def entry(outcomes, repetitions=2):
+            return power._block_endpoint({'outcomes': outcomes}, repetitions, 'test')
+        bad = [
+            [{'difference_sum': 0, 'probability': 0.8}],
+            [{'difference_sum': 0, 'probability': 0.5}, {'difference_sum': 0, 'probability': 0.5}],
+            [{'difference_sum': 3, 'probability': 1.0}],
+            [{'difference_sum': 0, 'probability': float('nan')}],
+        ]
+        for outcomes in bad:
+            with self.subTest(outcomes=outcomes), self.assertRaises(ValueError):
+                entry(outcomes)
+        with self.assertRaisesRegex(ValueError, 'at most 12'):
+            entry([{'difference_sum': 0, 'probability': 1.0}], 13)
+        endpoint = {'outcomes': [{'difference_sum': 0, 'probability': 1.0}]}
+        strata = [{'repetitions_per_task': 11, 'success': endpoint},
+                  {'repetitions_per_task': 7, 'success': endpoint}]
+        with self.assertRaisesRegex(ValueError, 'denominator'):
+            power._block_scale(strata, 'success')
+
     def test_extreme_pairs_and_cluster_repetition(self):
         a = example()
         a['task_counts'] = [100]

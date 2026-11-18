@@ -46,6 +46,74 @@ def _endpoint(value, name):
     return {'baseline': baseline, 'gain': gain, 'loss': loss}
 
 
+def _block_endpoint(value, repetitions, name):
+    if not isinstance(value, dict) or 'outcomes' not in value:
+        return _endpoint(value, name)
+    value = _object(value, ('outcomes',), name)
+    if repetitions > 12:
+        raise ValueError(f'{name}: explicit block distributions allow at most 12 repetitions')
+    outcomes = value['outcomes']
+    if not isinstance(outcomes, list) or not outcomes or len(outcomes) > 2 * repetitions + 1:
+        raise ValueError(f'{name}: invalid block outcome count')
+    seen = set()
+    normalized = []
+    total = Decimal(0)
+    for outcome in outcomes:
+        outcome = _object(outcome, ('difference_sum', 'probability'), name + '.outcome')
+        difference = _integer(outcome['difference_sum'], name + '.difference_sum', -repetitions, repetitions)
+        probability = _number(outcome['probability'], name + '.probability', 0, 1)
+        if difference in seen:
+            raise ValueError(f'{name}: duplicate block outcome')
+        seen.add(difference)
+        total += Decimal(str(probability))
+        normalized.append({'difference_sum': difference, 'probability': probability})
+    if total != Decimal(1):
+        raise ValueError(f'{name}: block probabilities must sum exactly to 1')
+    return {'outcomes': sorted(normalized, key=lambda x: x['difference_sum'])}
+
+
+def _block_scale(strata, endpoint=None):
+    endpoints = (endpoint,) if endpoint else ('success', 'discovery')
+    denominators = [item['repetitions_per_task'] for item in strata
+                    if any('outcomes' in item[name] for name in endpoints)]
+    scale = math.lcm(*denominators) if denominators else 1
+    if scale > 60:
+        raise ValueError('block repetition common denominator exceeds 60')
+    return scale
+
+
+def block_distribution(strata, endpoint, scale):
+    """Sum independent task-block means on an exact common integer grid."""
+    probabilities = {0: 1.0}
+    for item in strata:
+        definition = item[endpoint]
+        if 'outcomes' in definition:
+            repetitions = item['repetitions_per_task']
+            assert scale % repetitions == 0
+            support = [(v['difference_sum'] * (scale // repetitions), v['probability'])
+                       for v in definition['outcomes'] if v['probability'] > 0]
+        else:
+            gain, loss = definition['gain'], definition['loss']
+            same = float(Decimal(1) - Decimal(str(gain)) - Decimal(str(loss)))
+            support = [(step, chance) for step, chance in ((-scale, loss), (0, same), (scale, gain)) if chance > 0]
+        for _ in range(item['tasks']):
+            out = {}
+            for offset, chance in probabilities.items():
+                for step, weight in support:
+                    key = offset + step
+                    out[key] = out.get(key, 0.0) + chance * weight
+            probabilities = out
+    assert abs(math.fsum(probabilities.values()) - 1.0) < 1e-9
+    return probabilities
+
+
+def block_endpoint_power(strata, endpoint, null_upper, width):
+    scale = _block_scale(strata, endpoint)
+    count = sum(x['tasks'] for x in strata)
+    distribution = block_distribution(strata, endpoint, scale)
+    return math.fsum(p for offset, p in distribution.items() if offset / (count * scale) - width > null_upper)
+
+
 def stratified_distribution(strata):
     """PMF of summed independent task differences, with per-stratum rates."""
     probabilities = [1.0]
@@ -102,14 +170,23 @@ def calculate_stratified(spec):
             if not isinstance(label, str) or not label.strip() or len(label) > 100 or label in stratum_names:
                 raise ValueError('stratum names must be unique nonblank strings of at most 100 characters')
             stratum_names.add(label)
+            repetitions = _integer(stratum['repetitions_per_task'], 'repetitions_per_task', 1, 1000)
             items.append({'name': label, 'tasks': _integer(stratum['tasks'], 'tasks', 1, 1000),
-                          'repetitions_per_task': _integer(stratum['repetitions_per_task'], 'repetitions_per_task', 1, 1000),
-                          'success': _endpoint(stratum['success'], name + '.' + label + '.success'),
-                          'discovery': _endpoint(stratum['discovery'], name + '.' + label + '.discovery')})
+                          'repetitions_per_task': repetitions,
+                          'success': _block_endpoint(stratum['success'], repetitions, name + '.' + label + '.success'),
+                          'discovery': _block_endpoint(stratum['discovery'], repetitions, name + '.' + label + '.discovery')})
         if sum(x['tasks'] for x in items) > 1000:
             raise ValueError('a design may contain at most 1000 independent tasks')
         normalized.append({'name': name, 'strata': items})
-    if 4 * sum(sum(x['tasks'] for x in d['strata']) ** 2 for d in normalized) > 8_000_000:
+    estimated_operations = 0
+    for design in normalized:
+        strata = design['strata']
+        scale = _block_scale(strata)
+        explicit = any('outcomes' in x[endpoint] for x in strata for endpoint in ('success', 'discovery'))
+        support = max((len(x[endpoint]['outcomes']) if 'outcomes' in x[endpoint] else 3)
+                      for x in strata for endpoint in ('success', 'discovery')) if explicit else 1
+        estimated_operations += 4 * sum(x['tasks'] for x in strata) ** 2 * scale * support
+    if estimated_operations > 12_000_000:
         raise ValueError('requested calculation exceeds operation bound')
     tail_alpha = alpha / (2 * contrasts)
     if tail_alpha == 0.0:
@@ -121,14 +198,19 @@ def calculate_stratified(spec):
         width = math.sqrt(2 * -math.log(tail_alpha) / n)
         powers = {}
         for endpoint, boundary in (('success', -margin), ('discovery', gain)):
-            distribution = stratified_distribution([(x['tasks'], x[endpoint]['gain'], x[endpoint]['loss']) for x in strata])
-            powers[endpoint] = math.fsum(p for i, p in enumerate(distribution) if (i - n) / n - width > boundary)
+            if any('outcomes' in x[endpoint] for x in strata):
+                powers[endpoint] = block_endpoint_power(strata, endpoint, boundary, width)
+            else:
+                distribution = stratified_distribution([(x['tasks'], x[endpoint]['gain'], x[endpoint]['loss']) for x in strata])
+                powers[endpoint] = math.fsum(p for i, p in enumerate(distribution) if (i - n) / n - width > boundary)
         stratum_results = []
         for item in strata:
             count = item['tasks']
             local_width = math.sqrt(2 * -math.log(tail_alpha) / count)
-            local_success = endpoint_power(count, item['success'], -margin, local_width)
-            local_discovery = endpoint_power(count, item['discovery'], gain, local_width)
+            local_success = (block_endpoint_power([item], 'success', -margin, local_width)
+                             if 'outcomes' in item['success'] else endpoint_power(count, item['success'], -margin, local_width))
+            local_discovery = (block_endpoint_power([item], 'discovery', gain, local_width)
+                               if 'outcomes' in item['discovery'] else endpoint_power(count, item['discovery'], gain, local_width))
             stratum_results.append({'name': item['name'], 'tasks': count,
                                     'repetitions_per_task': item['repetitions_per_task'],
                                     'success_power': local_success, 'discovery_power': local_discovery,
@@ -145,7 +227,8 @@ def calculate_stratified(spec):
                             'strata have fixed task counts and contribute in proportion to task count',
                             'stratum-specific claims require those claims to be included in confirmatory_contrasts',
                             'each endpoint is a paired binary outcome',
-                            'perfect correlation among repetitions of the same task; repetitions add no independent blocks',
+                            'legacy gain/loss endpoints assume perfect correlation among repetitions; explicit block distributions supply a different assumption',
+                            'each task block is independent; repetitions are never independent task blocks',
                             'unknown dependence between endpoints; joint power is a union-bound lower bound',
                             'no cost, latency, host or rights qualification'],
             'execution_authorized': False, 'provider_calls': 0, 'spend_usd': 0}

@@ -151,12 +151,40 @@ result weights strata by their fixed task counts; individual stratum sensitivity
 is reported separately. A pooled result does not establish a per-stratum guard.
 If any per-stratum or other additional comparison will support a claim, include
 it in `confirmatory_contrasts` before examining outcomes; the tool cannot infer
-which claims a future study will make. Within each task, repetitions are still
-modeled as perfectly correlated, not as independent tasks.
+which claims a future study will make. With the `baseline`/`gain`/`loss` form,
+repetitions within each task are modeled as perfectly correlated.
+
+To explore a different explicit within-task dependence assumption, either
+endpoint in a stratum may instead supply a probability distribution over the sum
+of its paired run differences. For example, with `repetitions_per_task: 2`, an
+endpoint can be written as:
+
+```json
+{"outcomes": [
+  {"difference_sum": -2, "probability": 0.1},
+  {"difference_sum": -1, "probability": 0.2},
+  {"difference_sum": 0, "probability": 0.4},
+  {"difference_sum": 1, "probability": 0.2},
+  {"difference_sum": 2, "probability": 0.1}
+]}
+```
+
+Each run difference is treatment minus control in `{-1, 0, 1}`; the task-block
+mean is the supplied sum divided by that stratum's repetition count. The tool
+uses the supplied block distribution directly, with independent task blocks and
+fixed task-count weights. It does not infer within-task correlation or the joint
+dependence between success and discovery from these marginal distributions. The
+confidence and joint-power bounds remain conservative under those assumptions.
+Explicit block distributions permit at most 12 repetitions per task; their common
+denominator across a design is capped at 60 and a separate operation bound applies.
+Outcome sums must be distinct and in range, and their decimal probabilities must
+sum exactly to one. This distribution is a hypothetical sensitivity input, not
+observed pilot evidence or an authorization to run it.
 
 The computation rejects malformed, infeasible or oversized inputs. Both forms
-are binary and assume independent task blocks; neither estimates unknown rates
-nor establishes the selected tasks' independence or within-stratum distribution.
+are binary per run and assume independent task blocks; neither estimates unknown
+rates or block distributions nor establishes the selected tasks' independence or
+within-stratum distribution.
 They do not address the full six-contrast matrix, other endpoint types, cost,
 latency, rights, host readiness or provider use. A future freeze must select and
 justify its actual analysis, task/stratum model, margins and schedule; this tool
