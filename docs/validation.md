@@ -23,6 +23,12 @@ startup test recorded one refusal and 16 journal records, then halted with
 owner inventory, durable startup-prefix acknowledgment and matching Ready echo
 remain open. No provider calls or spend occurred. Private receipts remain under
 `runs/pilot-startup-refusal-order-2026-11-18/`.
+ The qualified code and records were pushed to the experimental branch and all
+440 tracked files matched a fresh clone. After deleting this round's build and
+minimum-Rust caches (3,740,979,200 to 284,274,688 allocated bytes for the stage),
+seven direct retained-executable controls passed without rebuilding, including the
+new receipt control. The prior qualified upstream host and its source reference
+remain retained; reconstruction after pruning was not rerun in this round.
 
 ## Restricted startup managed timer exclusion — 2026-11-18
 

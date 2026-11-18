@@ -9,7 +9,8 @@ and dated paragraphs below are history.
   out-of-order attempts, stale journal sequences and previously seen prefix digests;
   native controls and the no-provider qualification passed
   ([receipt](validation.md#ordered-startup-refusal-receipts--2026-11-18)). These
-  checks do not independently prove the parent wrote the journal. Full startup
+  checks do not independently prove the parent wrote the journal. The qualified
+  changes were pushed and cache-free replay passed. Full startup
   owner inventory and its durable acknowledgment/Ready echo remain open; startup
   admission, paid runs, signing and release stay gated.
 - **Restricted managed timer exclusion, 2026-11-18.** The prior native host let
