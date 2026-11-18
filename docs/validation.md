@@ -38,6 +38,19 @@ checks. No provider calls or spend occurred. Complete inventory and durable
 acknowledgment remain open; paid runs, signing and release remain gated.
 
 
+
+The qualified implementation and records were pushed to
+`experimental/context-ecosystem` as `7721baf7670a2beea81cc9b45156b0b1a7bb59b3`.
+A fresh HTTPS clone matched all 439 tracked file bytes, types and executable modes;
+main was unchanged and no CI run was observed. After exact input retention and
+open-file checks, this round's source, dependency, Rust and MSRV caches and ten
+duplicate native copies were pruned. Stage allocation fell from **6,685,626,368**
+to **535,842,816 bytes**; this is not a physical APFS reclamation measurement.
+The necessary CLI leaf and runnable test artifacts remain. CLI, units, channel,
+startup and both legacy-source consumers passed again without the caches. A source
+restoration recipe and all 10,338 checked inputs remain; full reconstruction after
+pruning was not rerun.
+
 ## Source-owned startup extension dispatch — 2026-11-18
 
 The restricted startup diagnostic now joins the selected original `session_start`

@@ -10,6 +10,7 @@ and dated paragraphs below are history.
   profile now rejects managed timeout and interval admission before construction,
   with source, real-CLI, persistence and compatibility checks passing without
   provider calls ([receipt](validation.md#restricted-startup-managed-timer-exclusion--2026-11-18)).
+  The qualified code and records were pushed, and cache-free replay passed.
   Raw timers and arbitrary extension work, complete inventory and durable
   acknowledgment remain open; startup admission, paid runs, signing and release
   remain gated.
