@@ -5,6 +5,13 @@
 Updated 2026-11-16. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
+- **Startup logger ownership, 2026-11-18.** The explicit restricted profile now
+  closes its native local logger, blocks reconfiguration and joins the original
+  retention callbacks. Source and native CLI controls, startup persistence and
+  compatibility gates passed without provider calls
+  ([receipt](validation.md#source-owned-startup-logger--2026-11-18)). This is not
+  physical descriptor-release proof or complete startup admission; plugin re-warm,
+  trusted-extension and other owners and the prefix acknowledgment remain open.
 - **Startup owner census, 2026-11-18.** Source inspection found that the awaited
   initial plugin-root preload has a detached cache-clear re-warm path, and that
   the current startup-observation profile does not select the older logging helper.

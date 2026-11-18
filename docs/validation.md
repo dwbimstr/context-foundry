@@ -1,5 +1,43 @@
 # Validation
 
+## Source-owned startup logger — 2026-11-18
+
+The explicit restricted startup diagnostic now closes the selected native logger
+and joins its actual queued retention callbacks before incomplete-inventory HOLD.
+Code `d61c156b81dd6d91cbc7096de07370b802830675` and the [upstream MIT reference
+patch](references/omp-startup-logging-owner.patch) target
+`can1357/oh-my-pi@24439066040e006eb08da7b204f0ac41c79d2de9` after the previously
+qualified startup patches. Foundry does not apply that patch automatically.
+
+A network-denied baseline showed that the original disabled logger could be
+reconfigured and write a second synthetic marker. `--startup-no-logging` requires
+restricted tools and establishes the source owner before CLI initialization. It
+uses the original synchronous transport close, refuses later transport, sink and
+forwarder changes through cached or direct references, retains pending original
+retention callbacks, and references their native handles while joining them. The
+exact owner retires against the sealed session and registry after marketplace; Rust
+validates and journals the closed metadata. Ordinary logging remains available
+without the flag. Upstream close is best-effort, so this is logical logger retirement,
+not independent proof of physical descriptor release or every logging implementation.
+
+The SDK and logger matrix passed **696/0** across **66** files. Removing each of
+the three reconfiguration guards or the retention join made its control fail.
+The first promise-only candidate stalled waiting for an unreferenced native
+immediate; the corrected owner references that original handle during its join.
+A held original callback prevents retirement until released. Three compiled-CLI
+controls passed: ordinary, owned and invalid restriction flags. They deny network,
+send no prompt and preserve pinned model metadata in successful cases. Fresh
+checks passed formatting, pilot all-target Clippy, **117/0** pilot units (**1**
+ignored), Rust **1.90** all-target checking, five current-host consumers, **36/0**
+frozen compatibility (**10** ignored), both legacy-source consumers and seven
+channel controls. Four default gates reuse **258** identical effective inputs.
+Ten startup persistence cases passed; the normal journal has **14** records and
+ends in `startup_inventory_unqualified`, with no Ready, permit or generation.
+No provider calls or spend occurred. Plugin re-warm, trusted-extension and other
+owners, complete inventory and durable acknowledgment/Ready echo remain open;
+paid runs, signing and release remain gated.
+
+
 ## Startup owner source census — 2026-11-18
 
 A partial source review followed the qualified marketplace round; it does not
