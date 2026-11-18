@@ -19,6 +19,16 @@ compatibility cases (10 ignored), both legacy-source consumers and Rust 1.90
 pilot all-target checking. Four default-feature gates reuse 258 identical effective
 inputs. These are no-provider diagnostics; no prompt or paid model call was made.
 
+The implementation and qualification records were pushed to
+`experimental/context-ecosystem` as `91159b872ed391f1c999b49bec596a17598d7ddf`.
+A fresh HTTPS clone matched all 433 tracked file bytes, types and executable modes;
+main was unchanged and no CI run was observed. Source, dependency, Rust and MSRV
+caches were pruned after exact retention and open-file checks, along with seven
+duplicate native copies. The needed CLI leaf and runnable test artifacts remain.
+The pilot units, CLI, channel, startup and both legacy-source consumers pass again
+without the caches. The private receipts retain allocations and the exact source
+restoration recipe; the full reconstruction has not been rerun after pruning.
+
 The normal startup journal remains an **11-record HOLD**. Complete startup
 inventory, telemetry/update/logging, trusted-extension ownership and the durable
 prefix acknowledgment/Ready echo remain open. No general OAuth drain, daemon-server

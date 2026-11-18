@@ -664,7 +664,9 @@ and dated paragraphs below are history.
     The [daemon-presence handle fix](validation.md#daemon-presence-immutable-handle-qualification--2026-11-18)
     is qualified at the fixed startup boundary. Full inventory, telemetry/update/
     logging, trusted-extension ownership and prefix acknowledgment/Ready echo
-    remain open; full admission stays HOLD. Six historical stores remain in
+    remain open; full admission stays HOLD. The fix is pushed with full clone
+    readback; new caches are pruned and retained executables pass direct replay.
+    Six historical stores remain in
     lossless local cold storage with restore recipes.
     The empty-auth fix/records are published with full fresh-clone readback.
     New build/MSRV/SDK caches and duplicate native libraries are pruned; retained
