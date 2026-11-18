@@ -29,6 +29,12 @@ The pilot units, CLI, channel, startup and both legacy-source consumers pass aga
 without the caches. The private receipts retain allocations and the exact source
 restoration recipe; the full reconstruction has not been rerun after pruning.
 
+A separate same-source behavioral counterfactual removes the owned-handle
+freeze: the fake cleanup is invoked and the regression fails. Restoring the exact
+qualified source makes the same test pass. The original source and dependency
+caches used for this control were pruned after hash and open-file checks. The
+no-provider receipts are in `runs/pilot-presence-mutation-2026-11-18/`.
+
 The normal startup journal remains an **11-record HOLD**. Complete startup
 inventory, telemetry/update/logging, trusted-extension ownership and the durable
 prefix acknowledgment/Ready echo remain open. No general OAuth drain, daemon-server

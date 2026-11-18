@@ -662,7 +662,8 @@ and dated paragraphs below are history.
     extension and daemon-presence ownership plus prefix acknowledgment/Ready echo
     remain open; full admission stays HOLD.
     The [daemon-presence handle fix](validation.md#daemon-presence-immutable-handle-qualification--2026-11-18)
-    is qualified at the fixed startup boundary. Full inventory, telemetry/update/
+    is qualified at the fixed startup boundary; removing its handle freeze makes
+    the behavioral cleanup-substitution test fail. Full inventory, telemetry/update/
     logging, trusted-extension ownership and prefix acknowledgment/Ready echo
     remain open; full admission stays HOLD. The fix is pushed with full clone
     readback; new caches are pruned and retained executables pass direct replay.
