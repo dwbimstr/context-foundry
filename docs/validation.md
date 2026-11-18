@@ -1,5 +1,24 @@
 # Validation
 
+## Restricted startup raw timer counterexample — 2026-11-18
+
+A network-denied native CLI control on the retained source-built restricted
+host (SHA-256 `c48ea3b5a2ec5376044da48de072ae8e961d91bb87e4614269b2f37297f64cbf`)
+used a synthetic trusted extension that scheduled a raw `setTimeout`. Its trace
+recorded scheduling at sequence 11, the existing extension-retirement receipt at
+13, and the raw callback at 14. The process exited normally and its process group
+was gone. This demonstrates that the managed-timer exclusion and the selected
+handler receipt do not settle arbitrary raw timer work. It does not show a
+provider call, capture-journal admission or an actual unsafe generation: no
+prompt was sent, network access was denied and spend was zero. Full startup
+inventory and admission remain on HOLD.
+
+The first harness invocation failed before launching a host because its scratch
+directory was absent. A second failed closed on a malformed sandbox policy; the
+corrected control produced the result above. Both failures and the native trace
+are retained in `runs/pilot-startup-raw-timer-2026-11-18/`. This is a
+counterexample to settlement, not a general timer-fencing design or repair.
+
 ## T005 dense retention census correction — 2026-11-18
 
 The preceding census omitted packing decisions marked `shortened`, even though

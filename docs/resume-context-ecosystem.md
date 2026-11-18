@@ -5,6 +5,13 @@
 Updated 2026-11-16. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
+- **Restricted startup raw timer counterexample, 2026-11-18.** On the retained
+  source-built restricted host, a synthetic extension's raw timer callback fired
+  after the extension-retirement receipt, despite managed-timer exclusion
+  ([record](validation.md#restricted-startup-raw-timer-counterexample--2026-11-18)).
+  The network-denied control sent no prompt. Full owner inventory, startup
+  acknowledgment and admission remain open; paid runs and signing stay gated.
+
 - **T005 successful-control dense retention census, corrected 2026-11-18.**
   Including shortened packing decisions, all 169 retained development successes
   had a target-name-covering dense range among their first 16 kept dense units;
