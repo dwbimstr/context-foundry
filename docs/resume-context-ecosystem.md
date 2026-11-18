@@ -11,6 +11,7 @@ and dated paragraphs below are history.
   ([receipt](validation.md#source-owned-marketplace-exclusion--2026-11-18)). Other
   update routes, logging, trusted-extension ownership, complete before-I/O
   inventory and durable acknowledgment with matching Ready echo remain open.
+  The qualified code and records were pushed, and cache-free replay passed.
   Full startup admission, paid runs, signing and release remain gated.
 - **Measurement.** G2 (388 questions over rust-lang/rust and oh-my-pi, run with
   [`scripts/g2.sh`](../scripts/g2.sh) on the owner's Mac) is now development evidence.
