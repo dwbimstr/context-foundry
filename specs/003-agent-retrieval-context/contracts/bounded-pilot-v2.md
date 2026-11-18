@@ -1567,6 +1567,21 @@ and ignored-abort paths, and prevent late work from being mistaken for a settled
 owner. The existing incomplete-inventory HOLD remains in force. See the
 [dated native receipt](../../../docs/validation.md#native-startup-extension-timeout-boundary--2026-11-18).
 
+**Selected startup extension dispatch ownership round, 2026-11-18.** One
+90-minute no-provider round, one heavy job, a 20 GiB disk floor, an 8 GiB sampled
+individual RSS ceiling and a 120-second cleanup reserve covers the restricted
+startup profile. The source owner binds the exact session runner, retains the
+original `session_start` work and observers, and validates failures and timeouts
+before issuing a one-use receipt after the handler broadcast. The existing channel
+verifies the exact receipt and Rust journals it after plugin-root retirement.
+Repeated starts and extension additions refuse. Source counterfactuals, wrong
+identity, failure, timeout and native held-handler controls qualify this selected
+dispatch lifetime; ordinary behavior remains available without the flag. See the
+[source patch](../../../docs/references/omp-startup-extension-owner.patch).
+Arbitrary work spawned by extension code, other events, complete startup inventory
+and durable acknowledgment/Ready echo remain open. Paid runs, signing and release
+remain gated.
+
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
 and a complete startup-owner inventory: catalog/discovery, credential refresh,
