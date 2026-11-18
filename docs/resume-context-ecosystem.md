@@ -661,6 +661,10 @@ and dated paragraphs below are history.
     by this empty profile. Complete inventory, telemetry/update/logging, trusted-
     extension and daemon-presence ownership plus prefix acknowledgment/Ready echo
     remain open; full admission stays HOLD.
+    The [source-owned telemetry exclusion](validation.md#source-owned-telemetry-exclusion--2026-11-18)
+    now joins the original disabled initialization and rejects exporter activation
+    in the explicit restricted diagnostic. Direct OTLP imports, general exporter
+    drain and complete startup admission remain open.
     The [daemon-presence handle fix](validation.md#daemon-presence-immutable-handle-qualification--2026-11-18)
     is qualified at the fixed startup boundary; removing its handle freeze makes
     the behavioral cleanup-substitution test fail. Full inventory, telemetry/update/

@@ -1,5 +1,60 @@
 # Validation
 
+## Source-owned telemetry exclusion — 2026-11-18
+
+**The explicit restricted startup diagnostic now prevents telemetry exporters
+from starting and joins its original disabled initialization before HOLD. Full
+startup admission remains open.** Code `06e1a2662df3c5f33caded7300673f841da113ae` and the
+[incremental upstream MIT patch](references/omp-startup-telemetry-exclusion.patch)
+target `can1357/oh-my-pi@24439066040e006eb08da7b204f0ac41c79d2de9`, after the
+caller/auth/refusal/restricted/catalog/settings/empty-auth/presence patches.
+Foundry does not automatically apply that reference patch.
+
+A network-denied baseline probe demonstrated that a disabled initialization can
+be followed by an enabled call that registers exporters. In the opt-in fixed
+profile, `--startup-no-telemetry` requires `--restrict-tools` and establishes a
+source owner before CLI initialization. It refuses enabled, repeated or late
+initialization before exporter construction; it retains the original disabled
+call and its completion observer, closes admission and joins them before reporting
+retirement. Ordinary telemetry outside the flag remains available. The SDK binds
+the exact source owner to the sealed session/registry after presence retirement.
+Rust validates the three closed facts and journals them before incomplete-inventory
+HOLD. This excludes the selected initialization path; direct OTLP imports, general
+exporter drain and a blanket network fence are not qualified.
+
+The SDK matrix passes **654/0** across **59** files, including existing telemetry,
+main/CLI, auth and presence suites. Removing the exclusion or its observer join
+makes the corresponding controls fail. Five compiled-CLI controls pass: ordinary
+baseline, owned disabled configuration, a configured endpoint, enabled-setting
+refusal and invalid restriction flags. Native controls use an OS network denial;
+no prompt or provider call is made. Three successful controls preserve model
+metadata digest `83aac156b7678be8faab3ca2d09fbf4e9773214fc968f1c4a13839dc718317c9`.
+The initial source-transform mismatch and test type errors are retained in private
+evidence; neither constitutes acceptance.
+
+Fresh affected checks pass: formatting, pilot all-target Clippy, **115/0** pilot
+units (**1** ignored) and Rust **1.90** pilot all-target checking. Four default
+feature gates reuse **258** identical effective inputs. All five current-host
+consumers, **36/0** frozen compatibility (**10** explicit diagnostics ignored),
+both legacy-source consumers and seven channel controls pass. Eight actual startup
+persistence cases pass, including telemetry-append and terminal-HOLD failures;
+the normal journal has **12 records** and no Ready, counter, permit or generation.
+The legacy conversation retains two requests, **29** usage mutation refusals and
+**25** trace mutation refusals. No retrieval improvement or real-provider economics
+is claimed.
+
+The source host is `520ee05bdff74f88092462cf1d0eeaad38827c502a7fbba00e8c9e1529da618c`. All **10,333**
+source/native inputs are hashed before and after compilation and retained through
+the B5/native masters and exact overlays; the public patch applies with exact
+resulting bytes. Successful guarded phases sample at least
+**551,988,264,960 bytes** free disk and at most
+**2,406,072,320 bytes** individual RSS. These are sampled,
+not global or GPU, bounds. Private receipts are in
+`runs/pilot-telemetry-owner-2026-11-18/`. Complete startup inventory, update and
+logging ownership, trusted-extension ownership and durable prefix acknowledgment/
+Ready echo remain open; paid runs, signing and v2/T006 execution stay gated.
+Review is in-session.
+
 ## Daemon-presence immutable handle qualification — 2026-11-18
 
 The owned daemon-presence handle now prevents a caller from replacing its original

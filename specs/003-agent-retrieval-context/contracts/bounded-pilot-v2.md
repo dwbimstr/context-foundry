@@ -1494,7 +1494,7 @@ records the corrected source, native controls, fresh gates and remaining admissi
 The incremental [source patch](../../../docs/references/omp-startup-presence-retirement.patch)
 retains the original registration/cleanup, upstream identity and focused tests.
 
-**Selected telemetry exclusion round, 2026-11-18.** After the presence round's
+**Selected telemetry exclusion round, 2026-11-18 — qualified at the fixed startup boundary.** After the presence round's
 terminal receipt, use a fresh 90-minute no-spend round with one heavy job, a 20 GiB
 disk floor, an 8 GiB sampled individual RSS ceiling and a 120-second cleanup
 reserve. The source's disabled initialization permits a later enabled call to
@@ -1508,7 +1508,7 @@ retirement; validate closed metadata and journal it before incomplete-inventory 
 Qualify ordinary and owned controls, configured endpoint, enabled-setting refusal,
 wrong identity, delayed observer, late references and persistence failure at the
 actual boundaries. The [upstream reference patch](../../../docs/references/omp-startup-telemetry-exclusion.patch)
-records source identity and differences. Direct OTLP imports, general exporter drain,
+records source identity and differences. The [dated qualification](../../../docs/validation.md#source-owned-telemetry-exclusion--2026-11-18) records native controls, gates and limits. Direct OTLP imports, general exporter drain,
 other startup owners, complete inventory and prefix acknowledgment/Ready echo remain
 open. Paid execution, signing and v2/T006 remain gated.
 
