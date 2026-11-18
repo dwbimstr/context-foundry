@@ -1596,6 +1596,17 @@ profile; see the [source patch](../../../docs/references/omp-startup-managed-tim
 Raw timers, arbitrary extension work, other events, complete inventory and durable
 acknowledgment/Ready echo remain open. Paid runs, signing and release remain gated.
 
+**Selected restricted workspace-scan exclusion, 2026-11-18.** In the diagnostic
+profile with the exact restricted extension startup owner, the source host refuses
+workspace-tree scan construction at the original SDK entry point, including a later
+settings-triggered scan. A supplied tree does not start that scan. Other profiles
+retain ordinary scanning. The source host is represented by the
+[reference patch](../../../docs/references/omp-startup-workspace-scan-exclusion.patch),
+which Foundry does not automatically apply. Its scope is this scan entry point;
+other filesystem discoveries, native operations and arbitrary extension work are
+not covered. Complete inventory, durable acknowledgment and matching Ready echo
+remain open, so no startup admission or paid execution is enabled.
+
 **Ordered refusal receipt repair, 2026-11-18.** The pinned runtime reproduced
 acceptance of duplicate or decreasing journal sequences, repeated digests and
 out-of-order attempt receipts. The existing child channel now requires the next
