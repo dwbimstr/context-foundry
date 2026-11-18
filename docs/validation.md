@@ -1,5 +1,24 @@
 # Validation
 
+## T005 dense retention census correction — 2026-11-18
+
+The preceding census omitted packing decisions marked `shortened`, even though
+those can deliver the target name. Replaying the same pinned development traces
+and mapping a shortened range through its recorded parent corrects the result:
+all 169 located successes had a selected or shortened dense range covering the
+target-name bytes among their first 16 kept dense units; 153 had one among the
+first eight. In the earlier selected-only census, the 15 cases without a mapped
+selected range all had a shortened target-name-covering range. The earlier result
+is retained below as the selected-only observation, but its suggestion that those
+15 successes were unexplained by this mapping is superseded.
+
+This remains a range-level description, not a counterfactual response or a proof
+that any change preserves definitions or bodies. Placement and packing may
+change when the cut changes. No candidate was selected; no retrieval, model,
+provider or consumed final holdout was run or accessed. T005 remains unaccepted.
+The corrected private protocol, analyzer and results are under
+`runs/t005-dense-retention-correction-2026-11-18/`; the earlier artifacts remain.
+
 ## T005 successful-control dense retention census — 2026-11-18
 
 An offline census rechecked the 169 located successes in the retained G2
@@ -8,15 +27,15 @@ and replay of the original placement caps. It mapped selected packing ranges
 back to original materialization and placement. In 154 cases, a selected dense
 range covering the target-name bytes came from one of the first 16 kept dense
 units; 141 of those had such a range among the first eight. The other 15 had no
-selected packing range covering the name under this mapping, so this census does
-not explain their successful baseline response. All 169 original responses were
+selected packing range covering the name under this selected-only mapping; the
+correction above identifies their shortened ranges. All 169 original responses were
 located successes, and 154 were verified body successes; these counts are not
 asserted to be the same cases.
 
 This describes selected source ranges, not necessarily the text rendered by each
 packing form. It does not establish that removing later dense units preserves a
 response: a changed cut can alter placement, packing and materialization, and the
-15 unmapped successes need separate explanation. No displacement rule was
+selected-only mapping omitted shortened ranges, as corrected above. No displacement rule was
 selected or evaluated, and no retrieval or model was run. The consumed final
 holdout was not accessed; T005 still needs a separately bounded selection and
 fresh unexposed acceptance evidence. The zero-spend private protocol, analyzer and
