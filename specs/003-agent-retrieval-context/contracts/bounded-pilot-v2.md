@@ -1494,6 +1494,24 @@ records the corrected source, native controls, fresh gates and remaining admissi
 The incremental [source patch](../../../docs/references/omp-startup-presence-retirement.patch)
 retains the original registration/cleanup, upstream identity and focused tests.
 
+**Selected telemetry exclusion round, 2026-11-18.** After the presence round's
+terminal receipt, use a fresh 90-minute no-spend round with one heavy job, a 20 GiB
+disk floor, an 8 GiB sampled individual RSS ceiling and a 120-second cleanup
+reserve. The source's disabled initialization permits a later enabled call to
+register exporters; the bounded network-denied baseline observes that behavior.
+Only the explicit restricted diagnostic uses `--startup-no-telemetry`. Establish
+one source owner before initialization; retain the original disabled call and its
+completion observer, refuse enabled/repeated/late calls before exporter construction,
+and join the originals before reporting retirement. Keep ordinary telemetry outside
+this option. Bind the exact owner to the sealed session/registry after presence
+retirement; validate closed metadata and journal it before incomplete-inventory HOLD.
+Qualify ordinary and owned controls, configured endpoint, enabled-setting refusal,
+wrong identity, delayed observer, late references and persistence failure at the
+actual boundaries. The [upstream reference patch](../../../docs/references/omp-startup-telemetry-exclusion.patch)
+records source identity and differences. Direct OTLP imports, general exporter drain,
+other startup owners, complete inventory and prefix acknowledgment/Ready echo remain
+open. Paid execution, signing and v2/T006 remain gated.
+
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
 and a complete startup-owner inventory: catalog/discovery, credential refresh,

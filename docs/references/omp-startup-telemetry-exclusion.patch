@@ -1,0 +1,382 @@
+Experimental source-owned telemetry exclusion; not automatically applied by Context Foundry.
+Target: can1357/oh-my-pi @ 24439066040e006eb08da7b204f0ac41c79d2de9
+Owner: 003 T006 bounded-pilot-v2 startup observation and admission.
+Requires prior caller/auth/refusal/restricted/catalog/settings/empty-auth/presence patches.
+Modules: telemetry-export::{ownStartupTelemetry,initTelemetryExport,retireStartupTelemetry};
+main CLI explicit flag; sdk exact-session binding; CLI args/flag table.
+Tests: startup-telemetry-owner.test.ts, telemetry-export.test.ts, original auth,
+presence, settings, caller, main/CLI and restricted SDK suites.
+Difference: --startup-no-telemetry requires --restrict-tools; it installs a source
+owner before CLI initialization, refuses enabled or repeated work before exporter
+construction, joins the original disabled call and completion observer, and binds
+retirement to the exact sealed session/registry after original presence retirement.
+Ordinary telemetry outside the flag remains available. This does not establish a
+blanket network fence, direct OTLP imports, general exporter drain, complete startup
+inventory, Ready, paid execution, signing or release acceptance.
+
+MIT License
+
+Copyright (c) 2025 Mario Zechner
+Copyright (c) 2025-2026 Can Bölük
+Copyright (c) 2026 Stencil Labs, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+diff --git a/packages/coding-agent/src/cli/args.ts b/packages/coding-agent/src/cli/args.ts
+--- a/packages/coding-agent/src/cli/args.ts
++++ b/packages/coding-agent/src/cli/args.ts
+@@ -84,6 +84,7 @@
+ 	restrictTools?: boolean;
+ 	startupEmptyAuth?: boolean;
+ 	startupPresence?: boolean;
++	startupNoTelemetry?: boolean;
+ 	noLsp?: boolean;
+ 	noPty?: boolean;
+ 	hooks?: string[];
+@@ -368,6 +369,8 @@
+ 			result.noSession = true;
+ 		} else if (arg === "--no-tools") {
+ 			result.noTools = true;
++		} else if (arg === "--startup-no-telemetry") {
++			result.startupNoTelemetry = true;
+ 		} else if (arg === "--startup-presence") {
+ 			result.startupPresence = true;
+ 		} else if (arg === "--startup-empty-auth") {
+diff --git a/packages/coding-agent/src/cli/flag-tables.ts b/packages/coding-agent/src/cli/flag-tables.ts
+--- a/packages/coding-agent/src/cli/flag-tables.ts
++++ b/packages/coding-agent/src/cli/flag-tables.ts
+@@ -357,6 +357,7 @@
+ 	"--restrict-tools",
+ 	"--startup-empty-auth",
+ 	"--startup-presence",
++	"--startup-no-telemetry",
+ 	"--no-lsp",
+ 	"--no-pty",
+ 	"--hide-thinking",
+diff --git a/packages/coding-agent/src/main.ts b/packages/coding-agent/src/main.ts
+--- a/packages/coding-agent/src/main.ts
++++ b/packages/coding-agent/src/main.ts
+@@ -139,7 +139,12 @@
+ } from "./system-prompt";
+ import { createPersistedSubagentReviverFactory } from "./task/persisted-revive";
+ import { type RestoreOutcome, restoreSession } from "./task/restore";
+-import { createTelemetryExportConfig, initTelemetryExport, isTelemetryExportEnabled } from "./telemetry-export";
++import {
++	createTelemetryExportConfig,
++	initTelemetryExport,
++	isTelemetryExportEnabled,
++	ownStartupTelemetry,
++} from "./telemetry-export";
+ import { cfgTelemetryOtlpExportEnabled } from "./telemetry-settings";
+ import { registerLocalInferenceApi } from "./tiny/local-inference-api";
+ import { automaticThinkingLevel, concreteThinkingLevel, parseConfiguredThinkingLevel } from "@oh-my-pi/pi-tui/thinking";
+@@ -1844,6 +1849,9 @@
+ 	rawArgs: string[],
+ 	deps: RunRootCommandDependencies = DEFAULT_RUN_ROOT_DEPENDENCIES,
+ ): Promise<void> {
++	if (parsed.startupNoTelemetry && !parsed.restrictTools)
++		throw new Error("--startup-no-telemetry requires --restrict-tools");
++	const startupTelemetryOwner = parsed.startupNoTelemetry ? ownStartupTelemetry() : undefined;
+ 	logger.startTiming();
+ 	startStartupWatchdog();
+ 	try {
+@@ -2412,6 +2420,7 @@
+ 				startupWarning,
+ 			);
+ 			if (startupPresence) options.startupDaemonPresence = startupPresence;
++			if (startupTelemetryOwner) options.startupTelemetryOwner = startupTelemetryOwner;
+ 			options.authStorage = authStorage;
+ 			options.modelRegistry = modelRegistry;
+ 			options.hasUI = isInteractive || mode === "rpc-ui";
+diff --git a/packages/coding-agent/src/sdk.ts b/packages/coding-agent/src/sdk.ts
+--- a/packages/coding-agent/src/sdk.ts
++++ b/packages/coding-agent/src/sdk.ts
+@@ -1,4 +1,5 @@
+ import * as path from "node:path";
++import { isStartupTelemetry, retireStartupTelemetry, type StartupTelemetryOwner } from "./telemetry-export";
+ import { isStartupDaemonPresence, retireStartupDaemonPresence, type StartupDaemonPresence } from "./launch/presence";
+ import {
+ 	Agent,
+@@ -863,6 +864,7 @@
+ 	restrictToolNames?: boolean;
+ 	/** Exact source-owned CLI presence, only for the explicit restricted startup profile. */
+ 	startupDaemonPresence?: StartupDaemonPresence;
++	startupTelemetryOwner?: StartupTelemetryOwner;
+ 	/**
+ 	 * Permit only caller-supplied SDK custom tools inside a restricted session.
+ 	 * They must still be named in {@link toolNames}; discovered extensions, MCP,
+@@ -1050,6 +1052,8 @@
+ 			settingsRetired?: true;
+ 			authRetired?: true;
+ 			presence?: WeakRef<StartupDaemonPresence>;
++			presenceRetired?: true;
++			telemetry?: WeakRef<StartupTelemetryOwner>;
+ 			receipt: SealedRestrictedStartupReceipt;
+ 	  }
+ 	| undefined;
+@@ -1165,7 +1169,30 @@
+ 		!presence
+ 	)
+ 		throw new Error("Restricted presence owner identity or state mismatch");
+-	return await retireStartupDaemonPresence(presence);
++	const receipt = await retireStartupDaemonPresence(presence);
++	owner.presenceRetired = true;
++	return receipt;
++}
++
++/** Retire the exact source-owned no-export initialization after presence. */
++export async function retireRestrictedStartupTelemetry(sessionManager: unknown, modelRegistry: unknown) {
++	const owner = restrictedOwner,
++		session = owner?.session.deref(),
++		registry = owner?.registry.deref(),
++		telemetry = owner?.telemetry?.deref();
++	if (
++		!restrictedSealed ||
++		restrictedStarts !== 1 ||
++		!owner?.presenceRetired ||
++		!session ||
++		session.isDisposed ||
++		session.sessionManager !== sessionManager ||
++		!registry ||
++		registry !== modelRegistry ||
++		!telemetry
++	)
++		throw new Error("Restricted telemetry owner identity or state mismatch");
++	return await retireStartupTelemetry(telemetry);
+ }
+ 
+ /** Result from createAgentSession */
+@@ -2089,6 +2116,11 @@
+  */
+ export async function createAgentSession(options: CreateAgentSessionOptions = {}): Promise<CreateAgentSessionResult> {
+ 	if (
++		options.startupTelemetryOwner !== undefined &&
++		(options.restrictToolNames !== true || !isStartupTelemetry(options.startupTelemetryOwner))
++	)
++		throw new Error("Startup telemetry requires its exact restricted CLI owner");
++	if (
+ 		options.startupDaemonPresence !== undefined &&
+ 		(options.restrictToolNames !== true || !isStartupDaemonPresence(options.startupDaemonPresence))
+ 	)
+@@ -2116,6 +2148,7 @@
+ 				registry: new WeakRef(options.modelRegistry),
+ 				auth: new WeakRef(options.authStorage ?? options.modelRegistry.authStorage),
+ 				...(options.startupDaemonPresence ? { presence: new WeakRef(options.startupDaemonPresence) } : {}),
++				...(options.startupTelemetryOwner ? { telemetry: new WeakRef(options.startupTelemetryOwner) } : {}),
+ 				receipt: Object.freeze({ ...result.startupRestrictions, credential_usage_joined: true }),
+ 			};
+ 	}
+diff --git a/packages/coding-agent/src/telemetry-export.ts b/packages/coding-agent/src/telemetry-export.ts
+--- a/packages/coding-agent/src/telemetry-export.ts
++++ b/packages/coding-agent/src/telemetry-export.ts
+@@ -41,6 +41,52 @@
+ 
+ let otlp: OtlpExportModule | undefined;
+ let initPromise: Promise<void> | undefined;
++export interface StartupTelemetryOwner {
++	readonly kind: "startup-telemetry";
++}
++let telemetryStarts = 0;
++let startupTelemetry:
++	| {
++			handle: StartupTelemetryOwner;
++			phase: "open" | "closing" | "closed";
++			original?: Promise<void>;
++			observer?: Promise<void>;
++			violated: boolean;
++	  }
++	| undefined;
++
++/** Own the explicit no-export profile before any initialization begins. */
++export function ownStartupTelemetry(): StartupTelemetryOwner {
++	if (startupTelemetry || telemetryStarts || initPromise || otlp)
++		throw new Error("Startup telemetry ownership is late or repeated");
++	const handle = Object.freeze({ kind: "startup-telemetry" as const });
++	startupTelemetry = { handle, phase: "open", violated: false };
++	return handle;
++}
++export function isStartupTelemetry(handle: unknown): handle is StartupTelemetryOwner {
++	return (
++		!!startupTelemetry &&
++		startupTelemetry.handle === handle &&
++		startupTelemetry.phase === "open" &&
++		!!startupTelemetry.original
++	);
++}
++/** Only the exact owner may close admission and join the original no-export call. */
++export async function retireStartupTelemetry(handle: unknown) {
++	const owner = startupTelemetry;
++	if (!owner || owner.handle !== handle || owner.phase !== "open" || !owner.original || !owner.observer)
++		throw new Error("Startup telemetry identity or state mismatch");
++	owner.phase = "closing";
++	const results = await Promise.allSettled([owner.original, owner.observer]);
++	if (owner.violated || results.some(result => result.status !== "fulfilled") || initPromise || otlp)
++		throw new Error("Startup telemetry did not qualify");
++	owner.phase = "closed";
++	return Object.freeze({
++		telemetry_disabled: true as const,
++		original_joined: true as const,
++		callbacks_joined: true as const,
++	});
++}
+ 
+ /**
+  * Whether {@link initTelemetryExport} registered any real OTLP signal provider.
+@@ -76,7 +122,24 @@
+  * @param exportEnabled `telemetry.otlpExportEnabled`; required so every caller
+  *   decides whether the user's opt-out applies.
+  */
+-export async function initTelemetryExport(exportEnabled: boolean): Promise<void> {
++export function initTelemetryExport(exportEnabled: boolean): Promise<void> {
++	const owner = startupTelemetry;
++	telemetryStarts = Math.min(2, telemetryStarts + 1);
++	if (owner && (owner.phase !== "open" || owner.original || exportEnabled)) {
++		if (owner.phase === "open" && owner.original) owner.violated = true;
++		return Promise.reject(new Error("Startup telemetry export is closed"));
++	}
++	const original = initOriginalTelemetryExport(exportEnabled);
++	if (owner) {
++		owner.original = original;
++		owner.observer = original.then(
++			() => {},
++			() => {},
++		);
++	}
++	return original;
++}
++async function initOriginalTelemetryExport(exportEnabled: boolean): Promise<void> {
+ 	if (initPromise) return initPromise;
+ 
+ 	if (!exportEnabled || process.env.OTEL_SDK_DISABLED?.trim().toLowerCase() === "true") return;
+diff --git a/packages/coding-agent/test/startup-telemetry-owner.test.ts b/packages/coding-agent/test/startup-telemetry-owner.test.ts
+new file mode 100644
+--- /dev/null
++++ b/packages/coding-agent/test/startup-telemetry-owner.test.ts
+@@ -0,0 +1,111 @@
++import { expect, test } from "bun:test";
++const load = async (): Promise<typeof import("../src/telemetry-export")> =>
++	import("../src/telemetry-export.ts?case=" + crypto.randomUUID());
++test("owned disabled initialization remains disabled despite a configured endpoint and captured late calls", async () => {
++	const m = await load(),
++		captured = m.initTelemetryExport,
++		owner = m.ownStartupTelemetry();
++	process.env.OTEL_EXPORTER_OTLP_ENDPOINT = "http://127.0.0.1:9";
++	await expect(captured(true)).rejects.toThrow("closed");
++	await captured(false);
++	expect(m.isTelemetryExportEnabled()).toBe(false);
++	expect(await m.retireStartupTelemetry(owner)).toEqual({
++		telemetry_disabled: true,
++		original_joined: true,
++		callbacks_joined: true,
++	});
++	await expect(captured(true)).rejects.toThrow("closed");
++	await expect(captured(false)).rejects.toThrow("closed");
++	await expect(m.retireStartupTelemetry(owner)).rejects.toThrow("state");
++	delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
++});
++test("wrong and forged owners cannot obtain the original receipt", async () => {
++	const m = await load(),
++		owner = m.ownStartupTelemetry();
++	await m.initTelemetryExport(false);
++	expect(m.isStartupTelemetry(owner)).toBe(true);
++	await expect(m.retireStartupTelemetry({ kind: "startup-telemetry" })).rejects.toThrow("identity");
++	await m.retireStartupTelemetry(owner);
++});
++test("late and repeated ownership refuse", async () => {
++	const m = await load();
++	await m.initTelemetryExport(false);
++	expect(() => m.ownStartupTelemetry()).toThrow("late");
++	const n = await load(),
++		owner = n.ownStartupTelemetry();
++	expect(() => n.ownStartupTelemetry()).toThrow("repeated");
++	await expect(n.retireStartupTelemetry(owner)).rejects.toThrow("state");
++});
++test("ambiguous duplicate initialization cannot yield a receipt", async () => {
++	const m = await load(),
++		owner = m.ownStartupTelemetry();
++	await m.initTelemetryExport(false);
++	await expect(m.initTelemetryExport(false)).rejects.toThrow("closed");
++	await expect(m.retireStartupTelemetry(owner)).rejects.toThrow("qualify");
++});
++test("the SDK rejects a forged owner before initialization", async () => {
++	const { createAgentSession } = await import("../src/sdk");
++	await expect(
++		createAgentSession({ restrictToolNames: true, startupTelemetryOwner: { kind: "startup-telemetry" } }),
++	).rejects.toThrow("exact restricted CLI owner");
++});
++test("the opt-in flag is valueless", async () => {
++	const { parseArgs } = await import("../src/cli/args"),
++		{ VALUELESS_FLAGS } = await import("../src/cli/flag-tables");
++	const a = parseArgs([
++		"--startup-no-telemetry",
++		"--model",
++		"synthetic/model",
++		"--restrict-tools",
++		"--tools",
++		"read,edit",
++	]);
++	expect(a.startupNoTelemetry).toBe(true);
++	expect(a.model).toBe("synthetic/model");
++	expect(VALUELESS_FLAGS.has("--startup-no-telemetry")).toBe(true);
++});
++
++test("retirement joins the original completion observer", async () => {
++	const m = await load(),
++		owner = m.ownStartupTelemetry();
++	let release!: () => void;
++	const gate = new Promise<void>(resolve => {
++		release = resolve;
++	});
++	const nativeThen = Promise.prototype.then;
++	let captured = false;
++	try {
++		Promise.prototype.then = function (this: Promise<unknown>, onFulfilled, onRejected) {
++			if (!captured) {
++				captured = true;
++				return nativeThen.call(
++					this,
++					async value => {
++						await gate;
++						return onFulfilled?.(value);
++					},
++					onRejected,
++				);
++			}
++			return nativeThen.call(this, onFulfilled, onRejected);
++		} as typeof Promise.prototype.then;
++		m.initTelemetryExport(false);
++	} finally {
++		Promise.prototype.then = nativeThen;
++	}
++	expect(captured).toBe(true);
++	let settled = false;
++	const retirement = m.retireStartupTelemetry(owner);
++	retirement.then(
++		() => {
++			settled = true;
++		},
++		() => {
++			settled = true;
++		},
++	);
++	await Bun.sleep(20);
++	expect(settled).toBe(false);
++	release();
++	expect((await retirement).callbacks_joined).toBe(true);
++});

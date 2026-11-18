@@ -95,6 +95,11 @@ pub enum ChildMessage {
         cleanup_joined: bool,
         presence_removed: bool,
     },
+    TelemetryRetired {
+        telemetry_disabled: bool,
+        original_joined: bool,
+        callbacks_joined: bool,
+    },
     Fault {
         code: Fault,
     },
@@ -276,6 +281,15 @@ impl ChannelState {
         {
             return Err(ProtocolFault("startup_presence_unqualified"));
         }
+        if let ChildMessage::TelemetryRetired {
+            telemetry_disabled,
+            original_joined,
+            callbacks_joined,
+        } = &h.msg
+            && (!telemetry_disabled || !original_joined || !callbacks_joined)
+        {
+            return Err(ProtocolFault("startup_telemetry_unqualified"));
+        }
         Ok(Some(Inbound {
             seq: h.seq,
             msg: h.msg,
@@ -349,6 +363,7 @@ struct ObservedOwners {
     settings: bool,
     auth: bool,
     presence: bool,
+    telemetry: bool,
 }
 impl ObservedOwners {
     fn accept(&mut self, message: &ChildMessage) -> Result<(), ProtocolFault> {
@@ -398,6 +413,12 @@ impl ObservedOwners {
                 }
                 self.presence = true;
             }
+            ChildMessage::TelemetryRetired { .. } => {
+                if !self.presence || self.telemetry {
+                    return Err(ProtocolFault("startup_telemetry_order"));
+                }
+                self.telemetry = true;
+            }
             ChildMessage::Fault { .. } => return Err(ProtocolFault("startup_child_fault")),
         }
         Ok(())
@@ -409,6 +430,7 @@ impl ObservedOwners {
             && self.settings
             && self.auth
             && self.presence
+            && self.telemetry
     }
 }
 
@@ -466,6 +488,9 @@ async fn observe(a: ObservationAdmission) -> Result<ObservationReceipt, CaptureF
                     }
                     ChildMessage::PresenceRetired { .. } => {
                         journal.append("startup_presence_retired",json!({"child_seq":inbound.seq,"presence":inbound.msg}))?;
+                    }
+                    ChildMessage::TelemetryRetired { .. } => {
+                        journal.append("startup_telemetry_retired",json!({"child_seq":inbound.seq,"telemetry":inbound.msg}))?;
                     }
                     ChildMessage::Fault { .. } => return Err(fault(FaultClass::Protocol,"startup_child_fault")),
                     }
@@ -808,6 +833,33 @@ mod tests {
     }
 
     #[test]
+    fn startup_telemetry_requires_disabled_original_and_callback_join() {
+        let valid = json!({"type":"telemetry_retired","telemetry_disabled":true,"original_joined":true,"callbacks_joined":true});
+        for field in ["telemetry_disabled", "original_joined", "callbacks_joined"] {
+            let mut bad = valid.clone();
+            bad[field] = json!(false);
+            let msg = serde_json::from_value::<ChildMessage>(bad).unwrap();
+            assert!(
+                ChannelState::new(identity())
+                    .read(&mut frame(1, msg).as_slice())
+                    .is_err()
+            );
+            let mut missing = valid.clone();
+            missing.as_object_mut().unwrap().remove(field);
+            assert!(serde_json::from_value::<ChildMessage>(missing).is_err());
+        }
+        let mut extra = valid.clone();
+        extra["endpoint"] = json!("must-not-export");
+        assert!(serde_json::from_value::<ChildMessage>(extra).is_err());
+        let msg = serde_json::from_value::<ChildMessage>(valid).unwrap();
+        assert!(
+            ChannelState::new(identity())
+                .read(&mut frame(1, msg).as_slice())
+                .is_ok()
+        );
+    }
+
+    #[test]
     fn startup_owner_order_rejects_duplicates_and_attempts_after_settlement() {
         let warmup = ChildMessage::OwnerSettled {
             owner: Owner::ModelConnectionWarmup,
@@ -851,7 +903,13 @@ mod tests {
             cleanup_joined: true,
             presence_removed: true,
         };
+        let telemetry = ChildMessage::TelemetryRetired {
+            telemetry_disabled: true,
+            original_joined: true,
+            callbacks_joined: true,
+        };
         for early in [
+            &telemetry,
             &warmup,
             &restrictions,
             &catalog,
@@ -881,8 +939,12 @@ mod tests {
         assert!(state.accept(&presence).is_err());
         state.accept(&auth).unwrap();
         assert!(!state.complete());
+        assert!(state.accept(&telemetry).is_err());
         state.accept(&presence).unwrap();
+        assert!(!state.complete());
+        state.accept(&telemetry).unwrap();
         assert!(state.complete());
+        assert!(state.accept(&telemetry).is_err());
         assert!(state.accept(&presence).is_err());
         assert!(state.accept(&auth).is_err());
         assert!(state.accept(&settings).is_err());

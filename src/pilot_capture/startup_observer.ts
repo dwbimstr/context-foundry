@@ -41,7 +41,7 @@ function createStartupObserver() {
  });
  return Object.freeze({
   channel,
-  bind(pi: { on(event: string, callback: (event: unknown, ctx: any) => Promise<void>): void }, sealRestricted: (manager: unknown, registry: unknown) => unknown, retireCatalog: (manager: unknown, registry: unknown) => Promise<unknown>, retireSettings: (manager: unknown, registry: unknown) => Promise<unknown>, retireAuth: (manager: unknown, registry: unknown) => Promise<unknown>, retirePresence: (manager: unknown, registry: unknown) => Promise<unknown>) {
+  bind(pi: { on(event: string, callback: (event: unknown, ctx: any) => Promise<void>): void }, sealRestricted: (manager: unknown, registry: unknown) => unknown, retireCatalog: (manager: unknown, registry: unknown) => Promise<unknown>, retireSettings: (manager: unknown, registry: unknown) => Promise<unknown>, retireAuth: (manager: unknown, registry: unknown) => Promise<unknown>, retirePresence: (manager: unknown, registry: unknown) => Promise<unknown>, retireTelemetry: (manager: unknown, registry: unknown) => Promise<unknown>) {
    if (bound || channel.quiet) startupFail(); bound = true;
    pi.on("session_start", async (_event, ctx) => {
     if (channel.quiet) return;
@@ -73,6 +73,11 @@ function createStartupObserver() {
     catch { channel.send({type:"fault",code:"unclassified"}); startupFail(); }
     if (!startupExact(presence,["presence_retired","registration_joined","callbacks_joined","cleanup_joined","presence_removed"]) || presence.presence_retired !== true || presence.registration_joined !== true || presence.callbacks_joined !== true || presence.cleanup_joined !== true || presence.presence_removed !== true) startupFail();
     if (!channel.quiet && !channel.send({type:"presence_retired",...presence})) startupFail();
+    let telemetry: any;
+    try { telemetry = await retireTelemetry(ctx.sessionManager, ctx.modelRegistry); }
+    catch { channel.send({type:"fault",code:"unclassified"}); startupFail(); }
+    if (!startupExact(telemetry,["telemetry_disabled","original_joined","callbacks_joined"]) || telemetry.telemetry_disabled !== true || telemetry.original_joined !== true || telemetry.callbacks_joined !== true) startupFail();
+    if (!channel.quiet && !channel.send({type:"telemetry_retired",...telemetry})) startupFail();
    });
   },
  });
@@ -86,7 +91,7 @@ if (startupOwner === undefined) {
 export default async function observeStartup(pi: { on(event: string, callback: (event: unknown, ctx: any) => Promise<void>): void }): Promise<void> {
  // Only the late trusted-extension loader resolves host SDK imports. The early
  // preload owns the channel and receives this exact source binding afterward.
- const { sealRestrictedStartup, retireRestrictedStartupCatalog, retireRestrictedStartupSettings, retireRestrictedStartupAuth, retireRestrictedStartupPresence } = await import("@oh-my-pi/pi-coding-agent");
- if (typeof sealRestrictedStartup !== "function" || typeof retireRestrictedStartupCatalog !== "function" || typeof retireRestrictedStartupSettings !== "function" || typeof retireRestrictedStartupAuth !== "function" || typeof retireRestrictedStartupPresence !== "function") startupFail();
- startupOwner!.bind(pi, sealRestrictedStartup, retireRestrictedStartupCatalog, retireRestrictedStartupSettings, retireRestrictedStartupAuth, retireRestrictedStartupPresence);
+ const { sealRestrictedStartup, retireRestrictedStartupCatalog, retireRestrictedStartupSettings, retireRestrictedStartupAuth, retireRestrictedStartupPresence, retireRestrictedStartupTelemetry } = await import("@oh-my-pi/pi-coding-agent");
+ if (typeof sealRestrictedStartup !== "function" || typeof retireRestrictedStartupCatalog !== "function" || typeof retireRestrictedStartupSettings !== "function" || typeof retireRestrictedStartupAuth !== "function" || typeof retireRestrictedStartupPresence !== "function" || typeof retireRestrictedStartupTelemetry !== "function") startupFail();
+ startupOwner!.bind(pi, sealRestrictedStartup, retireRestrictedStartupCatalog, retireRestrictedStartupSettings, retireRestrictedStartupAuth, retireRestrictedStartupPresence, retireRestrictedStartupTelemetry);
 }
