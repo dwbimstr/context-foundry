@@ -5,6 +5,13 @@
 Updated 2026-11-16. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
+- **Complete T005 development lexical-depth diagnostic, 2026-11-18.** The
+  fixed raw-depth probe now covers all 388 development cases with original
+  256-document trace parity. Of 95 no-cover misses, 30 have a target-name-covering
+  lexical document below rank 256 and within 4,096; all 30 already filled the
+  32-unit placement with dense evidence. This does not select a displacement rule
+  or prove delivered-body gains ([record](validation.md#t005-complete-development-lexical-depth-diagnostic--2026-11-18)).
+  The consumed holdout was not accessed and T005 remains unaccepted.
 - **Pilot v2 task-block sensitivity, 2026-11-18.** The optional power tool now
   accepts explicit within-task paired-outcome distributions in addition to the
   perfect-correlation assumption ([record](validation.md#pilot-v2-explicit-task-block-sensitivity--2026-11-18)).

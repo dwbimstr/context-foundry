@@ -1,5 +1,41 @@
 # Validation
 
+## T005 complete development lexical-depth diagnostic — 2026-11-18
+
+The preceding fixed 4,096-document, raw tier-2 lexical probe was extended to the
+remaining 186 retained G2 development misses, without rerunning its earlier 202
+cases. The query helper received only IDs, corpora and questions; target ranges
+were joined afterward. Both checksum-verified cold archives were used to restore
+private search-only copies. Their 154 index files matched the retained manifests.
+The original 256-document trace sequence matched in all 186 additional cases;
+together with the earlier 202, the comparison covers all 388 development cases.
+The existing cap checker replayed the additional placement traces, and target
+source hashes were checked before and after. This is a raw lexical diagnostic,
+not an evaluation of a new response or retrieval policy.
+
+| Retained G2 development group | Cases | Covering lexical document at raw ranks 257–4,096 | No covering lexical document in first 4,096 |
+| --- | ---: | ---: | ---: |
+| Misses with no eligible target-covering candidate | 95 | 30 | 65 |
+
+In all 30 deep-cover cases, the original dense-first placement had already kept
+32 dense units. Across all 219 misses, this occurred in 207; it also occurred in
+164 of 169 successful controls. Every raw probe filled its 4,096-document window,
+so absence within it does not prove index absence. A covering document witnesses
+only the target name, not a delivered definition body. The result identifies a
+coverage/placement interaction worth studying, but does not select a rule, prove
+a recovery, measure a final-response gain or establish that sacrificing dense
+units is safe. Any candidate still needs a separately bounded selection and
+unexposed acceptance evidence; the consumed 400-case final set was not accessed.
+T005 remains unaccepted.
+
+Both new lexical query processes exited naturally under native supervision. No
+model worker or provider call was observed, and spend was zero. After open-file
+checks, the temporary search copies and duplicate helper were removed; the stage
+fell from 437,309,440 to 176,091,136 allocated bytes. Original cold archives,
+retained helper and private outputs remain. Evidence is under
+`runs/t005-lexical-depth-rest-2026-11-18/`; the prior 202-case evidence remains
+under `runs/t005-lexical-depth-2026-11-18/`.
+
 ## Pilot v2 explicit task-block sensitivity — 2026-11-18
 
 The optional [pilot-v2 power tool](../scripts/pilot-v2-power.py) now accepts an
