@@ -1,5 +1,27 @@
 # Validation
 
+## T005 successful-control dense retention census — 2026-11-18
+
+An offline census rechecked the 169 located successes in the retained G2
+*development* run, including source identity and bytes, response and trace hashes,
+and replay of the original placement caps. It mapped selected packing ranges
+back to original materialization and placement. In 154 cases, a selected dense
+range covering the target-name bytes came from one of the first 16 kept dense
+units; 141 of those had such a range among the first eight. The other 15 had no
+selected packing range covering the name under this mapping, so this census does
+not explain their successful baseline response. All 169 original responses were
+located successes, and 154 were verified body successes; these counts are not
+asserted to be the same cases.
+
+This describes selected source ranges, not necessarily the text rendered by each
+packing form. It does not establish that removing later dense units preserves a
+response: a changed cut can alter placement, packing and materialization, and the
+15 unmapped successes need separate explanation. No displacement rule was
+selected or evaluated, and no retrieval or model was run. The consumed final
+holdout was not accessed; T005 still needs a separately bounded selection and
+fresh unexposed acceptance evidence. The zero-spend private protocol, analyzer and
+case-level results are in `runs/t005-dense-retention-census-2026-11-18/`.
+
 ## T005 complete development lexical-depth diagnostic — 2026-11-18
 
 The preceding fixed 4,096-document, raw tier-2 lexical probe was extended to the

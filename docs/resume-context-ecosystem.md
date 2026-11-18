@@ -5,6 +5,14 @@
 Updated 2026-11-16. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
+- **T005 successful-control dense retention census, 2026-11-18.** Among 169
+  retained development successes, 154 had a selected target-name-covering dense
+  range among their first 16 kept dense units; 15 had no mapped selected range.
+  This is a descriptive trace census, not proof that a changed cut preserves
+  responses ([record](validation.md#t005-successful-control-dense-retention-census--2026-11-18)).
+  No candidate was selected, the consumed holdout was not accessed, and T005
+  remains unaccepted.
+
 - **Complete T005 development lexical-depth diagnostic, 2026-11-18.** The
   fixed raw-depth probe now covers all 388 development cases with original
   256-document trace parity. Of 95 no-cover misses, 30 have a target-name-covering
