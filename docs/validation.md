@@ -18,9 +18,24 @@ SHA-256. This is source evidence only: no late I/O, network route or active scan
 was observed. Before treating the workspace-scan owner as settled, exercise a
 held real scan with the setting enabled and establish that the restricted profile
 joins or excludes the original work, including timeout and late-completion cases.
+A subsequent network-denied native-addon control used the exact retained Bun and
+native addon. An interposer held the selected synthetic directory operation for
+two seconds **before invoking the original OS call**. With a 100 ms native timeout,
+two runs settled the timeout promise at about 103 ms while the interposed call was
+still held; event order was hold, promise, release. An ordinary scan resolved, and
+a 4,000 ms timeout waited for the hold to release before resolving. These controls
+show that promise settlement does not join a blocked native worker in this
+instrumented addon scenario. They do not reproduce an actual stalled kernel call
+or qualify the full host, its five-second race, owner settlement or admission.
+The retained implementation requests cancellation and aborts the async task on
+timeout; its own dropping test covers a yielding walk and explicitly excludes a
+syscall stalled in the device. A full-host control and a design that owns or
+excludes the underlying operation remain necessary.
+
 Complete owner inventory and startup admission remain on HOLD. No provider call
-or spend occurred; the local source/hash readback is in
-`runs/pilot-startup-inventory-census-2026-11-18/source-readback.json`.
+or spend occurred; source/hash and native-addon controls remain respectively in
+`runs/pilot-startup-inventory-census-2026-11-18/source-readback.json` and
+`runs/pilot-workspace-native-hold-2026-11-18/controls.json`.
 
 ## Ordered startup refusal receipts — 2026-11-18
 

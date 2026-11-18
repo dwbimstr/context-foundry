@@ -7,9 +7,11 @@ and dated paragraphs below are history.
 
 - **Startup workspace scan census, 2026-11-18.** Retained qualified host
   source shows a conditional workspace scan can outlive its startup deadline;
-  the setting defaults off. This is source evidence, not an observed late I/O
-  event. A held native scan and join-or-exclude control remain necessary before
-  considering that owner settled ([record](validation.md#startup-workspace-scan-census--2026-11-18)).
+  the setting defaults off. A network-denied addon control confirmed that its
+  timeout promise can settle while an instrumented native directory call is held
+  before the OS call. This is not a stalled-kernel or full-host observation; a
+  full-host join-or-exclude control remains necessary
+  ([record](validation.md#startup-workspace-scan-census--2026-11-18)).
   Complete startup admission, paid runs and signing remain gated.
 - **Ordered startup refusal receipts, 2026-11-18.** The child now rejects
   out-of-order attempts, stale journal sequences and previously seen prefix digests;
