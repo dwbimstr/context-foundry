@@ -1,5 +1,27 @@
 # Validation
 
+## Startup workspace scan census — 2026-11-18
+
+A source-only census of the retained qualified host's `sdk.ts` (SHA-256
+`c9b634bd2c1d36173d83fd4a45d85e06fd7c0d08b04ebdc5dc5353a14d76ad62`,
+from the patched `can1357/oh-my-pi@24439066040e006eb08da7b204f0ac41c79d2de9`)
+found a further conditional startup lifetime. When `includeWorkspaceTree` is
+true and no tree is supplied, `createAgentSessionScoped` starts the native
+workspace scan and races its promise against a five-second deadline. The
+source explicitly allows the original work to continue after that deadline.
+The setting defaults to false. Other independent discovery promises have their
+own await sites; their presence does not establish that they outlive startup.
+
+The retained SDK hash matches the qualified source-build inputs, and the retained
+host matches that build's `f2e02c42209c551dfe46fffd0ca2eb012c89adeba835deff40d1ac5c6b93a826`
+SHA-256. This is source evidence only: no late I/O, network route or active scan
+was observed. Before treating the workspace-scan owner as settled, exercise a
+held real scan with the setting enabled and establish that the restricted profile
+joins or excludes the original work, including timeout and late-completion cases.
+Complete owner inventory and startup admission remain on HOLD. No provider call
+or spend occurred; the local source/hash readback is in
+`runs/pilot-startup-inventory-census-2026-11-18/source-readback.json`.
+
 ## Ordered startup refusal receipts — 2026-11-18
 
 On the pinned native runtime, synthetic framed-channel controls exposed acceptance
