@@ -5,14 +5,21 @@
 Updated 2026-11-16. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
+- **Startup plugin-root ownership, 2026-11-18.** The restricted diagnostic now
+  drains the original cache reads, preloads, re-warms and synchronous clears before
+  closing their entry points. Source, held real-CLI, startup persistence and
+  compatibility checks passed without provider calls
+  ([receipt](validation.md#source-owned-startup-plugin-roots--2026-11-18)). Other
+  discovery and extension work, complete inventory and durable acknowledgment
+  remain open; startup admission, paid runs, signing and release remain gated.
 - **Startup logger ownership, 2026-11-18.** The explicit restricted profile now
   closes its native local logger, blocks reconfiguration and joins the original
   retention callbacks. Source and native CLI controls, startup persistence and
   compatibility gates passed without provider calls
   ([receipt](validation.md#source-owned-startup-logger--2026-11-18)). This is not
   physical descriptor-release proof or complete startup admission. The qualified
-  code and records were pushed, and cache-free replay passed; plugin re-warm,
-  trusted-extension and other owners and the prefix acknowledgment remain open.
+  code and records were pushed, and cache-free replay passed; trusted-extension
+  and other owners and the prefix acknowledgment remain open.
 - **Startup owner census, 2026-11-18.** Source inspection found that the awaited
   initial plugin-root preload has a detached cache-clear re-warm path, and that
   the current startup-observation profile does not select the older logging helper.

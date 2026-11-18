@@ -1,5 +1,43 @@
 # Validation
 
+## Source-owned startup plugin roots — 2026-11-18
+
+The explicit restricted startup diagnostic now owns the selected plugin-root
+cache lifetime before incomplete-inventory HOLD. Code
+`1d5a70494ee7d6dd6e7d1c95fd2bd6f23e859fa1` and the [upstream MIT reference
+patch](references/omp-startup-plugin-roots-owner.patch) target
+`can1357/oh-my-pi@24439066040e006eb08da7b204f0ac41c79d2de9` after the previously
+qualified startup patches. Foundry does not apply that patch automatically.
+
+A network-denied baseline held an actual filesystem call and showed that cache
+clearing returned while its original re-warm continued. `--startup-plugin-roots`
+requires restricted tools and establishes the source owner before CLI startup.
+It tracks the original direct reads, preloads and injected-root work, their
+observers and synchronous cache clears; bounded work drains before entry points
+close atomically. Failed originals or invalidators refuse retirement, as does
+reentrant retirement; late reads and clears refuse before cache mutation. The SDK
+binds the exact owner to the sealed session and registry after logging retirement;
+Rust validates the bounded metadata and journals it. Ordinary behavior remains
+available without the flag. This does not join arbitrary asynchronous work spawned
+by invalidators or extensions, or establish a complete discovery inventory.
+
+The source matrix passed **725/0** across **69** files. Six counterfactuals covering
+closure, drain, synchronous failure/reentry and both clear entry points failed as
+intended. Four compiled-CLI controls passed: ordinary, owned, a real held re-warm,
+and invalid restriction flags. In the held case the parent observed the filesystem
+operation held and no retirement until release. Successful controls preserved pinned
+model metadata; no prompt or provider call was made. Fresh checks passed formatting,
+pilot all-target Clippy, **118/0** pilot units (**1** ignored), Rust **1.90**
+all-target checking, five current-host consumers, **36/0** frozen compatibility
+(**10** ignored), both legacy-source consumers and seven channel controls. Four
+default gates reuse **258** identical effective inputs. Eleven startup persistence
+cases passed; the normal journal has **15** records and ends in
+`startup_inventory_unqualified`, with no Ready, permit or generation. No provider
+calls or spend occurred. Other discovery/extension work, complete inventory and
+durable acknowledgment/Ready echo remain open; paid runs, signing and release
+remain gated.
+
+
 ## Source-owned startup logger — 2026-11-18
 
 The explicit restricted startup diagnostic now closes the selected native logger
