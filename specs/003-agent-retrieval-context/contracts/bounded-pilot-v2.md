@@ -1512,6 +1512,20 @@ records source identity and differences. The [dated qualification](../../../docs
 other startup owners, complete inventory and prefix acknowledgment/Ready echo remain
 open. Paid execution, signing and v2/T006 remain gated.
 
+**Selected marketplace exclusion round, 2026-11-18.** A 90-minute no-provider
+round with one heavy job, a 20 GiB disk floor, an 8 GiB sampled per-process RSS
+ceiling and cleanup reserve covers the fixed startup profile. The source baseline
+showed that a later enabled call after an off call starts detached marketplace
+refresh work. The opt-in restricted profile closes that entry point, requires a
+frozen own data property set to off and invokes the original synchronous off
+branch; exact-session retirement follows telemetry retirement. The Rust journal
+records the closed result. Native CLI controls exercise ordinary off, owned off,
+enabled refusal and invalid flags; source tests and counterfactuals cover cached
+calls and deceptive mutable options. See the [source reference patch](../../../docs/references/omp-startup-marketplace-exclusion.patch).
+Other update routes, logging, trusted-extension ownership, the full before-I/O
+inventory and durable prefix acknowledgment with matching Ready echo remain open.
+This does not admit startup or authorize paid runs, signing or release.
+
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
 and a complete startup-owner inventory: catalog/discovery, credential refresh,

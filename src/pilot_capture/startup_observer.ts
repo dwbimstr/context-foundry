@@ -41,7 +41,7 @@ function createStartupObserver() {
  });
  return Object.freeze({
   channel,
-  bind(pi: { on(event: string, callback: (event: unknown, ctx: any) => Promise<void>): void }, sealRestricted: (manager: unknown, registry: unknown) => unknown, retireCatalog: (manager: unknown, registry: unknown) => Promise<unknown>, retireSettings: (manager: unknown, registry: unknown) => Promise<unknown>, retireAuth: (manager: unknown, registry: unknown) => Promise<unknown>, retirePresence: (manager: unknown, registry: unknown) => Promise<unknown>, retireTelemetry: (manager: unknown, registry: unknown) => Promise<unknown>) {
+  bind(pi: { on(event: string, callback: (event: unknown, ctx: any) => Promise<void>): void }, sealRestricted: (manager: unknown, registry: unknown) => unknown, retireCatalog: (manager: unknown, registry: unknown) => Promise<unknown>, retireSettings: (manager: unknown, registry: unknown) => Promise<unknown>, retireAuth: (manager: unknown, registry: unknown) => Promise<unknown>, retirePresence: (manager: unknown, registry: unknown) => Promise<unknown>, retireTelemetry: (manager: unknown, registry: unknown) => Promise<unknown>, retireMarketplace: (manager: unknown, registry: unknown) => Promise<unknown>) {
    if (bound || channel.quiet) startupFail(); bound = true;
    pi.on("session_start", async (_event, ctx) => {
     if (channel.quiet) return;
@@ -78,6 +78,11 @@ function createStartupObserver() {
     catch { channel.send({type:"fault",code:"unclassified"}); startupFail(); }
     if (!startupExact(telemetry,["telemetry_disabled","original_joined","callbacks_joined"]) || telemetry.telemetry_disabled !== true || telemetry.original_joined !== true || telemetry.callbacks_joined !== true) startupFail();
     if (!channel.quiet && !channel.send({type:"telemetry_retired",...telemetry})) startupFail();
+    let marketplace: any;
+    try { marketplace = await retireMarketplace(ctx.sessionManager, ctx.modelRegistry); }
+    catch { channel.send({type:"fault",code:"unclassified"}); startupFail(); }
+    if (!startupExact(marketplace,["marketplace_disabled","schedule_completed"]) || marketplace.marketplace_disabled !== true || marketplace.schedule_completed !== true) startupFail();
+    if (!channel.quiet && !channel.send({type:"marketplace_retired",...marketplace})) startupFail();
    });
   },
  });
@@ -91,7 +96,7 @@ if (startupOwner === undefined) {
 export default async function observeStartup(pi: { on(event: string, callback: (event: unknown, ctx: any) => Promise<void>): void }): Promise<void> {
  // Only the late trusted-extension loader resolves host SDK imports. The early
  // preload owns the channel and receives this exact source binding afterward.
- const { sealRestrictedStartup, retireRestrictedStartupCatalog, retireRestrictedStartupSettings, retireRestrictedStartupAuth, retireRestrictedStartupPresence, retireRestrictedStartupTelemetry } = await import("@oh-my-pi/pi-coding-agent");
- if (typeof sealRestrictedStartup !== "function" || typeof retireRestrictedStartupCatalog !== "function" || typeof retireRestrictedStartupSettings !== "function" || typeof retireRestrictedStartupAuth !== "function" || typeof retireRestrictedStartupPresence !== "function" || typeof retireRestrictedStartupTelemetry !== "function") startupFail();
- startupOwner!.bind(pi, sealRestrictedStartup, retireRestrictedStartupCatalog, retireRestrictedStartupSettings, retireRestrictedStartupAuth, retireRestrictedStartupPresence, retireRestrictedStartupTelemetry);
+ const { sealRestrictedStartup, retireRestrictedStartupCatalog, retireRestrictedStartupSettings, retireRestrictedStartupAuth, retireRestrictedStartupPresence, retireRestrictedStartupTelemetry, retireRestrictedStartupMarketplace } = await import("@oh-my-pi/pi-coding-agent");
+ if (typeof sealRestrictedStartup !== "function" || typeof retireRestrictedStartupCatalog !== "function" || typeof retireRestrictedStartupSettings !== "function" || typeof retireRestrictedStartupAuth !== "function" || typeof retireRestrictedStartupPresence !== "function" || typeof retireRestrictedStartupTelemetry !== "function" || typeof retireRestrictedStartupMarketplace !== "function") startupFail();
+ startupOwner!.bind(pi, sealRestrictedStartup, retireRestrictedStartupCatalog, retireRestrictedStartupSettings, retireRestrictedStartupAuth, retireRestrictedStartupPresence, retireRestrictedStartupTelemetry, retireRestrictedStartupMarketplace);
 }

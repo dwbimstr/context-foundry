@@ -100,6 +100,10 @@ pub enum ChildMessage {
         original_joined: bool,
         callbacks_joined: bool,
     },
+    MarketplaceRetired {
+        marketplace_disabled: bool,
+        schedule_completed: bool,
+    },
     Fault {
         code: Fault,
     },
@@ -290,6 +294,14 @@ impl ChannelState {
         {
             return Err(ProtocolFault("startup_telemetry_unqualified"));
         }
+        if let ChildMessage::MarketplaceRetired {
+            marketplace_disabled,
+            schedule_completed,
+        } = &h.msg
+            && (!marketplace_disabled || !schedule_completed)
+        {
+            return Err(ProtocolFault("startup_marketplace_unqualified"));
+        }
         Ok(Some(Inbound {
             seq: h.seq,
             msg: h.msg,
@@ -364,6 +376,7 @@ struct ObservedOwners {
     auth: bool,
     presence: bool,
     telemetry: bool,
+    marketplace: bool,
 }
 impl ObservedOwners {
     fn accept(&mut self, message: &ChildMessage) -> Result<(), ProtocolFault> {
@@ -419,6 +432,12 @@ impl ObservedOwners {
                 }
                 self.telemetry = true;
             }
+            ChildMessage::MarketplaceRetired { .. } => {
+                if !self.telemetry || self.marketplace {
+                    return Err(ProtocolFault("startup_marketplace_order"));
+                }
+                self.marketplace = true;
+            }
             ChildMessage::Fault { .. } => return Err(ProtocolFault("startup_child_fault")),
         }
         Ok(())
@@ -431,6 +450,7 @@ impl ObservedOwners {
             && self.auth
             && self.presence
             && self.telemetry
+            && self.marketplace
     }
 }
 
@@ -491,6 +511,9 @@ async fn observe(a: ObservationAdmission) -> Result<ObservationReceipt, CaptureF
                     }
                     ChildMessage::TelemetryRetired { .. } => {
                         journal.append("startup_telemetry_retired",json!({"child_seq":inbound.seq,"telemetry":inbound.msg}))?;
+                    }
+                    ChildMessage::MarketplaceRetired { .. } => {
+                        journal.append("startup_marketplace_retired",json!({"child_seq":inbound.seq,"marketplace":inbound.msg}))?;
                     }
                     ChildMessage::Fault { .. } => return Err(fault(FaultClass::Protocol,"startup_child_fault")),
                     }
@@ -833,6 +856,33 @@ mod tests {
     }
 
     #[test]
+    fn startup_marketplace_requires_disabled_completed_and_exact_fields() {
+        let valid = json!({"type":"marketplace_retired","marketplace_disabled":true,"schedule_completed":true});
+        for field in ["marketplace_disabled", "schedule_completed"] {
+            let mut bad = valid.clone();
+            bad[field] = json!(false);
+            let msg = serde_json::from_value::<ChildMessage>(bad).unwrap();
+            assert!(
+                ChannelState::new(identity())
+                    .read(&mut frame(1, msg).as_slice())
+                    .is_err()
+            );
+            let mut missing = valid.clone();
+            missing.as_object_mut().unwrap().remove(field);
+            assert!(serde_json::from_value::<ChildMessage>(missing).is_err());
+        }
+        let mut extra = valid.clone();
+        extra["path"] = json!("must-not-export");
+        assert!(serde_json::from_value::<ChildMessage>(extra).is_err());
+        let msg = serde_json::from_value::<ChildMessage>(valid).unwrap();
+        assert!(
+            ChannelState::new(identity())
+                .read(&mut frame(1, msg).as_slice())
+                .is_ok()
+        );
+    }
+
+    #[test]
     fn startup_telemetry_requires_disabled_original_and_callback_join() {
         let valid = json!({"type":"telemetry_retired","telemetry_disabled":true,"original_joined":true,"callbacks_joined":true});
         for field in ["telemetry_disabled", "original_joined", "callbacks_joined"] {
@@ -908,7 +958,12 @@ mod tests {
             original_joined: true,
             callbacks_joined: true,
         };
+        let marketplace = ChildMessage::MarketplaceRetired {
+            marketplace_disabled: true,
+            schedule_completed: true,
+        };
         for early in [
+            &marketplace,
             &telemetry,
             &warmup,
             &restrictions,
@@ -942,8 +997,12 @@ mod tests {
         assert!(state.accept(&telemetry).is_err());
         state.accept(&presence).unwrap();
         assert!(!state.complete());
+        assert!(state.accept(&marketplace).is_err());
         state.accept(&telemetry).unwrap();
+        assert!(!state.complete());
+        state.accept(&marketplace).unwrap();
         assert!(state.complete());
+        assert!(state.accept(&marketplace).is_err());
         assert!(state.accept(&telemetry).is_err());
         assert!(state.accept(&presence).is_err());
         assert!(state.accept(&auth).is_err());
