@@ -1,5 +1,46 @@
 # Validation
 
+## Source-owned startup extension dispatch — 2026-11-18
+
+The restricted startup diagnostic now joins the selected original `session_start`
+handler and its tracked observer before incomplete-inventory HOLD. Code
+`e41df2fbe92580b15091abb2b8aa9438db7e9368` and the [upstream MIT reference
+patch](references/omp-startup-extension-owner.patch) target
+`can1357/oh-my-pi@24439066040e006eb08da7b204f0ac41c79d2de9` after the previously
+qualified startup patches. Foundry does not automatically apply that patch.
+
+The earlier native baseline showed that the host's ordinary 30-second timeout
+can return while an abort-ignoring original handler is still running. The explicit
+`--startup-extension` profile requires restricted tools, refuses late ownership,
+binds the exact session runner and tracks the original handler promise and its
+observer. After the handler broadcast and plugin-root retirement, the source
+produces an identity-bound, one-use receipt; the existing channel verifies it and
+Rust journals it. Timeout or handler failure cannot attest success, and repeated
+`session_start` dispatch and extension additions refuse. Ordinary extension
+behavior remains available without the flag. This does not join arbitrary work
+spawned by extensions or qualify other extension events or timers.
+
+The source matrix passed **836/0** across **71** files. Seven counterfactuals
+cover original tracking, failure, receipt identity, readiness, late installation,
+late additions and repeated dispatch. Five compiled-CLI controls passed: ordinary,
+owned, held handler, timeout and invalid restriction flags. The held handler
+produced no receipt before release. The timeout control used the host's test
+setter at 150 ms; after an ignored abort and release the process exited with failure
+and no extension receipt. No prompt or provider call was made. Fresh checks passed
+formatting, pilot all-target Clippy, **119/0** pilot units (**1** ignored), Rust
+**1.90** all-target checking, five current-host consumers, **36/0** frozen
+compatibility (**10** ignored), both legacy-source consumers and seven channel
+controls. Four default gates reuse **258** identical effective inputs. Twelve
+startup persistence cases passed; the normal journal has **16** records and ends
+in `startup_inventory_unqualified`, with no Ready echo, permit or generation.
+
+An earlier candidate lacked a late-install guard. Its current-host gate was
+intentionally interrupted; forced cleanup left no owned processes, and its commit
+and receipts remain locally retained. The corrected candidate received all gates
+above. No provider calls or spend occurred. Complete owner inventory and durable
+prefix acknowledgment remain open; paid runs, signing and release remain gated.
+
+
 ## Native startup extension timeout boundary — 2026-11-18
 
 A network-denied control on the current source-built startup host

@@ -5,6 +5,14 @@
 Updated 2026-11-16. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
+- **Startup extension dispatch ownership, 2026-11-18.** The restricted profile
+  now tracks the exact original `session_start` handler and observer, refuses
+  failure, timeout and late starts, and journals a one-use receipt after the
+  handler broadcast. Source, real-CLI held/timeout, persistence and compatibility
+  checks passed without provider calls
+  ([receipt](validation.md#source-owned-startup-extension-dispatch--2026-11-18)).
+  Arbitrary extension-spawned work, other events and timers, complete inventory
+  and durable acknowledgment remain open; startup admission stays on HOLD.
 - **Native extension timeout, 2026-11-18.** On the pinned CLI, a synthetic held
   `session_start` handler outlived its reported timeout while RPC answered a state
   request; the original completed only after release. Raw RPC Ready also precedes
