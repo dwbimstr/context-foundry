@@ -5,11 +5,13 @@
 Updated 2026-11-16. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
-- **Workspace-scan repair candidate, 2026-11-18.** An isolated source-host
-  candidate refuses restricted scans and passed initial native and source checks;
-  ordinary scanning remained available. It is not qualified or published as a
-  fix: a durable owner regression, capture-journal integration and full gates
-  remain ([record](validation.md#startup-workspace-scan-census--2026-11-18)).
+- **Restricted workspace-scan exclusion, 2026-11-18.** The source-built
+  diagnostic refuses this scan when its restricted startup extension owner is
+  active; ordinary scanning remains available. The SDK regression, native
+  controls, capture-journal path and selected gates pass
+  ([record](validation.md#restricted-workspace-scan-exclusion--2026-11-18)).
+  This does not complete the owner inventory or enable startup admission; paid
+  runs and signing remain gated.
 - **Startup workspace scan census, 2026-11-18.** Retained qualified host
   source shows a conditional workspace scan can outlive its startup deadline;
   the setting defaults off. A network-denied addon control confirmed that its

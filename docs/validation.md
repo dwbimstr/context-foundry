@@ -1,8 +1,39 @@
 # Validation
 
+## Restricted workspace scan exclusion — 2026-11-18
+
+The source-built restricted diagnostic now refuses workspace-tree scanning at the
+SDK entry point when its exact startup extension owner is present, including a
+later settings-triggered scan. Ordinary profiles keep workspace scanning; a
+supplied tree need not start a scan. Foundry pins the source-built host and retains
+an [upstream reference patch](references/omp-startup-workspace-scan-exclusion.patch);
+it does not apply the patch to an installed host. This excludes the selected scan,
+not other discovery, raw timers, arbitrary extension work or all native I/O.
+
+On code `6b7bc4b3baaf1bdbc7713b55098d57e47c90b778`, the source-built host refused
+an enabled restricted scan before the third matching directory operation; the
+restricted disabled-setting and ordinary enabled-setting controls completed. A
+later settings change and prompt refresh was refused before settings retirement.
+The new SDK regression passed and failed when the guard was removed, with the
+unguarded session resolving. The patch was applied to a copy of its exact prior
+source and both resulting files matched the qualified source. Source format, lint,
+existing extension-owner and new regression tests, and types passed.
+
+All eleven selected no-provider gates passed: format, lint, units (119 passed, one
+ignored), refusal control, capture startup, channel, current host (five passed),
+frozen integration (37 passed, ten ignored), source, source-auth and minimum Rust.
+The capture startup test retained one refusal, 16 journal records and a normal,
+reaped `startup_inventory_unqualified` halt. Four prior default-feature checks were
+reused only after their 258 inputs matched. Provider calls and spend were zero.
+This qualifies the selected exclusion, not complete startup inventory, a durable
+prefix acknowledgment, the matching Ready echo or generation admission. Paid runs,
+signing and release remain gated. Local receipts and the source-built host are
+under `runs/pilot-workspace-owner-2026-11-18/`; native controls are under
+`runs/pilot-workspace-host-hold-2026-11-18/`.
+
 ## Startup workspace scan census — 2026-11-18
 
-A subsequent isolated **candidate, not a qualified repair**, refuses the
+A subsequent isolated candidate, later qualified in the preceding record, refuses the
 workspace scan at the original SDK entry point when the restricted extension
 startup owner is present. On its source-built CLI, an enabled scan failed before
 the previously observed third matching directory call; restricted startup with
@@ -14,9 +45,9 @@ controls are retained under `runs/pilot-workspace-owner-2026-11-18/` and
 `runs/pilot-workspace-host-hold-2026-11-18/`; the copied dependency cache was
 removed. The first offline installation failed on four uncached packages; a
 subsequent frozen, script-disabled public-registry install passed without provider
-calls or spend. The candidate needs a durable regression at the actual owner,
-capture-journal integration, and the full gates before it may be presented or
-published as a fix. It does not establish complete inventory or admission.
+calls or spend. At that point the candidate still needed a durable regression, capture-journal
+integration and the full gates; these were subsequently completed as recorded
+above. It does not establish complete inventory or admission.
 
 A source-only census of the retained qualified host's `sdk.ts` (SHA-256
 `c9b634bd2c1d36173d83fd4a45d85e06fd7c0d08b04ebdc5dc5353a14d76ad62`,
