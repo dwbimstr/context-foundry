@@ -5,6 +5,11 @@
 Updated 2026-11-16. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
+- **Workspace-scan repair candidate, 2026-11-18.** An isolated source-host
+  candidate refuses restricted scans and passed initial native and source checks;
+  ordinary scanning remained available. It is not qualified or published as a
+  fix: a durable owner regression, capture-journal integration and full gates
+  remain ([record](validation.md#startup-workspace-scan-census--2026-11-18)).
 - **Startup workspace scan census, 2026-11-18.** Retained qualified host
   source shows a conditional workspace scan can outlive its startup deadline;
   the setting defaults off. A network-denied addon control confirmed that its

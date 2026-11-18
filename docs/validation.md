@@ -2,6 +2,22 @@
 
 ## Startup workspace scan census — 2026-11-18
 
+A subsequent isolated **candidate, not a qualified repair**, refuses the
+workspace scan at the original SDK entry point when the restricted extension
+startup owner is present. On its source-built CLI, an enabled scan failed before
+the previously observed third matching directory call; restricted startup with
+the setting off completed, and ordinary startup with it on still scanned. A
+synthetic later settings change followed by prompt refresh also hit the refusal
+before settings retirement. Format, lint, the existing extension-owner unit
+suite and type checks passed. The source-built host and its no-provider native
+controls are retained under `runs/pilot-workspace-owner-2026-11-18/` and
+`runs/pilot-workspace-host-hold-2026-11-18/`; the copied dependency cache was
+removed. The first offline installation failed on four uncached packages; a
+subsequent frozen, script-disabled public-registry install passed without provider
+calls or spend. The candidate needs a durable regression at the actual owner,
+capture-journal integration, and the full gates before it may be presented or
+published as a fix. It does not establish complete inventory or admission.
+
 A source-only census of the retained qualified host's `sdk.ts` (SHA-256
 `c9b634bd2c1d36173d83fd4a45d85e06fd7c0d08b04ebdc5dc5353a14d76ad62`,
 from the patched `can1357/oh-my-pi@24439066040e006eb08da7b204f0ac41c79d2de9`)
