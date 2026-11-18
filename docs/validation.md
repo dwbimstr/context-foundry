@@ -1,5 +1,32 @@
 # Validation
 
+## Native startup extension timeout boundary — 2026-11-18
+
+A network-denied control on the current source-built startup host
+`c4e46ad7590e75e3b8b6db76368a9aed0a8c8bb5f563fc8bb13f84ee1a412d9d`
+used one synthetic trusted extension with a held `session_start` handler. In the
+normal control the handler was released before the timeout and the host exited
+normally. In the other control the host reported the handler timeout and answered
+an RPC state request while the original handler remained held; after the parent
+released it, that original handler completed and the host exited normally. The
+parent independently observed the handler's entry and completion. Both controls
+sent no prompt, used no provider and preserved the pinned model metadata.
+
+In the pinned source, `runtime-init.ts::initializeExtensions` awaits
+`ExtensionRunner.emit`; `runner.ts::raceHandlerWithTimeout` races the original
+handler against a deadline and signals abort on timeout. That race returning does
+not prove an abort-ignoring original has finished. RPC also emits its ordinary
+protocol `ready` before extension initialization. These are native observations
+with a synthetic extension, not a claim that Foundry admitted a run or that its
+actual observer handler timed out. The current startup-only Rust path ignores the
+raw RPC Ready and stops at `startup_inventory_unqualified`; no Ready echo, permit,
+count or generation is granted. The experiment made zero provider calls and no
+spend. Full extension ownership must account for the original handler and its
+callbacks after the handler returns, including timeout and ignored-abort controls;
+complete inventory and durable prefix acknowledgment remain open. Paid runs,
+signing and release remain gated.
+
+
 ## Source-owned startup plugin roots — 2026-11-18
 
 The explicit restricted startup diagnostic now owns the selected plugin-root

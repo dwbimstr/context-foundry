@@ -1556,6 +1556,17 @@ the flag. See the [source patch](../../../docs/references/omp-startup-plugin-roo
 Other discovery and extension work, complete inventory and durable acknowledgment/
 Ready echo remain open. Paid execution, signing and release remain gated.
 
+**Extension handler timeout boundary, 2026-11-18.** A network-denied native
+control on the pinned host held a synthetic `session_start` handler past its
+reported timeout; the RPC state response arrived while the original handler was
+still held. The original completed after release. Ordinary RPC Ready precedes
+extension initialization and is not startup admission. Before any full startup
+settlement or matching Ready echo, own the actual handler and callback lifetime:
+prove its original completion outside the handler itself, refuse timeout, failure
+and ignored-abort paths, and prevent late work from being mistaken for a settled
+owner. The existing incomplete-inventory HOLD remains in force. See the
+[dated native receipt](../../../docs/validation.md#native-startup-extension-timeout-boundary--2026-11-18).
+
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
 and a complete startup-owner inventory: catalog/discovery, credential refresh,

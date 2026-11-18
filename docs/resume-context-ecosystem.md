@@ -5,6 +5,13 @@
 Updated 2026-11-16. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
+- **Native extension timeout, 2026-11-18.** On the pinned CLI, a synthetic held
+  `session_start` handler outlived its reported timeout while RPC answered a state
+  request; the original completed only after release. Raw RPC Ready also precedes
+  extension initialization. The current diagnostic still holds admission
+  ([receipt](validation.md#native-startup-extension-timeout-boundary--2026-11-18)).
+  Original-handler and callback settlement, complete inventory and durable prefix
+  acknowledgment remain open; paid runs, signing and release stay gated.
 - **Startup plugin-root ownership, 2026-11-18.** The restricted diagnostic now
   drains the original cache reads, preloads, re-warms and synchronous clears before
   closing their entry points. Source, held real-CLI, startup persistence and
