@@ -5,6 +5,13 @@
 Updated 2026-11-16. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
+- **Ordered startup refusal receipts, 2026-11-18.** The child now rejects
+  out-of-order attempts, stale journal sequences and previously seen prefix digests;
+  native controls and the no-provider qualification passed
+  ([receipt](validation.md#ordered-startup-refusal-receipts--2026-11-18)). These
+  checks do not independently prove the parent wrote the journal. Full startup
+  owner inventory and its durable acknowledgment/Ready echo remain open; startup
+  admission, paid runs, signing and release stay gated.
 - **Restricted managed timer exclusion, 2026-11-18.** The prior native host let
   a synthetic managed timeout fire after the extension receipt. The restricted
   profile now rejects managed timeout and interval admission before construction,

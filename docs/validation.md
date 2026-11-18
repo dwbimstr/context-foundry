@@ -1,5 +1,29 @@
 # Validation
 
+## Ordered startup refusal receipts — 2026-11-18
+
+On the pinned native runtime, synthetic framed-channel controls exposed acceptance
+of duplicate and decreasing journal sequences, reordered attempts, and both adjacent
+and nonconsecutive repeated prefix digests. The child now resolves refusals only in
+attempt order, with strictly increasing safe journal sequences and previously unseen
+well-formed digests. Sequence gaps are allowed. The digest set is bounded by the
+existing 20-attempt limit. This is a receipt sanity check: it does not independently
+prove disk persistence. The parent already appends, syncs and reads back the journal
+before sending each refusal.
+
+On code `0c3e142f70f4d3184ce87777272264edfb7e591f`, six pinned-runtime controls
+passed, including a valid gap and five negative cases. Removing each of the three
+new guards made its corresponding controls fail. All eleven selected no-provider
+gates passed: formatting, lint, unit (119 passed, one ignored), focused receipt,
+real startup, channel, current host (five passed), frozen integration (37 passed,
+ten ignored), source, source-auth and minimum Rust. Previously qualified default
+checks were reused after verifying their 258 inputs, rather than rerun. The real
+startup test recorded one refusal and 16 journal records, then halted with
+`startup_inventory_unqualified`; it exited normally without forced cleanup. Full
+owner inventory, durable startup-prefix acknowledgment and matching Ready echo
+remain open. No provider calls or spend occurred. Private receipts remain under
+`runs/pilot-startup-refusal-order-2026-11-18/`.
+
 ## Restricted startup managed timer exclusion — 2026-11-18
 
 The restricted startup diagnostic now excludes the selected extension runner's
