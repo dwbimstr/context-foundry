@@ -5,6 +5,12 @@
 Updated 2026-11-16. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
+- **T005 lexical clause census, 2026-11-18.** The first 20 eligible tier-2
+  documents per retained success/no-cover case show no stopword-only documents
+  in the 95 no-cover misses. This bounded tokenizer reconstruction is not a
+  ranking replay and does not select a candidate
+  ([record](validation.md#t005-lexical-clause-census--2026-11-18)). T005 remains
+  unaccepted; the consumed holdout was not accessed.
 - **T005 source overlap census, 2026-11-18.** A read-only census of retained
   development cases found that literal question terms often occur somewhere in
   the target file but seldom cover half the question terms near the target name

@@ -1,5 +1,35 @@
 # Validation
 
+## T005 lexical clause census — 2026-11-18
+
+The current semantic search calls the ordinary two-tier lexical collector with
+`prose: false`; the accepted lexical-only T010 behavior does not alter that path.
+A read-only census examined the first 20 eligible tier-2 lexical document
+occurrences in each retained success or no-cover miss, using the original traces
+and source-bound document ranges. It reconstructed the query's body subtokens
+and identifier terms and compared them with those in each source document,
+separating the current prose stopword list from all other terms. This is an
+approximation of the source tokenizer, not a Tantivy score replay; it does not
+establish why a document ranked where it did or what lies outside the sample.
+
+| Group | Cases | Documents examined | Cases with a stopword-only document | Such documents |
+| --- | ---: | ---: | ---: | ---: |
+| Located successes | 169 | 3,380 | 7 | 9 |
+| No-cover misses | 95 | 1,900 | 0 | 0 |
+| Primary file-absent misses | 33 | 660 | 0 | 0 |
+
+The last group overlaps the no-cover group. A stopword-only document here means
+that at least one selected stopword token appeared while none of the other
+reconstructed query tokens did. The 33 file-absent cases and 95 misses therefore
+do not support choosing a simple stopword-only filtering repair from these first
+20 documents. This does not rule out term weighting, phrase effects, deeper
+candidates, dense ranking, or any other mechanism. All 264 selected trace hashes
+and 2,556 source-file hashes were checked; inputs and sources were read back
+unchanged. The source-backed method and aggregate are retained under
+`runs/t005-lexical-clause-census-2026-11-18/`. No store query, model call,
+provider call, spend, consumed-holdout access, candidate selection or quality
+promotion occurred. T005 remains unaccepted.
+
 ## T005 literal source overlap census — 2026-11-18
 
 A read-only development census checked the retained 388 G2 questions and the
