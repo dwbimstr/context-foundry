@@ -41,7 +41,7 @@ function createStartupObserver() {
  });
  return Object.freeze({
   channel,
-  bind(pi: { on(event: string, callback: (event: unknown, ctx: any) => Promise<void>): void }, sealRestricted: (manager: unknown, registry: unknown) => unknown, retireCatalog: (manager: unknown, registry: unknown) => Promise<unknown>, retireSettings: (manager: unknown, registry: unknown) => Promise<unknown>, retireAuth: (manager: unknown, registry: unknown) => Promise<unknown>, retirePresence: (manager: unknown, registry: unknown) => Promise<unknown>, retireTelemetry: (manager: unknown, registry: unknown) => Promise<unknown>, retireMarketplace: (manager: unknown, registry: unknown) => Promise<unknown>, retireLogging: (manager: unknown, registry: unknown) => Promise<unknown>) {
+  bind(pi: { on(event: string, callback: (event: unknown, ctx: any) => Promise<void>): void }, sealRestricted: (manager: unknown, registry: unknown) => unknown, retireCatalog: (manager: unknown, registry: unknown) => Promise<unknown>, retireSettings: (manager: unknown, registry: unknown) => Promise<unknown>, retireAuth: (manager: unknown, registry: unknown) => Promise<unknown>, retirePresence: (manager: unknown, registry: unknown) => Promise<unknown>, retireTelemetry: (manager: unknown, registry: unknown) => Promise<unknown>, retireMarketplace: (manager: unknown, registry: unknown) => Promise<unknown>, retireLogging: (manager: unknown, registry: unknown) => Promise<unknown>, retirePluginRoots: (manager: unknown, registry: unknown) => Promise<unknown>) {
    if (bound || channel.quiet) startupFail(); bound = true;
    pi.on("session_start", async (_event, ctx) => {
     if (channel.quiet) return;
@@ -88,6 +88,11 @@ function createStartupObserver() {
     catch { channel.send({type:"fault",code:"unclassified"}); startupFail(); }
     if (!startupExact(logging,["logging_closed","transport_closed","retention_joined"]) || logging.logging_closed !== true || logging.transport_closed !== true || logging.retention_joined !== true) startupFail();
     if (!channel.quiet && !channel.send({type:"logging_retired",...logging})) startupFail();
+    let plugin: any;
+    try { plugin = await retirePluginRoots(ctx.sessionManager, ctx.modelRegistry); }
+    catch { channel.send({type:"fault",code:"unclassified"}); startupFail(); }
+    if (!startupExact(plugin,["plugin_roots_closed","originals_joined","callbacks_joined","operations"]) || plugin.plugin_roots_closed !== true || plugin.originals_joined !== true || plugin.callbacks_joined !== true || !Number.isInteger(plugin.operations) || plugin.operations < 1 || plugin.operations > 4096) startupFail();
+    if (!channel.quiet && !channel.send({type:"plugin_roots_retired",...plugin})) startupFail();
    });
   },
  });
@@ -101,7 +106,7 @@ if (startupOwner === undefined) {
 export default async function observeStartup(pi: { on(event: string, callback: (event: unknown, ctx: any) => Promise<void>): void }): Promise<void> {
  // Only the late trusted-extension loader resolves host SDK imports. The early
  // preload owns the channel and receives this exact source binding afterward.
- const { sealRestrictedStartup, retireRestrictedStartupCatalog, retireRestrictedStartupSettings, retireRestrictedStartupAuth, retireRestrictedStartupPresence, retireRestrictedStartupTelemetry, retireRestrictedStartupMarketplace, retireRestrictedStartupLogging } = await import("@oh-my-pi/pi-coding-agent");
- if (typeof sealRestrictedStartup !== "function" || typeof retireRestrictedStartupCatalog !== "function" || typeof retireRestrictedStartupSettings !== "function" || typeof retireRestrictedStartupAuth !== "function" || typeof retireRestrictedStartupPresence !== "function" || typeof retireRestrictedStartupTelemetry !== "function" || typeof retireRestrictedStartupMarketplace !== "function" || typeof retireRestrictedStartupLogging !== "function") startupFail();
- startupOwner!.bind(pi, sealRestrictedStartup, retireRestrictedStartupCatalog, retireRestrictedStartupSettings, retireRestrictedStartupAuth, retireRestrictedStartupPresence, retireRestrictedStartupTelemetry, retireRestrictedStartupMarketplace, retireRestrictedStartupLogging);
+ const { sealRestrictedStartup, retireRestrictedStartupCatalog, retireRestrictedStartupSettings, retireRestrictedStartupAuth, retireRestrictedStartupPresence, retireRestrictedStartupTelemetry, retireRestrictedStartupMarketplace, retireRestrictedStartupLogging, retireRestrictedStartupPluginRoots } = await import("@oh-my-pi/pi-coding-agent");
+ if (typeof sealRestrictedStartup !== "function" || typeof retireRestrictedStartupCatalog !== "function" || typeof retireRestrictedStartupSettings !== "function" || typeof retireRestrictedStartupAuth !== "function" || typeof retireRestrictedStartupPresence !== "function" || typeof retireRestrictedStartupTelemetry !== "function" || typeof retireRestrictedStartupMarketplace !== "function" || typeof retireRestrictedStartupLogging !== "function" || typeof retireRestrictedStartupPluginRoots !== "function") startupFail();
+ startupOwner!.bind(pi, sealRestrictedStartup, retireRestrictedStartupCatalog, retireRestrictedStartupSettings, retireRestrictedStartupAuth, retireRestrictedStartupPresence, retireRestrictedStartupTelemetry, retireRestrictedStartupMarketplace, retireRestrictedStartupLogging, retireRestrictedStartupPluginRoots);
 }

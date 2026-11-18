@@ -104,7 +104,8 @@ fn source_startup_refusal_is_durable_and_incomplete_inventory_never_admits() {
         ("telemetry-write", Some(9)),
         ("marketplace-write", Some(10)),
         ("logging-write", Some(11)),
-        ("halt-write", Some(12)),
+        ("plugin-roots-write", Some(12)),
+        ("halt-write", Some(13)),
     ] {
         let e = env();
         let run_dir = e._root.path().join("startup-observation");
@@ -189,6 +190,12 @@ fn source_startup_refusal_is_durable_and_incomplete_inventory_never_admits() {
             assert_eq!(
                 rows.iter()
                     .filter(|r| r["kind"] == "startup_logging_retired")
+                    .count(),
+                1
+            );
+            assert_eq!(
+                rows.iter()
+                    .filter(|r| r["kind"] == "startup_plugin_roots_retired")
                     .count(),
                 1
             );

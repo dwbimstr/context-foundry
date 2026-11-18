@@ -1541,6 +1541,21 @@ This does not qualify arbitrary other logging implementations, trusted-extension
 work, plugin re-warm, complete inventory or durable acknowledgment/Ready echo.
 Startup admission, paid execution, signing and release remain gated.
 
+**Selected startup plugin-roots ownership round, 2026-11-18.** One 90-minute
+no-provider round, one heavy job, a 20 GiB disk floor, an 8 GiB sampled individual
+RSS ceiling and a 120-second cleanup reserve covers the restricted startup profile.
+A network-denied baseline held the real filesystem work and showed cache clearing
+returns before its re-warm completes. The source owner tracks original plugin-root
+reads, preloads, injected roots, cache clears and their observers; it drains bounded
+work before atomically closing entry points. Synchronous invalidator errors or
+reentrant retirement fail, and late reads and clears refuse before cache mutation.
+The exact owner retires after logging and is journaled before incomplete-inventory
+HOLD. Source and real CLI held-filesystem, wrong-identity, failure and counterfactual
+controls qualify this cache owner, while ordinary behavior remains available without
+the flag. See the [source patch](../../../docs/references/omp-startup-plugin-roots-owner.patch).
+Other discovery and extension work, complete inventory and durable acknowledgment/
+Ready echo remain open. Paid execution, signing and release remain gated.
+
 **Owners and transport.** Reuse `CaptureSession`, `Host::launch`, the existing
 private channel and hash-chained journal. Freeze the artifact/source association
 and a complete startup-owner inventory: catalog/discovery, credential refresh,

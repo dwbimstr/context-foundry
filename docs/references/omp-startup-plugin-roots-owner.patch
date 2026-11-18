@@ -1,0 +1,478 @@
+Experimental source-owned startup plugin roots; not automatically applied by Context Foundry.
+Target: can1357/oh-my-pi @ 24439066040e006eb08da7b204f0ac41c79d2de9
+Owner: 003 T006 bounded-pilot-v2 startup observation and admission.
+Requires prior caller/auth/refusal/restricted/catalog/settings/empty-auth/presence/telemetry/marketplace/logging patches.
+Modules: discovery/helpers::{readPluginRoots,preloadPluginRoots,injectPluginDirRoots,clearClaudePluginRootsCache,clearPluginRootsAndCaches}; CLI and sdk exact-session binding.
+Tests: startup-plugin-roots.test.ts plus existing plugin registry, SDK and CLI suites.
+Difference: --startup-plugin-roots requires --restrict-tools; it retains original
+reads, preloads and callbacks, bounds and drains them before atomic closure, rejects
+late reads and cache clears, and fails on synchronous invalidator errors or reentry.
+Ordinary behavior remains available without the flag. Other owners, complete
+inventory, Ready, paid execution, signing and release acceptance remain open.
+
+MIT License
+
+Copyright (c) 2025 Mario Zechner
+Copyright (c) 2025-2026 Can Bölük
+Copyright (c) 2026 Stencil Labs, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+diff --git a/packages/coding-agent/src/cli/args.ts b/packages/coding-agent/src/cli/args.ts
+--- a/packages/coding-agent/src/cli/args.ts
++++ b/packages/coding-agent/src/cli/args.ts
+@@ -87,6 +87,7 @@
+ 	startupNoTelemetry?: boolean;
+ 	startupNoMarketplace?: boolean;
+ 	startupNoLogging?: boolean;
++	startupPluginRoots?: boolean;
+ 	noLsp?: boolean;
+ 	noPty?: boolean;
+ 	hooks?: string[];
+@@ -371,6 +372,8 @@
+ 			result.noSession = true;
+ 		} else if (arg === "--no-tools") {
+ 			result.noTools = true;
++		} else if (arg === "--startup-plugin-roots") {
++			result.startupPluginRoots = true;
+ 		} else if (arg === "--startup-no-logging") {
+ 			result.startupNoLogging = true;
+ 		} else if (arg === "--startup-no-marketplace") {
+diff --git a/packages/coding-agent/src/cli/flag-tables.ts b/packages/coding-agent/src/cli/flag-tables.ts
+--- a/packages/coding-agent/src/cli/flag-tables.ts
++++ b/packages/coding-agent/src/cli/flag-tables.ts
+@@ -360,6 +360,7 @@
+ 	"--startup-no-telemetry",
+ 	"--startup-no-marketplace",
+ 	"--startup-no-logging",
++	"--startup-plugin-roots",
+ 	"--no-lsp",
+ 	"--no-pty",
+ 	"--hide-thinking",
+diff --git a/packages/coding-agent/src/discovery/helpers.ts b/packages/coding-agent/src/discovery/helpers.ts
+--- a/packages/coding-agent/src/discovery/helpers.ts
++++ b/packages/coding-agent/src/discovery/helpers.ts
+@@ -1216,6 +1216,115 @@
+ 
+ const pluginRootsCache = new Map<string, PluginRootsCacheEntry>();
+ 
++export interface StartupPluginRootsOwner {
++	readonly kind: "startup-plugin-roots";
++}
++let pluginRootStarts = 0;
++let startupPluginRoots:
++	| {
++			handle: StartupPluginRootsOwner;
++			phase: "open" | "closed";
++			retiring: boolean;
++			activeSync: number;
++			failed: boolean;
++			operations: number;
++			pending: Set<Promise<void>>;
++	  }
++	| undefined;
++export function ownStartupPluginRoots(): StartupPluginRootsOwner {
++	if (startupPluginRoots || pluginRootStarts) throw new Error("Startup plugin roots ownership is late or repeated");
++	const handle = Object.freeze({ kind: "startup-plugin-roots" as const });
++	startupPluginRoots = {
++		handle,
++		phase: "open",
++		retiring: false,
++		activeSync: 0,
++		failed: false,
++		operations: 0,
++		pending: new Set(),
++	};
++	return handle;
++}
++export function isStartupPluginRoots(handle: unknown): handle is StartupPluginRootsOwner {
++	return !!startupPluginRoots && startupPluginRoots.handle === handle && startupPluginRoots.phase === "open";
++}
++function assertPluginRootsOpen(): void {
++	const owner = startupPluginRoots;
++	if (!owner) {
++		pluginRootStarts = Math.min(2, pluginRootStarts + 1);
++		return;
++	}
++	if (owner.phase !== "open") throw new Error("Startup plugin roots are closed");
++}
++function ownPluginRootsTask<T>(start: () => Promise<T>): Promise<T> {
++	const owner = startupPluginRoots;
++	if (!owner) {
++		pluginRootStarts = Math.min(2, pluginRootStarts + 1);
++		return start();
++	}
++	assertPluginRootsOpen();
++	if (++owner.operations > 4096) {
++		owner.failed = true;
++		throw new Error("Startup plugin roots operation limit");
++	}
++	let original: Promise<T>;
++	owner.activeSync++;
++	try {
++		original = start();
++	} catch (error) {
++		owner.failed = true;
++		throw error;
++	} finally {
++		owner.activeSync--;
++	}
++	const observer = original.then(
++		() => {
++			owner.pending.delete(observer);
++		},
++		() => {
++			owner.failed = true;
++			owner.pending.delete(observer);
++		},
++	);
++	owner.pending.add(observer);
++	return original;
++}
++function ownPluginRootsSync<T>(operation: () => T): T {
++	const owner = startupPluginRoots;
++	assertPluginRootsOpen();
++	if (!owner) return operation();
++	if (++owner.operations > 4096) {
++		owner.failed = true;
++		throw new Error("Startup plugin roots operation limit");
++	}
++	owner.activeSync++;
++	try {
++		return operation();
++	} catch (error) {
++		owner.failed = true;
++		throw error;
++	} finally {
++		owner.activeSync--;
++	}
++}
++/** Drain originals and their observers before atomically closing all entry points. */
++export async function retireStartupPluginRoots(handle: unknown) {
++	const owner = startupPluginRoots;
++	if (!owner || owner.handle !== handle || owner.phase !== "open" || owner.retiring || owner.activeSync !== 0)
++		throw new Error("Startup plugin roots identity or state mismatch");
++	owner.retiring = true;
++	while (owner.pending.size) await Promise.all(owner.pending);
++	owner.phase = "closed";
++	if (owner.failed || owner.operations < 1 || owner.operations > 4096)
++		throw new Error("Startup plugin roots did not settle");
++	return Object.freeze({
++		plugin_roots_closed: true as const,
++		originals_joined: true as const,
++		callbacks_joined: true as const,
++		operations: owner.operations,
++	});
++}
++
+ /**
+  * Plugin id of every plugin root a registry has named in this process, keyed by the root's path and
+  * by its real path (Agent Plugin skills record real paths). See {@link isSupersededPluginPath}.
+@@ -1322,7 +1431,14 @@
+ }
+ 
+ /** {@link listClaudePluginRoots}; with `revalidate`, a cached result whose registry files changed is read again. */
+-async function readPluginRoots(home: string, cwd: string | undefined, revalidate: boolean): Promise<PluginRootsResult> {
++function readPluginRoots(home: string, cwd: string | undefined, revalidate: boolean): Promise<PluginRootsResult> {
++	return ownPluginRootsTask(() => readPluginRootsOriginal(home, cwd, revalidate));
++}
++async function readPluginRootsOriginal(
++	home: string,
++	cwd: string | undefined,
++	revalidate: boolean,
++): Promise<PluginRootsResult> {
+ 	const { claudeConfigDir, ompRegistryPath, resolvedProjectPath, files } = await resolvePluginRegistryFiles(home, cwd);
+ 	const projectRoot = resolvedProjectPath ? path.dirname(path.dirname(path.dirname(resolvedProjectPath))) : cwd;
+ 	const activeClaudeProjectPath = projectRoot ? await canonicalClaudeProjectPath(projectRoot) : null;
+@@ -1559,6 +1675,9 @@
+  * Clear the plugin roots cache (useful for testing or when plugins change).
+  */
+ export function clearClaudePluginRootsCache(): void {
++	return ownPluginRootsSync(clearClaudePluginRootsCacheOriginal);
++}
++function clearClaudePluginRootsCacheOriginal(): void {
+ 	pluginRootsCache.clear();
+ 	for (const invalidate of pluginCacheInvalidators) invalidate();
+ 	preloadedPluginRoots = [...injectedPluginDirRoots];
+@@ -1574,6 +1693,9 @@
+  * installing/uninstalling/enabling/disabling plugins.
+  */
+ export function clearPluginRootsAndCaches(extraPaths?: readonly string[]): void {
++	return ownPluginRootsSync(() => clearPluginRootsAndCachesOriginal(extraPaths));
++}
++function clearPluginRootsAndCachesOriginal(extraPaths?: readonly string[]): void {
+ 	invalidateFsCache(path.join(resolveClaudePaths().configDir, "plugins", "installed_plugins.json"));
+ 	invalidateFsCache(path.join(getPluginsDir(), "installed_plugins.json"));
+ 	for (const p of extraPaths ?? []) invalidateFsCache(p);
+@@ -1593,7 +1715,10 @@
+  * Call during session initialization, after dir resolution completes
+  * but before any LSP config is read.
+  */
+-export async function preloadPluginRoots(home: string, cwd?: string): Promise<void> {
++export function preloadPluginRoots(home: string, cwd?: string): Promise<void> {
++	return ownPluginRootsTask(() => preloadPluginRootsOriginal(home, cwd));
++}
++async function preloadPluginRootsOriginal(home: string, cwd?: string): Promise<void> {
+ 	lastPreloadHome = home;
+ 	const { roots } = await listClaudePluginRoots(home, cwd);
+ 	preloadedPluginRoots = roots;
+@@ -1614,7 +1739,10 @@
+  * These are prepended to the cache with highest precedence (before OMP/Claude entries).
+  * Must be called before any listClaudePluginRoots() access.
+  */
+-export async function injectPluginDirRoots(home: string, dirs: string[], cwd?: string): Promise<void> {
++export function injectPluginDirRoots(home: string, dirs: string[], cwd?: string): Promise<void> {
++	return ownPluginRootsTask(() => injectPluginDirRootsOriginal(home, dirs, cwd));
++}
++async function injectPluginDirRootsOriginal(home: string, dirs: string[], cwd?: string): Promise<void> {
+ 	const injected: ClaudePluginRoot[] = [];
+ 	for (const dir of dirs) {
+ 		const resolved = path.resolve(dir);
+diff --git a/packages/coding-agent/src/main.ts b/packages/coding-agent/src/main.ts
+--- a/packages/coding-agent/src/main.ts
++++ b/packages/coding-agent/src/main.ts
+@@ -67,6 +67,7 @@
+ 	clearPluginRootsAndCaches,
+ 	injectPluginDirRoots,
+ 	preloadPluginRoots,
++	ownStartupPluginRoots,
+ 	resolveActiveProjectRegistryPath,
+ } from "./discovery/helpers";
+ import { injectOmpExtensionCliRoots } from "./discovery/omp-extension-roots";
+@@ -1850,12 +1851,15 @@
+ 	rawArgs: string[],
+ 	deps: RunRootCommandDependencies = DEFAULT_RUN_ROOT_DEPENDENCIES,
+ ): Promise<void> {
++	if (parsed.startupPluginRoots && !parsed.restrictTools)
++		throw new Error("--startup-plugin-roots requires --restrict-tools");
+ 	if (parsed.startupNoLogging && !parsed.restrictTools)
+ 		throw new Error("--startup-no-logging requires --restrict-tools");
+ 	if (parsed.startupNoMarketplace && !parsed.restrictTools)
+ 		throw new Error("--startup-no-marketplace requires --restrict-tools");
+ 	if (parsed.startupNoTelemetry && !parsed.restrictTools)
+ 		throw new Error("--startup-no-telemetry requires --restrict-tools");
++	const startupPluginRootsOwner = parsed.startupPluginRoots ? ownStartupPluginRoots() : undefined;
+ 	const startupLoggingOwner = parsed.startupNoLogging ? logger.ownStartupLogging() : undefined;
+ 	const startupTelemetryOwner = parsed.startupNoTelemetry ? ownStartupTelemetry() : undefined;
+ 	const startupMarketplaceOwner = parsed.startupNoMarketplace ? ownStartupMarketplace() : undefined;
+@@ -2430,6 +2434,7 @@
+ 			if (startupTelemetryOwner) options.startupTelemetryOwner = startupTelemetryOwner;
+ 			if (startupMarketplaceOwner) options.startupMarketplaceOwner = startupMarketplaceOwner;
+ 			if (startupLoggingOwner) options.startupLoggingOwner = startupLoggingOwner;
++			if (startupPluginRootsOwner) options.startupPluginRootsOwner = startupPluginRootsOwner;
+ 			options.authStorage = authStorage;
+ 			options.modelRegistry = modelRegistry;
+ 			options.hasUI = isInteractive || mode === "rpc-ui";
+diff --git a/packages/coding-agent/src/sdk.ts b/packages/coding-agent/src/sdk.ts
+--- a/packages/coding-agent/src/sdk.ts
++++ b/packages/coding-agent/src/sdk.ts
+@@ -1,4 +1,5 @@
+ import * as path from "node:path";
++import { isStartupPluginRoots, retireStartupPluginRoots, type StartupPluginRootsOwner } from "./discovery/helpers";
+ import {
+ 	isStartupMarketplace,
+ 	retireStartupMarketplace,
+@@ -872,6 +873,7 @@
+ 	startupTelemetryOwner?: StartupTelemetryOwner;
+ 	startupMarketplaceOwner?: StartupMarketplaceOwner;
+ 	startupLoggingOwner?: logger.StartupLoggingOwner;
++	startupPluginRootsOwner?: StartupPluginRootsOwner;
+ 	/**
+ 	 * Permit only caller-supplied SDK custom tools inside a restricted session.
+ 	 * They must still be named in {@link toolNames}; discovered extensions, MCP,
+@@ -1065,6 +1067,8 @@
+ 			marketplace?: WeakRef<StartupMarketplaceOwner>;
+ 			marketplaceRetired?: true;
+ 			logging?: WeakRef<logger.StartupLoggingOwner>;
++			loggingRetired?: true;
++			pluginRoots?: WeakRef<StartupPluginRootsOwner>;
+ 			receipt: SealedRestrictedStartupReceipt;
+ 	  }
+ 	| undefined;
+@@ -1249,7 +1253,30 @@
+ 		!logging
+ 	)
+ 		throw new Error("Restricted logging owner identity or state mismatch");
+-	return await logger.retireStartupLogging(logging);
++	const receipt = await logger.retireStartupLogging(logging);
++	owner.loggingRetired = true;
++	return receipt;
++}
++
++/** Join and close the exact plugin roots owner after logging retirement. */
++export async function retireRestrictedStartupPluginRoots(sessionManager: unknown, modelRegistry: unknown) {
++	const owner = restrictedOwner,
++		session = owner?.session.deref(),
++		registry = owner?.registry.deref(),
++		roots = owner?.pluginRoots?.deref();
++	if (
++		!restrictedSealed ||
++		restrictedStarts !== 1 ||
++		!owner?.loggingRetired ||
++		!session ||
++		session.isDisposed ||
++		session.sessionManager !== sessionManager ||
++		!registry ||
++		registry !== modelRegistry ||
++		!roots
++	)
++		throw new Error("Restricted plugin roots identity or state mismatch");
++	return await retireStartupPluginRoots(roots);
+ }
+ 
+ /** Result from createAgentSession */
+@@ -2173,6 +2200,11 @@
+  */
+ export async function createAgentSession(options: CreateAgentSessionOptions = {}): Promise<CreateAgentSessionResult> {
+ 	if (
++		options.startupPluginRootsOwner !== undefined &&
++		(options.restrictToolNames !== true || !isStartupPluginRoots(options.startupPluginRootsOwner))
++	)
++		throw new Error("Startup plugin roots require the exact restricted CLI owner");
++	if (
+ 		options.startupLoggingOwner !== undefined &&
+ 		(options.restrictToolNames !== true || !logger.isStartupLogging(options.startupLoggingOwner))
+ 	)
+@@ -2218,6 +2250,7 @@
+ 				...(options.startupTelemetryOwner ? { telemetry: new WeakRef(options.startupTelemetryOwner) } : {}),
+ 				...(options.startupMarketplaceOwner ? { marketplace: new WeakRef(options.startupMarketplaceOwner) } : {}),
+ 				...(options.startupLoggingOwner ? { logging: new WeakRef(options.startupLoggingOwner) } : {}),
++				...(options.startupPluginRootsOwner ? { pluginRoots: new WeakRef(options.startupPluginRootsOwner) } : {}),
+ 				receipt: Object.freeze({ ...result.startupRestrictions, credential_usage_joined: true }),
+ 			};
+ 	}
+diff --git a/packages/coding-agent/test/startup-plugin-roots.test.ts b/packages/coding-agent/test/startup-plugin-roots.test.ts
+new file mode 100644
+--- /dev/null
++++ b/packages/coding-agent/test/startup-plugin-roots.test.ts
+@@ -0,0 +1,114 @@
++import { expect, test } from "bun:test";
++import { mkdtempSync, rmSync } from "node:fs";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++const helpersPath = join(import.meta.dir, "../src/discovery/helpers.ts");
++function run(code: string) {
++	const dir = mkdtempSync(join(tmpdir(), "foundry-plugin-test-"));
++	try {
++		const p = Bun.spawnSync(
++			[
++				process.execPath,
++				"-e",
++				`import * as m from ${JSON.stringify(helpersPath)}; import * as fs from 'node:fs'; const dir=${JSON.stringify(dir)};\n${code}`,
++			],
++			{ stdout: "pipe", stderr: "pipe" },
++		);
++		if (p.exitCode !== 0) throw Error(p.stderr.toString());
++		return JSON.parse(p.stdout.toString());
++	} finally {
++		rmSync(dir, { recursive: true, force: true });
++	}
++}
++test("holds real detached rewarm until original fs work and observer settle, then blocks cached entries", () => {
++	const result = run(`
++  fs.mkdirSync(dir+'/home',{recursive:true});fs.mkdirSync(dir+'/work',{recursive:true});
++  let invalidations=0;m.registerPluginCacheInvalidator(()=>invalidations++);const owner=m.ownStartupPluginRoots();await m.preloadPluginRoots(dir+'/home',dir+'/work');
++  const old=fs.promises.stat;let entered=false,release;const held=new Promise(r=>release=r);
++  fs.promises.stat=async (...args)=>{if(!entered){entered=true;await held;}return await Reflect.apply(old,fs.promises,args)};
++  const clear=m.clearClaudePluginRootsCache, pre=m.preloadPluginRoots, list=m.listClaudePluginRoots, inject=m.injectPluginDirRoots, full=m.clearPluginRootsAndCaches;
++  clear(); for(let i=0;i<100&&!entered;i++)await new Promise(r=>setTimeout(r,5));if(!entered)throw Error('actual fs hold not reached');
++  let done=false;const retirement=m.retireStartupPluginRoots(owner).then(r=>{done=true;return r});
++  await new Promise(r=>setTimeout(r,10));const premature=done;release();fs.promises.stat=old;const receipt=await retirement;
++  const beforeInvalidations=invalidations;let denied=0;for(const f of [()=>clear(),()=>full(),()=>pre(dir+'/home',dir+'/work'),()=>list(dir+'/home',dir+'/work'),()=>inject(dir+'/home',[],dir+'/work')]){try{await f()}catch{denied++}}
++  let repeated=false;try{await m.retireStartupPluginRoots(owner)}catch{repeated=true}
++  console.log(JSON.stringify({premature,done,denied,repeated,receipt,beforeInvalidations,afterInvalidations:invalidations}));
++ `);
++	expect(result.premature).toBe(false);
++	expect(result.done).toBe(true);
++	expect(result.denied).toBe(5);
++	expect(result.afterInvalidations).toBe(result.beforeInvalidations);
++	expect(result.repeated).toBe(true);
++	expect(result.receipt.plugin_roots_closed).toBe(true);
++	expect(result.receipt.originals_joined).toBe(true);
++	expect(result.receipt.callbacks_joined).toBe(true);
++	expect(result.receipt.operations).toBeGreaterThanOrEqual(4);
++});
++test("wrong, repeated and late ownership are refused", () => {
++	const result = run(`
++  const owner=m.ownStartupPluginRoots();let wrong=false,repeat=false;
++  try{await m.retireStartupPluginRoots({kind:'startup-plugin-roots'})}catch{wrong=true}
++  try{m.ownStartupPluginRoots()}catch{repeat=true}
++  await m.preloadPluginRoots(dir,dir);await m.retireStartupPluginRoots(owner);
++  console.log(JSON.stringify({wrong,repeat}));
++ `);
++	expect(result).toEqual({ wrong: true, repeat: true });
++	const late = run(
++		`await m.listClaudePluginRoots(dir,dir);let refused=false;try{m.ownStartupPluginRoots()}catch{refused=true}console.log(JSON.stringify({refused}))`,
++	);
++	expect(late.refused).toBe(true);
++});
++test("CLI flag is valueless and forged SDK ownership is rejected", async () => {
++	const { parseArgs } = await import("../src/cli/args");
++	const { VALUELESS_FLAGS } = await import("../src/cli/flag-tables");
++	const { createAgentSession } = await import("../src/sdk");
++	const args = parseArgs([
++		"--startup-plugin-roots",
++		"--model",
++		"synthetic/model",
++		"--restrict-tools",
++		"--tools",
++		"read,edit",
++	]);
++	expect(args.startupPluginRoots).toBe(true);
++	expect(args.model).toBe("synthetic/model");
++	expect(VALUELESS_FLAGS.has("--startup-plugin-roots")).toBe(true);
++	await expect(
++		createAgentSession({ restrictToolNames: true, startupPluginRootsOwner: { kind: "startup-plugin-roots" } }),
++	).rejects.toThrow("exact restricted CLI owner");
++});
++test("a failed original operation cannot produce a successful retirement", () => {
++	const result = run(`
++  const owner=m.ownStartupPluginRoots();let originalFailed=false,retirementFailed=false;
++  try {await m.listClaudePluginRoots(null,dir)} catch {originalFailed=true}
++  try {await m.retireStartupPluginRoots(owner)} catch {retirementFailed=true}
++  console.log(JSON.stringify({originalFailed,retirementFailed}));
++ `);
++	expect(result).toEqual({ originalFailed: true, retirementFailed: true });
++});
++test("late full cache clear does not invalidate caller-supplied paths", () => {
++	const fsCache = join(import.meta.dir, "../src/capability/fs.ts");
++	const result = run(`
++  const cache=await import(${JSON.stringify(fsCache)});const file=dir+'/memo.txt';fs.writeFileSync(file,'before');
++  await cache.readFile(file);const owner=m.ownStartupPluginRoots();await m.preloadPluginRoots(dir,dir);await m.retireStartupPluginRoots(owner);
++  fs.writeFileSync(file,'after');let refused=false;try{m.clearPluginRootsAndCaches([file])}catch{refused=true}
++  const cached=await cache.readFile(file);console.log(JSON.stringify({refused,cached}));
++ `);
++	expect(result).toEqual({ refused: true, cached: "before" });
++});
++test("failed and reentrant synchronous invalidators cannot attest retirement", () => {
++	const failed = run(`
++  const owner=m.ownStartupPluginRoots();await m.preloadPluginRoots(dir,dir);m.registerPluginCacheInvalidator(()=>{throw Error('invalidation failed')});
++  let clearFailed=false,retirementFailed=false;try{m.clearClaudePluginRootsCache()}catch{clearFailed=true}
++  try{await m.retireStartupPluginRoots(owner)}catch{retirementFailed=true}
++  console.log(JSON.stringify({clearFailed,retirementFailed}));
++ `);
++	expect(failed).toEqual({ clearFailed: true, retirementFailed: true });
++	const reentrant = run(`
++  const owner=m.ownStartupPluginRoots();await m.preloadPluginRoots(dir,dir);let reentrantRejected=false,pending;
++  m.registerPluginCacheInvalidator(()=>{pending=m.retireStartupPluginRoots(owner).catch(()=>{reentrantRejected=true})});
++  m.clearClaudePluginRootsCache();await pending;const receipt=await m.retireStartupPluginRoots(owner);
++  console.log(JSON.stringify({reentrantRejected,closed:receipt.plugin_roots_closed}));
++ `);
++	expect(reentrant).toEqual({ reentrantRejected: true, closed: true });
++});

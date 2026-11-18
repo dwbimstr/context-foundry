@@ -109,6 +109,12 @@ pub enum ChildMessage {
         transport_closed: bool,
         retention_joined: bool,
     },
+    PluginRootsRetired {
+        plugin_roots_closed: bool,
+        originals_joined: bool,
+        callbacks_joined: bool,
+        operations: u32,
+    },
     Fault {
         code: Fault,
     },
@@ -316,6 +322,20 @@ impl ChannelState {
         {
             return Err(ProtocolFault("startup_logging_unqualified"));
         }
+        if let ChildMessage::PluginRootsRetired {
+            plugin_roots_closed,
+            originals_joined,
+            callbacks_joined,
+            operations,
+        } = &h.msg
+            && (!plugin_roots_closed
+                || !originals_joined
+                || !callbacks_joined
+                || *operations == 0
+                || *operations > 4096)
+        {
+            return Err(ProtocolFault("startup_plugin_roots_unqualified"));
+        }
         Ok(Some(Inbound {
             seq: h.seq,
             msg: h.msg,
@@ -392,6 +412,7 @@ struct ObservedOwners {
     telemetry: bool,
     marketplace: bool,
     logging: bool,
+    plugin_roots: bool,
 }
 impl ObservedOwners {
     fn accept(&mut self, message: &ChildMessage) -> Result<(), ProtocolFault> {
@@ -459,6 +480,12 @@ impl ObservedOwners {
                 }
                 self.logging = true;
             }
+            ChildMessage::PluginRootsRetired { .. } => {
+                if !self.logging || self.plugin_roots {
+                    return Err(ProtocolFault("startup_plugin_roots_order"));
+                }
+                self.plugin_roots = true;
+            }
             ChildMessage::Fault { .. } => return Err(ProtocolFault("startup_child_fault")),
         }
         Ok(())
@@ -473,6 +500,7 @@ impl ObservedOwners {
             && self.telemetry
             && self.marketplace
             && self.logging
+            && self.plugin_roots
     }
 }
 
@@ -539,6 +567,9 @@ async fn observe(a: ObservationAdmission) -> Result<ObservationReceipt, CaptureF
                     }
                     ChildMessage::LoggingRetired { .. } => {
                         journal.append("startup_logging_retired",json!({"child_seq":inbound.seq,"logging":inbound.msg}))?;
+                    }
+                    ChildMessage::PluginRootsRetired { .. } => {
+                        journal.append("startup_plugin_roots_retired",json!({"child_seq":inbound.seq,"plugin_roots":inbound.msg}))?;
                     }
                     ChildMessage::Fault { .. } => return Err(fault(FaultClass::Protocol,"startup_child_fault")),
                     }
@@ -881,6 +912,54 @@ mod tests {
     }
 
     #[test]
+    fn startup_plugin_roots_require_closed_joined_bounded_and_exact_fields() {
+        let valid = json!({"type":"plugin_roots_retired","plugin_roots_closed":true,"originals_joined":true,"callbacks_joined":true,"operations":1});
+        for field in [
+            "plugin_roots_closed",
+            "originals_joined",
+            "callbacks_joined",
+        ] {
+            let mut bad = valid.clone();
+            bad[field] = json!(false);
+            let msg = serde_json::from_value::<ChildMessage>(bad).unwrap();
+            assert!(
+                ChannelState::new(identity())
+                    .read(&mut frame(1, msg).as_slice())
+                    .is_err()
+            );
+        }
+        for count in [0, 4097] {
+            let mut bad = valid.clone();
+            bad["operations"] = json!(count);
+            let msg = serde_json::from_value::<ChildMessage>(bad).unwrap();
+            assert!(
+                ChannelState::new(identity())
+                    .read(&mut frame(1, msg).as_slice())
+                    .is_err()
+            );
+        }
+        for field in [
+            "plugin_roots_closed",
+            "originals_joined",
+            "callbacks_joined",
+            "operations",
+        ] {
+            let mut missing = valid.clone();
+            missing.as_object_mut().unwrap().remove(field);
+            assert!(serde_json::from_value::<ChildMessage>(missing).is_err());
+        }
+        let mut extra = valid.clone();
+        extra["path"] = json!("must-not-export");
+        assert!(serde_json::from_value::<ChildMessage>(extra).is_err());
+        let msg = serde_json::from_value::<ChildMessage>(valid).unwrap();
+        assert!(
+            ChannelState::new(identity())
+                .read(&mut frame(1, msg).as_slice())
+                .is_ok()
+        );
+    }
+
+    #[test]
     fn startup_logging_requires_closed_transport_retention_and_exact_fields() {
         let valid = json!({"type":"logging_retired","logging_closed":true,"transport_closed":true,"retention_joined":true});
         for field in ["logging_closed", "transport_closed", "retention_joined"] {
@@ -1019,7 +1098,14 @@ mod tests {
             transport_closed: true,
             retention_joined: true,
         };
+        let plugin_roots = ChildMessage::PluginRootsRetired {
+            plugin_roots_closed: true,
+            originals_joined: true,
+            callbacks_joined: true,
+            operations: 1,
+        };
         for early in [
+            &plugin_roots,
             &logging,
             &marketplace,
             &telemetry,
@@ -1061,8 +1147,12 @@ mod tests {
         assert!(state.accept(&logging).is_err());
         state.accept(&marketplace).unwrap();
         assert!(!state.complete());
+        assert!(state.accept(&plugin_roots).is_err());
         state.accept(&logging).unwrap();
+        assert!(!state.complete());
+        state.accept(&plugin_roots).unwrap();
         assert!(state.complete());
+        assert!(state.accept(&plugin_roots).is_err());
         assert!(state.accept(&logging).is_err());
         assert!(state.accept(&marketplace).is_err());
         assert!(state.accept(&telemetry).is_err());
