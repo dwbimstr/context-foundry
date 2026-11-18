@@ -38,6 +38,19 @@ durable acknowledgment/Ready echo remain open; paid runs, signing and release
 remain gated.
 
 
+
+The qualified implementation and records were pushed to
+`experimental/context-ecosystem` as `7e2b5250fea8d496df0697aabe6f4da4d91f2411`.
+A fresh HTTPS clone matched all 437 tracked file bytes, types and executable modes;
+main was unchanged and no CI run was observed. After exact input retention and
+open-file checks, this round's source, dependency, Rust and MSRV caches and 15
+duplicate native copies were pruned. Stage allocation fell from **7,243,726,848**
+to **538,865,664 bytes**; this is not a physical APFS reclamation measurement.
+The necessary CLI leaf and runnable test artifacts remain. CLI, units, channel,
+startup and both legacy-source consumers passed again without the caches. A source
+restoration recipe and all 10,337 checked inputs remain; full reconstruction after
+pruning was not rerun.
+
 ## Source-owned startup logger — 2026-11-18
 
 The explicit restricted startup diagnostic now closes the selected native logger

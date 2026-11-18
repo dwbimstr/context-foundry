@@ -9,7 +9,8 @@ and dated paragraphs below are history.
   drains the original cache reads, preloads, re-warms and synchronous clears before
   closing their entry points. Source, held real-CLI, startup persistence and
   compatibility checks passed without provider calls
-  ([receipt](validation.md#source-owned-startup-plugin-roots--2026-11-18)). Other
+  ([receipt](validation.md#source-owned-startup-plugin-roots--2026-11-18)). The
+  qualified code and records were pushed, and cache-free replay passed. Other
   discovery and extension work, complete inventory and durable acknowledgment
   remain open; startup admission, paid runs, signing and release remain gated.
 - **Startup logger ownership, 2026-11-18.** The explicit restricted profile now
