@@ -1344,6 +1344,11 @@ fixed third/final variant completed the sole 400-case final pair without promoti
 the current checkpoint is closed and the broader quality goal is retained. Further
 work needs a new bounded selection and unexposed acceptance evidence. See the
 [dated result](../../docs/validation.md#t005-compact-candidate-no-promotion--2026-11-11).
+On 2026-11-18 the owner selected fresh-context authors for the next blind set.
+Use the same pinned corpora, unchanged builder and full verifier, 200 cases per
+corpus, disjoint whole-module author assignments and separate label-side checks.
+The custodian also excludes normalized question text and answer identities from
+the consumed 400-case set. Implementation receives only seal metadata.
 The original G2 verdict remains valid for its original question: gain over no profile.
 This task asks which current losses can be repaired at the same delivery budget.
 The [resumable handoff](../../docs/resume-context-ecosystem.md#current-status--2026-11-06)

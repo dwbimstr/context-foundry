@@ -1,5 +1,80 @@
 # Validation
 
+## T005 new blind holdout authoring started — 2026-11-18
+
+The owner selected fresh-context authors. The label custodian froze a new
+sampling seed, catalog of 65,526 eligible declarations and four disjoint
+whole-module partitions before launching the authors. The allocation is 100
+questions per partition and 200 per pinned corpus. The custodian applied the
+historical G2/F4 exclusions and derived exclusion-only keys from the consumed
+final set. The authors receive the pinned source and authoring rules, with the
+same three-per-file and six-per-module caps. Separate label-side quality checks
+and the unchanged full verifier are required before sealing.
+
+Preparation metadata SHA-256
+`d1e4fc99c7d6d8dbb8abf05a7875c169196d52b8363e37d7198e95c9c7bc7825` records the
+source pins, partition and eligibility digests at author launch. The preparation
+and forthcoming labels are private under `runs/t005-holdout-fresh-2026-11-18/`.
+All four authors delivered their full quota. The custodian's aggregate readback
+found zero duplicate normalized question texts and zero overlaps with the frozen
+exclusion keys. Its authoring metadata SHA-256 is
+`3ba4bc5942ebe4e157a8a858743e0799006ec826730ac779adc8a7a7a5388ff1`.
+Candidate tuning begins only after the separate source-side checks and the
+full verifier produce a qualified seal. T005 remains open.
+
+## Startup RPC command boundary — 2026-11-18
+
+The startup-only profile now holds the native CLI's stdin pipe for normal
+teardown without creating an RPC command queue or writer. A caller attempting
+`Host::send_rpc` receives `rpc_on_startup_channel` before any bytes are encoded.
+The existing private channel still carries the startup attempt, refusal and
+retirement records. The actual-host regression failed on the old launcher because
+it accepted the synthetic `get_state` command. It passed after the repair and the
+owned host was reaped without a command response or forced termination.
+
+A separate control of the retained source-built host
+`c48ea3b5a2ec5376044da48de072ae8e961d91bb87e4614269b2f37297f64cbf` used a
+synthetic extension and a 27-byte project command file. The file read completed
+at trace sequence 4. Raw RPC Ready appeared at 6, the extension's retirement
+receipt at 14, and the initial catalog containing the marker command at 15.
+The host exited normally. Network access was denied, and the control sent only
+state requests. In the hash-pinned upstream source
+`can1357/oh-my-pi@24439066040e006eb08da7b204f0ac41c79d2de9`,
+`modes/rpc/rpc-mode.ts::runRpcMode` awaits `initializeExtensions`, subscribes to
+command metadata changes and awaits the initial command catalog. The later
+catalog frame orders that selected publication. The file read came earlier, and
+the test did not hold any work started by the metadata subscription.
+
+Follow-up native controls wrapped the exact session's metadata subscription. The
+natural control observed one registration and one initial catalog. The injected
+control invoked the registered callback during registration. The original
+callback returned without a promise, and stdout published two catalog updates.
+That observed extra update identifies the callback path a future owner must join
+or defer. The injection establishes behavior when invoked at that point. It does
+not establish that a normal startup fires that callback spontaneously.
+
+Two more controls placed a synthetic module in `.claude/extensions`. Its factory
+did not run with the restricted invocation's single explicit trusted path. The
+same factory ran once when its path was explicitly added to that list. Both
+hosts exited normally. The control covers this discovery route. The real
+Foundry launcher supplies only the exact materialized bridge, whose digest was
+read back from the normal observation journal. The first-party imports and the
+work they start still need lifecycle coverage.
+
+This separates the extension receipt from the overall startup boundary. The
+next owner to qualify is RPC initialization, including its command-metadata
+callback and teardown. The actual admitting exchange still requires a complete
+source-bound inventory, durable journal prefix readback and a matching Ready
+echo. The complete startup observation still ends at `startup_inventory_unqualified`.
+Fresh checks passed formatting, pilot all-target Clippy, 119 pilot unit tests
+(one ignored), Rust 1.90 all-target checking, the actual startup command test,
+the twelve startup journal cases, five current-host cases, 37 frozen-host tests
+(11 ignored), and both source-host consumers. Four default-feature gates reused
+their prior results after readback of 258 identical effective inputs. The normal
+journal contains 16 records and a normal host exit. Private inputs, red and green
+runs, and CLI snapshots are retained under
+`runs/pilot-startup-rpc-input-2026-11-18/`. Provider calls and spend were zero.
+
 ## Restricted startup held watchdog read — 2026-11-18
 
 A second network-denied native control used the same restricted source-built host

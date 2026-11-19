@@ -5,6 +5,19 @@
 Updated 2026-11-16. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
+- **T005 blind holdout drafts complete, 2026-11-18.** Four fresh-context
+  authors delivered 400 drafts within frozen Rust and bun partitions. All drafts
+  and source checks stay with the label custodian. The new set needs full validation
+  and sealing before candidate tuning
+  ([record](validation.md#t005-new-blind-holdout-authoring-started--2026-11-18)).
+
+- **Startup RPC command boundary, 2026-11-18.** The startup observation parent
+  has no RPC command writer. A separate native control placed raw Ready before
+  extension retirement and publication of the first command catalog afterward.
+  The RPC initialization owner and its callbacks need qualification before the
+  durable prefix acknowledgment and Ready echo can admit commands
+  ([record](validation.md#startup-rpc-command-boundary--2026-11-18)).
+
 - **Restricted startup held watchdog read, 2026-11-18.** In a network-denied
   native control, the restricted host withheld its extension-retirement receipt
   while a synthetic watchdog marker read was held before the OS call; the read

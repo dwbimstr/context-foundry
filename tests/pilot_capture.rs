@@ -86,6 +86,46 @@ async fn source_host_owned_catalog_preserves_full_history() {
     assert_eq!(report["native_warmup_deadline_readback"], true);
 }
 
+#[tokio::test]
+#[ignore = "needs explicit CF_PILOT_STARTUP_OMP; no-provider startup command boundary"]
+async fn source_startup_profile_refuses_rpc_commands() {
+    use pilot_capture::host::{CatalogProfile, Host, HostEvent, HostSpec, RpcEvent};
+    use pilot_capture::protocol::ChannelIdentity;
+    use std::time::Duration;
+
+    let omp = PathBuf::from(
+        std::env::var_os("CF_PILOT_STARTUP_OMP").expect("explicit startup source host"),
+    );
+    let e = env();
+    let (host, mut events) = Host::launch(&HostSpec {
+        omp,
+        root: e.run_dir,
+        workspace: e.workspace,
+        real_home: std::fs::canonicalize(std::env::var_os("HOME").unwrap()).unwrap(),
+        deny: vec![],
+        deny_literals: vec![],
+        identity: ChannelIdentity::new("startup-rpc".into(), "test-host".into()).unwrap(),
+        catalog: CatalogProfile::StartupObservation,
+    })
+    .unwrap();
+    let first = tokio::time::timeout(Duration::from_secs(10), events.recv()).await;
+    let result = host
+        .send_rpc(&json!({"id": "startup-control", "type": "get_state"}))
+        .await;
+    let (drained, exit) = host.finish(events, Duration::from_secs(10)).await;
+
+    assert!(matches!(first, Ok(Some(HostEvent::Startup(_)))));
+    let error = result.unwrap_err();
+    assert_eq!(error.class, FaultClass::Protocol);
+    assert_eq!(error.code, "rpc_on_startup_channel");
+    assert!(exit.group_gone && !exit.forced);
+    assert!(
+        !drained
+            .iter()
+            .any(|event| matches!(event, HostEvent::Rpc(RpcEvent::Response { .. })))
+    );
+}
+
 /// Actual source-built CLI, shared FIFOs and the capture journal; no model
 /// delivery API is available in this startup-only profile.
 #[test]

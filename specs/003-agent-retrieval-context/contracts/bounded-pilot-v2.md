@@ -1737,6 +1737,36 @@ captures a transport reference. The preload and later bridge share one child
 channel/sequence owner; do not open a second connection or reset its sequence.
 Do not add a worker, proxy, service, database or independent log.
 
+**RPC startup boundary selected 2026-11-18.** Keep the exact first-party bridge
+as the only trusted module in the restricted launch. Treat its extension receipt
+as one owner's result. The native CLI publishes its first command catalog after
+that receipt and emits raw RPC Ready earlier. Close startup at the real RPC
+initialization boundary after the initial catalog work and its startup callbacks
+have settled. Qualify the command-metadata subscription, output ordering and
+cleanup on the source-built profile before including this owner in the frozen
+inventory. Verify the actual first-party extension closure by source and native
+controls, including module/factory work and any callbacks they start.
+
+The current startup-only parent holds the RPC input pipe open for teardown and
+has no command writer. In the future admitting revision, keep RPC command delivery
+closed until the same private channel returns the exact acknowledgment digest in
+Ready and the ordinary settings and model checks pass. Settled startup owners,
+the parent's synced prefix readback, and the matching child echo are separate
+requirements. See the [native RPC evidence](../../../docs/validation.md#startup-rpc-command-boundary--2026-11-18).
+
+Use the ordered receipt prefix in [`startup.rs`](../../../src/pilot_capture/startup.rs)
+as the starting inventory for the existing diagnostic. It contains these selected
+facts and leaves these boundaries to qualify before the inventory can be frozen.
+
+| Startup area | Current diagnostic evidence | Remaining scope for the admitting profile |
+| --- | --- | --- |
+| Connection preparation | The original warm-up caller settles after the parent durably refuses the classified Anthropic HEAD route. | Establish before-I/O ownership for each enabled route and fail closed on unclassified transports. |
+| Tools, MCP, memory and credentials | The sealed identity reports fixed `edit` and `read`, MCP and memory exclusions, and joined credential-usage work. | Bind the final task tools and any admitted MCP integration to actual before-I/O controls. |
+| Catalog, settings and authentication | Source owner receipts cover selected discovery, settings callbacks and the empty authentication profile. | Verify the enabled configuration and any credential owners selected for the admitting profile. |
+| Presence, telemetry, marketplace and logging | The selected owners close or exclude their own work and record the original joins. | Review enabled update and output paths outside these selected owners. |
+| Plugin roots and first-party extension | The diagnostic reports plugin-root retirement and the original extension dispatch join. It excludes managed timers and the selected workspace scan. | Check module and factory work for the exact first-party source graph, including enabled native timers, discovery and callbacks. |
+| RPC initialization and parent admission | The parent has no RPC command writer in startup observation. The native fixtures show the command catalog runs after the extension receipt. | Verify RPC initialization work and command-metadata callbacks. Use the complete inventory for the synced acknowledgment and matching Ready echo below. |
+
 Source inspection at `24439066040e006eb08da7b204f0ac41c79d2de9` distinguishes
 `main.ts::buildSessionOptions` assigning `toolNames` for `--tools` from
 `sdk.ts::createAgentSessionScoped` guarding MCP and memory work with the separate

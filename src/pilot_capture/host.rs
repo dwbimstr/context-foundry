@@ -15,7 +15,7 @@ use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Component, Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -365,6 +365,12 @@ enum BridgeOutbound {
     Startup(super::startup::ParentMessage),
 }
 
+enum RpcInput {
+    Commands(mpsc::Sender<Vec<u8>>),
+    // Keep the pipe open until teardown without starting a command writer.
+    Startup { _stdin: ChildStdin },
+}
+
 pub struct Host {
     pub paths: HostPaths,
     pub launch: LaunchRecord,
@@ -372,7 +378,7 @@ pub struct Host {
     pgid: i32,
     bridge_out: Option<mpsc::Sender<BridgeOutbound>>,
     startup_observation: bool,
-    rpc_out: Option<mpsc::Sender<Vec<u8>>>,
+    rpc_input: Option<RpcInput>,
     threads: Vec<JoinHandle<()>>,
     stderr: std::sync::Arc<std::sync::Mutex<StderrDigest>>,
 }
@@ -852,9 +858,11 @@ impl Host {
                 }
             }));
         }
-        // RPC stdin writer: dropping the sender closes stdin (EOF).
-        let (rpc_tx, mut rpc_rx) = mpsc::channel::<Vec<u8>>(WRITE_QUEUE);
-        {
+        let rpc_input = if startup_observation {
+            RpcInput::Startup { _stdin: stdin }
+        } else {
+            // RPC stdin writer: dropping the sender closes stdin (EOF).
+            let (rpc_tx, mut rpc_rx) = mpsc::channel::<Vec<u8>>(WRITE_QUEUE);
             let tx = event_tx.clone();
             let mut stdin = stdin;
             threads.push(std::thread::spawn(move || {
@@ -866,7 +874,8 @@ impl Host {
                 }
                 drop(stdin);
             }));
-        }
+            RpcInput::Commands(rpc_tx)
+        };
         // stderr: count and hash only; content is never retained.
         let digest = std::sync::Arc::new(std::sync::Mutex::new(StderrDigest {
             hasher: Some(<sha2::Sha256 as sha2::Digest>::new()),
@@ -903,7 +912,7 @@ impl Host {
             pgid,
             bridge_out: Some(bridge_tx),
             startup_observation,
-            rpc_out: Some(rpc_tx),
+            rpc_input: Some(rpc_input),
             threads,
             stderr: digest,
         };
@@ -945,10 +954,13 @@ impl Host {
 
     /// Send one RPC command (a JSON object) as a JSONL line.
     pub async fn send_rpc(&self, command: &Value) -> Result<(), CaptureFault> {
-        let out = self
-            .rpc_out
-            .as_ref()
-            .ok_or(fault(FaultClass::Bootstrap, "rpc_stdin_closed"))?;
+        let out = match &self.rpc_input {
+            Some(RpcInput::Commands(out)) => out,
+            Some(RpcInput::Startup { .. }) => {
+                return Err(fault(FaultClass::Protocol, "rpc_on_startup_channel"));
+            }
+            None => return Err(fault(FaultClass::Bootstrap, "rpc_stdin_closed")),
+        };
         let mut line = serde_json::to_vec(command)
             .map_err(|_| fault(FaultClass::Bootstrap, "rpc_encode_failed"))?;
         line.push(b'\n');
@@ -964,7 +976,7 @@ impl Host {
 
     /// Close RPC stdin: the host disposes its session and exits.
     pub fn close_rpc(&mut self) {
-        self.rpc_out = None;
+        self.rpc_input = None;
     }
 
     /// Wait for the host to exit on its own within `grace`, draining events
@@ -977,7 +989,7 @@ impl Host {
         grace: Duration,
     ) -> (Vec<HostEvent>, HostExit) {
         self.bridge_out = None;
-        self.rpc_out = None;
+        self.close_rpc();
         let deadline = tokio::time::Instant::now() + grace;
         let mut drained = Vec::new();
         let mut status = None;
