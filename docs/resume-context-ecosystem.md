@@ -5,11 +5,12 @@
 Updated 2026-11-16. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
-- **T005 blind holdout drafts complete, 2026-11-18.** Four fresh-context
-  authors delivered 400 drafts within frozen Rust and bun partitions. All drafts
-  and source checks stay with the label custodian. The new set needs full validation
-  and sealing before candidate tuning
-  ([record](validation.md#t005-new-blind-holdout-authoring-started--2026-11-18)).
+- **T005 blind holdout sealed, 2026-11-18.** Four fresh-context authors delivered
+  400 questions, 200 per corpus. Separate source checks and the unchanged full
+  verifier passed. The custodian retains the set; implementation verified only
+  the metadata receipt. Freeze the next bounded candidate and evaluation guards
+  before tuning. T005 remains open
+  ([record](validation.md#t005-new-blind-holdout-sealed--2026-11-18)).
 
 - **Startup RPC command boundary, 2026-11-18.** The startup observation parent
   has no RPC command writer. A separate native control placed raw Ready before

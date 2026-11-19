@@ -1348,7 +1348,10 @@ On 2026-11-18 the owner selected fresh-context authors for the next blind set.
 Use the same pinned corpora, unchanged builder and full verifier, 200 cases per
 corpus, disjoint whole-module author assignments and separate label-side checks.
 The custodian also excludes normalized question text and answer identities from
-the consumed 400-case set. Implementation receives only seal metadata.
+the consumed 400-case set. The new set passed source-side review and the full
+verifier and is sealed. Implementation receives only seal metadata. The next
+bounded candidate and evaluation guards still need to be selected before tuning.
+See the [seal receipt](../../docs/validation.md#t005-new-blind-holdout-sealed--2026-11-18).
 The original G2 verdict remains valid for its original question: gain over no profile.
 This task asks which current losses can be repaired at the same delivery budget.
 The [resumable handoff](../../docs/resume-context-ecosystem.md#current-status--2026-11-06)

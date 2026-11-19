@@ -1,6 +1,6 @@
 # Validation
 
-## T005 new blind holdout authoring started — 2026-11-18
+## T005 new blind holdout sealed — 2026-11-18
 
 The owner selected fresh-context authors. The label custodian froze a new
 sampling seed, catalog of 65,526 eligible declarations and four disjoint
@@ -19,8 +19,24 @@ All four authors delivered their full quota. The custodian's aggregate readback
 found zero duplicate normalized question texts and zero overlaps with the frozen
 exclusion keys. Its authoring metadata SHA-256 is
 `3ba4bc5942ebe4e157a8a858743e0799006ec826730ac779adc8a7a7a5388ff1`.
-Candidate tuning begins only after the separate source-side checks and the
-full verifier produce a qualified seal. T005 remains open.
+Four separate label-side checkers passed all 400 questions after 1,582 pinned
+source inspections and 171 wording repairs that preserved answer identity. One
+append-only amendment preserves an earlier checker verdict and its correction.
+The unchanged builder and full verifier passed, including all 45 self-tests and
+six literal-unit mutations. The three-per-file and six-per-module caps held, with
+zero historical answer or wording overlap and zero duplicate normalized questions.
+
+The sealed question artifact is 139,277 bytes, with SHA-256
+`2386e58ab3d6b6df739c8cb1e687f0549e0352be2851aba3ea96dda1436f94a8`.
+The local mode-0700 stage passed readback of 47 files and 58,108,244 bytes.
+Implementation verified metadata-only receipt SHA-256
+`d08f06dd3f69d6fed1c7c2b1d23c339e40d2d940c16474726efa658f377e2791`.
+The custodian retained the questions, labels and source inspection records
+privately. All authors, checkers and the native verifier finished. External
+provider calls, retrieval calls, store opens and spend were zero. The seal
+satisfies the fresh evidence prerequisite for the next bounded candidate.
+Candidate selection, development gates and the sole final evaluation remain
+ahead. T005 remains open.
 
 ## Startup RPC command boundary — 2026-11-18
 
@@ -74,6 +90,14 @@ their prior results after readback of 258 identical effective inputs. The normal
 journal contains 16 records and a normal host exit. Private inputs, red and green
 runs, and CLI snapshots are retained under
 `runs/pilot-startup-rpc-input-2026-11-18/`. Provider calls and spend were zero.
+
+The qualified change was pushed as `b962c90`. A fresh clone matched all 443
+tracked files, including types and executable modes. Open-file and checksum
+checks preceded removal of this round's Rust build caches and five redundant
+native library copies. Stage allocation fell from 4,303,962,112 bytes to
+290,320,384 bytes. The focused actual-host test passed again using the retained
+executable and the existing startup host. The cleanup receipt and replay log
+remain in the same private stage.
 
 ## Restricted startup held watchdog read — 2026-11-18
 
