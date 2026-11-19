@@ -1,5 +1,71 @@
 # Validation
 
+## Fixed runtime providers during startup observation — 2026-11-18
+
+The [source patch](references/omp-startup-fixed-runtime-providers.patch) fixes the
+runtime provider set for the explicit restricted profile. The registry rejects
+registration before mutation and latches the existing unqualified state. The
+source SDK proves the empty runtime registration set in its catalog retirement
+receipt. The bridge and Rust require that fact.
+
+The rebuilt CLI SHA-256 is
+`34298ef0060fa728f19de74ae5d3f5b0d1c9871ab9edec57d40ae7844c1e4ba7`.
+The exact bridge completed the normal diagnostic with both classified refusals.
+Two trusted fixture variants queued registration under configured and unknown
+IDs. Both exited before any discovery callback ran or catalog retirement was
+reported. A third fixture caught the registration error during session startup.
+The latch still prevented catalog retirement and the private channel reported
+a fault. Ordinary RPC registered the same synthetic callback, ran it to
+completion and answered a state query. All five process groups were reaped.
+All 12 source registry tests passed, including the fixed-profile regression.
+
+The Rust observer records the new fact in the ordinary 18-row diagnostic
+journal and still halts on the partial inventory. All controls used isolated
+fixtures and OS network denial. They made zero provider calls and incurred zero
+spend. Private receipts are under
+`runs/pilot-startup-fixed-runtime-providers-2026-11-18/`.
+
+Ten fresh gates passed. They covered the 14-case startup journal, RPC input,
+feature tests (121 passed, one ignored), Clippy, Rust 1.90, formatting, frozen
+host (37 passed, 11 ignored), five current-host checks and both source-host
+checks. Readback verified 10,339 source inputs, the patch against its four
+preimages and the 258 inputs to the retained default-feature gates. Cache
+cleanup reduced this round's main directory from 6,116,761,600 to 521,318,400
+allocated bytes before replay and retained the runnable binaries, source
+overlays and private receipts. The RPC input and all 14 startup cases passed
+again from those binaries.
+
+## Debugger sweep after startup RPC retirement — 2026-11-18
+
+Two controls on the fixed-runtime-provider CLI held the exact startup bridge
+open after the RPC retirement receipt. A scoped preload recorded the live
+30-second interval started by the imported `DapSessionManager` singleton.
+The longer control observed an actual tick before teardown, with no debug
+session started. This was the only pending timer in the wrapped timer APIs at
+both snapshots. The process exited normally after the controller closed the
+channel. Four observed disposal timers created during teardown were cleared.
+The final postmortem deadline was still recorded at exit, and the process
+group was reaped. These witnesses leave other timer APIs and transitive startup
+work open.
+
+The proposed owner-level change starts the existing sweep on first session
+registration. The focused test failed against the constructor's eager schedule
+and passed against the draft along with the six existing session tests. The
+draft still needs compiled-host qualification. Private controls are under
+`runs/pilot-startup-post-retirement-timers-2026-11-18/`.
+
+## Startup subprocess controls — 2026-11-18
+
+The fixed-runtime-provider CLI reached RPC retirement with zero calls through the
+wrapped Bun `spawn` and `spawnSync` entry points. Separate positive controls
+observed both calls and successful exits of the local fixture commands. The same
+CLI and exact bridge also completed under a temporary sandbox with
+`deny process-fork`. Both fixture calls received permission errors under that
+policy. All four process groups were reaped. These checks cover the named APIs
+and the provisional sandbox rule. Other transports and policy compatibility
+with an admitting runtime remain open. Private receipts are under
+`runs/pilot-startup-process-owners-2026-11-18/`.
+
 ## Restricted prompt inputs and startup launch binding — 2026-11-18
 
 The [source patch](references/omp-startup-prompt-exclusion.patch) closes implicit

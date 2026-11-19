@@ -71,6 +71,7 @@ pub enum ChildMessage {
         originals_joined: bool,
         callbacks_joined: bool,
         timers_retired: bool,
+        runtime_providers_excluded: bool,
         operations: u32,
         rejections: u32,
     },
@@ -267,6 +268,7 @@ impl ChannelState {
             originals_joined,
             callbacks_joined,
             timers_retired,
+            runtime_providers_excluded,
             operations,
             rejections,
         } = &h.msg
@@ -274,6 +276,7 @@ impl ChannelState {
                 || !originals_joined
                 || !callbacks_joined
                 || !timers_retired
+                || !runtime_providers_excluded
                 || *operations == 0
                 || *operations > 4096
                 || rejections > operations)
@@ -911,13 +914,23 @@ mod tests {
     }
 
     #[test]
-    fn startup_catalog_requires_each_join_and_bounded_source_operations() {
-        let valid = json!({"type":"catalog_retired","discovery_retired":true,"originals_joined":true,"callbacks_joined":true,"timers_retired":true,"operations":1,"rejections":0});
+    fn startup_catalog_requires_runtime_provider_exclusion_and_each_join() {
+        let valid = json!({
+            "type": "catalog_retired",
+            "discovery_retired": true,
+            "originals_joined": true,
+            "callbacks_joined": true,
+            "timers_retired": true,
+            "runtime_providers_excluded": true,
+            "operations": 1,
+            "rejections": 0,
+        });
         for field in [
             "discovery_retired",
             "originals_joined",
             "callbacks_joined",
             "timers_retired",
+            "runtime_providers_excluded",
         ] {
             let mut bad = valid.clone();
             bad[field] = json!(false);
@@ -1295,6 +1308,7 @@ mod tests {
             originals_joined: true,
             callbacks_joined: true,
             timers_retired: true,
+            runtime_providers_excluded: true,
             operations: 1,
             rejections: 0,
         };

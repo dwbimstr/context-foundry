@@ -5,13 +5,21 @@
 Updated 2026-11-18. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
+- **Fixed runtime providers and debugger timer, 2026-11-18.** The fixed
+  startup registry refuses runtime registration and a caught refusal still
+  prevents catalog retirement. Ordinary RPC completed the synthetic discovery
+  callback. A separate native control saw the debugger idle sweep tick after
+  RPC retirement. Its owner-level repair has source-test evidence and awaits
+  a compiled-host check. Inventory, acknowledgment and runtime handoff remain
+  on HOLD
+  ([registry record](validation.md#fixed-runtime-providers-during-startup-observation--2026-11-18),
+  [timer record](validation.md#debugger-sweep-after-startup-rpc-retirement--2026-11-18)).
+
 - **Restricted prompt inputs and launch binding, 2026-11-18.** Startup
   observation excludes implicit prompt and file-command discovery and fails
   closed at the prompt preparation deadline. Its journal now binds the exact
-  launch inputs. A synthetic extension showed that an existing provider ID can
-  still admit runtime discovery callbacks. Close registration in the fixed
-  profile before freezing inventory. The acknowledgment and runtime handoff
-  remain on HOLD
+  launch inputs. A synthetic extension from that round demonstrated the
+  runtime registration issue repaired above
   ([prompt record](validation.md#restricted-prompt-inputs-and-startup-launch-binding--2026-11-18),
   [provider record](validation.md#runtime-provider-eligibility-during-startup--2026-11-18)).
 

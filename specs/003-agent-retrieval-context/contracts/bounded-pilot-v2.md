@@ -1790,11 +1790,12 @@ facts and leaves these boundaries to qualify before the inventory can be frozen.
 | --- | --- | --- |
 | Connection preparation | The original warm-up caller settles after the parent durably refuses the classified Anthropic HEAD route. | Establish before-I/O ownership for each enabled route and fail closed on unclassified transports. |
 | Tools, MCP, memory and credentials | The sealed identity reports fixed `edit` and `read`, MCP and memory exclusions, and joined credential-usage work. | Bind the final task tools and any admitted MCP integration to actual before-I/O controls. |
-| Catalog, settings and authentication | Source owner receipts cover selected discovery, settings callbacks and the empty authentication profile. The catalog GET is classified and refused before transport. A trusted synthetic registration under the configured provider ID started two joined discovery callbacks. | Exclude runtime registrations at the registry owner for the fixed admitting profile, or qualify each one and its transport. |
+| Catalog, settings and authentication | Source owner receipts cover selected discovery, settings callbacks and the empty authentication profile. The catalog GET is classified and refused before transport. The fixed registry closes runtime registration, and the catalog receipt requires that fact. | Bind the same closed registry and enabled discovery routes to the final admitting profile. |
 | Presence, telemetry, marketplace and logging | The selected owners close or exclude their own work and record the original joins. | Review enabled update and output paths outside these selected owners. |
 | Plugin roots and first-party extension | The diagnostic reports plugin-root retirement and the original extension dispatch join. It excludes managed timers and the selected workspace scan. Native controls cover the exact bridge graph read and the loader's awaited factory. | Check work started by enabled transitive loads, including native timers, discovery and callbacks. |
 | Advisors | The candidate excludes advisor discovery, tool construction, restore and activation in the explicit profile. The existing restricted-session receipt records the exclusion. Native controls exercised ordinary RPC and a late activation and restore attempt. | Preserve the disposition in the final admitting profile. |
 | Prompt and command inputs | Source guards close implicit prompt, template, command and active-repo discovery at the selected owners. Native controls cover input exclusion, ordinary RPC and active-child projection. The prompt builder rejects a preparation timeout in this profile. | Bind the same decisions to the final admitting profile and retain evidence for any enabled prompt or transitive discovery owner. |
+| Debugger and process timers | The compiled host kept the debugger's import-time idle sweep after RPC retirement. A controlled hold observed its original tick. | Start the sweep only for an actual debug session and verify the exact native boundary. Account for other reachable timers and teardown ownership. |
 | RPC initialization and parent admission | Startup observation joins the initial catalog and its stdout writes, excludes runtime callbacks and RPC dispatch, and persists the source-bound receipt. The observation parent has no RPC command writer. | Qualify the runtime subscription and dispatch handoff for the admitting profile. Use the complete inventory for the synced acknowledgment and matching Ready echo below. |
 
 **Selected next work, 2026-11-18.** Keep one inventory for the exact restricted
@@ -1806,8 +1807,8 @@ observation journal binds the bridge, effective arguments, settings, sanitized
 environment and sandbox policy. Each reachable owner needs a source anchor, an eligibility
 decision, a side-effect boundary and evidence of exclusion before construction,
 refusal before I/O, or original work and callbacks joined with late starts closed.
-Account for registry provider refresh and the transports reachable through
-admitted transitive code. Keep the selected prompt and command dispositions
+Account for the debugger sweep and the transports reachable through admitted
+transitive code. Keep the selected registry, prompt and command dispositions
 bound to the same profile. The diagnostic receipts cover a
 partial inventory. An unresolved edge keeps admission on HOLD.
 
