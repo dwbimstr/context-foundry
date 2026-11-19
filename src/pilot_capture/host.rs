@@ -128,7 +128,7 @@ pub const SOURCE_QUALIFICATION_OMP_SHA256: &str =
     "b5e50ce94846e29ea3db04ddab00f716208f21c0299263a30aee725c006ff9e9";
 
 pub const STARTUP_OBSERVATION_OMP_SHA256: &str =
-    "7e64ff01012824f69b2b8b4cdb6f2f35d23340d874e00b5af67de91d9dff8db2";
+    "199317b11f621e566fcbc82d4cbcb1f1dfb1d09b1429ddf35e4e60f0f1a22134";
 pub const STARTUP_OBSERVER_SOURCE: &[u8] = concat!(
     include_str!("bridge_channel.ts"),
     "\n",
@@ -293,6 +293,7 @@ pub struct LaunchRecord {
     pub startup_memory_sha256: Option<String>,
     pub startup_logging_sha256: Option<String>,
     pub env_names: Vec<String>,
+    pub startup_env_sha256: Option<String>,
 }
 
 /// Summary of a native session `get_state` response.
@@ -742,6 +743,11 @@ impl Host {
             startup_memory_sha256,
             startup_logging_sha256,
             env_names: env.iter().map(|(k, _)| k.clone()).collect(),
+            startup_env_sha256: startup_observation.then(|| {
+                // This ordered list is the cleared process environment, including
+                // the private channel's fresh session and inherited pipe identities.
+                sha256_hex(&serde_json::to_vec(&env).expect("fixed startup environment"))
+            }),
         };
 
         let (event_tx, events) = mpsc::channel(EVENT_QUEUE);

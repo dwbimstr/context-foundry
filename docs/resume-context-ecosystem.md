@@ -5,6 +5,16 @@
 Updated 2026-11-18. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
+- **Restricted prompt inputs and launch binding, 2026-11-18.** Startup
+  observation excludes implicit prompt and file-command discovery and fails
+  closed at the prompt preparation deadline. Its journal now binds the exact
+  launch inputs. A synthetic extension showed that an existing provider ID can
+  still admit runtime discovery callbacks. Close registration in the fixed
+  profile before freezing inventory. The acknowledgment and runtime handoff
+  remain on HOLD
+  ([prompt record](validation.md#restricted-prompt-inputs-and-startup-launch-binding--2026-11-18),
+  [provider record](validation.md#runtime-provider-eligibility-during-startup--2026-11-18)).
+
 - **Advisor exclusion and prompt inputs, 2026-11-18.** The qualified startup
   observer excludes watchdog and advisor discovery, tools, cost restore and
   late activation. Its Rust journal still halts on the partial inventory.

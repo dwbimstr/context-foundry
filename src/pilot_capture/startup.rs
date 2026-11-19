@@ -620,7 +620,15 @@ async fn observe(a: ObservationAdmission) -> Result<ObservationReceipt, CaptureF
         host::Host::launch(&spec).map_err(|e| journal.admission_refusal("startup_launch", e))?;
     let mut owners = ObservedOwners::default();
     let result: Result<(), CaptureFault> = tokio::time::timeout_at(deadline, async {
-        journal.append("host_launched", json!({"pid":host.launch.pid,"bridge_sha256":host.launch.bridge_sha256,"policy_sha256":host.launch.policy_sha256}))?;
+        journal.append("host_launched", json!({
+            "pid": host.launch.pid,
+            "argv_sha256": host.launch.argv_sha256,
+            "bridge_sha256": host.launch.bridge_sha256,
+            "policy_sha256": host.launch.policy_sha256,
+            "models_yml_sha256": host.launch.models_yml_sha256,
+            "config_yml_sha256": host.launch.config_yml_sha256,
+            "env_sha256": host.launch.startup_env_sha256,
+        }))?;
         loop {
             match events.recv().await {
                 Some(host::HostEvent::Startup(inbound)) => {

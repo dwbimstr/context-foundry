@@ -191,6 +191,22 @@ fn source_startup_refusal_is_durable_and_incomplete_inventory_never_admits() {
             assert!(receipt.exit.normal && !receipt.exit.forced && receipt.exit.group_gone);
             assert_eq!(receipt.journal_sha256, pilot_capture::sha256_hex(&bytes));
             assert_eq!(receipt.journal_records, 18);
+            let launch = &rows[1];
+            assert_eq!(launch["kind"], "host_launched");
+            let host_root = run_dir.join("hosts/startup-owner");
+            for (relative, field) in [
+                ("agent/models.yml", "models_yml_sha256"),
+                ("agent/config.yml", "config_yml_sha256"),
+                ("bridge/bridge.ts", "bridge_sha256"),
+            ] {
+                let materialized = std::fs::read(host_root.join(relative)).unwrap();
+                assert_eq!(launch[field], pilot_capture::sha256_hex(&materialized));
+            }
+            for field in ["argv_sha256", "policy_sha256", "env_sha256"] {
+                let digest = launch[field].as_str().unwrap();
+                assert_eq!(digest.len(), 64);
+                assert!(digest.bytes().all(|byte| byte.is_ascii_hexdigit()));
+            }
             let attempts: Vec<_> = rows
                 .iter()
                 .filter(|r| r["kind"] == "startup_refused")

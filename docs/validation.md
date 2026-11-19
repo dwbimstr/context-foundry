@@ -1,5 +1,69 @@
 # Validation
 
+## Restricted prompt inputs and startup launch binding — 2026-11-18
+
+The [source patch](references/omp-startup-prompt-exclusion.patch) closes implicit
+system, append and title overrides at CLI setup. The explicit restricted SDK
+profile skips automatic templates, Markdown commands and the active-repo
+lookup. Its prompt builder uses the bundled personality and fails at the
+preparation deadline. Initial RPC command publication omits the file-command
+loader in this profile.
+
+The rebuilt CLI SHA-256 is
+`199317b11f621e566fcbc82d4cbcb1f1dfb1d09b1429ddf35e4e60f0f1a22134`.
+The exact bridge reached retirement with the synthetic prompt files unread.
+Three explicit override flags failed before reading the supplied file or
+reporting retirement. Ordinary RPC read all seven implicit fixtures, advertised
+the Markdown command and answered a state query. In a separate pair outside an
+ancestor Git repository, the native ordinary session included the synthetic
+child repository in its prompt and the restricted session omitted it. These
+controls exercise prompt projection with an actual native host.
+
+The prompt builder's owner-level control held a supplied workspace-tree
+promise. Restricted preparation rejected after its five-second deadline and
+ordinary preparation returned a fallback. All 36 upstream prompt tests passed
+with their temporary workspaces outside this Git tree. An earlier in-tree
+setup failed the active-child fixture because its parent already belonged to
+the Foundry repository. Private receipts preserve both results.
+
+The Rust observation journal records hashes of the exact launch arguments,
+sanitized environment, policy, bridge, models and config. The environment
+digest includes the channel identity and inherited pipe identifiers supplied
+to the child. The native journal test compares the bridge, models and config
+digests with the materialized files. The inventory remains partial and the
+observer still halts before acknowledgment. All controls used OS network denial
+and incurred zero provider calls or spend. Private receipts are under
+`runs/pilot-startup-prompt-exclusion-2026-11-18/`.
+
+Ten fresh gates passed, including the 14-case startup journal, RPC input,
+feature tests (121 passed, one ignored), Clippy, Rust 1.90, formatting, frozen
+host (37 passed, 11 ignored), five current-host checks and both source-host
+checks. Readback verified 10,339 compiled inputs, the four-file patch against
+its exact preimages and the 258 inputs to the retained default-feature gates.
+Cache cleanup reduced this round's main directory from 6,115,385,344 to
+521,023,488 allocated bytes before replay. It retained the source overlays,
+private evidence and the binaries needed for the focused checks. The RPC input
+and all 14 startup cases passed again from those binaries.
+
+## Runtime provider eligibility during startup — 2026-11-18
+
+A trusted synthetic extension on the prompt-exclusion CLI registered a local
+discovery callback under the existing configured provider ID. The host ran
+two original callbacks and held catalog retirement until both returned. The
+controller refused the classified Anthropic warm-up attempt. The usual shared
+catalog GET attempt was absent from that trace. A second fixture registered an
+unknown provider ID and faulted after settings retirement, before its callback
+or RPC retirement.
+Both final controls reaped their groups. The fixtures made no network or model
+calls and used no credentials. The exact first-party bridge issues neither
+registration. Before freezing the admitting inventory, close runtime
+registrations at the registry owner for the fixed profile and prove the
+exclusion. The fixed-profile draft refuses both IDs before mutation and latches
+the failure even when the caller catches it. A source-level control failed on
+the current registry and passed on a copy of the draft. The draft still needs
+compiled-host qualification. Private controls and the draft are under
+`runs/pilot-startup-runtime-provider-2026-11-18/`.
+
 ## Implicit prompt inputs during startup observation — 2026-11-18
 
 The advisor-exclusion candidate read synthetic `SYSTEM.md`,
