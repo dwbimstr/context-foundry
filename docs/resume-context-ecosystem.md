@@ -5,6 +5,20 @@
 Updated 2026-11-19. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
+- **Startup RPC output through teardown, 2026-11-19.** The diagnostic parent
+  verifies the single startup catalog on stdout and both stream endings.
+  Late parser faults are durable failures even when the host reports
+  retirement and exits normally. Native fault cases covered malformed,
+  unexpected, repeated, Ready and unterminated frames. Full inventory,
+  durable acknowledgment and runtime dispatch remain on HOLD
+  ([record](validation.md#startup-rpc-output-through-teardown--2026-11-19)).
+
+- **Remote URL prompt lookups, 2026-11-19.** The pinned host still checks
+  `ssh`, `gh` and `glab` availability while building optional scheme
+  descriptions in the restricted prompt. The next source guard belongs
+  at prompt construction
+  ([record](validation.md#remote-url-documentation-lookups-during-startup--2026-11-19)).
+
 - **Fixed startup discovery eligibility, 2026-11-19.** The registry requires
   the Anthropic-only discovery profile and latches changes before new
   discovery work can start. The native host preserved the shared catalog

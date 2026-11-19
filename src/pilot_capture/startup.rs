@@ -482,6 +482,29 @@ fn record_inventory_hold(journal: &mut Journal) -> Result<(), CaptureFault> {
     )
 }
 
+fn check_startup_shutdown(
+    drained: &[host::HostEvent],
+    exit: &host::HostExit,
+) -> Result<(), CaptureFault> {
+    use host::HostEvent;
+    let incomplete = fault(FaultClass::Cleanup, "startup_shutdown_incomplete");
+    let mut bridge_eof = false;
+    let mut rpc_eof = false;
+    for event in drained {
+        match event {
+            HostEvent::BridgeEof if !bridge_eof => bridge_eof = true,
+            HostEvent::RpcEof if !rpc_eof => rpc_eof = true,
+            HostEvent::RpcFault(code) => return Err(fault(FaultClass::Protocol, code)),
+            _ => return Err(incomplete),
+        }
+    }
+    if exit.normal && !exit.forced && exit.group_gone && bridge_eof && rpc_eof {
+        Ok(())
+    } else {
+        Err(incomplete)
+    }
+}
+
 impl CaptureSession {
     /// Observe the owned startup seam without constructing a provider transport,
     /// counters or permits. An incomplete inventory always ends in durable HOLD.
@@ -702,8 +725,7 @@ async fn observe(a: ObservationAdmission) -> Result<ObservationReceipt, CaptureF
                     ChildMessage::Fault { .. } => return Err(fault(FaultClass::Protocol,"startup_child_fault")),
                     }
                 },
-                Some(host::HostEvent::Rpc(host::RpcEvent::Other)) => {},
-                Some(host::HostEvent::Rpc(host::RpcEvent::Ready)) => return Err(fault(FaultClass::Protocol,"startup_raw_ready")),
+                Some(host::HostEvent::RpcFault(code)) => return Err(fault(FaultClass::Protocol,code)),
                 Some(host::HostEvent::BridgeFault(e)) => return Err(fault(FaultClass::Protocol,e.0)),
                 _ => return Err(fault(FaultClass::Protocol,"startup_unexpected_event")),
             }
@@ -730,24 +752,8 @@ async fn observe(a: ObservationAdmission) -> Result<ObservationReceipt, CaptureF
     if terminal.code != INVENTORY_UNQUALIFIED {
         return Err(terminal);
     }
-    if !exit.normal
-        || exit.forced
-        || !exit.group_gone
-        || drained.iter().any(|e| {
-            matches!(
-                e,
-                host::HostEvent::Startup(_)
-                    | host::HostEvent::Bridge(_)
-                    | host::HostEvent::BridgeFault(_)
-                    | host::HostEvent::BridgeWriteFailed(_)
-                    | host::HostEvent::Rpc(host::RpcEvent::Ready)
-            )
-        })
-    {
-        return Err(journal.admission_refusal(
-            "startup_cleanup",
-            fault(FaultClass::Cleanup, "startup_shutdown_incomplete"),
-        ));
+    if let Err(error) = check_startup_shutdown(&drained, &exit) {
+        return Err(journal.admission_refusal("startup_cleanup", error));
     }
     Ok(ObservationReceipt {
         attempts: owners.attempts,
@@ -768,6 +774,47 @@ mod tests {
     use crate::neural::protocol::write_frame_as;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn startup_shutdown_requires_both_clean_stream_ends() {
+        use host::{HostEvent, HostExit, RpcEvent};
+        let exit = HostExit {
+            normal: true,
+            code: Some(0),
+            signal: None,
+            forced: false,
+            group_gone: true,
+            stderr_bytes: 0,
+            stderr_sha256: String::new(),
+        };
+        let eof = [HostEvent::BridgeEof, HostEvent::RpcEof];
+        assert_eq!(check_startup_shutdown(&eof, &exit), Ok(()));
+        for events in [&eof[..0], &eof[..1], &eof[1..]] {
+            assert_eq!(
+                check_startup_shutdown(events, &exit).unwrap_err().code,
+                "startup_shutdown_incomplete"
+            );
+        }
+        let failed_exit = HostExit {
+            group_gone: false,
+            ..exit.clone()
+        };
+        assert_eq!(
+            check_startup_shutdown(&eof, &failed_exit).unwrap_err().code,
+            "startup_shutdown_incomplete"
+        );
+        assert_eq!(
+            check_startup_shutdown(
+                &[
+                    HostEvent::BridgeEof,
+                    HostEvent::RpcFault("rpc_line_not_json")
+                ],
+                &exit,
+            ),
+            Err(fault(FaultClass::Protocol, "rpc_line_not_json"))
+        );
+        assert!(check_startup_shutdown(&[HostEvent::Rpc(RpcEvent::AgentEnd)], &exit).is_err());
+    }
 
     #[test]
     fn inventory_hold_refuses_uncertain_journal_prefixes() {

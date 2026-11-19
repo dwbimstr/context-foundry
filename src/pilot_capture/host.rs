@@ -835,10 +835,14 @@ impl Host {
             let tx = event_tx.clone();
             threads.push(std::thread::spawn(move || {
                 let mut reader = BufReader::with_capacity(64 * 1024, stdout);
+                let mut startup_catalog_seen = false;
                 loop {
-                    match read_bounded_line(&mut reader, MAX_RPC_LINE_BYTES) {
+                    match read_bounded_line(&mut reader, MAX_RPC_LINE_BYTES, startup_observation) {
                         Ok(Some(line)) => {
-                            let event = match parse_rpc_line(&line) {
+                            let event = match parse_rpc_output(
+                                &line,
+                                startup_observation.then_some(&mut startup_catalog_seen),
+                            ) {
                                 // Streaming updates and other frames are
                                 // summarized away here, never queued.
                                 Ok(RpcEvent::Other) => continue,
@@ -853,7 +857,12 @@ impl Host {
                             }
                         }
                         Ok(None) => {
-                            let _ = tx.blocking_send(HostEvent::RpcEof);
+                            let event = if startup_observation && !startup_catalog_seen {
+                                HostEvent::RpcFault("startup_rpc_catalog_missing")
+                            } else {
+                                HostEvent::RpcEof
+                            };
+                            let _ = tx.blocking_send(event);
                             break;
                         }
                         Err(code) => {
@@ -1141,13 +1150,20 @@ fn drain<R: Read>(r: &mut R) {
     while matches!(r.read(&mut buf), Ok(n) if n > 0) {}
 }
 
-/// Read one LF-terminated line of at most `max` bytes. `Ok(None)` at EOF
-/// with nothing buffered; a final unterminated line is returned as is.
-fn read_bounded_line<R: BufRead>(r: &mut R, max: usize) -> Result<Option<Vec<u8>>, &'static str> {
+/// Read one line of at most `max` bytes. Ordinary RPC also accepts a final
+/// unterminated line. Startup observation requires each frame to end in LF.
+fn read_bounded_line<R: BufRead>(
+    r: &mut R,
+    max: usize,
+    require_newline: bool,
+) -> Result<Option<Vec<u8>>, &'static str> {
     let mut line = Vec::new();
     loop {
         let buf = r.fill_buf().map_err(|_| "rpc_stdout_read_failed")?;
         if buf.is_empty() {
+            if require_newline && !line.is_empty() {
+                return Err("startup_rpc_line_unterminated");
+            }
             return Ok(if line.is_empty() { None } else { Some(line) });
         }
         match buf.iter().position(|&b| b == b'\n') {
@@ -1178,14 +1194,43 @@ fn str_field(v: &Value, key: &str) -> Option<String> {
 /// Summarize one RPC stdout line. Unknown frame types are `Other`; frames
 /// the pilot forbids are flagged; nothing textual is retained.
 pub fn parse_rpc_line(line: &[u8]) -> Result<RpcEvent, &'static str> {
+    parse_rpc_output(line, None)
+}
+
+fn parse_rpc_output(
+    line: &[u8],
+    startup_catalog_seen: Option<&mut bool>,
+) -> Result<RpcEvent, &'static str> {
     if line.iter().all(u8::is_ascii_whitespace) {
-        return Ok(RpcEvent::Other);
+        return if startup_catalog_seen.is_some() {
+            Err("startup_rpc_unexpected_output")
+        } else {
+            Ok(RpcEvent::Other)
+        };
     }
     let v: Value = serde_json::from_slice(line).map_err(|_| "rpc_line_not_json")?;
     let kind = v
         .get("type")
         .and_then(Value::as_str)
         .ok_or("rpc_line_untyped")?;
+    if let Some(catalog_seen) = startup_catalog_seen {
+        if kind == "ready" {
+            return Err("startup_raw_ready");
+        }
+        if kind != "available_commands_update" {
+            return Err("startup_rpc_unexpected_output");
+        }
+        if !v.as_object().is_some_and(|fields| fields.len() == 2)
+            || !v.get("commands").is_some_and(Value::is_array)
+        {
+            return Err("startup_rpc_catalog_shape");
+        }
+        if *catalog_seen {
+            return Err("startup_rpc_catalog_repeated");
+        }
+        *catalog_seen = true;
+        return Ok(RpcEvent::Other);
+    }
     Ok(match kind {
         "ready" => RpcEvent::Ready,
         "response" => {
@@ -1780,16 +1825,78 @@ mod tests {
     }
 
     #[test]
+    fn startup_stdout_accepts_only_one_command_catalog() {
+        let mut seen = false;
+        let catalog = br#"{"type":"available_commands_update","commands":[]}"#;
+        for (line, code) in [
+            (b" ".as_slice(), "startup_rpc_unexpected_output"),
+            (b"malformed", "rpc_line_not_json"),
+            (b"{}", "rpc_line_untyped"),
+            (br#"{"type":"ready"}"#, "startup_raw_ready"),
+            (
+                br#"{"type":"advisor_cost_changed"}"#,
+                "startup_rpc_unexpected_output",
+            ),
+            (
+                br#"{"type":"response","command":"get_state","success":true}"#,
+                "startup_rpc_unexpected_output",
+            ),
+            (
+                br#"{"type":"available_commands_update","commands":{}}"#,
+                "startup_rpc_catalog_shape",
+            ),
+            (
+                br#"{"type":"available_commands_update","commands":[],"extra":true}"#,
+                "startup_rpc_catalog_shape",
+            ),
+        ] {
+            assert_eq!(parse_rpc_output(line, Some(&mut seen)), Err(code));
+            assert!(!seen);
+        }
+        assert_eq!(
+            parse_rpc_output(catalog, Some(&mut seen)),
+            Ok(RpcEvent::Other)
+        );
+        assert!(seen);
+        assert_eq!(
+            parse_rpc_output(catalog, Some(&mut seen)),
+            Err("startup_rpc_catalog_repeated")
+        );
+        assert_eq!(parse_rpc_line(br#"{"type":"ready"}"#), Ok(RpcEvent::Ready));
+        assert_eq!(
+            parse_rpc_line(br#"{"type":"advisor_cost_changed"}"#),
+            Ok(RpcEvent::Other)
+        );
+    }
+
+    #[test]
     fn bounded_lines_refuse_oversize() {
         let mut r = std::io::Cursor::new(b"abc\ndef".to_vec());
-        assert_eq!(read_bounded_line(&mut r, 8).unwrap().unwrap(), b"abc");
-        assert_eq!(read_bounded_line(&mut r, 8).unwrap().unwrap(), b"def");
-        assert!(read_bounded_line(&mut r, 8).unwrap().is_none());
+        assert_eq!(
+            read_bounded_line(&mut r, 8, false).unwrap().unwrap(),
+            b"abc"
+        );
+        assert_eq!(
+            read_bounded_line(&mut r, 8, false).unwrap().unwrap(),
+            b"def"
+        );
+        assert!(read_bounded_line(&mut r, 8, false).unwrap().is_none());
         let mut r = std::io::Cursor::new(vec![b'x'; 20]);
         assert_eq!(
-            read_bounded_line(&mut r, 8).unwrap_err(),
+            read_bounded_line(&mut r, 8, false).unwrap_err(),
             "rpc_line_too_large"
         );
+    }
+
+    #[test]
+    fn startup_stdout_requires_lf_termination() {
+        let mut r = b"{}\n{}".as_slice();
+        assert_eq!(read_bounded_line(&mut r, 8, true), Ok(Some(b"{}".to_vec())));
+        assert_eq!(
+            read_bounded_line(&mut r, 8, true),
+            Err("startup_rpc_line_unterminated")
+        );
+        assert_eq!(read_bounded_line(&mut r, 8, true), Ok(None));
     }
 
     #[test]

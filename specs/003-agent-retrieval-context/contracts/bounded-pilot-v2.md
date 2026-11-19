@@ -1797,7 +1797,7 @@ facts and leaves these boundaries to qualify before the inventory can be frozen.
 | Prompt and command inputs | Source guards close implicit prompt, template, command and active-repo discovery at the selected owners. Native controls cover input exclusion, ordinary RPC and active-child projection. The prompt builder rejects a preparation timeout in this profile. | Bind the same decisions to the final admitting profile and retain evidence for any enabled prompt or transitive discovery owner. |
 | Debugger and process timers | The debugger sweep starts at first session registration. The startup control stayed free of the sweep beyond the baseline tick, and ordinary RPC started it with a fixture-backed session. | Account for other reachable timer APIs and teardown ownership. |
 | Native addon and process resources | Phased kernel snapshots place the selected profile's three same-process Unix descriptors at the original addon load. The sampled process group held no additional members or Internet sockets. | Qualify transient activity and remaining native or transitive transport owners. |
-| RPC initialization and parent admission | Startup observation joins the initial catalog and its stdout writes, excludes runtime callbacks and RPC dispatch, and persists the source-bound receipt. The observation parent has no RPC command writer. | Qualify the runtime subscription and dispatch handoff for the admitting profile. Use the complete inventory for the synced acknowledgment and matching Ready echo below. |
+| RPC initialization and parent admission | Startup observation joins the initial catalog and its stdout writes, excludes runtime callbacks and RPC dispatch, and persists the source-bound receipt. Its parent admits one command catalog envelope on stdout and checks both streams through EOF. The observation parent has no RPC command writer. | Qualify the runtime subscription and dispatch handoff for the admitting profile. Use the complete inventory for the synced acknowledgment and matching Ready echo below. |
 
 **Selected next work, 2026-11-18.** Keep one inventory for the exact restricted
 profile. The advisor candidate excludes discovery, tools, cost restore and
@@ -1828,6 +1828,13 @@ verify the effective set at the registry for this exact diagnostic. The
 catalog receipt requires `discovery_providers_fixed`. Preserve these
 eligibility decisions in the admitting profile and qualify its remaining
 transitive transport and callback ownership.
+
+The restricted prompt still calls `InternalUrlRouter.describe`, which
+runs optional remote scheme documentation checks. The
+[native lookup control](../../../docs/validation.md#remote-url-documentation-lookups-during-startup--2026-11-19)
+observed `ssh`, `gh` and `glab` executable lookup at those owners.
+Exclude optional scheme descriptions at the read/edit-only prompt boundary
+and exercise the ordinary prompt as the positive control.
 
 Source inspection at `24439066040e006eb08da7b204f0ac41c79d2de9` distinguishes
 `main.ts::buildSessionOptions` assigning `toolNames` for `--tools` from
@@ -1900,6 +1907,15 @@ failure reaps the host and returns a persistence error without a successful
 observation receipt. The count and digest attest this partial inventory.
 The admitting revision still requires the complete inventory, matching private
 Ready and durable echo before opening commands.
+
+The startup-only stdout reader accepts one LF-terminated
+`available_commands_update` envelope with a commands array. A missing or
+repeated envelope, malformed frame, or other RPC message is a protocol fault.
+A clean diagnostic receipt also requires normal process-group exit and EOF on
+both the private channel and stdout. A fault during teardown is journaled
+after the observation HOLD and host exit records, and the caller receives
+the fault. The accepted prefix remains evidence of the observed owners.
+See the [native teardown controls](../../../docs/validation.md#startup-rpc-output-through-teardown--2026-11-19).
 
 For the admitting revision, use the existing private channel and preserve its
 sequence across the handoff. Await the acknowledgment at the RPC boundary after

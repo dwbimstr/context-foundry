@@ -1,5 +1,51 @@
 # Validation
 
+## Startup RPC output through teardown — 2026-11-19
+
+The startup-only [stdout reader](../src/pilot_capture/host.rs) accepts a single
+LF-terminated command catalog envelope. The [observation parent](../src/pilot_capture/startup.rs)
+requires EOF on both pipes and a normal process-group exit before returning a
+clean HOLD receipt. A parser fault during teardown is journaled under
+`startup_cleanup` and returned as a protocol error.
+
+A test-only bridge on the same pinned compiled host wrote synthetic output at
+normal exit after private RPC retirement and after the parent closed stdin.
+The preceding parent returned the usual 18-row HOLD receipt despite malformed
+stdout. The fixed parent refused five forms of late output on that boundary:
+malformed JSON, an unknown typed message, a duplicate catalog, raw Ready,
+and an unterminated catalog. The 19-row fault journals preserve the synced
+16-row prefix, the HOLD and the normal process exit. The final row names the
+static parser fault. All five subprocess groups were reaped. The injected
+bridge ran only in the isolated fixture checkout. Private receipts are under
+`runs/pilot-startup-rpc-output-2026-11-19/`.
+
+The initial normal-host run reused the fixture binary from a shared Cargo
+target. The acceptance run used a clean target and verified a distinct
+production binary without the fixture marker. All ten Rust gates passed,
+including the 14-case startup matrix, RPC input, 125 feature tests, 37 frozen
+host tests, five current-host tests, both source-host checks, Clippy, Rust
+1.90 and formatting. The round used zero provider calls and zero spend.
+The two run directories went from 6,369,701,888 to 285,802,496 allocated
+bytes before replay. The startup matrix and RPC input check passed from the
+retained production binaries after cleanup.
+
+## Remote URL documentation lookups during startup — 2026-11-19
+
+A narrow native preload on the same pinned host observed one
+`Bun.which` lookup each for `ssh`, `gh` and `glab` in both restricted
+startup and ordinary RPC. The call stacks place the lookups in
+`buildSystemPrompt`, `InternalUrlRouter.describe` and the handlers'
+`promptDoc` methods. The diagnostic used the exact startup bridge and
+completed both classified refusals. Ordinary RPC answered a state query.
+Both groups were reaped under network denial with zero provider calls
+and zero spend.
+
+The probe establishes local executable-availability checks for optional
+prompt descriptions. The read/edit-only startup profile has no need to
+advertise those remote URI handlers. The remaining qualification is to
+exclude their descriptions in that profile while preserving ordinary RPC.
+Private receipts are under `runs/pilot-startup-url-doc-owners-2026-11-19/`.
+
 ## Fixed discovery provider inventory at startup — 2026-11-19
 
 The [registry patch](references/omp-startup-fixed-discovery-plan.patch) extends
