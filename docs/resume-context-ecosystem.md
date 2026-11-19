@@ -2,13 +2,27 @@
 
 ## Current status — 2026-11-06
 
-Updated 2026-11-16. This section owns current status; other documents link here,
+Updated 2026-11-18. This section owns current status; other documents link here,
 and dated paragraphs below are history.
+
+- **Advisor startup inventory, 2026-11-18.** The native observer awaited a
+  `WATCHDOG.yml` import, started and settled advisor cost restore, and built a
+  separate advisor tool pool. The next slice excludes those paths and later
+  activation at their source owners. Complete the launch inventory before
+  enabling a durable acknowledgment and matching Ready on the private channel
+  ([record](validation.md#advisor-discovery-within-restricted-startup--2026-11-18),
+  [contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md)).
+
+- **RPC runtime callbacks excluded, 2026-11-18.** Startup observation leaves
+  runtime subscriptions and goal reconciliation inactive. The late notice
+  reached the real emission path, and ordinary RPC still delivered it. The
+  diagnostic still reports session writer failure at teardown. Full inventory,
+  durable acknowledgment and runtime handoff remain open
+  ([record](validation.md#rpc-runtime-callbacks-excluded-during-startup-observation--2026-11-18)).
 
 - **RPC session callback after retirement, 2026-11-18.** A synthetic notice
   released after private RPC retirement reached the original session callback.
-  Its stdout writer had already closed. The runtime subscription handoff and
-  acknowledgment stay open
+  Its stdout writer had already closed. This was the baseline for the change above
   ([record](validation.md#rpc-session-callback-after-startup-retirement--2026-11-18)).
 
 - **Catalog refusal and Spotlight exclusion, 2026-11-18.** The explicit

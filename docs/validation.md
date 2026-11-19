@@ -1,5 +1,62 @@
 # Validation
 
+## Advisor discovery within restricted startup — 2026-11-18
+
+The native observer read a synthetic `WATCHDOG.yml` and its relative file import
+with `--no-context-files` set. Holding the imported file before the original
+read held extension and RPC retirement until release. A separate synthetic
+factory instrumented the real `AgentSession` and recorded the original advisor
+cost-restore start and completion. The advisor was inactive during the check,
+and its separate tool pool contained 18 entries, including `bash`. The fixture
+invoked none of them. No prompts, provider calls or spend occurred.
+
+Advisor inputs, tool-pool construction and startup cost restore are separate
+from primary tool selection. Their startup eligibility remains an inventory item.
+The private controls are under `runs/pilot-startup-advisor-discovery-2026-11-18/`.
+
+## RPC runtime callbacks excluded during startup observation — 2026-11-18
+
+The [source patch](references/omp-startup-rpc-runtime-exclusion.patch) keeps
+session-event subscription, subagent-event registration and initial goal
+reconciliation out of RPC startup observation. Its private, one-use retirement
+receipt now includes the callback exclusion. The observer and Rust decoder
+require the new fact. Persistence observers retain their teardown ownership.
+
+The native late-notice control reached the original `AgentSession.emitNotice`
+call after the retirement receipt. Neither the RPC subscription nor its callback
+ran, and the goal reconciliation witness stayed absent. The ordinary RPC control
+ran its initial goal reconciliation, answered a state query and delivered the
+fixture notice on stdout. A separate diagnostic control injected an `ENOSPC`
+failure after closing the actual temporary session writer. The persistence owner
+reported the failure and nondurable shutdown on stderr, and the process exited
+with status 1. The original upstream persistence tests passed 10 of 10.
+
+Separate native probes observed two original catalog deadline timers per run.
+Timers remained armed while the refusal reply was held. Both were cleared before
+catalog retirement in each run. Neither probe reached the selected Anthropic
+warm-up's native abort deadline construction. Private timing receipts are under
+`runs/pilot-startup-route-timers-2026-11-18/`.
+
+The rebuilt CLI SHA-256 is
+`e97678428a82dee6092a99814d295c8775ec8f6820c3d8055b42c1c38e2a9711`.
+The qualification uses isolated synthetic inputs and OS network denial. Private
+controls and receipts are under `runs/pilot-startup-rpc-runtime-exclusion-2026-11-18/`.
+Provider calls and spend were zero. The complete inventory and admitting runtime
+handoff after a durable acknowledgment and Ready echo remain open.
+
+Ten fresh gates passed. The 14-case startup control ended its normal 18-row
+journal with two durable refusals and an incomplete-inventory halt. The startup
+RPC input check, 121 feature unit tests (one ignored), feature Clippy, Rust 1.90
+all-target check, formatting, frozen host suite (37 passed, 11 ignored), all five
+current-host checks, and both source-host checks passed. The four prior
+default-feature gates were reused after exact readback of their 258 inputs.
+Readback verified 10,339 compiled-source inputs and the patch applied to its
+exact preimage. Cleanup removed the round's temporary caches and four duplicate
+native extractions, reducing allocated space in the round from 8,549,240,832 to
+521,273,344 bytes before replay. The runnable host and focused test binaries,
+source overlays and private evidence were retained. The RPC input and 14-case
+startup controls passed again from the retained binaries after cleanup.
+
 ## RPC session callback after startup retirement — 2026-11-18
 
 A network-denied test used the catalog/Spotlight host with a synthetic extension

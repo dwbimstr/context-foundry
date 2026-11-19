@@ -1775,10 +1775,12 @@ closed until the same private channel returns the exact acknowledgment digest in
 Ready and the ordinary settings and model checks pass. Settled startup owners,
 the parent's synced prefix readback, and the matching child echo are separate
 requirements. See the [native RPC evidence](../../../docs/validation.md#startup-rpc-command-boundary--2026-11-18).
-The original session event callback is still live after the RPC retirement
-receipt, as shown by a [native injected notice](../../../docs/validation.md#rpc-session-callback-after-startup-retirement--2026-11-18).
-Keep runtime subscriptions and goal reconciliation out of the observation
-boundary while retaining persistence failure reporting through session teardown.
+The original session event callback stayed live after the RPC retirement
+receipt in the [baseline native control](../../../docs/validation.md#rpc-session-callback-after-startup-retirement--2026-11-18).
+The qualified observation profile now excludes session and subagent event
+subscriptions and goal reconciliation. Its receipt binds that exclusion,
+and its persistence owner continues reporting teardown failures. See the
+[native qualification](../../../docs/validation.md#rpc-runtime-callbacks-excluded-during-startup-observation--2026-11-18).
 
 Use the ordered receipt prefix in [`startup.rs`](../../../src/pilot_capture/startup.rs)
 as the starting inventory for the existing diagnostic. It contains these selected
@@ -1791,7 +1793,22 @@ facts and leaves these boundaries to qualify before the inventory can be frozen.
 | Catalog, settings and authentication | Source owner receipts cover selected discovery, settings callbacks and the empty authentication profile. The catalog GET is classified and refused before transport. | Verify the enabled configuration and any additional discovery and credential owners selected for the admitting profile. |
 | Presence, telemetry, marketplace and logging | The selected owners close or exclude their own work and record the original joins. | Review enabled update and output paths outside these selected owners. |
 | Plugin roots and first-party extension | The diagnostic reports plugin-root retirement and the original extension dispatch join. It excludes managed timers and the selected workspace scan. Native controls cover the exact bridge graph read and the loader's awaited factory. | Check work started by enabled transitive loads, including native timers, discovery and callbacks. |
-| RPC initialization and parent admission | Startup observation joins the initial catalog and its stdout writes, excludes the live subscription and RPC dispatch, and persists the source-bound receipt. The observation parent has no RPC command writer. | Qualify the runtime subscription and dispatch handoff for the admitting profile. Use the complete inventory for the synced acknowledgment and matching Ready echo below. |
+| Advisors | Native controls observed and held an imported advisor input and observed cost restore and the advisor tool pool under restricted startup. | Decide and qualify advisor discovery, tool and restore eligibility for the complete startup profile before admission. |
+| RPC initialization and parent admission | Startup observation joins the initial catalog and its stdout writes, excludes runtime callbacks and RPC dispatch, and persists the source-bound receipt. The observation parent has no RPC command writer. | Qualify the runtime subscription and dispatch handoff for the admitting profile. Use the complete inventory for the synced acknowledgment and matching Ready echo below. |
+
+**Selected next work, 2026-11-18.** Use the existing explicit restricted SDK
+profile to exclude advisor and watchdog discovery, separate advisor tools,
+initial cost restore and later activation at their source owners. Exercise the
+same original paths in ordinary RPC as positive controls. Keep one inventory
+for the exact profile. Bind the compiled and native artifacts, ordered source
+patches, bridge, effective arguments, settings, sanitized environment and
+sandbox policy. Each reachable owner needs a source anchor, an eligibility
+decision, a side-effect boundary and evidence of exclusion before construction,
+refusal before I/O, or original work and callbacks joined with late starts closed.
+Account for CLI prompt discovery, active-repo context, template and command
+discovery, RPC file-command reload, registry provider refresh, and the transports
+reachable through admitted transitive code. The diagnostic receipts cover a
+partial inventory. An unresolved edge keeps admission on HOLD.
 
 Source inspection at `24439066040e006eb08da7b204f0ac41c79d2de9` distinguishes
 `main.ts::buildSessionOptions` assigning `toolNames` for `--tools` from
@@ -1800,9 +1817,10 @@ Source inspection at `24439066040e006eb08da7b204f0ac41c79d2de9` distinguishes
 RPC also starts settings watching, and telemetry initialization has settings/env
 eligibility. Trace the final selected options, backends, owners and lifetimes
 before freezing the inventory; this source census proves neither active model
-work nor absence of these owners at runtime. The known warm-up source constructs
-an abort deadline, whose timer/callback settlement is not qualified by the Agent
-TCP control or a quiet trace.
+work nor absence of these owners at runtime. In the selected diagnostic, the
+source warm-up refuses before abort deadline construction. The
+[named native timer controls](../../../docs/validation.md#rpc-runtime-callbacks-excluded-during-startup-observation--2026-11-18)
+also observed both catalog deadline cancellations before its retirement.
 
 The [native HTTPS controls](../../../docs/validation.md#native-https-startup-boundaries--2026-11-15)
 now demonstrate a concrete alternate SDK path: Anthropic connection warm-up uses
@@ -1855,6 +1873,14 @@ return the persistence error and publish no successful seal. Preserve consumed
 authority and unknown spend. Restart uses fresh launch/channel/prefix identities;
 journal replay cannot create a new execution authority. No fallback to v1 or an
 unobserved route can convert failed v2 startup into readiness.
+
+For the admitting revision, use the existing private channel and preserve its
+sequence across the handoff. Await the acknowledgment at the RPC boundary after
+extension retirement and the initial output drain. That drain must leave the
+runtime writer open. Read readiness facts from the bound session before enabling
+RPC commands. Persist and read back the accepted Ready echo before opening the
+parent writer or permitting a request. Keep the observation profile's teardown
+and journal replay paths closed to admission.
 
 **Qualification.** Protocol/state tests reject ordering, replay, duplicate, stale,
 conflicting, truncated and exhausted inputs. Actual-host controls exercise every

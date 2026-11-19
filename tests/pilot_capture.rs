@@ -275,6 +275,7 @@ fn source_startup_refusal_is_durable_and_incomplete_inventory_never_admits() {
             assert_eq!(rows[15]["kind"], "startup_rpc_retired");
             assert_eq!(rows[15]["rpc"]["initial_catalog_joined"], true);
             assert_eq!(rows[15]["rpc"]["metadata_subscription_excluded"], true);
+            assert_eq!(rows[15]["rpc"]["runtime_callbacks_excluded"], true);
             assert_eq!(rows[15]["rpc"]["output_drained"], true);
             assert_eq!(rows[15]["rpc"]["dispatch_closed"], true);
             assert!(

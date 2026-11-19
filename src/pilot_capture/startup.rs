@@ -128,6 +128,7 @@ pub enum ChildMessage {
     RpcRetired {
         initial_catalog_joined: bool,
         metadata_subscription_excluded: bool,
+        runtime_callbacks_excluded: bool,
         output_drained: bool,
         dispatch_closed: bool,
     },
@@ -390,11 +391,13 @@ impl ChannelState {
         if let ChildMessage::RpcRetired {
             initial_catalog_joined,
             metadata_subscription_excluded,
+            runtime_callbacks_excluded,
             output_drained,
             dispatch_closed,
         } = &h.msg
             && (!initial_catalog_joined
                 || !metadata_subscription_excluded
+                || !runtime_callbacks_excluded
                 || !output_drained
                 || !dispatch_closed)
         {
@@ -1227,12 +1230,14 @@ mod tests {
     }
 
     #[test]
-    fn startup_rpc_receipt_requires_all_four_facts() {
+    fn startup_rpc_receipt_requires_all_retirement_facts() {
         let valid = json!({"type":"rpc_retired","initial_catalog_joined":true,
-            "metadata_subscription_excluded":true,"output_drained":true,"dispatch_closed":true});
+            "metadata_subscription_excluded":true,"runtime_callbacks_excluded":true,
+            "output_drained":true,"dispatch_closed":true});
         for field in [
             "initial_catalog_joined",
             "metadata_subscription_excluded",
+            "runtime_callbacks_excluded",
             "output_drained",
             "dispatch_closed",
         ] {
@@ -1246,6 +1251,9 @@ mod tests {
                     .0,
                 "startup_rpc_unqualified"
             );
+            let mut missing = valid.clone();
+            missing.as_object_mut().unwrap().remove(field);
+            assert!(serde_json::from_value::<ChildMessage>(missing).is_err());
         }
         let msg = serde_json::from_value::<ChildMessage>(valid).unwrap();
         assert!(
@@ -1329,6 +1337,7 @@ mod tests {
         let rpc = ChildMessage::RpcRetired {
             initial_catalog_joined: true,
             metadata_subscription_excluded: true,
+            runtime_callbacks_excluded: true,
             output_drained: true,
             dispatch_closed: true,
         };

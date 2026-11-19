@@ -55,7 +55,7 @@ function createStartupObserver() {
    let rpc: unknown;
    try { rpc = consumeRpc(proof); }
    catch { channel.send({type:"fault",code:"unclassified"}); fail(); }
-   const facts = ["initial_catalog_joined","metadata_subscription_excluded","output_drained","dispatch_closed"];
+   const facts = ["initial_catalog_joined","metadata_subscription_excluded","runtime_callbacks_excluded","output_drained","dispatch_closed"];
    if (!startupExact(rpc,facts) || !facts.every(key => rpc[key] === true)) fail();
    if (!channel.send({type:"rpc_retired",...rpc})) fail();
   },
