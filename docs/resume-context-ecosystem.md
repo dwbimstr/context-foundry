@@ -5,6 +5,13 @@
 Updated 2026-11-16. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
+- **First-party startup extension loader, 2026-11-18.** The pinned native host
+  waited for the exact observer's source read. The original factory loader also
+  waited for an injected barrier. Both failure controls reaped the host without
+  extension or RPC retirement. Enabled transitive work, the admitting transport
+  and subscription handoff, and the durable acknowledgment remain open
+  ([record](validation.md#first-party-startup-extension-loader-controls--2026-11-18)).
+
 - **Restricted startup RPC retirement, 2026-11-18.** The native source-built host
   waits for its initial command catalog and stdout completion, excludes the live
   metadata subscription and command dispatch, and journals a source-bound receipt

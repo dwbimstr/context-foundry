@@ -1748,9 +1748,11 @@ that receipt and still halts for the incomplete inventory. Ordinary RPC keeps
 its initialization and subscription. See the [source reference](../../../docs/references/omp-startup-rpc-observation.patch)
 and [native receipt](../../../docs/validation.md#restricted-startup-rpc-retirement--2026-11-18).
 
-The admitting profile still needs qualification for the actual first-party
-extension module and factory closure, the runtime subscription and command
-handoff, and the complete startup inventory.
+The exact first-party bridge's original graph read and the loader's awaited
+factory edge now have [native hold and failure controls](../../../docs/validation.md#first-party-startup-extension-loader-controls--2026-11-18).
+The admitting profile still needs qualification for enabled work started by
+transitive loads, the runtime subscription and command handoff, and the rest of
+the startup inventory.
 
 The current startup-only parent holds the RPC input pipe open for teardown and
 has no command writer. In the future admitting revision, keep RPC command delivery
@@ -1769,7 +1771,7 @@ facts and leaves these boundaries to qualify before the inventory can be frozen.
 | Tools, MCP, memory and credentials | The sealed identity reports fixed `edit` and `read`, MCP and memory exclusions, and joined credential-usage work. | Bind the final task tools and any admitted MCP integration to actual before-I/O controls. |
 | Catalog, settings and authentication | Source owner receipts cover selected discovery, settings callbacks and the empty authentication profile. | Verify the enabled configuration and any credential owners selected for the admitting profile. |
 | Presence, telemetry, marketplace and logging | The selected owners close or exclude their own work and record the original joins. | Review enabled update and output paths outside these selected owners. |
-| Plugin roots and first-party extension | The diagnostic reports plugin-root retirement and the original extension dispatch join. It excludes managed timers and the selected workspace scan. | Check module and factory work for the exact first-party source graph, including enabled native timers, discovery and callbacks. |
+| Plugin roots and first-party extension | The diagnostic reports plugin-root retirement and the original extension dispatch join. It excludes managed timers and the selected workspace scan. Native controls cover the exact bridge graph read and the loader's awaited factory. | Check work started by enabled transitive loads, including native timers, discovery and callbacks. |
 | RPC initialization and parent admission | Startup observation joins the initial catalog and its stdout writes, excludes the live subscription and RPC dispatch, and persists the source-bound receipt. The observation parent has no RPC command writer. | Qualify the runtime subscription and dispatch handoff for the admitting profile. Use the complete inventory for the synced acknowledgment and matching Ready echo below. |
 
 Source inspection at `24439066040e006eb08da7b204f0ac41c79d2de9` distinguishes

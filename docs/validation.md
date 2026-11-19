@@ -1,5 +1,30 @@
 # Validation
 
+## First-party startup extension loader controls — 2026-11-18
+
+Five native controls used the pinned CLI from [RPC retirement](#restricted-startup-rpc-retirement--2026-11-18).
+The baseline, held read and failed read used the exact materialized first-party
+observer. Its SHA-256 matched the native capture journal. The held read paused
+the original `Bun.file(...).text()` call for that module in the legacy extension
+graph loader. The extension and RPC receipts stayed absent until release. When
+the read failed, the host exited with status 1 and issued neither receipt.
+
+Two separately identified fixtures added one awaited hook after the observer
+registered its session-start handler. The original loader waited for the held
+factory. A failed factory produced exit status 1 without either receipt.
+The positive controls' extension and RPC message bodies matched the normal Rust
+capture journal. All five hosts exited and were reaped without a forced kill.
+The native controls used a private controller and OS network denial, with zero
+prompts, provider calls or spend.
+
+This qualifies the observed module read and the loader's awaited factory edge.
+The full startup inventory still requires proof of enabled transitive work,
+transport ownership and the runtime handoff before any durable acknowledgment.
+Private scripts and receipts are under `runs/pilot-first-party-extension-2026-11-18/`.
+Ten extracted native library copies matched the retained original and were
+removed after checking for open files. All 254 retained files matched after
+cleanup.
+
 ## Restricted startup RPC retirement — 2026-11-18
 
 The source-built startup observer now requires an RPC retirement receipt after
