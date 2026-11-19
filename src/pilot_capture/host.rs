@@ -128,7 +128,7 @@ pub const SOURCE_QUALIFICATION_OMP_SHA256: &str =
     "b5e50ce94846e29ea3db04ddab00f716208f21c0299263a30aee725c006ff9e9";
 
 pub const STARTUP_OBSERVATION_OMP_SHA256: &str =
-    "879e0690a9542088abe6ff936ee0b4fb35132f4263612cd2b8dc6660c8327766";
+    "d3735420b5a9389e66eb916e5e826a998844884f9b4ce0e797a3dae68882172d";
 pub const STARTUP_OBSERVER_SOURCE: &[u8] = concat!(
     include_str!("bridge_channel.ts"),
     "\n",

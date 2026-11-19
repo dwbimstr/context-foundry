@@ -1,5 +1,45 @@
 # Validation
 
+## Fixed discovery provider inventory at startup — 2026-11-19
+
+The [registry patch](references/omp-startup-fixed-discovery-plan.patch) extends
+the fixed startup profile at `ModelRegistry.#discoveryDisabledProviders`,
+`#loadCustomModels` and the original manager entry in
+`can1357/oh-my-pi@24439066040e006eb08da7b204f0ac41c79d2de9` after the retained
+startup patches. It requires the effective Anthropic-only eligibility set,
+rejects configured discovery and excludes implicit local discovery. The
+fixed Anthropic manager rejects a credential source before resolving a key.
+An unreadable or widened profile latches the fault. Ordinary RPC uses its
+existing eligibility rules.
+
+The compiled host SHA-256 is
+`d3735420b5a9389e66eb916e5e826a998844884f9b4ce0e797a3dae68882172d`.
+Native controls rejected enabled `web`, Ollama, OpenAI Codex and configured
+discovery before the first private attempt or manager deadline. The early
+rejection controls used the exact bridge. A trusted late-change fixture
+caught a widened-profile error and restored the settings. The first
+candidate started another manager after that error. The final candidate
+joined the already started manager and did not start another one or report
+catalog retirement. Ordinary RPC with `web` enabled ran two managers and
+answered a state query.
+
+The exact bridge preserved both classified refusals and the single built-in
+manager. Holding the catalog reply held retirement. The catalog receipt
+now requires the fixed inventory fact in the bridge and the Rust reader.
+All eight process groups were reaped under network denial and all 128
+focused upstream tests passed. There were zero provider calls and zero
+spend. Private receipts are under
+`runs/pilot-startup-fixed-discovery-plan-2026-11-19/`. Startup admission,
+the full transitive inventory and the durable acknowledgment remain open.
+
+Six fresh Rust checks passed, including the 14-case startup journal,
+RPC input, feature tests, Clippy, Rust 1.90 and formatting. The three
+new upstream tests failed against the preceding registry. The unchanged
+frozen and compatibility host pins retain their prior receipts.
+The startup journal and RPC input checks passed from the retained binaries
+after the staged build and package caches were removed. The run directory
+went from 10,899,398,656 to 528,982,016 allocated bytes before replay.
+
 ## Durable startup observation prefix — 2026-11-19
 
 The Rust observer reads back the synced journal through

@@ -1790,7 +1790,7 @@ facts and leaves these boundaries to qualify before the inventory can be frozen.
 | --- | --- | --- |
 | Connection preparation | The original warm-up caller settles after the parent durably refuses the classified Anthropic HEAD route. | Establish before-I/O ownership for each enabled route and fail closed on unclassified transports. |
 | Tools, MCP, memory and credentials | The sealed identity reports fixed `edit` and `read`, MCP and memory exclusions, and joined credential-usage work. | Bind the final task tools and any admitted MCP integration to actual before-I/O controls. |
-| Catalog, settings and authentication | Source owner receipts cover selected discovery, settings callbacks and the empty authentication profile. The catalog GET is classified and refused before transport. The fixed registry closes runtime registration. Native controls observed one built-in manager deadline in the pinned profile, two with the static web manager enabled, and a private fault with implicit Ollama discovery enabled. | Freeze configured, implicit and built-in eligibility at the registry before any new owner can reach construction or I/O. Bind the remaining enabled catalog route to the final profile. |
+| Catalog, settings and authentication | Source owner receipts cover selected discovery, settings callbacks and the empty authentication profile. The catalog GET is classified and refused before transport. The fixed registry closes runtime registration and binds Anthropic-only discovery eligibility. Native launch and late-change controls verify that the fixed set cannot expand. | Qualify the remaining enabled catalog transport and callbacks in the final profile. |
 | Presence, telemetry, marketplace and logging | The selected owners close or exclude their own work and record the original joins. | Review enabled update and output paths outside these selected owners. |
 | Plugin roots and first-party extension | The diagnostic reports plugin-root retirement and the original extension dispatch join. It excludes managed timers and the selected workspace scan. Native controls cover the exact bridge graph read and the loader's awaited factory. | Check work started by enabled transitive loads, including native timers, discovery and callbacks. |
 | Advisors | The candidate excludes advisor discovery, tool construction, restore and activation in the explicit profile. The existing restricted-session receipt records the exclusion. Native controls exercised ordinary RPC and a late activation and restore attempt. | Preserve the disposition in the final admitting profile. |
@@ -1813,7 +1813,7 @@ the selected debugger, registry, prompt and command dispositions
 bound to the same profile. The diagnostic receipts cover a
 partial inventory. An unresolved edge keeps admission on HOLD.
 
-Freeze model discovery eligibility at the registry. In upstream
+The startup diagnostic fixes model discovery eligibility at the registry. In upstream
 `24439066040e006eb08da7b204f0ac41c79d2de9`,
 `ModelRegistry.#addImplicitDiscoverableProviders` owns automatic local entries.
 `#collectBuiltInModelManagerOptions` separately selects standard descriptors,
@@ -1821,11 +1821,13 @@ special credential-dependent descriptors and catalog-only providers.
 `#discoverWithModelManagerStartupBody` constructs the selected manager and owns
 its refresh deadline. The restricted launch currently uses an Anthropic
 configuration with empty authentication and a disabled-provider list.
-The [native eligibility controls](../../../docs/validation.md#built-in-model-manager-eligibility-during-startup--2026-11-18)
-show that a broadened list changes which owners execute. The final profile
-must bind effective eligibility and fail closed on an unexpected configured,
-implicit or built-in owner before construction or I/O. A provider's public
-discovery status can stay idle when its manager runs.
+The [baseline eligibility controls](../../../docs/validation.md#built-in-model-manager-eligibility-during-startup--2026-11-18)
+show that a provider's public discovery status can stay idle when its manager
+runs. The [fixed-profile controls](../../../docs/validation.md#fixed-discovery-provider-inventory-at-startup--2026-11-19)
+verify the effective set at the registry for this exact diagnostic. The
+catalog receipt requires `discovery_providers_fixed`. Preserve these
+eligibility decisions in the admitting profile and qualify its remaining
+transitive transport and callback ownership.
 
 Source inspection at `24439066040e006eb08da7b204f0ac41c79d2de9` distinguishes
 `main.ts::buildSessionOptions` assigning `toolNames` for `--tools` from

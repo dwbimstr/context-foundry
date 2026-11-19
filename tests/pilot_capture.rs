@@ -222,6 +222,7 @@ fn source_startup_refusal_is_durable_and_incomplete_inventory_never_admits() {
             assert!(attempts[1]["seq"].as_u64().unwrap() < rows[6]["seq"].as_u64().unwrap());
             assert_eq!(rows[6]["kind"], "startup_catalog_retired");
             assert_eq!(rows[6]["catalog"]["runtime_providers_excluded"], true);
+            assert_eq!(rows[6]["catalog"]["discovery_providers_fixed"], true);
             assert_eq!(
                 rows.iter()
                     .filter(|r| r["kind"] == "startup_owner_settled")

@@ -101,7 +101,7 @@ function createStartupObserver() {
     let catalog: any;
     try { catalog = await retireCatalog(ctx.sessionManager, ctx.modelRegistry); }
     catch { channel.send({type:"fault",code:"unclassified"}); fail(); }
-    if (!startupExact(catalog,["discovery_retired","originals_joined","callbacks_joined","timers_retired","runtime_providers_excluded","operations","rejections"]) || catalog.discovery_retired !== true || catalog.originals_joined !== true || catalog.callbacks_joined !== true || catalog.timers_retired !== true || catalog.runtime_providers_excluded !== true || !Number.isInteger(catalog.operations) || catalog.operations < 1 || catalog.operations > 4096 || !Number.isInteger(catalog.rejections) || catalog.rejections < 0 || catalog.rejections > catalog.operations) fail();
+    if (!startupExact(catalog,["discovery_retired","originals_joined","callbacks_joined","timers_retired","runtime_providers_excluded","discovery_providers_fixed","operations","rejections"]) || catalog.discovery_retired !== true || catalog.originals_joined !== true || catalog.callbacks_joined !== true || catalog.timers_retired !== true || catalog.runtime_providers_excluded !== true || catalog.discovery_providers_fixed !== true || !Number.isInteger(catalog.operations) || catalog.operations < 1 || catalog.operations > 4096 || !Number.isInteger(catalog.rejections) || catalog.rejections < 0 || catalog.rejections > catalog.operations) fail();
     if (pendingFor("model_catalog_discovery")) fail();
     catalogDone = true;
     if (!channel.quiet && !channel.send({type:"catalog_retired",...catalog})) fail();

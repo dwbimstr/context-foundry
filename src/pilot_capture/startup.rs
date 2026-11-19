@@ -72,6 +72,7 @@ pub enum ChildMessage {
         callbacks_joined: bool,
         timers_retired: bool,
         runtime_providers_excluded: bool,
+        discovery_providers_fixed: bool,
         operations: u32,
         rejections: u32,
     },
@@ -269,6 +270,7 @@ impl ChannelState {
             callbacks_joined,
             timers_retired,
             runtime_providers_excluded,
+            discovery_providers_fixed,
             operations,
             rejections,
         } = &h.msg
@@ -277,6 +279,7 @@ impl ChannelState {
                 || !callbacks_joined
                 || !timers_retired
                 || !runtime_providers_excluded
+                || !discovery_providers_fixed
                 || *operations == 0
                 || *operations > 4096
                 || rejections > operations)
@@ -966,7 +969,7 @@ mod tests {
     }
 
     #[test]
-    fn startup_catalog_requires_runtime_provider_exclusion_and_each_join() {
+    fn startup_catalog_requires_fixed_provider_inventory_and_each_join() {
         let valid = json!({
             "type": "catalog_retired",
             "discovery_retired": true,
@@ -974,6 +977,7 @@ mod tests {
             "callbacks_joined": true,
             "timers_retired": true,
             "runtime_providers_excluded": true,
+            "discovery_providers_fixed": true,
             "operations": 1,
             "rejections": 0,
         });
@@ -983,6 +987,7 @@ mod tests {
             "callbacks_joined",
             "timers_retired",
             "runtime_providers_excluded",
+            "discovery_providers_fixed",
         ] {
             let mut bad = valid.clone();
             bad[field] = json!(false);
@@ -1361,6 +1366,7 @@ mod tests {
             callbacks_joined: true,
             timers_retired: true,
             runtime_providers_excluded: true,
+            discovery_providers_fixed: true,
             operations: 1,
             rejections: 0,
         };

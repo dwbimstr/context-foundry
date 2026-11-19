@@ -1,0 +1,348 @@
+diff --git a/packages/coding-agent/src/config/model-registry.ts b/packages/coding-agent/src/config/model-registry.ts
+--- a/packages/coding-agent/src/config/model-registry.ts
++++ b/packages/coding-agent/src/config/model-registry.ts
+@@ -309,6 +309,37 @@
+ 	#unsupportedStartupDiscovery = false;
+ 	#ownStartupDiscovery = <T>(operation: () => Promise<T>): Promise<T> =>
+ 		this.#startupDiscovery ? this.#startupDiscovery.own(operation) : operation();
++	#rejectFixedStartupDiscovery(): never {
++		this.#unsupportedStartupDiscovery = true;
++		throw new Error("Fixed startup discovery inventory unqualified");
++	}
++	#discoveryDisabledProviders(): Set<string> {
++		if (!this.#fixedStartupProviders) return getDisabledProviderIdsFromSettings(this.#settings);
++		if (!this.#settings || this.#unsupportedStartupDiscovery) return this.#rejectFixedStartupDiscovery();
++		let disabled: Set<string>;
++		try {
++			disabled = new Set(cfgDisabledProviders.get(this.#settings));
++		} catch {
++			return this.#rejectFixedStartupDiscovery();
++		}
++		const bundled = new Set<string>(getBundledProviders());
++		const discoveryProviders = [
++			...Object.keys(BUILT_IN_MODEL_MANAGER_PROVIDER_IDS),
++			...MODELS_DEV_CATALOG_PROVIDER_IDS.filter(provider => bundled.has(provider)),
++			"apple",
++			"llama.cpp",
++			"lm-studio",
++			"local",
++			"ollama",
++			"web",
++		];
++		if (
++			disabled.has("anthropic") ||
++			discoveryProviders.some(provider => provider !== "anthropic" && !disabled.has(provider))
++		)
++			this.#rejectFixedStartupDiscovery();
++		return disabled;
++	}
+ 	assertStartupRuntimeProvidersExcluded(): void {
+ 		if (!this.#fixedStartupProviders || this.#runtimeModelManagers.size || this.#runtimeRegistrations.length)
+ 			throw new Error("Startup runtime provider inventory unqualified");
+@@ -318,6 +349,7 @@
+ 			throw new Error("Startup discovery owner unqualified");
+ 		const receipt = await this.#startupDiscovery.retire();
+ 		if (this.#unsupportedStartupDiscovery) throw new Error("Startup discovery native owner unqualified");
++		if (this.#fixedStartupProviders) this.#discoveryDisabledProviders();
+ 		return receipt;
+ 	}
+ 
+@@ -1382,6 +1414,7 @@
+ 	}
+ 
+ 	#loadModels() {
++		if (this.#fixedStartupProviders) this.#discoveryDisabledProviders();
+ 		this.#resetStaticComposition();
+ 		// Load custom config first (to know which providers to override).
+ 		const {
+@@ -1393,6 +1426,8 @@
+ 			configuredProviders = new Set<string>(),
+ 			error: configError,
+ 		} = logger.time("modelRegistry:loadCustomModels", () => this.#loadCustomModels());
++		if (this.#fixedStartupProviders && (configError || discoverableProviders.length))
++			this.#rejectFixedStartupDiscovery();
+ 		this.#configError = configError;
+ 		this.#keylessProviders = keylessProviders;
+ 		this.#discoverableProviders = discoverableProviders;
+@@ -1400,7 +1435,7 @@
+ 		this.#providerOverrides = overrides;
+ 		this.#modelOverrides = modelOverrides;
+ 
+-		this.#addImplicitDiscoverableProviders(configuredProviders);
++		if (!this.#fixedStartupProviders) this.#addImplicitDiscoverableProviders(configuredProviders);
+ 		const configuredDiscoveryProviders = new Set(this.#discoverableProviders.map(provider => provider.provider));
+ 		this.#pendingStandardCacheProviders = new Set(
+ 			STARTUP_MODEL_CACHE_PROVIDER_IDS.filter(
+@@ -2147,6 +2182,15 @@
+ 		const providerEntries = Object.entries(value.providers ?? {});
+ 		const configuredProviders = new Set(Object.keys(value.providers ?? {}));
+ 		for (const [providerName, providerConfig] of providerEntries) {
++			if (
++				this.#fixedStartupProviders &&
++				(providerName !== "anthropic" ||
++					providerConfig.discovery ||
++					providerConfig.baseUrl ||
++					providerConfig.apiKey ||
++					providerConfig.headers)
++			)
++				this.#rejectFixedStartupDiscovery();
+ 			const commandConfigs = new Set<string>();
+ 			this.#collectCommandConfigValues(commandConfigs, providerConfig.apiKey, providerConfig.headers);
+ 			for (const modelDef of providerConfig.models ?? []) {
+@@ -2271,10 +2315,10 @@
+ 	}
+ 
+ 	async #runRuntimeDiscoveries(strategy: ModelRefreshStrategy, providerFilter?: ReadonlySet<string>): Promise<void> {
++		const disabledProviders = this.#discoveryDisabledProviders();
+ 		// One cache connection for the whole pass: every provider manager reads
+ 		// (and may write) its row, which would otherwise reopen the database each time.
+ 		using _cacheConnection = retainModelCacheConnection(this.#cacheDbPath);
+-		const disabledProviders = getDisabledProviderIdsFromSettings(this.#settings);
+ 		const selectedDiscoverableProviders = (
+ 			providerFilter
+ 				? this.#discoverableProviders.filter(provider => providerFilter.has(provider.provider))
+@@ -2291,7 +2335,7 @@
+ 					);
+ 		const [configuredDiscoveryResults, builtInDiscovery] = await Promise.all([
+ 			configuredDiscoveriesPromise,
+-			this.#discoverBuiltInProviderModels(strategy, providerFilter),
++			this.#discoverBuiltInProviderModels(strategy, disabledProviders, providerFilter),
+ 		]);
+ 		this.#captureCatalogMetrics(builtInDiscovery.models, providerFilter === undefined);
+ 		const currentDiscoverableProviders = new Set(this.#discoverableProviders);
+@@ -2648,18 +2692,23 @@
+ 
+ 	#discoverBuiltInProviderModels(
+ 		strategy: ModelRefreshStrategy,
++		disabledProviders: ReadonlySet<string>,
+ 		providerFilter?: ReadonlySet<string>,
+ 	): Promise<BuiltInDiscoveryResult> {
+-		return this.#ownStartupDiscovery(() => this.#discoverBuiltInProviderModelsStartupBody(strategy, providerFilter));
++		return this.#ownStartupDiscovery(() =>
++			this.#discoverBuiltInProviderModelsStartupBody(strategy, disabledProviders, providerFilter),
++		);
+ 	}
+ 	async #discoverBuiltInProviderModelsStartupBody(
+ 		strategy: ModelRefreshStrategy,
++		disabledProviders: ReadonlySet<string>,
+ 		providerFilter?: ReadonlySet<string>,
+ 	): Promise<BuiltInDiscoveryResult> {
+ 		// Skip providers already handled by configured discovery (e.g. user-configured ollama with discovery.type)
+ 		const configuredDiscoveryProviders = new Set(this.#discoverableProviders.map(p => p.provider));
+ 		const managerOptions = await this.#collectBuiltInModelManagerOptions(
+ 			strategy,
++			disabledProviders,
+ 			providerFilter,
+ 			configuredDiscoveryProviders,
+ 		);
+@@ -2720,6 +2769,15 @@
+ 		cacheProviderId: string | undefined,
+ 		authoritative: boolean,
+ 	): Promise<string | undefined> {
++		if (this.#fixedStartupProviders) {
++			if (
++				providerId !== "anthropic" ||
++				this.authStorage.keys.source(providerId) !== undefined ||
++				this.authStorage.credentials.hasOAuth(providerId)
++			)
++				this.#rejectFixedStartupDiscovery();
++			return kNoAuth;
++		}
+ 		const peekedKey = await this.#peekApiKeyForProvider(providerId);
+ 		if (isAuthenticated(peekedKey)) {
+ 			return peekedKey;
+@@ -2784,6 +2842,7 @@
+ 
+ 	async #collectBuiltInModelManagerOptions(
+ 		strategy: ModelRefreshStrategy,
++		disabledProviders: ReadonlySet<string>,
+ 		providerFilter: ReadonlySet<string> | undefined,
+ 		configuredDiscoveryProviders: ReadonlySet<string>,
+ 	): Promise<ModelManagerOptions<Api>[]> {
+@@ -2858,7 +2917,6 @@
+ 				},
+ 			},
+ 		];
+-		const disabledProviders = getDisabledProviderIdsFromSettings(this.#settings);
+ 		const standardProviderDescriptors = PROVIDER_DESCRIPTORS.filter(descriptor => {
+ 			if (disabledProviders.has(descriptor.providerId)) return false;
+ 			if (configuredDiscoveryProviders.has(descriptor.providerId)) return false;
+@@ -2986,6 +3044,7 @@
+ 		options: ModelManagerOptions<Api>,
+ 		strategy: ModelRefreshStrategy,
+ 	): Promise<BuiltInDiscoveryResult> {
++		if (this.#fixedStartupProviders && this.#unsupportedStartupDiscovery) this.#rejectFixedStartupDiscovery();
+ 		if (this.#startupDiscovery && options.providerId === "cursor") {
+ 			this.#unsupportedStartupDiscovery = true;
+ 			throw new Error("Startup discovery native owner unsupported");
+diff --git a/packages/coding-agent/src/sdk.ts b/packages/coding-agent/src/sdk.ts
+--- a/packages/coding-agent/src/sdk.ts
++++ b/packages/coding-agent/src/sdk.ts
+@@ -1128,7 +1128,11 @@
+ 	)
+ 		throw new Error("Restricted catalog owner identity mismatch");
+ 	registry.assertStartupRuntimeProvidersExcluded();
+-	return Object.freeze({ ...(await registry.retireStartupDiscovery()), runtime_providers_excluded: true });
++	return Object.freeze({
++		...(await registry.retireStartupDiscovery()),
++		runtime_providers_excluded: true,
++		discovery_providers_fixed: true,
++	});
+ }
+ 
+ /** Retire the original CLI auth/settings link and exact settings persistence owner. */
+diff --git a/packages/coding-agent/test/startup-discovery-owner.test.ts b/packages/coding-agent/test/startup-discovery-owner.test.ts
+--- a/packages/coding-agent/test/startup-discovery-owner.test.ts
++++ b/packages/coding-agent/test/startup-discovery-owner.test.ts
+@@ -1,12 +1,16 @@
+-import { expect, test } from "bun:test";
++import { expect, spyOn, test } from "bun:test";
+ import fs from "node:fs";
+ import os from "node:os";
+ import path from "node:path";
++import { getBundledProviders } from "@oh-my-pi/pi-catalog/models";
++import { MODELS_DEV_CATALOG_PROVIDER_IDS, PROVIDER_DESCRIPTORS } from "@oh-my-pi/pi-catalog/provider-models";
+ import { StartupDiscovery, startupDiscoveryFetch } from "@oh-my-pi/pi-catalog/provider-models/startup-discovery";
+ import { fetchWellKnownModels } from "@oh-my-pi/pi-catalog/provider-models/openai-compat";
+-import { withModelDiscoveryTimeout } from "../src/config/model-provider-discovery";
++import { SPECIAL_MODEL_MANAGER_PROVIDER_IDS, withModelDiscoveryTimeout } from "../src/config/model-provider-discovery";
+ import { discoverModelsByProviderType } from "../src/config/model-discovery";
+ import { ModelRegistry } from "../src/config/model-registry";
++import { cfgDisabledProviders } from "../src/config/model-settings";
++import { Settings } from "../src/config/settings";
+ import { createInMemoryAuthStorage } from "./helpers/agent-session-setup";
+ 
+ async function turns() {
+@@ -172,20 +176,54 @@
+ 	expect(retired).toBe(true);
+ });
+ 
+-function fixture(owned = true, fixedStartupProviders = false) {
++const FIXED_DISABLED_PROVIDERS = [
++	...new Set([
++		...getBundledProviders(),
++		...PROVIDER_DESCRIPTORS.map(descriptor => descriptor.providerId),
++		...SPECIAL_MODEL_MANAGER_PROVIDER_IDS,
++		...MODELS_DEV_CATALOG_PROVIDER_IDS,
++		"apple",
++		"llama.cpp",
++		"lm-studio",
++		"local",
++		"ollama",
++		"web",
++	]),
++].filter(id => id !== "anthropic");
++
++function fixture(
++	owned = true,
++	fixedStartupProviders = false,
++	{
++		disabledProviders = FIXED_DISABLED_PROVIDERS,
++		modelConfig,
++	}: { disabledProviders?: string[]; modelConfig?: string } = {},
++) {
+ 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "startup-registry-owner-")),
+ 		auth = createInMemoryAuthStorage();
+ 	let fetches = 0;
+-	const registry = new ModelRegistry(auth, path.join(dir, "models.yml"), {
+-		ownStartupDiscovery: owned,
+-		fixedStartupProviders,
+-		fetch: () => {
+-			fetches++;
+-			return Promise.reject(Error("synthetic transport refusal"));
+-		},
+-	});
++	const models = path.join(dir, "models.yml");
++	const settings = fixedStartupProviders ? Settings.isolated({ disabledProviders }) : undefined;
++	let registry: ModelRegistry;
++	try {
++		if (modelConfig) fs.writeFileSync(models, modelConfig);
++		registry = new ModelRegistry(auth, models, {
++			ownStartupDiscovery: owned,
++			fixedStartupProviders,
++			settings,
++			fetch: () => {
++				fetches++;
++				return Promise.reject(Error("synthetic transport refusal"));
++			},
++		});
++	} catch (error) {
++		auth.close();
++		fs.rmSync(dir, { recursive: true, force: true });
++		throw error;
++	}
+ 	return {
+ 		registry,
++		settings,
+ 		auth,
+ 		dir,
+ 		fetches: () => fetches,
+@@ -316,3 +354,68 @@
+ 		refused.close();
+ 	}
+ });
++
++test("fixed startup refuses a widened initial discovery profile", () => {
++	for (const providerId of ["web", "ollama", "openai-codex"]) {
++		const disabledProviders = FIXED_DISABLED_PROVIDERS.filter(id => id !== providerId);
++		expect(() => fixture(true, true, { disabledProviders }).close()).toThrow(
++			"Fixed startup discovery inventory unqualified",
++		);
++	}
++	const modelConfig =
++		"providers:\n  anthropic:\n    api: openai-completions\n    baseUrl: http://127.0.0.1:9/v1\n    discovery:\n      type: openai-models-list\n";
++	expect(() => fixture(true, true, { modelConfig }).close()).toThrow("Fixed startup discovery inventory unqualified");
++});
++
++test("fixed startup latches an unreadable or widened live discovery profile before provider preflight", async () => {
++	for (const unreadable of [false, true]) {
++		const f = fixture(true, true, { modelConfig: "providers:\n  anthropic:\n    auth: none\n" });
++		try {
++			const peek = spyOn(f.auth.keys, "peek");
++			const read = unreadable
++				? spyOn(cfgDisabledProviders, "get").mockImplementation(() => {
++						throw new Error("fixture unavailable");
++					})
++				: undefined;
++			try {
++				if (!unreadable)
++					cfgDisabledProviders.override(
++						f.settings!,
++						FIXED_DISABLED_PROVIDERS.filter(id => id !== "web"),
++					);
++				await expect(f.registry.refreshProvider("web", "online")).rejects.toThrow(
++					"Fixed startup discovery inventory unqualified",
++				);
++				expect(peek).not.toHaveBeenCalled();
++				expect(f.fetches()).toBe(0);
++			} finally {
++				read?.mockRestore();
++				peek.mockRestore();
++				cfgDisabledProviders.override(f.settings!, FIXED_DISABLED_PROVIDERS);
++			}
++			await expect(f.registry.refreshProvider("anthropic", "online")).rejects.toThrow(
++				"Fixed startup discovery inventory unqualified",
++			);
++			expect(f.fetches()).toBe(0);
++			await expect(f.registry.retireStartupDiscovery()).rejects.toThrow("native owner unqualified");
++		} finally {
++			f.close();
++		}
++	}
++});
++
++test("fixed startup refuses a discovery credential before resolving it", async () => {
++	const f = fixture(true, true);
++	try {
++		const peek = spyOn(f.auth.keys, "peek");
++		f.auth.keys.setRuntime("anthropic", "synthetic-discovery-key");
++		await expect(f.registry.refreshProvider("anthropic", "online")).rejects.toThrow(
++			"Fixed startup discovery inventory unqualified",
++		);
++		expect(peek).not.toHaveBeenCalled();
++		expect(f.fetches()).toBe(0);
++		await expect(f.registry.retireStartupDiscovery()).rejects.toThrow("native owner unqualified");
++	} finally {
++		f.close();
++	}
++});

@@ -5,6 +5,15 @@
 Updated 2026-11-19. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
+- **Fixed startup discovery eligibility, 2026-11-19.** The registry requires
+  the Anthropic-only discovery profile and latches changes before new
+  discovery work can start. The native host preserved the shared catalog
+  refusal and stopped both launch-time and caught late changes. The private
+  catalog receipt binds the fixed provider inventory. The transitive
+  transport inventory, durable acknowledgment and runtime handoff remain
+  on HOLD
+  ([record](validation.md#fixed-discovery-provider-inventory-at-startup--2026-11-19)).
+
 - **Durable startup observation prefix, 2026-11-19.** The native observer's
   HOLD row binds the synced prefix through RPC retirement. The journal
   rejects a torn record, a replacement inode and an uncommitted halt.
