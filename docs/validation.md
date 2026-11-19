@@ -1,5 +1,53 @@
 # Validation
 
+## T005 bounded lexical placement fails development gates — 2026-11-18
+
+One placement variant was frozen before implementation. In ready semantic
+context with the ordinary 32-unit cap and no resolved anchor window, it keeps
+the first eight offered dense locations. It then offers up to four existing
+tier-2 lexical units, one per path absent from that prefix and only when the unit
+has no identical dense location. The remaining dense and lexical lanes retain
+their internal order. The chosen candidate changes placement only. It uses the
+same Gemma profile, lexical and dense candidate windows, source validation, caps
+and packing. The fresh holdout seal and the existing one-candidate final guards
+were pinned before the experiment.
+
+The focused ordering test passed. The first shared Cargo target reused the
+baseline executable for the candidate, which the binary comparison caught
+before evaluation. Cleaning the package and rebuilding produced distinct
+executables. The first G2 baseline attempt under an additional outer sandbox
+fell back to lexical output on all 388 calls after the local worker exited.
+That attempt is invalid and retained. A single development CLI preflight
+confirmed dense output with the existing signed local worker and its normal
+isolation. The valid comparison used that setup with the same pinned inputs.
+
+| Frozen G2 development set | Questions | Located | Verbatim bodies |
+| --- | ---: | ---: | ---: |
+| Rust | 197 | 52 → 57 | 47 → 46 |
+| Bun | 191 | 117 → 117 | 107 → 107 |
+| Total | 388 | 169 → 174 | 154 → 153 |
+
+The fresh baseline matched all 388 retained responses byte for byte. All 776
+responses in the valid pair had ready semantic traces, verified request and
+response binding, matching placement replay and the original token and byte caps.
+The unchanged `scripts/g2.sh compare` returned **KEEP OFF**. There were 15
+located gains and 10 losses, with exact one-sided McNemar p = 0.212178 at K = 1.
+Verbatim bodies had 10 gains and 11 losses. Mean delivered tokens were 2,022.9
+and 2,025.7. Every newly located case selected or shortened a promoted range
+covering the target name. In every lost case, the target still had a covering
+range at packing input, where a budget drop removed that evidence. This shows
+where the tradeoff occurred in these measured responses.
+
+The isolated variant failed both significance and body preservation. The active
+baseline is retained. G1 and the final pair did not run, and the new sealed
+holdout remains unconsumed. Provider calls and spend were zero. The exact
+selection, source bundle, builds, traces, rejected attempt and validation are
+retained privately under `runs/t005-lexical-placement-candidate-2026-11-18/`.
+The two original archives and sentinel paths passed readback. After open-file
+checks, the stage's build cache, probe store, restored masters, duplicate binary
+and private worktrees were removed. Allocated stage size dropped from
+14,028,627,968 to 527,425,536 bytes. T005 remains open.
+
 ## T005 new blind holdout sealed — 2026-11-18
 
 The owner selected fresh-context authors. The label custodian froze a new

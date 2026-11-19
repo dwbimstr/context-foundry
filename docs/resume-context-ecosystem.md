@@ -5,11 +5,19 @@
 Updated 2026-11-16. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
+- **T005 lexical placement disposition, 2026-11-18.** A fixed placement variant
+  tested four lexical slots after eight dense offers. The fresh G2 baseline
+  matched all 388 retained responses, and the candidate failed both promotion
+  gates. It gained 15 and lost 10 located cases, and verbatim bodies fell by one.
+  The active baseline and the unconsumed holdout remain available. T005 stays
+  open. The record includes the build and worker setup failures, valid comparison
+  and cleanup ([record](validation.md#t005-bounded-lexical-placement-fails-development-gates--2026-11-18)).
+
 - **T005 blind holdout sealed, 2026-11-18.** Four fresh-context authors delivered
   400 questions, 200 per corpus. Separate source checks and the unchanged full
   verifier passed. The custodian retains the set; implementation verified only
-  the metadata receipt. Freeze the next bounded candidate and evaluation guards
-  before tuning. T005 remains open
+  the metadata receipt. The set remains unconsumed after the development rejection.
+  T005 remains open
   ([record](validation.md#t005-new-blind-holdout-sealed--2026-11-18)).
 
 - **Startup RPC command boundary, 2026-11-18.** The startup observation parent

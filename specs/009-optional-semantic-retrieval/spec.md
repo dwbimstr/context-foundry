@@ -1349,9 +1349,13 @@ Use the same pinned corpora, unchanged builder and full verifier, 200 cases per
 corpus, disjoint whole-module author assignments and separate label-side checks.
 The custodian also excludes normalized question text and answer identities from
 the consumed 400-case set. The new set passed source-side review and the full
-verifier and is sealed. Implementation receives only seal metadata. The next
-bounded candidate and evaluation guards still need to be selected before tuning.
+verifier and is sealed. Implementation receives only seal metadata. A subsequent
+single placement variant used the existing lexical and dense windows and was
+rejected on development G2 for significance and body preservation. The active
+placement baseline stands and the new holdout is still unconsumed.
 See the [seal receipt](../../docs/validation.md#t005-new-blind-holdout-sealed--2026-11-18).
+The [development result](../../docs/validation.md#t005-bounded-lexical-placement-fails-development-gates--2026-11-18)
+records the exact variant, paired scores and failure disposition.
 The original G2 verdict remains valid for its original question: gain over no profile.
 This task asks which current losses can be repaired at the same delivery budget.
 The [resumable handoff](../../docs/resume-context-ecosystem.md#current-status--2026-11-06)
