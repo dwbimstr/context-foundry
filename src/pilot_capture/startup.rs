@@ -122,6 +122,12 @@ pub enum ChildMessage {
         managed_timers_excluded: bool,
         handlers: u32,
     },
+    RpcRetired {
+        initial_catalog_joined: bool,
+        metadata_subscription_excluded: bool,
+        output_drained: bool,
+        dispatch_closed: bool,
+    },
     Fault {
         code: Fault,
     },
@@ -359,6 +365,19 @@ impl ChannelState {
         {
             return Err(ProtocolFault("startup_extension_unqualified"));
         }
+        if let ChildMessage::RpcRetired {
+            initial_catalog_joined,
+            metadata_subscription_excluded,
+            output_drained,
+            dispatch_closed,
+        } = &h.msg
+            && (!initial_catalog_joined
+                || !metadata_subscription_excluded
+                || !output_drained
+                || !dispatch_closed)
+        {
+            return Err(ProtocolFault("startup_rpc_unqualified"));
+        }
         Ok(Some(Inbound {
             seq: h.seq,
             msg: h.msg,
@@ -437,6 +456,7 @@ struct ObservedOwners {
     logging: bool,
     plugin_roots: bool,
     extension: bool,
+    rpc: bool,
 }
 impl ObservedOwners {
     fn accept(&mut self, message: &ChildMessage) -> Result<(), ProtocolFault> {
@@ -516,6 +536,12 @@ impl ObservedOwners {
                 }
                 self.extension = true;
             }
+            ChildMessage::RpcRetired { .. } => {
+                if !self.extension || self.rpc {
+                    return Err(ProtocolFault("startup_rpc_order"));
+                }
+                self.rpc = true;
+            }
             ChildMessage::Fault { .. } => return Err(ProtocolFault("startup_child_fault")),
         }
         Ok(())
@@ -532,6 +558,7 @@ impl ObservedOwners {
             && self.logging
             && self.plugin_roots
             && self.extension
+            && self.rpc
     }
 }
 
@@ -605,10 +632,14 @@ async fn observe(a: ObservationAdmission) -> Result<ObservationReceipt, CaptureF
                     ChildMessage::ExtensionRetired { .. } => {
                         journal.append("startup_extension_retired",json!({"child_seq":inbound.seq,"extension":inbound.msg}))?;
                     }
+                    ChildMessage::RpcRetired { .. } => {
+                        journal.append("startup_rpc_retired",json!({"child_seq":inbound.seq,"rpc":inbound.msg}))?;
+                    }
                     ChildMessage::Fault { .. } => return Err(fault(FaultClass::Protocol,"startup_child_fault")),
                     }
                 },
-                Some(host::HostEvent::Rpc(host::RpcEvent::Ready | host::RpcEvent::Other)) => {},
+                Some(host::HostEvent::Rpc(host::RpcEvent::Other)) => {},
+                Some(host::HostEvent::Rpc(host::RpcEvent::Ready)) => return Err(fault(FaultClass::Protocol,"startup_raw_ready")),
                 Some(host::HostEvent::BridgeFault(e)) => return Err(fault(FaultClass::Protocol,e.0)),
                 _ => return Err(fault(FaultClass::Protocol,"startup_unexpected_event")),
             }
@@ -643,6 +674,7 @@ async fn observe(a: ObservationAdmission) -> Result<ObservationReceipt, CaptureF
                     | host::HostEvent::Bridge(_)
                     | host::HostEvent::BridgeFault(_)
                     | host::HostEvent::BridgeWriteFailed(_)
+                    | host::HostEvent::Rpc(host::RpcEvent::Ready)
             )
         })
     {
@@ -1125,6 +1157,35 @@ mod tests {
     }
 
     #[test]
+    fn startup_rpc_receipt_requires_all_four_facts() {
+        let valid = json!({"type":"rpc_retired","initial_catalog_joined":true,
+            "metadata_subscription_excluded":true,"output_drained":true,"dispatch_closed":true});
+        for field in [
+            "initial_catalog_joined",
+            "metadata_subscription_excluded",
+            "output_drained",
+            "dispatch_closed",
+        ] {
+            let mut refused = valid.clone();
+            refused[field] = json!(false);
+            let msg = serde_json::from_value::<ChildMessage>(refused).unwrap();
+            assert_eq!(
+                ChannelState::new(identity())
+                    .read(&mut frame(1, msg).as_slice())
+                    .unwrap_err()
+                    .0,
+                "startup_rpc_unqualified"
+            );
+        }
+        let msg = serde_json::from_value::<ChildMessage>(valid).unwrap();
+        assert!(
+            ChannelState::new(identity())
+                .read(&mut frame(1, msg).as_slice())
+                .is_ok()
+        );
+    }
+
+    #[test]
     fn startup_owner_order_rejects_duplicates_and_attempts_after_settlement() {
         let warmup = ChildMessage::OwnerSettled {
             owner: Owner::ModelConnectionWarmup,
@@ -1195,7 +1256,14 @@ mod tests {
             managed_timers_excluded: true,
             handlers: 1,
         };
+        let rpc = ChildMessage::RpcRetired {
+            initial_catalog_joined: true,
+            metadata_subscription_excluded: true,
+            output_drained: true,
+            dispatch_closed: true,
+        };
         for early in [
+            &rpc,
             &extension,
             &plugin_roots,
             &logging,
@@ -1245,8 +1313,12 @@ mod tests {
         assert!(state.accept(&extension).is_err());
         state.accept(&plugin_roots).unwrap();
         assert!(!state.complete());
+        assert!(state.accept(&rpc).is_err());
         state.accept(&extension).unwrap();
+        assert!(!state.complete());
+        state.accept(&rpc).unwrap();
         assert!(state.complete());
+        assert!(state.accept(&rpc).is_err());
         assert!(state.accept(&extension).is_err());
         assert!(state.accept(&plugin_roots).is_err());
         assert!(state.accept(&logging).is_err());

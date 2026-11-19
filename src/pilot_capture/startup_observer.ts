@@ -10,8 +10,10 @@ function createStartupObserver() {
  if (process.env.CF_PILOT_API !== "cf-pilot-startup-v2") startupFail();
  const channel = getCaptureChannel();
  let next = 0, refused = 0, lastJournalSeq = 0, bound = false, settled = false, pluginDone = false;
+ let extensionDone = false;
  const seenJournalDigests = new Set<string>();
  let consumeExtension: ((proof: unknown) => unknown) | undefined;
+ let consumeRpc: ((proof: unknown) => unknown) | undefined;
  const pending = new Map<number, { resolve: () => void; reject: () => void }>();
  const rejectAll = () => { for (const p of pending.values()) p.reject(); pending.clear(); };
  channel.attach((message, payload) => {
@@ -33,12 +35,25 @@ function createStartupObserver() {
  Object.defineProperty(globalThis, Symbol.for("context-foundry.startup.extension-settled.v1"), {
   configurable:false,writable:false,
   value:(proof:unknown):void => {
-   if (!bound || !settled || !pluginDone || channel.quiet || !consumeExtension) startupFail();
+   if (!bound || !settled || !pluginDone || extensionDone || channel.quiet || !consumeExtension) startupFail();
    let extension:any;
    try { extension=consumeExtension(proof); }
    catch { channel.send({type:"fault",code:"unclassified"}); startupFail(); }
    if (!startupExact(extension,["handlers_joined","callbacks_joined","starts_closed","managed_timers_excluded","handlers"]) || extension.handlers_joined !== true || extension.callbacks_joined !== true || extension.starts_closed !== true || extension.managed_timers_excluded !== true || !Number.isInteger(extension.handlers) || extension.handlers < 1 || extension.handlers > 64) startupFail();
    if (!channel.send({type:"extension_retired",...extension})) startupFail();
+   extensionDone = true;
+  },
+ });
+ Object.defineProperty(globalThis, Symbol.for("context-foundry.startup.rpc-retired.v1"), {
+  configurable:false,writable:false,
+  value:(proof:unknown):void => {
+   if (!extensionDone || channel.quiet || !consumeRpc) startupFail();
+   let rpc: unknown;
+   try { rpc = consumeRpc(proof); }
+   catch { channel.send({type:"fault",code:"unclassified"}); startupFail(); }
+   const facts = ["initial_catalog_joined","metadata_subscription_excluded","output_drained","dispatch_closed"];
+   if (!startupExact(rpc,facts) || !facts.every(key => rpc[key] === true)) startupFail();
+   if (!channel.send({type:"rpc_retired",...rpc})) startupFail();
   },
  });
  Object.defineProperty(globalThis, STARTUP_HOOK, {
@@ -56,8 +71,8 @@ function createStartupObserver() {
  });
  return Object.freeze({
   channel,
-  bind(pi: { on(event: string, callback: (event: unknown, ctx: any) => Promise<void>): void }, sealRestricted: (manager: unknown, registry: unknown) => unknown, retireCatalog: (manager: unknown, registry: unknown) => Promise<unknown>, retireSettings: (manager: unknown, registry: unknown) => Promise<unknown>, retireAuth: (manager: unknown, registry: unknown) => Promise<unknown>, retirePresence: (manager: unknown, registry: unknown) => Promise<unknown>, retireTelemetry: (manager: unknown, registry: unknown) => Promise<unknown>, retireMarketplace: (manager: unknown, registry: unknown) => Promise<unknown>, retireLogging: (manager: unknown, registry: unknown) => Promise<unknown>, retirePluginRoots: (manager: unknown, registry: unknown) => Promise<unknown>, consume: (proof: unknown) => unknown) {
-   if (bound || channel.quiet) startupFail(); bound = true; consumeExtension = consume;
+  bind(pi: { on(event: string, callback: (event: unknown, ctx: any) => Promise<void>): void }, sealRestricted: (manager: unknown, registry: unknown) => unknown, retireCatalog: (manager: unknown, registry: unknown) => Promise<unknown>, retireSettings: (manager: unknown, registry: unknown) => Promise<unknown>, retireAuth: (manager: unknown, registry: unknown) => Promise<unknown>, retirePresence: (manager: unknown, registry: unknown) => Promise<unknown>, retireTelemetry: (manager: unknown, registry: unknown) => Promise<unknown>, retireMarketplace: (manager: unknown, registry: unknown) => Promise<unknown>, retireLogging: (manager: unknown, registry: unknown) => Promise<unknown>, retirePluginRoots: (manager: unknown, registry: unknown) => Promise<unknown>, consume: (proof: unknown) => unknown, consumeRpcReceipt: (proof: unknown) => unknown) {
+   if (bound || channel.quiet) startupFail(); bound = true; consumeExtension = consume; consumeRpc = consumeRpcReceipt;
    pi.on("session_start", async (_event, ctx) => {
     if (channel.quiet) return;
     if (settled || pending.size || next === 0) startupFail();
@@ -123,6 +138,8 @@ export default async function observeStartup(pi: { on(event: string, callback: (
  // Only the late trusted-extension loader resolves host SDK imports. The early
  // preload owns the channel and receives this exact source binding afterward.
  const { sealRestrictedStartup, retireRestrictedStartupCatalog, retireRestrictedStartupSettings, retireRestrictedStartupAuth, retireRestrictedStartupPresence, retireRestrictedStartupTelemetry, retireRestrictedStartupMarketplace, retireRestrictedStartupLogging, retireRestrictedStartupPluginRoots, consumeStartupExtensionReceipt } = await import("@oh-my-pi/pi-coding-agent");
+ const { consumeStartupRpcReceipt } = await import("@oh-my-pi/pi-coding-agent/modes/rpc/rpc-mode");
  if (typeof sealRestrictedStartup !== "function" || typeof retireRestrictedStartupCatalog !== "function" || typeof retireRestrictedStartupSettings !== "function" || typeof retireRestrictedStartupAuth !== "function" || typeof retireRestrictedStartupPresence !== "function" || typeof retireRestrictedStartupTelemetry !== "function" || typeof retireRestrictedStartupMarketplace !== "function" || typeof retireRestrictedStartupLogging !== "function" || typeof retireRestrictedStartupPluginRoots !== "function" || typeof consumeStartupExtensionReceipt !== "function") startupFail();
- startupOwner!.bind(pi, sealRestrictedStartup, retireRestrictedStartupCatalog, retireRestrictedStartupSettings, retireRestrictedStartupAuth, retireRestrictedStartupPresence, retireRestrictedStartupTelemetry, retireRestrictedStartupMarketplace, retireRestrictedStartupLogging, retireRestrictedStartupPluginRoots, consumeStartupExtensionReceipt);
+ if (typeof consumeStartupRpcReceipt !== "function") startupFail();
+ startupOwner!.bind(pi, sealRestrictedStartup, retireRestrictedStartupCatalog, retireRestrictedStartupSettings, retireRestrictedStartupAuth, retireRestrictedStartupPresence, retireRestrictedStartupTelemetry, retireRestrictedStartupMarketplace, retireRestrictedStartupLogging, retireRestrictedStartupPluginRoots, consumeStartupExtensionReceipt, consumeStartupRpcReceipt);
 }

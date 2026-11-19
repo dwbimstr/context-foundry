@@ -148,7 +148,8 @@ fn source_startup_refusal_is_durable_and_incomplete_inventory_never_admits() {
         ("logging-write", Some(11)),
         ("plugin-roots-write", Some(12)),
         ("extension-write", Some(13)),
-        ("halt-write", Some(14)),
+        ("rpc-write", Some(14)),
+        ("halt-write", Some(15)),
     ] {
         let e = env();
         let run_dir = e._root.path().join("startup-observation");
@@ -161,6 +162,10 @@ fn source_startup_refusal_is_durable_and_incomplete_inventory_never_admits() {
             },
         });
         let bytes = std::fs::read(run_dir.join("journal.jsonl")).unwrap();
+        if let Some(out) = &output {
+            fixture_private_dirs(out).unwrap();
+            fixture_private_write(out.join(format!("{name}-journal.jsonl")), &bytes).unwrap();
+        }
         let rows: Vec<Value> = bytes
             .split(|b| *b == b'\n')
             .filter(|b| !b.is_empty())
@@ -176,6 +181,7 @@ fn source_startup_refusal_is_durable_and_incomplete_inventory_never_admits() {
             assert_eq!(receipt.terminal_code, "startup_inventory_unqualified");
             assert!(receipt.exit.normal && !receipt.exit.forced && receipt.exit.group_gone);
             assert_eq!(receipt.journal_sha256, pilot_capture::sha256_hex(&bytes));
+            assert_eq!(receipt.journal_records, 17);
             assert_eq!(
                 rows.iter()
                     .filter(|r| r["kind"] == "startup_refused")
@@ -248,6 +254,12 @@ fn source_startup_refusal_is_durable_and_incomplete_inventory_never_admits() {
                     .count(),
                 1
             );
+            assert_eq!(rows[13]["kind"], "startup_extension_retired");
+            assert_eq!(rows[14]["kind"], "startup_rpc_retired");
+            assert_eq!(rows[14]["rpc"]["initial_catalog_joined"], true);
+            assert_eq!(rows[14]["rpc"]["metadata_subscription_excluded"], true);
+            assert_eq!(rows[14]["rpc"]["output_drained"], true);
+            assert_eq!(rows[14]["rpc"]["dispatch_closed"], true);
             assert!(
                 rows.iter()
                     .any(|r| r["kind"] == "halt" && r["code"] == "startup_inventory_unqualified")
@@ -278,10 +290,6 @@ fn source_startup_refusal_is_durable_and_incomplete_inventory_never_admits() {
             })
             .is_err()
         );
-        if let Some(out) = &output {
-            fixture_private_dirs(out).unwrap();
-            fixture_private_write(out.join(format!("{name}-journal.jsonl")), bytes).unwrap();
-        }
     }
 }
 

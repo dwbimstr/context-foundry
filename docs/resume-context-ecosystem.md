@@ -5,6 +5,13 @@
 Updated 2026-11-16. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
+- **Restricted startup RPC retirement, 2026-11-18.** The native source-built host
+  waits for its initial command catalog and stdout completion, excludes the live
+  metadata subscription and command dispatch, and journals a source-bound receipt
+  after extension retirement. Catalog and output holds passed in native controls.
+  Complete inventory, the durable acknowledgment and Ready echo remain open
+  ([record](validation.md#restricted-startup-rpc-retirement--2026-11-18)).
+
 - **T005 lexical placement disposition, 2026-11-18.** A fixed placement variant
   tested four lexical slots after eight dense offers. The fresh G2 baseline
   matched all 388 retained responses, and the candidate failed both promotion
@@ -23,8 +30,7 @@ and dated paragraphs below are history.
 - **Startup RPC command boundary, 2026-11-18.** The startup observation parent
   has no RPC command writer. A separate native control placed raw Ready before
   extension retirement and publication of the first command catalog afterward.
-  The RPC initialization owner and its callbacks need qualification before the
-  durable prefix acknowledgment and Ready echo can admit commands
+  This was the baseline for the restricted RPC retirement change above
   ([record](validation.md#startup-rpc-command-boundary--2026-11-18)).
 
 - **Restricted startup held watchdog read, 2026-11-18.** In a network-denied

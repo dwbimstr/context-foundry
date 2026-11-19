@@ -1,5 +1,53 @@
 # Validation
 
+## Restricted startup RPC retirement — 2026-11-18
+
+The source-built startup observer now requires an RPC retirement receipt after
+extension retirement. The selected RPC mode awaits the original initial command
+catalog and closes the stdout writer after its queued writes finish. It excludes
+the live command-metadata subscription, raw Ready and RPC command dispatch. A
+one-use source object binds the report to the original RPC initializer. The
+Foundry observer consumes it on the existing channel, and Rust requires all
+four facts in the existing journal before closing on `startup_inventory_unqualified`.
+Ordinary RPC preserves its command catalog, subscription and dispatch.
+
+The [reference patch](references/omp-startup-rpc-observation.patch) applies to
+the retained `can1357/oh-my-pi@24439066040e006eb08da7b204f0ac41c79d2de9` source
+with the earlier startup patches. Applying it to copies of its four input files
+reproduced the built sources exactly. The source-built CLI SHA-256 is
+`7e4d547e315a29d2ab361347b3fad29ba6ae415c4aff777f595301d1804ef59e`.
+
+Six compiled CLI controls ran with networking denied. Holding the exact marker
+read before the OS call delayed the receipt until the catalog was built.
+Holding the catalog's native stdout completion callback delayed the receipt
+until the callback was released. Both holds occurred after extension retirement.
+The ordinary control retained its injected metadata callback and state queries.
+The selected mode refused unexpected input, invalid flags, a missing observer,
+and forged or replayed receipt objects. The capture-journal test passed all 13
+real-host cases. Its normal path durably records RPC retirement at row 15,
+followed by the incomplete-inventory halt and a normal reaped exit. The fault
+injection at that append leaves no successful retirement receipt. The first
+journal attempt used an old binary path and failed the pin check before launch.
+
+Ten fresh checks passed, covering the journal and RPC input controls, 120 pilot
+unit tests (one ignored), formatting, pilot all-target Clippy, Rust 1.90
+all-target checking, 37 frozen-host tests (11 ignored), five current-host tests
+and two source-host consumers. Four default-feature gates reused prior results
+after readback of 258 unchanged effective inputs. The candidate source readback
+covered all 10,339 build inputs.
+
+After checking for open files, cleanup removed the generated source tree,
+package and Rust build caches, and six duplicate native libraries. The round's
+allocated size fell from 8,772,448,256 to 522,293,248 bytes before replay.
+The retained binaries passed the RPC input check and all 13 startup journal
+cases again. The replay's normal journal contains 17 records.
+
+This qualifies RPC startup retirement for the observation profile. The first-party
+extension closure, complete inventory, runtime subscription handoff and durable
+acknowledgment/Ready exchange remain open for the admitting profile. The private
+source, native controls and receipts are under `runs/pilot-rpc-owner-2026-11-18/`.
+No provider calls or spend occurred. Paid trials and release signing remain gated.
+
 ## T005 bounded lexical placement fails development gates — 2026-11-18
 
 One placement variant was frozen before implementation. In ready semantic

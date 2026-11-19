@@ -1738,14 +1738,19 @@ channel/sequence owner; do not open a second connection or reset its sequence.
 Do not add a worker, proxy, service, database or independent log.
 
 **RPC startup boundary selected 2026-11-18.** Keep the exact first-party bridge
-as the only trusted module in the restricted launch. Treat its extension receipt
-as one owner's result. The native CLI publishes its first command catalog after
-that receipt and emits raw RPC Ready earlier. Close startup at the real RPC
-initialization boundary after the initial catalog work and its startup callbacks
-have settled. Qualify the command-metadata subscription, output ordering and
-cleanup on the source-built profile before including this owner in the frozen
-inventory. Verify the actual first-party extension closure by source and native
-controls, including module/factory work and any callbacks they start.
+as the only trusted module in the restricted launch. In the prior host, the
+native CLI published its first command catalog after extension retirement and
+emitted raw RPC Ready earlier. The source-built observation mode now awaits
+the original command catalog and drains its stdout writer. The mode excludes the
+metadata subscription and RPC dispatch, and emits its one-use source receipt
+after the extension receipt on the same private channel. The parent persists
+that receipt and still halts for the incomplete inventory. Ordinary RPC keeps
+its initialization and subscription. See the [source reference](../../../docs/references/omp-startup-rpc-observation.patch)
+and [native receipt](../../../docs/validation.md#restricted-startup-rpc-retirement--2026-11-18).
+
+The admitting profile still needs qualification for the actual first-party
+extension module and factory closure, the runtime subscription and command
+handoff, and the complete startup inventory.
 
 The current startup-only parent holds the RPC input pipe open for teardown and
 has no command writer. In the future admitting revision, keep RPC command delivery
@@ -1765,7 +1770,7 @@ facts and leaves these boundaries to qualify before the inventory can be frozen.
 | Catalog, settings and authentication | Source owner receipts cover selected discovery, settings callbacks and the empty authentication profile. | Verify the enabled configuration and any credential owners selected for the admitting profile. |
 | Presence, telemetry, marketplace and logging | The selected owners close or exclude their own work and record the original joins. | Review enabled update and output paths outside these selected owners. |
 | Plugin roots and first-party extension | The diagnostic reports plugin-root retirement and the original extension dispatch join. It excludes managed timers and the selected workspace scan. | Check module and factory work for the exact first-party source graph, including enabled native timers, discovery and callbacks. |
-| RPC initialization and parent admission | The parent has no RPC command writer in startup observation. The native fixtures show the command catalog runs after the extension receipt. | Verify RPC initialization work and command-metadata callbacks. Use the complete inventory for the synced acknowledgment and matching Ready echo below. |
+| RPC initialization and parent admission | Startup observation joins the initial catalog and its stdout writes, excludes the live subscription and RPC dispatch, and persists the source-bound receipt. The observation parent has no RPC command writer. | Qualify the runtime subscription and dispatch handoff for the admitting profile. Use the complete inventory for the synced acknowledgment and matching Ready echo below. |
 
 Source inspection at `24439066040e006eb08da7b204f0ac41c79d2de9` distinguishes
 `main.ts::buildSessionOptions` assigning `toolNames` for `--tools` from

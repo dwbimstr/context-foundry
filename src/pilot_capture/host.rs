@@ -128,7 +128,7 @@ pub const SOURCE_QUALIFICATION_OMP_SHA256: &str =
     "b5e50ce94846e29ea3db04ddab00f716208f21c0299263a30aee725c006ff9e9";
 
 pub const STARTUP_OBSERVATION_OMP_SHA256: &str =
-    "c48ea3b5a2ec5376044da48de072ae8e961d91bb87e4614269b2f37297f64cbf";
+    "7e4d547e315a29d2ab361347b3fad29ba6ae415c4aff777f595301d1804ef59e";
 pub const STARTUP_OBSERVER_SOURCE: &[u8] = concat!(
     include_str!("bridge_channel.ts"),
     "\n",
@@ -643,6 +643,7 @@ impl Host {
             args.push("--startup-no-logging".into());
             args.push("--startup-plugin-roots".into());
             args.push("--startup-extension".into());
+            args.push("--startup-rpc-observation".into());
         }
 
         let (c2r_read, c2r_write) =
