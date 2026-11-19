@@ -5,13 +5,21 @@
 Updated 2026-11-18. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
+- **Debugger sweep and native socket ownership, 2026-11-18.** The exact
+  startup observer stayed free of the debugger sweep through the prior tick
+  interval. Ordinary RPC scheduled it when a fixture-backed debug session
+  registered. Phased kernel snapshots attributed the three same-process Unix
+  descriptors at retirement to the pinned addon load. The broader inventory,
+  durable acknowledgment and runtime handoff remain on HOLD
+  ([debugger record](validation.md#debugger-sweep-starts-with-session-registration--2026-11-18),
+  [native socket record](validation.md#native-addon-socket-ownership-at-startup--2026-11-18)).
+
 - **Fixed runtime providers and debugger timer, 2026-11-18.** The fixed
   startup registry refuses runtime registration and a caught refusal still
   prevents catalog retirement. Ordinary RPC completed the synthetic discovery
   callback. A separate native control saw the debugger idle sweep tick after
-  RPC retirement. Its owner-level repair has source-test evidence and awaits
-  a compiled-host check. Inventory, acknowledgment and runtime handoff remain
-  on HOLD
+  RPC retirement. That control supplied the baseline for the owner-level
+  repair above
   ([registry record](validation.md#fixed-runtime-providers-during-startup-observation--2026-11-18),
   [timer record](validation.md#debugger-sweep-after-startup-rpc-retirement--2026-11-18)).
 

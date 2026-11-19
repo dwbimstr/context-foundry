@@ -1,5 +1,55 @@
 # Validation
 
+## Debugger sweep starts with session registration — 2026-11-18
+
+The [source patch](references/omp-startup-dap-idle-sweep.patch) starts the existing
+debugger idle sweep when `DapSessionManager` first registers a debug session.
+The ordinary manager still keeps a single sweep. Import and construction perform
+no sweep scheduling.
+
+The rebuilt CLI SHA-256 is
+`879e0690a9542088abe6ff936ee0b4fb35132f4263612cd2b8dc6660c8327766`.
+With the exact observation bridge, both wrapped-timer snapshots were empty and
+no debugger sweep was scheduled. The controller held the host open for 31.6
+seconds after RPC retirement, longer than the prior observed tick. A separate
+ordinary RPC control used the real compiled manager with a synthetic adapter.
+It requested launch, scheduled exactly one sweep, registered the session,
+disposed the adapter and answered a state query. Both groups were reaped.
+
+All 39 debugger SDK tests passed under a loopback-only sandbox. The earlier
+deny-all run passed 36 and refused the local listeners required by three TCP
+fixtures. The compiled startup controls kept the network-denied profile. There
+were zero provider calls and zero spend. Private receipts are under
+`runs/pilot-startup-dap-idle-sweep-2026-11-18/`.
+
+Six fresh Rust gates passed, covering the 14-case startup journal, RPC input,
+feature tests, Clippy, Rust 1.90 and formatting. The only changed Rust value
+is the `StartupObservation` executable pin. Readback verified the unchanged
+frozen, current and source host pins and retained the four matching
+compatibility receipts. It also verified 10,339 source inputs and the two-file
+patch against its exact preimages. Cache cleanup reduced the main round from
+5,775,650,816 to 517,177,344 allocated bytes before replay and retained the
+runnable evidence. The RPC input and all 14 startup cases passed again from
+the retained binaries.
+
+## Native addon socket ownership at startup — 2026-11-18
+
+Kernel snapshots of the exact CLI found no Internet sockets or additional
+processes in its group at RPC retirement or immediately before teardown. A
+positive local fixture confirmed that the descriptor query could observe both
+Internet and Unix sockets. The host had three Unix descriptors across two
+endpoints, with every visible peer address matched inside the same process.
+
+A phased control sampled the actual pinned addon at `process.dlopen`. The
+first preload and the sample immediately before the call had zero Unix sockets.
+The original call returned with three descriptors. Their identities and peers
+were stable through retirement and teardown. Loading the same addon under
+bare pinned Bun reproduced three descriptors across two endpoints. The bare
+runtime, SQLite and file-watcher controls did not reproduce those descriptors.
+This attributes the observed IPC to the addon load in this profile. The full
+native owner and transport inventory remains open. Private receipts are under
+`runs/pilot-startup-kernel-handles-2026-11-18/`.
+
 ## Fixed runtime providers during startup observation — 2026-11-18
 
 The [source patch](references/omp-startup-fixed-runtime-providers.patch) fixes the

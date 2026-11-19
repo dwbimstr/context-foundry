@@ -1795,7 +1795,8 @@ facts and leaves these boundaries to qualify before the inventory can be frozen.
 | Plugin roots and first-party extension | The diagnostic reports plugin-root retirement and the original extension dispatch join. It excludes managed timers and the selected workspace scan. Native controls cover the exact bridge graph read and the loader's awaited factory. | Check work started by enabled transitive loads, including native timers, discovery and callbacks. |
 | Advisors | The candidate excludes advisor discovery, tool construction, restore and activation in the explicit profile. The existing restricted-session receipt records the exclusion. Native controls exercised ordinary RPC and a late activation and restore attempt. | Preserve the disposition in the final admitting profile. |
 | Prompt and command inputs | Source guards close implicit prompt, template, command and active-repo discovery at the selected owners. Native controls cover input exclusion, ordinary RPC and active-child projection. The prompt builder rejects a preparation timeout in this profile. | Bind the same decisions to the final admitting profile and retain evidence for any enabled prompt or transitive discovery owner. |
-| Debugger and process timers | The compiled host kept the debugger's import-time idle sweep after RPC retirement. A controlled hold observed its original tick. | Start the sweep only for an actual debug session and verify the exact native boundary. Account for other reachable timers and teardown ownership. |
+| Debugger and process timers | The debugger sweep starts at first session registration. The startup control stayed free of the sweep beyond the baseline tick, and ordinary RPC started it with a fixture-backed session. | Account for other reachable timer APIs and teardown ownership. |
+| Native addon and process resources | Phased kernel snapshots place the selected profile's three same-process Unix descriptors at the original addon load. The sampled process group held no additional members or Internet sockets. | Qualify transient activity and remaining native or transitive transport owners. |
 | RPC initialization and parent admission | Startup observation joins the initial catalog and its stdout writes, excludes runtime callbacks and RPC dispatch, and persists the source-bound receipt. The observation parent has no RPC command writer. | Qualify the runtime subscription and dispatch handoff for the admitting profile. Use the complete inventory for the synced acknowledgment and matching Ready echo below. |
 
 **Selected next work, 2026-11-18.** Keep one inventory for the exact restricted
@@ -1807,8 +1808,8 @@ observation journal binds the bridge, effective arguments, settings, sanitized
 environment and sandbox policy. Each reachable owner needs a source anchor, an eligibility
 decision, a side-effect boundary and evidence of exclusion before construction,
 refusal before I/O, or original work and callbacks joined with late starts closed.
-Account for the debugger sweep and the transports reachable through admitted
-transitive code. Keep the selected registry, prompt and command dispositions
+Account for the transports reachable through admitted transitive code. Keep
+the selected debugger, registry, prompt and command dispositions
 bound to the same profile. The diagnostic receipts cover a
 partial inventory. An unresolved edge keeps admission on HOLD.
 
