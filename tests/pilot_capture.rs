@@ -139,17 +139,18 @@ fn source_startup_refusal_is_durable_and_incomplete_inventory_never_admits() {
     for (name, fail_after) in [
         ("normal", None),
         ("refusal-write", Some(2)),
-        ("catalog-write", Some(5)),
-        ("settings-write", Some(6)),
-        ("auth-write", Some(7)),
-        ("presence-write", Some(8)),
-        ("telemetry-write", Some(9)),
-        ("marketplace-write", Some(10)),
-        ("logging-write", Some(11)),
-        ("plugin-roots-write", Some(12)),
-        ("extension-write", Some(13)),
-        ("rpc-write", Some(14)),
-        ("halt-write", Some(15)),
+        ("catalog-refusal-write", Some(3)),
+        ("catalog-write", Some(6)),
+        ("settings-write", Some(7)),
+        ("auth-write", Some(8)),
+        ("presence-write", Some(9)),
+        ("telemetry-write", Some(10)),
+        ("marketplace-write", Some(11)),
+        ("logging-write", Some(12)),
+        ("plugin-roots-write", Some(13)),
+        ("extension-write", Some(14)),
+        ("rpc-write", Some(15)),
+        ("halt-write", Some(16)),
     ] {
         let e = env();
         let run_dir = e._root.path().join("startup-observation");
@@ -173,21 +174,37 @@ fn source_startup_refusal_is_durable_and_incomplete_inventory_never_admits() {
             .collect();
         assert!(!rows.iter().any(|r| matches!(
             r["kind"].as_str(),
-            Some("bridge_ready" | "prompt_sent" | "permit" | "counter_result" | "provider_attempt")
+            Some(
+                "startup_ack"
+                    | "startup_settled"
+                    | "bridge_ready"
+                    | "prompt_sent"
+                    | "permit"
+                    | "counter_result"
+                    | "provider_attempt"
+            )
         )));
         if name == "normal" {
             let receipt = receipt.unwrap();
-            assert_eq!(receipt.attempts, 1);
+            assert_eq!(receipt.attempts, 2);
             assert_eq!(receipt.terminal_code, "startup_inventory_unqualified");
             assert!(receipt.exit.normal && !receipt.exit.forced && receipt.exit.group_gone);
             assert_eq!(receipt.journal_sha256, pilot_capture::sha256_hex(&bytes));
-            assert_eq!(receipt.journal_records, 17);
-            assert_eq!(
-                rows.iter()
-                    .filter(|r| r["kind"] == "startup_refused")
-                    .count(),
-                1
-            );
+            assert_eq!(receipt.journal_records, 18);
+            let attempts: Vec<_> = rows
+                .iter()
+                .filter(|r| r["kind"] == "startup_refused")
+                .collect();
+            assert_eq!(attempts.len(), 2);
+            assert_eq!(attempts[0]["attempt"]["owner"], "model_connection_warmup");
+            assert_eq!(attempts[0]["attempt"]["attempt"], 1);
+            assert_eq!(attempts[1]["attempt"]["owner"], "model_catalog_discovery");
+            assert_eq!(attempts[1]["attempt"]["attempt"], 2);
+            assert_eq!(attempts[1]["attempt"]["method"], "GET");
+            assert_eq!(attempts[1]["attempt"]["hostname"], "catalog.stencil.so");
+            assert_eq!(attempts[1]["attempt"]["route"], "stencil_catalog");
+            assert!(attempts[1]["seq"].as_u64().unwrap() < rows[6]["seq"].as_u64().unwrap());
+            assert_eq!(rows[6]["kind"], "startup_catalog_retired");
             assert_eq!(
                 rows.iter()
                     .filter(|r| r["kind"] == "startup_owner_settled")
@@ -254,12 +271,12 @@ fn source_startup_refusal_is_durable_and_incomplete_inventory_never_admits() {
                     .count(),
                 1
             );
-            assert_eq!(rows[13]["kind"], "startup_extension_retired");
-            assert_eq!(rows[14]["kind"], "startup_rpc_retired");
-            assert_eq!(rows[14]["rpc"]["initial_catalog_joined"], true);
-            assert_eq!(rows[14]["rpc"]["metadata_subscription_excluded"], true);
-            assert_eq!(rows[14]["rpc"]["output_drained"], true);
-            assert_eq!(rows[14]["rpc"]["dispatch_closed"], true);
+            assert_eq!(rows[14]["kind"], "startup_extension_retired");
+            assert_eq!(rows[15]["kind"], "startup_rpc_retired");
+            assert_eq!(rows[15]["rpc"]["initial_catalog_joined"], true);
+            assert_eq!(rows[15]["rpc"]["metadata_subscription_excluded"], true);
+            assert_eq!(rows[15]["rpc"]["output_drained"], true);
+            assert_eq!(rows[15]["rpc"]["dispatch_closed"], true);
             assert!(
                 rows.iter()
                     .any(|r| r["kind"] == "halt" && r["code"] == "startup_inventory_unqualified")
@@ -279,6 +296,10 @@ fn source_startup_refusal_is_durable_and_incomplete_inventory_never_admits() {
             assert_eq!(rows.len(), fail_after.unwrap() as usize);
             if name == "refusal-write" {
                 assert!(!rows.iter().any(|r| r["kind"] == "startup_owner_settled"));
+            }
+            if name == "catalog-refusal-write" {
+                assert_eq!(rows[2]["attempt"]["owner"], "model_connection_warmup");
+                assert!(!rows.iter().any(|r| r["kind"] == "startup_catalog_retired"));
             }
         }
         assert!(

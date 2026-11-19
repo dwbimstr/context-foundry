@@ -1758,17 +1758,16 @@ The admitting profile still needs qualification for enabled work started by
 transitive loads, the runtime subscription and command handoff, and the rest of
 the startup inventory.
 
-**Catalog and Spotlight routes observed 2026-11-18.** Both pinned hosts attempted
-the shared catalog GET in the default diagnostic without a private destination
-receipt. Use the existing registry-owned discovery fetch for the classified
-before-transport refusal, with the same private channel and journal. A catalog
-attempt belongs to the catalog owner's open window until that owner retires.
-The currently separate warm-up and catalog retirement claims need their own
-ordering checks. The optional Spotlight experiment starts a warm-up outside
-these owners when enabled. In the selected admitting profile, close that
-experiment's startup eligibility before constructing its client, preserving
-ordinary opt-in behavior. See the [native comparison](../../../docs/validation.md#startup-catalog-and-opt-in-spotlight-route-controls--2026-11-18).
-Both route repairs and their fail-closed controls are open.
+**Catalog and Spotlight startup boundaries, 2026-11-18.** Use the existing
+registry-owned discovery fetch for the classified shared catalog GET refusal.
+The diagnostic now handles this before transport through the same private
+channel and journal as the connection warm-up. Each owner's retirement closes
+its own attempt window. The explicit restricted startup SDK closes Spotlight
+eligibility before constructing its client. Ordinary opt-in remains available.
+The [native qualification](../../../docs/validation.md#catalog-refusal-and-spotlight-startup-exclusion--2026-11-18)
+covers a held catalog refusal, a malformed reply, an unclassified and late
+attempt, missing observation and ordinary RPC. Admission still requires the
+complete inventory and durable acknowledgment below.
 
 The current startup-only parent holds the RPC input pipe open for teardown and
 has no command writer. In the future admitting revision, keep RPC command delivery
@@ -1776,6 +1775,10 @@ closed until the same private channel returns the exact acknowledgment digest in
 Ready and the ordinary settings and model checks pass. Settled startup owners,
 the parent's synced prefix readback, and the matching child echo are separate
 requirements. See the [native RPC evidence](../../../docs/validation.md#startup-rpc-command-boundary--2026-11-18).
+The original session event callback is still live after the RPC retirement
+receipt, as shown by a [native injected notice](../../../docs/validation.md#rpc-session-callback-after-startup-retirement--2026-11-18).
+Keep runtime subscriptions and goal reconciliation out of the observation
+boundary while retaining persistence failure reporting through session teardown.
 
 Use the ordered receipt prefix in [`startup.rs`](../../../src/pilot_capture/startup.rs)
 as the starting inventory for the existing diagnostic. It contains these selected
@@ -1785,7 +1788,7 @@ facts and leaves these boundaries to qualify before the inventory can be frozen.
 | --- | --- | --- |
 | Connection preparation | The original warm-up caller settles after the parent durably refuses the classified Anthropic HEAD route. | Establish before-I/O ownership for each enabled route and fail closed on unclassified transports. |
 | Tools, MCP, memory and credentials | The sealed identity reports fixed `edit` and `read`, MCP and memory exclusions, and joined credential-usage work. | Bind the final task tools and any admitted MCP integration to actual before-I/O controls. |
-| Catalog, settings and authentication | Source owner receipts cover selected discovery, settings callbacks and the empty authentication profile. A native control observes the shared catalog GET before transport. | Require the catalog destination receipt and verify the enabled configuration and any credential owners selected for the admitting profile. |
+| Catalog, settings and authentication | Source owner receipts cover selected discovery, settings callbacks and the empty authentication profile. The catalog GET is classified and refused before transport. | Verify the enabled configuration and any additional discovery and credential owners selected for the admitting profile. |
 | Presence, telemetry, marketplace and logging | The selected owners close or exclude their own work and record the original joins. | Review enabled update and output paths outside these selected owners. |
 | Plugin roots and first-party extension | The diagnostic reports plugin-root retirement and the original extension dispatch join. It excludes managed timers and the selected workspace scan. Native controls cover the exact bridge graph read and the loader's awaited factory. | Check work started by enabled transitive loads, including native timers, discovery and callbacks. |
 | RPC initialization and parent admission | Startup observation joins the initial catalog and its stdout writes, excludes the live subscription and RPC dispatch, and persists the source-bound receipt. The observation parent has no RPC command writer. | Qualify the runtime subscription and dispatch handoff for the admitting profile. Use the complete inventory for the synced acknowledgment and matching Ready echo below. |

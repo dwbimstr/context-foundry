@@ -1,5 +1,77 @@
 # Validation
 
+## RPC session callback after startup retirement — 2026-11-18
+
+A network-denied test used the catalog/Spotlight host with a synthetic extension
+handler that wrapped the real session subscription. The controller waited for
+the private `rpc_retired` receipt and then released a harmless
+`AgentSession.emitNotice` call. The original RPC callback entered and returned.
+The already-closed stdout writer emitted no notice. The exact-bridge baseline and
+the injected control both exited normally and were reaped. The injected event
+establishes that the callback was still live, independently of stdout delivery.
+In a separate ordinary RPC control, the same emission API delivered the fixture
+notice on stdout after a successful state query.
+
+Separate runtime event subscription and goal reconciliation from the observation
+boundary before accepting a runtime handoff. Preserve session persistence failure
+reporting through teardown. This follow-up and the acknowledgment stay open. The
+private controls and draft are under `runs/pilot-startup-rpc-event-owner-2026-11-18/`.
+Provider calls and spend were zero.
+
+## Catalog refusal and Spotlight startup exclusion — 2026-11-18
+
+The [source patch](references/omp-startup-catalog-spotlight.patch) binds the
+explicit startup-observation launch's registry to a refusal-only fetch. It
+classifies the exact catalog GET before the registry can call transport. The
+catalog and connection warm-up owners share the original sequence, channel and
+synced journal, with an independent retirement window for each owner. The
+restricted startup SDK also closes Spotlight eligibility before creating the
+experiment client or its credential state.
+
+The rebuilt CLI SHA-256 is
+`f8a67f4f45b701171ad88c76d5f46379a4bf18a1beae3f35728b9e966a274ba3`.
+The materialized observer SHA-256 is
+`8fb429aad6e2a502885e2977a41e8ff40b2dfedeb0d1ebc3f7aad40afb279de4`.
+Reapplying the reference patch reproduced both changed host source files.
+
+Eight network-denied native controls on the rebuilt host passed. Both target
+routes produced private refusal requests, and holding the catalog refusal reply
+kept catalog, extension and RPC retirement pending. A Spotlight opt-in left
+Spotlight inactive in explicit restricted startup. Ordinary RPC still invoked
+both fixture fetch paths and answered a state query. A malformed refusal, an
+unclassified catalog attempt, a late attempt and a missing observer stopped
+startup without RPC retirement.
+
+An additional native control kept the global fetch binding intact and observed
+Darwin `socket`, `connect`, `sendto` and `getaddrinfo`. The normal launch loaded
+the observer without reaching those interposed calls. The positive loopback
+control registered `socket` and `connect` and returned `ECONNREFUSED`. Those two
+calls have positive runtime witnesses. Coverage of other transports remains open.
+
+The initial unclassified-attempt control exposed a frame after a terminal fault.
+The extension loader had guarded `process.exit`, leaving enough time for the
+next startup task to send. Closing the observer channel and rejecting its
+pending promises before exiting made the fault the final frame in the native
+control. The original failing trace is retained.
+
+Ten fresh Rust and host checks passed, including 121 pilot units (one ignored),
+37 frozen-host tests (11 ignored), five current-host cases and both source-host
+consumers. The 14 actual startup journal cases included a write fault at the
+catalog refusal. The normal journal contains 18 records, both classified
+refusals, and the incomplete-inventory halt followed by a normal reaped exit.
+Four default-feature gates reused prior results on 258 unchanged inputs. The
+observed inventory binds this prefix to the CLI, bridge, and source manifest.
+
+After open-file and checksum checks, cleanup removed the generated source tree,
+package and Rust build caches, and twenty duplicate native libraries. The round
+fell from 10,334,167,040 to 528,359,424 allocated bytes before replay. The RPC
+input check and all 14 startup journal cases passed from the retained binaries.
+
+These checks qualify the two selected route boundaries. The complete startup
+owner inventory, runtime handoff and durable acknowledgment remain open.
+Private originals, controls and receipts are under
+`runs/pilot-startup-route-closure-2026-11-18/`. Provider calls and spend were zero.
+
 ## Startup catalog and opt-in Spotlight route controls — 2026-11-18
 
 A native comparison used the previous and direct-SDK CLIs with the same

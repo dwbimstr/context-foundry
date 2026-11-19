@@ -1,0 +1,61 @@
+diff --git a/packages/coding-agent/src/main.ts b/packages/coding-agent/src/main.ts
+--- a/packages/coding-agent/src/main.ts
++++ b/packages/coding-agent/src/main.ts
+@@ -9,6 +9,7 @@
+ import type { ThinkingLevel } from "@oh-my-pi/pi-agent-core/thinking";
+ import type { ImageContent, Model } from "@oh-my-pi/pi-ai";
+ import { getModelPricingStatus } from "@oh-my-pi/pi-catalog/models";
++import type { FetchImpl } from "@oh-my-pi/pi-catalog/types";
+ import { ensureSqliteLockShim, isEnoent, isEnotdir } from "@oh-my-pi/pi-utils";
+ import {
+ 	APP_NAME,
+@@ -1846,6 +1847,19 @@
+ 	await session.dispose().catch(() => undefined);
+ }
+ 
++function observeStartupCatalogFetch(): FetchImpl {
++	const hook = (globalThis as Record<symbol, unknown>)[Symbol.for("context-foundry.startup.catalog-refusal.v1")];
++	if (typeof hook !== "function") throw new Error("Startup catalog observer unavailable");
++	return async (input, init) => {
++		const metadata =
++			input === "https://catalog.stencil.so/models.json.zstd" && init?.method === "GET"
++				? { owner: "model_catalog_discovery", method: "GET", origin: "https://catalog.stencil.so" }
++				: null;
++		await hook(metadata);
++		throw new Error("Startup catalog transport refused");
++	};
++}
++
+ export async function runRootCommand(
+ 	parsed: Args,
+ 	rawArgs: string[],
+@@ -1863,6 +1877,7 @@
+ 		throw new Error("--startup-no-marketplace requires --restrict-tools");
+ 	if (parsed.startupNoTelemetry && !parsed.restrictTools)
+ 		throw new Error("--startup-no-telemetry requires --restrict-tools");
++	const startupCatalogFetch = parsed.startupRpcObservation ? observeStartupCatalogFetch() : undefined;
+ 	const startupExtensionOwner = parsed.startupExtension ? ownStartupExtension() : undefined;
+ 	const startupPluginRootsOwner = parsed.startupPluginRoots ? ownStartupPluginRoots() : undefined;
+ 	const startupLoggingOwner = parsed.startupNoLogging ? logger.ownStartupLogging() : undefined;
+@@ -2053,6 +2068,7 @@
+ 				new ModelRegistry(authStorage, undefined, {
+ 					settings: settingsInstance,
+ 					ownStartupDiscovery: parsedArgs.restrictTools === true,
++					...(startupCatalogFetch ? { fetch: startupCatalogFetch } : {}),
+ 				}),
+ 		);
+ 		// Credential-scoped catalogs (e.g. GitHub Copilot) load from their cache
+diff --git a/packages/coding-agent/src/sdk.ts b/packages/coding-agent/src/sdk.ts
+--- a/packages/coding-agent/src/sdk.ts
++++ b/packages/coding-agent/src/sdk.ts
+@@ -3095,7 +3095,9 @@
+ 		// and its shaping replaces the native read summarizer / bash minimizer for the session.
+ 		// Helper sessions (security scan, spec generation) stay out of it.
+ 		const spotlightExperiment =
+-			options.bindProcessState === false ? undefined : startSpotlightExperiment(settings, sessionManager);
++			options.bindProcessState === false || options.startupExtensionOwner !== undefined
++				? undefined
++				: startSpotlightExperiment(settings, sessionManager);
+ 		if (spotlightExperiment) toolSession.spotlight = spotlightExperiment;
+ 		let browserPrelude: EvalPreludeDefinition | undefined;
+ 		let computerPrelude: EvalPreludeDefinition | undefined;

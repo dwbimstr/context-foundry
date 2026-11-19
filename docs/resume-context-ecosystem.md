@@ -5,11 +5,23 @@
 Updated 2026-11-16. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
+- **RPC session callback after retirement, 2026-11-18.** A synthetic notice
+  released after private RPC retirement reached the original session callback.
+  Its stdout writer had already closed. The runtime subscription handoff and
+  acknowledgment stay open
+  ([record](validation.md#rpc-session-callback-after-startup-retirement--2026-11-18)).
+
+- **Catalog refusal and Spotlight exclusion, 2026-11-18.** The explicit
+  startup profile now classifies the shared catalog GET through the existing
+  refusal channel before transport. Holding its reply held catalog retirement.
+  Spotlight stays outside that profile and ordinary opt-in still worked in the
+  network-denied control. Complete startup inventory and acknowledgment stay
+  open ([record](validation.md#catalog-refusal-and-spotlight-startup-exclusion--2026-11-18)).
+
 - **Startup catalog and Spotlight routes, 2026-11-18.** Both native host pins
   attempted the shared catalog GET without a destination receipt. In a synthetic
   Spotlight opt-in, both reported extension and RPC retirement while its fetch
-  was held. The exact default profile leaves Spotlight inactive. Keep admission
-  closed while these routes gain before-transport ownership
+  was held. These were the baselines for the route repairs above
   ([record](validation.md#startup-catalog-and-opt-in-spotlight-route-controls--2026-11-18)).
 
 - **Direct SDK import for startup observation, 2026-11-18.** The compiled host

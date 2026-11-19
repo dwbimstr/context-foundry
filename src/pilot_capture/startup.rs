@@ -17,10 +17,12 @@ pub const OBSERVATION_SECONDS: u64 = 30;
 #[serde(rename_all = "snake_case")]
 pub enum Owner {
     ModelConnectionWarmup,
+    ModelCatalogDiscovery,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Method {
     HEAD,
+    GET,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -31,6 +33,7 @@ pub enum Scheme {
 #[serde(rename_all = "snake_case")]
 pub enum Route {
     AnthropicOrigin,
+    StencilCatalog,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -213,13 +216,32 @@ impl ChannelState {
             .ok_or(ProtocolFault("startup_sequence_exhausted"))?;
         if let ChildMessage::StartupAttempt {
             attempt,
+            owner,
+            method,
+            scheme,
             hostname,
             port,
-            ..
+            route,
         } = &h.msg
             && (!(1..=MAX_ATTEMPTS).contains(attempt)
-                || hostname != "api.anthropic.com"
-                || *port != 443)
+                || !matches!(
+                    (*owner, *method, *scheme, hostname.as_str(), *port, *route),
+                    (
+                        Owner::ModelConnectionWarmup,
+                        Method::HEAD,
+                        Scheme::Https,
+                        "api.anthropic.com",
+                        443,
+                        Route::AnthropicOrigin
+                    ) | (
+                        Owner::ModelCatalogDiscovery,
+                        Method::GET,
+                        Scheme::Https,
+                        "catalog.stencil.so",
+                        443,
+                        Route::StencilCatalog
+                    )
+                ))
         {
             return Err(ProtocolFault("startup_route_unclassified"));
         }
@@ -445,6 +467,7 @@ impl CaptureSession {
 #[derive(Default)]
 struct ObservedOwners {
     attempts: u32,
+    warmup_attempted: bool,
     warmup: bool,
     restrictions: bool,
     catalog: bool,
@@ -461,17 +484,22 @@ struct ObservedOwners {
 impl ObservedOwners {
     fn accept(&mut self, message: &ChildMessage) -> Result<(), ProtocolFault> {
         match message {
-            ChildMessage::StartupAttempt { attempt, .. } => {
-                if self.warmup || self.restrictions || self.catalog {
+            ChildMessage::StartupAttempt { attempt, owner, .. } => {
+                let owner_retired = match owner {
+                    Owner::ModelConnectionWarmup => self.warmup,
+                    Owner::ModelCatalogDiscovery => self.catalog,
+                };
+                if owner_retired {
                     return Err(ProtocolFault("startup_attempt_after_settlement"));
                 }
                 if *attempt != self.attempts + 1 || self.attempts == MAX_ATTEMPTS {
                     return Err(ProtocolFault("startup_attempt_order"));
                 }
                 self.attempts += 1;
+                self.warmup_attempted |= *owner == Owner::ModelConnectionWarmup;
             }
-            ChildMessage::OwnerSettled { .. } => {
-                if self.attempts == 0 || self.warmup {
+            ChildMessage::OwnerSettled { owner } => {
+                if *owner != Owner::ModelConnectionWarmup || !self.warmup_attempted || self.warmup {
                     return Err(ProtocolFault("startup_owner_order"));
                 }
                 self.warmup = true;
@@ -714,6 +742,18 @@ mod tests {
             route: Route::AnthropicOrigin,
         }
     }
+    fn catalog_attempt(attempt: u32) -> ChildMessage {
+        ChildMessage::StartupAttempt {
+            attempt,
+            owner: Owner::ModelCatalogDiscovery,
+            method: Method::GET,
+            scheme: Scheme::Https,
+            hostname: "catalog.stencil.so".into(),
+            port: 443,
+            route: Route::StencilCatalog,
+        }
+    }
+
     fn frame(seq: u32, msg: ChildMessage) -> Vec<u8> {
         let id = identity();
         let h = ChildHeader {
@@ -742,6 +782,36 @@ mod tests {
         assert_eq!(channel.read(&mut bytes.as_slice()).unwrap().unwrap().seq, 1);
         assert!(channel.read(&mut bytes.as_slice()).is_err());
     }
+    #[test]
+    fn startup_attempts_require_the_exact_frozen_route_tuple() {
+        for valid in [attempt(), catalog_attempt(1)] {
+            assert!(
+                ChannelState::new(identity())
+                    .read(&mut frame(1, valid).as_slice())
+                    .is_ok()
+            );
+        }
+        let good = serde_json::to_value(catalog_attempt(1)).unwrap();
+        for (field, value) in [
+            ("owner", json!("model_connection_warmup")),
+            ("method", json!("HEAD")),
+            ("hostname", json!("api.anthropic.com")),
+            ("port", json!(8443)),
+            ("route", json!("anthropic_origin")),
+        ] {
+            let mut changed = good.clone();
+            changed[field] = value;
+            let msg = serde_json::from_value(changed).unwrap();
+            assert_eq!(
+                ChannelState::new(identity())
+                    .read(&mut frame(1, msg).as_slice())
+                    .unwrap_err()
+                    .0,
+                "startup_route_unclassified"
+            );
+        }
+    }
+
     #[test]
     fn startup_framing_refuses_truncation_identity_version_payload_and_exhaustion() {
         let good = frame(1, attempt());
@@ -1278,6 +1348,16 @@ mod tests {
         ] {
             assert!(ObservedOwners::default().accept(early).is_err());
         }
+        let mut catalog_only = ObservedOwners::default();
+        catalog_only.accept(&catalog_attempt(1)).unwrap();
+        assert!(catalog_only.accept(&warmup).is_err());
+        assert!(
+            catalog_only
+                .accept(&ChildMessage::OwnerSettled {
+                    owner: Owner::ModelCatalogDiscovery
+                })
+                .is_err()
+        );
         let mut state = ObservedOwners::default();
         state.accept(&attempt()).unwrap();
         assert!(state.accept(&attempt()).is_err());
@@ -1290,7 +1370,12 @@ mod tests {
         assert!(state.accept(&restrictions).is_err());
         assert!(!state.complete());
         assert!(state.accept(&settings).is_err());
+        state.accept(&catalog_attempt(2)).unwrap();
         state.accept(&catalog).unwrap();
+        assert_eq!(
+            state.accept(&catalog_attempt(3)).unwrap_err().0,
+            "startup_attempt_after_settlement"
+        );
         assert!(!state.complete());
         assert!(state.accept(&auth).is_err());
         state.accept(&settings).unwrap();
