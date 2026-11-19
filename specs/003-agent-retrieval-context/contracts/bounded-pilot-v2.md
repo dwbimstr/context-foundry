@@ -1769,6 +1769,15 @@ covers a held catalog refusal, a malformed reply, an unclassified and late
 attempt, missing observation and ordinary RPC. Admission still requires the
 complete inventory and durable acknowledgment below.
 
+The fixed diagnostic starts the pinned Anthropic-only discovery owner in a
+fresh process and private profile. Its parent accepts catalog retirement only
+after the classified catalog attempt has been refused and synced. The warm-up
+refusal cannot satisfy this requirement. Missing evidence records
+`startup_catalog_refusal_missing` before any catalog retirement or partial
+inventory attestation. A profile that can skip the catalog attempt needs
+explicit evidence of that disposition before using the admitting protocol.
+See the [native omission control](../../../docs/validation.md#catalog-refusal-binding-in-the-startup-diagnostic--2026-11-19).
+
 The current startup-only parent holds the RPC input pipe open for teardown and
 has no command writer. In the future admitting revision, keep RPC command delivery
 closed until the same private channel returns the exact acknowledgment digest in

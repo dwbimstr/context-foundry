@@ -519,6 +519,7 @@ impl CaptureSession {
 struct ObservedOwners {
     attempts: u32,
     warmup_attempted: bool,
+    catalog_attempted: bool,
     warmup: bool,
     restrictions: bool,
     catalog: bool,
@@ -547,7 +548,10 @@ impl ObservedOwners {
                     return Err(ProtocolFault("startup_attempt_order"));
                 }
                 self.attempts += 1;
-                self.warmup_attempted |= *owner == Owner::ModelConnectionWarmup;
+                match owner {
+                    Owner::ModelConnectionWarmup => self.warmup_attempted = true,
+                    Owner::ModelCatalogDiscovery => self.catalog_attempted = true,
+                }
             }
             ChildMessage::OwnerSettled { owner } => {
                 if *owner != Owner::ModelConnectionWarmup || !self.warmup_attempted || self.warmup {
@@ -564,6 +568,11 @@ impl ObservedOwners {
             ChildMessage::CatalogRetired { .. } => {
                 if !self.restrictions || self.catalog {
                     return Err(ProtocolFault("startup_catalog_order"));
+                }
+                // The pinned diagnostic launches with a fresh catalog context.
+                // The observer syncs each refusal before accepting the next frame.
+                if !self.catalog_attempted {
+                    return Err(ProtocolFault("startup_catalog_refusal_missing"));
                 }
                 self.catalog = true;
             }
@@ -1514,6 +1523,10 @@ mod tests {
         assert!(state.accept(&restrictions).is_err());
         assert!(!state.complete());
         assert!(state.accept(&settings).is_err());
+        assert_eq!(
+            state.accept(&catalog).unwrap_err().0,
+            "startup_catalog_refusal_missing"
+        );
         state.accept(&catalog_attempt(2)).unwrap();
         state.accept(&catalog).unwrap();
         assert_eq!(

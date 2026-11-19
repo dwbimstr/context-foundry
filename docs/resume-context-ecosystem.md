@@ -5,6 +5,13 @@
 Updated 2026-11-19. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
+- **Catalog refusal binding, 2026-11-19.** The fixed startup diagnostic
+  requires the shared catalog refusal before recording catalog retirement.
+  An omission control exercised the compiled host and the Rust journal.
+  Full startup inventory, durable acknowledgment and runtime handoff remain
+  on HOLD
+  ([record](validation.md#catalog-refusal-binding-in-the-startup-diagnostic--2026-11-19)).
+
 - **Restricted startup prompt and process policy, 2026-11-19.** The explicit
   profile skips optional scheme descriptions and their executable lookups.
   The startup launcher binds the macOS subprocess-creation denial into the

@@ -1,5 +1,46 @@
 # Validation
 
+## Catalog refusal binding in the startup diagnostic — 2026-11-19
+
+The fixed startup diagnostic uses a fresh, private host and enables only
+Anthropic discovery. In the pinned OMP source at
+`24439066040e006eb08da7b204f0ac41c79d2de9` with the recorded patches,
+`anthropicModelManagerOptions` enables the shared catalog fetch without an
+API key. The CLI's `observeStartupCatalogFetch` supplies a new, locally
+refusing fetch function for each diagnostic launch.
+The Rust observer now requires a classified catalog attempt before accepting
+catalog retirement. The observation loop appends and syncs the refusal before
+processing the retirement frame
+([observer implementation](../src/pilot_capture/startup.rs)).
+
+A native omission control used the exact pinned CLI and a test-only bridge
+that returned before sending the catalog attempt. The CLI still refused
+locally under network and process-fork denial. Before the repair, the
+observer recorded catalog retirement and attested a 15-record prefix with
+only the warm-up refusal. The process group was reaped.
+
+After the repair, the same control records `startup_catalog_refusal_missing`
+before catalog retirement and reaps the process group. The seven-record
+journal ends with the protocol halt and host-exit receipt. The production
+bridge passes the native 14-case startup test. The normal run keeps both
+classified refusals, its 16-record prefix and its 18-record HOLD journal.
+The native RPC input control also passes.
+
+Formatting, capture Clippy, the Rust 1.90 capture check and the capture
+unit suite pass. The unit suite has 125 passed, zero failed and one ignored.
+The four default-feature gate receipts are reused after verifying all 258
+effective inputs against their retained hashes.
+
+Removing the generated source copy and three build caches reduced the
+round's allocation by 5,895,245,824 bytes. All three native checks passed
+again from the retained executables after cleanup.
+
+The control uses host SHA-256
+`a25ee9675c56e02363876abcc9e4d87179f6a44089eadc0e4ee62cdea017ca25`.
+Private transcripts and command receipts are under
+`runs/pilot-startup-catalog-refusal-binding-2026-11-19/`.
+Full inventory, durable acknowledgment and runtime handoff remain on HOLD.
+
 ## Restricted startup scheme descriptions and process policy — 2026-11-19
 
 The [source patch](references/omp-startup-prompt-scheme-exclusion.patch)
