@@ -5,6 +5,20 @@
 Updated 2026-11-19. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
+- **Restricted startup prompt and process policy, 2026-11-19.** The explicit
+  profile skips optional scheme descriptions and their executable lookups.
+  The startup launcher binds the macOS subprocess-creation denial into the
+  policy hash. Native positive controls preserved ordinary RPC. The broader
+  inventory, durable acknowledgment and runtime handoff remain on HOLD
+  ([record](validation.md#restricted-startup-scheme-descriptions-and-process-policy--2026-11-19)).
+
+- **Native addon socket creation, 2026-11-19.** The compiled host's addon
+  made one Unix stream socket-pair call. The differential Tokio fixture
+  reproduced the three-descriptor pattern when the Unix signal driver
+  was active. Internal function attribution in the compiled addon and
+  broader transport qualification remain open
+  ([record](validation.md#native-unix-socket-creation-during-addon-load--2026-11-19)).
+
 - **Startup RPC output through teardown, 2026-11-19.** The diagnostic parent
   verifies the single startup catalog on stdout and both stream endings.
   Late parser faults are durable failures even when the host reports
@@ -13,10 +27,9 @@ and dated paragraphs below are history.
   durable acknowledgment and runtime dispatch remain on HOLD
   ([record](validation.md#startup-rpc-output-through-teardown--2026-11-19)).
 
-- **Remote URL prompt lookups, 2026-11-19.** The pinned host still checks
-  `ssh`, `gh` and `glab` availability while building optional scheme
-  descriptions in the restricted prompt. The next source guard belongs
-  at prompt construction
+- **Remote URL prompt lookup baseline, 2026-11-19.** The earlier pinned host
+  checked `ssh`, `gh` and `glab` availability while building optional
+  scheme descriptions in the restricted prompt
   ([record](validation.md#remote-url-documentation-lookups-during-startup--2026-11-19)).
 
 - **Fixed startup discovery eligibility, 2026-11-19.** The registry requires

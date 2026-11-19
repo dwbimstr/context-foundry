@@ -1,5 +1,65 @@
 # Validation
 
+## Restricted startup scheme descriptions and process policy — 2026-11-19
+
+The [source patch](references/omp-startup-prompt-scheme-exclusion.patch)
+skips optional scheme descriptions in the existing restricted
+`buildSystemPrompt` path. The new source regression observed a call to
+`InternalUrlRouter.describe` on the previous code. All 33 focused SDK
+tests passed with the guard.
+
+The rebuilt CLI SHA-256 is
+`a25ee9675c56e02363876abcc9e4d87179f6a44089eadc0e4ee62cdea017ca25`.
+Both restricted runs used the exact bridge and observed zero lookups for
+`ssh`, `gh` and `glab`. Holding the catalog refusal held retirement.
+The 16,174-byte command catalog matched the baseline. Ordinary RPC used the
+same agent settings, performed all three lookups, and answered a state query.
+
+The startup-only Rust launcher binds a macOS `deny process-fork` rule into
+the launch policy hash. The compiled host reached diagnostic retirement under
+the rule. A synthetic `/usr/bin/true` fixture received `EPERM` from
+`Bun.spawn`, `Bun.spawnSync` and Node's `spawnSync` with the rule in force.
+All three calls succeeded under the ordinary policy. All six native control
+groups were reaped. These are no-provider controls under network denial.
+Private evidence is under `runs/pilot-startup-prompt-scheme-exclusion-2026-11-19/`
+and `runs/pilot-startup-kernel-fork-exclusion-2026-11-19/`.
+
+The Rust launch-policy regression failed before the rule was bound. Six
+fresh checks passed for the final change, including the 14-case startup
+journal, RPC input, 125 feature tests, Clippy, Rust 1.90 and formatting.
+The frozen, current and source compatibility host pins match their
+preceding receipts. Cleanup reduced the four staged run directories from
+9,074,438,144 to 525,672,448 allocated bytes before replay. Both native
+startup checks passed again from the retained production binaries.
+
+## Native Unix socket creation during addon load — 2026-11-19
+
+A test-only syscall witness observed one successful `AF_UNIX` stream
+`socketpair` call from the pinned native addon image during startup of
+the rebuilt CLI. The exact bridge reached RPC retirement and the process
+group was reaped under network and process-fork denial. The same witness
+observed a call while loading the addon under bare pinned Bun. Its
+bare-runtime control observed zero calls.
+
+The pinned source calls `start_async_runtime` from the N-API module
+registration path. On macOS that path uses Tokio
+`Builder::new_multi_thread().enable_all()`. A separate native fixture built
+with the source lock's Tokio 1.53.1 and Mio 1.2.3 reproduced the measured
+descriptor pattern. The full runtime held three Unix descriptors across
+two same-process endpoints. Dropping it left the two shared endpoints.
+The no-signal and time-only controls held zero Unix descriptors. This
+identifies the Unix signal driver in the component fixture and accounts
+for the matching pattern in the addon as an inference. The compiled
+addon's sampled frames identify the image and offsets. They leave its
+internal function identity and the remaining transport inventory open.
+
+macOS denied the debugger attachment. The first test-only syscall witness
+crashed during addon loading. The successful witness calls the original
+symbol from its own image and records only the transport class and frames.
+Private evidence is under `runs/pilot-startup-tokio-signal-owner-2026-11-19/`
+and `runs/pilot-startup-addon-socketpair-2026-11-19/`. These controls used
+zero provider calls and zero spend.
+
 ## Startup RPC output through teardown — 2026-11-19
 
 The startup-only [stdout reader](../src/pilot_capture/host.rs) accepts a single
@@ -41,9 +101,8 @@ Both groups were reaped under network denial with zero provider calls
 and zero spend.
 
 The probe establishes local executable-availability checks for optional
-prompt descriptions. The read/edit-only startup profile has no need to
-advertise those remote URI handlers. The remaining qualification is to
-exclude their descriptions in that profile while preserving ordinary RPC.
+prompt descriptions. It supplied the baseline for the
+[restricted prompt repair](#restricted-startup-scheme-descriptions-and-process-policy--2026-11-19).
 Private receipts are under `runs/pilot-startup-url-doc-owners-2026-11-19/`.
 
 ## Fixed discovery provider inventory at startup — 2026-11-19

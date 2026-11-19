@@ -1794,9 +1794,9 @@ facts and leaves these boundaries to qualify before the inventory can be frozen.
 | Presence, telemetry, marketplace and logging | The selected owners close or exclude their own work and record the original joins. | Review enabled update and output paths outside these selected owners. |
 | Plugin roots and first-party extension | The diagnostic reports plugin-root retirement and the original extension dispatch join. It excludes managed timers and the selected workspace scan. Native controls cover the exact bridge graph read and the loader's awaited factory. | Check work started by enabled transitive loads, including native timers, discovery and callbacks. |
 | Advisors | The candidate excludes advisor discovery, tool construction, restore and activation in the explicit profile. The existing restricted-session receipt records the exclusion. Native controls exercised ordinary RPC and a late activation and restore attempt. | Preserve the disposition in the final admitting profile. |
-| Prompt and command inputs | Source guards close implicit prompt, template, command and active-repo discovery at the selected owners. Native controls cover input exclusion, ordinary RPC and active-child projection. The prompt builder rejects a preparation timeout in this profile. | Bind the same decisions to the final admitting profile and retain evidence for any enabled prompt or transitive discovery owner. |
+| Prompt and command inputs | Source guards close implicit prompt, template, command and active-repo discovery at the selected owners. The restricted prompt skips optional URI scheme descriptions before invoking their owners. Native controls cover input exclusion, ordinary RPC and active-child projection. The prompt builder rejects a preparation timeout in this profile. | Bind the same decisions to the final admitting profile and retain evidence for any enabled prompt or transitive discovery owner. |
 | Debugger and process timers | The debugger sweep starts at first session registration. The startup control stayed free of the sweep beyond the baseline tick, and ordinary RPC started it with a fixture-backed session. | Account for other reachable timer APIs and teardown ownership. |
-| Native addon and process resources | Phased kernel snapshots place the selected profile's three same-process Unix descriptors at the original addon load. The sampled process group held no additional members or Internet sockets. | Qualify transient activity and remaining native or transitive transport owners. |
+| Native addon and process resources | Phased kernel snapshots place three same-process Unix descriptors at the original addon load. A test-only witness records one Unix stream socket-pair call from that image. A Tokio component fixture reproduces the pattern with its signal driver. The startup launcher binds the process-fork denial into its policy hash. | Qualify remaining transient network and IPC activity and any process capability required by the final runtime. |
 | RPC initialization and parent admission | Startup observation joins the initial catalog and its stdout writes, excludes runtime callbacks and RPC dispatch, and persists the source-bound receipt. Its parent admits one command catalog envelope on stdout and checks both streams through EOF. The observation parent has no RPC command writer. | Qualify the runtime subscription and dispatch handoff for the admitting profile. Use the complete inventory for the synced acknowledgment and matching Ready echo below. |
 
 **Selected next work, 2026-11-18.** Keep one inventory for the exact restricted
@@ -1829,12 +1829,17 @@ catalog receipt requires `discovery_providers_fixed`. Preserve these
 eligibility decisions in the admitting profile and qualify its remaining
 transitive transport and callback ownership.
 
-The restricted prompt still calls `InternalUrlRouter.describe`, which
-runs optional remote scheme documentation checks. The
-[native lookup control](../../../docs/validation.md#remote-url-documentation-lookups-during-startup--2026-11-19)
-observed `ssh`, `gh` and `glab` executable lookup at those owners.
-Exclude optional scheme descriptions at the read/edit-only prompt boundary
-and exercise the ordinary prompt as the positive control.
+The [baseline lookup control](../../../docs/validation.md#remote-url-documentation-lookups-during-startup--2026-11-19)
+observed `ssh`, `gh` and `glab` executable lookups in
+`InternalUrlRouter.describe`. The read/edit-only prompt now excludes that
+call at `buildSystemPrompt`, and ordinary RPC exercises it as a positive
+control. The startup-only sandbox denies process creation. The
+[native controls](../../../docs/validation.md#restricted-startup-scheme-descriptions-and-process-policy--2026-11-19)
+verify the source guard, kernel denials and ordinary positive cases.
+The [addon controls](../../../docs/validation.md#native-unix-socket-creation-during-addon-load--2026-11-19)
+bind the observed socket-pair call to the native image and separately test
+the Tokio source path. The component result supplies a source attribution
+for further qualification of the compiled addon.
 
 Source inspection at `24439066040e006eb08da7b204f0ac41c79d2de9` distinguishes
 `main.ts::buildSessionOptions` assigning `toolNames` for `--tools` from

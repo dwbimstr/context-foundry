@@ -89,7 +89,9 @@ async fn source_host_owned_catalog_preserves_full_history() {
 #[tokio::test]
 #[ignore = "needs explicit CF_PILOT_STARTUP_OMP; no-provider startup command boundary"]
 async fn source_startup_profile_refuses_rpc_commands() {
-    use pilot_capture::host::{CatalogProfile, Host, HostEvent, HostSpec, RpcEvent};
+    use pilot_capture::host::{
+        CatalogProfile, Host, HostEvent, HostSpec, RpcEvent, sandbox_policy,
+    };
     use pilot_capture::protocol::ChannelIdentity;
     use std::time::Duration;
 
@@ -97,7 +99,7 @@ async fn source_startup_profile_refuses_rpc_commands() {
         std::env::var_os("CF_PILOT_STARTUP_OMP").expect("explicit startup source host"),
     );
     let e = env();
-    let (host, mut events) = Host::launch(&HostSpec {
+    let spec = HostSpec {
         omp,
         root: e.run_dir,
         workspace: e.workspace,
@@ -106,8 +108,19 @@ async fn source_startup_profile_refuses_rpc_commands() {
         deny_literals: vec![],
         identity: ChannelIdentity::new("startup-rpc".into(), "test-host".into()).unwrap(),
         catalog: CatalogProfile::StartupObservation,
-    })
+    };
+    let (host, mut events) = Host::launch(&spec).unwrap();
+    let actual_policy_sha256 = host.launch.policy_sha256.clone();
+    let mut expected_policy = sandbox_policy(
+        &spec.omp,
+        &host.paths.root,
+        &spec.workspace,
+        &spec.real_home,
+        &spec.deny,
+        &spec.deny_literals,
+    )
     .unwrap();
+    expected_policy.push_str("(deny process-fork)");
     let first = tokio::time::timeout(Duration::from_secs(10), events.recv()).await;
     let result = host
         .send_rpc(&json!({"id": "startup-control", "type": "get_state"}))
@@ -119,6 +132,11 @@ async fn source_startup_profile_refuses_rpc_commands() {
     assert_eq!(error.class, FaultClass::Protocol);
     assert_eq!(error.code, "rpc_on_startup_channel");
     assert!(exit.group_gone && !exit.forced);
+    assert_eq!(
+        actual_policy_sha256,
+        pilot_capture::sha256_hex(expected_policy.as_bytes()),
+        "startup launch must bind the process-fork denial"
+    );
     assert!(
         !drained
             .iter()
