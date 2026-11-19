@@ -95,7 +95,7 @@ function createStartupObserver() {
     try {
      restriction = sealRestricted(ctx.sessionManager, ctx.modelRegistry);
     } catch { channel.send({type:"fault",code:"unclassified"}); fail(); }
-    if (!startupExact(restriction,["tool_names","mcp_disabled","memory_disabled","credential_usage_joined"]) || restriction.mcp_disabled !== true || restriction.memory_disabled !== true || restriction.credential_usage_joined !== true || JSON.stringify(restriction.tool_names) !== JSON.stringify(["edit","read"])) fail();
+    if (!startupExact(restriction,["tool_names","mcp_disabled","memory_disabled","credential_usage_joined","advisors_excluded"]) || restriction.mcp_disabled !== true || restriction.memory_disabled !== true || restriction.credential_usage_joined !== true || restriction.advisors_excluded !== true || JSON.stringify(restriction.tool_names) !== JSON.stringify(["edit","read"])) fail();
     settled = true;
     if (!channel.send({type:"owner_settled",owner:"model_connection_warmup"}) || !channel.send({type:"restrictions_settled",...restriction})) fail();
     let catalog: any;

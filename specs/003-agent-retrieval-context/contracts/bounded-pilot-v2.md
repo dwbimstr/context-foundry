@@ -1793,14 +1793,15 @@ facts and leaves these boundaries to qualify before the inventory can be frozen.
 | Catalog, settings and authentication | Source owner receipts cover selected discovery, settings callbacks and the empty authentication profile. The catalog GET is classified and refused before transport. | Verify the enabled configuration and any additional discovery and credential owners selected for the admitting profile. |
 | Presence, telemetry, marketplace and logging | The selected owners close or exclude their own work and record the original joins. | Review enabled update and output paths outside these selected owners. |
 | Plugin roots and first-party extension | The diagnostic reports plugin-root retirement and the original extension dispatch join. It excludes managed timers and the selected workspace scan. Native controls cover the exact bridge graph read and the loader's awaited factory. | Check work started by enabled transitive loads, including native timers, discovery and callbacks. |
-| Advisors | Native controls observed and held an imported advisor input and observed cost restore and the advisor tool pool under restricted startup. | Decide and qualify advisor discovery, tool and restore eligibility for the complete startup profile before admission. |
+| Advisors | The candidate excludes advisor discovery, tool construction, restore and activation in the explicit profile. The existing restricted-session receipt records the exclusion. Native controls exercised ordinary RPC and a late activation and restore attempt. | Preserve the disposition in the final admitting profile. |
+| Prompt and command inputs | The candidate read implicit system, append and title prompts, a prompt template and a Markdown command. A held system prompt read held startup retirement. A held personality read outlived RPC retirement. | Close or join implicit work at the CLI, SDK and prompt-builder owners, including deadline continuations. Qualify the RPC file-command reload and the native active-repo traversal. |
 | RPC initialization and parent admission | Startup observation joins the initial catalog and its stdout writes, excludes runtime callbacks and RPC dispatch, and persists the source-bound receipt. The observation parent has no RPC command writer. | Qualify the runtime subscription and dispatch handoff for the admitting profile. Use the complete inventory for the synced acknowledgment and matching Ready echo below. |
 
-**Selected next work, 2026-11-18.** Use the existing explicit restricted SDK
-profile to exclude advisor and watchdog discovery, separate advisor tools,
-initial cost restore and later activation at their source owners. Exercise the
-same original paths in ordinary RPC as positive controls. Keep one inventory
-for the exact profile. Bind the compiled and native artifacts, ordered source
+**Selected next work, 2026-11-18.** Keep one inventory for the exact restricted
+profile. The advisor candidate excludes discovery, tools, cost restore and
+activation at their source owners. Ordinary RPC exercises the original paths
+in [native controls](../../../docs/validation.md#advisor-exclusion-during-startup-observation--2026-11-18).
+Bind the compiled and native artifacts, ordered source
 patches, bridge, effective arguments, settings, sanitized environment and
 sandbox policy. Each reachable owner needs a source anchor, an eligibility
 decision, a side-effect boundary and evidence of exclusion before construction,

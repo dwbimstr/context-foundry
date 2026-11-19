@@ -217,6 +217,11 @@ fn source_startup_refusal_is_durable_and_incomplete_inventory_never_admits() {
                     .count(),
                 1
             );
+            assert!(
+                rows.iter()
+                    .any(|r| r["kind"] == "startup_restrictions_settled"
+                        && r["restrictions"]["advisors_excluded"] == true)
+            );
             assert_eq!(
                 rows.iter()
                     .filter(|r| r["kind"] == "startup_catalog_retired")

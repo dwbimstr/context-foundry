@@ -64,6 +64,7 @@ pub enum ChildMessage {
         mcp_disabled: bool,
         memory_disabled: bool,
         credential_usage_joined: bool,
+        advisors_excluded: bool,
     },
     CatalogRetired {
         discovery_retired: bool,
@@ -251,10 +252,12 @@ impl ChannelState {
             mcp_disabled,
             memory_disabled,
             credential_usage_joined,
+            advisors_excluded,
         } = &h.msg
             && (!mcp_disabled
                 || !memory_disabled
                 || !credential_usage_joined
+                || !advisors_excluded
                 || tool_names != &["edit", "read"])
         {
             return Err(ProtocolFault("startup_restrictions_unqualified"));
@@ -864,30 +867,34 @@ mod tests {
     }
     #[test]
     fn startup_restrictions_require_all_owner_facts_and_the_exact_tools() {
-        for (mcp_disabled, memory_disabled, credential_usage_joined, tool_names) in [
-            (false, true, true, vec!["edit".into(), "read".into()]),
-            (true, false, true, vec!["edit".into(), "read".into()]),
-            (true, true, false, vec!["edit".into(), "read".into()]),
-            (true, true, true, vec!["read".into()]),
+        let valid = json!({
+            "type": "restrictions_settled",
+            "tool_names": ["edit", "read"],
+            "mcp_disabled": true,
+            "memory_disabled": true,
+            "credential_usage_joined": true,
+            "advisors_excluded": true,
+        });
+        for (field, value) in [
+            ("mcp_disabled", json!(false)),
+            ("memory_disabled", json!(false)),
+            ("credential_usage_joined", json!(false)),
+            ("advisors_excluded", json!(false)),
+            ("tool_names", json!(["read"])),
         ] {
-            let message = ChildMessage::RestrictionsSettled {
-                mcp_disabled,
-                memory_disabled,
-                credential_usage_joined,
-                tool_names,
-            };
+            let mut invalid = valid.clone();
+            invalid[field] = value;
+            let message = serde_json::from_value::<ChildMessage>(invalid).unwrap();
             assert!(
                 ChannelState::new(identity())
                     .read(&mut frame(1, message).as_slice())
                     .is_err()
             );
         }
-        let message = ChildMessage::RestrictionsSettled {
-            mcp_disabled: true,
-            memory_disabled: true,
-            credential_usage_joined: true,
-            tool_names: vec!["edit".into(), "read".into()],
-        };
+        let mut missing = valid.clone();
+        missing.as_object_mut().unwrap().remove("advisors_excluded");
+        assert!(serde_json::from_value::<ChildMessage>(missing).is_err());
+        let message = serde_json::from_value::<ChildMessage>(valid).unwrap();
         assert!(
             ChannelState::new(identity())
                 .read(&mut frame(1, message).as_slice())
@@ -1273,6 +1280,7 @@ mod tests {
             mcp_disabled: true,
             memory_disabled: true,
             credential_usage_joined: true,
+            advisors_excluded: true,
         };
         let catalog = ChildMessage::CatalogRetired {
             discovery_retired: true,

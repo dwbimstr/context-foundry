@@ -5,11 +5,21 @@
 Updated 2026-11-18. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
+- **Advisor exclusion and prompt inputs, 2026-11-18.** The qualified startup
+  observer excludes watchdog and advisor discovery, tools, cost restore and
+  late activation. Its Rust journal still halts on the partial inventory.
+  Implicit CLI prompt files, templates and a Markdown command were read in
+  separate controls. A held personality read outlived the RPC retirement
+  receipt. Freeze the profile and qualify each reachable owner and transport
+  before the durable acknowledgment and RPC handoff
+  ([advisor record](validation.md#advisor-exclusion-during-startup-observation--2026-11-18),
+  [prompt record](validation.md#implicit-prompt-inputs-during-startup-observation--2026-11-18)).
+
 - **Advisor startup inventory, 2026-11-18.** The native observer awaited a
   `WATCHDOG.yml` import, started and settled advisor cost restore, and built a
-  separate advisor tool pool. The next slice excludes those paths and later
-  activation at their source owners. Complete the launch inventory before
-  enabling a durable acknowledgment and matching Ready on the private channel
+  separate advisor tool pool. The fresh-context proposals selected owner-level
+  exclusion and require the complete launch inventory before the private
+  acknowledgment and Ready exchange
   ([record](validation.md#advisor-discovery-within-restricted-startup--2026-11-18),
   [contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md)).
 

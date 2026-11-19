@@ -1,5 +1,59 @@
 # Validation
 
+## Implicit prompt inputs during startup observation — 2026-11-18
+
+The advisor-exclusion candidate read synthetic `SYSTEM.md`,
+`SYSTEM_TEMPLATE.md`, `APPEND_SYSTEM.md`, `TITLE_SYSTEM.md`, a prompt template
+and a Markdown command with `--no-context-files` set. Holding the original
+`SYSTEM.md` read kept restricted-session, extension and RPC retirement pending
+until the read returned. A separate command-file hold saw only the classified
+warm-up attempt before release. The command was read once per run. A separate
+physical read during the RPC catalog reload remains unestablished. All runs used
+the exact bridge and exited normally. No prompt was sent.
+
+A second control held the synthetic `PERSONALITY.md` callback before its
+original file read. The host reported RPC retirement while the hold was active.
+The original read ran and returned after release. The corresponding source
+deadline in `system-prompt.ts::buildSystemPrompt` can return a fallback and
+leave the original operation and its completion callback running. The receipt
+therefore leaves this prompt owner unqualified. Both personality controls
+exited normally with no provider calls or spend.
+Private evidence is under `runs/pilot-startup-prompt-inputs-2026-11-18/`.
+
+## Advisor exclusion during startup observation — 2026-11-18
+
+The [source patch](references/omp-startup-advisor-exclusion.patch) uses the
+explicit restricted SDK profile to exclude advisor and watchdog discovery,
+the separate tool builders and initial cost restoration. It closes later
+activation and restore at the session owner. The existing one-use restricted
+session receipt binds the exclusion to the actual session, registry and
+first-party extension. The bridge and Rust require that fact.
+
+The rebuilt CLI SHA-256 is
+`7e64ff01012824f69b2b8b4cdb6f2f35d23340d874e00b5af67de91d9dff8db2`.
+The exact-bridge native run emitted the new receipt. An instrumented run with
+the same CLI observed an empty advisor pool and no watchdog, YAML or imported-file
+reads or initial cost restore. A fixture invoked activation and cost restore after
+RPC retirement and observed no advisor activation or change of the restore
+promise. Ordinary RPC read the same synthetic watchdog and YAML inputs and both
+relative imports, built the 18-entry pool, and started and settled its original
+restore. It answered a state query. All hosts exited normally and their process
+groups were gone.
+The builds and controls used OS network denial and no providers. Private
+evidence is under `runs/pilot-startup-advisor-exclusion-2026-11-18/`.
+
+All ten fresh gates passed. The 14-case Rust startup control recorded the advisor
+fact and ended its normal 18-row journal in `startup_inventory_unqualified`.
+The RPC input check, feature unit tests (121 passed, one ignored), Clippy, Rust
+1.90 all-target check, formatting, frozen host (37 passed, 11 ignored), five
+current-host checks and both source-host checks passed. Readback verified
+10,339 source inputs, the four-file patch against its exact preimages and the 258
+inputs for the reused default-feature gates. Removing temporary source and
+compiler caches and six duplicate native extractions reduced this round's
+allocated space from 6,224,998,400 to 523,313,152 bytes before replay. The host,
+focused tests, exact source overlays and private receipts were retained. Both
+focused checks passed again after cleanup.
+
 ## Advisor discovery within restricted startup — 2026-11-18
 
 The native observer read a synthetic `WATCHDOG.yml` and its relative file import
