@@ -1,5 +1,75 @@
 # Validation
 
+## Startup catalog and opt-in Spotlight route controls — 2026-11-18
+
+A native comparison used the previous and direct-SDK CLIs with the same
+network-denied control. In the default and Spotlight-enabled cases on both
+hosts, the original catalog code attempted `GET` to `catalog.stencil.so`.
+The control refused before transport. The private startup channel reported its
+one Anthropic warm-up attempt and finished its existing retirement sequence.
+The catalog GET had no destination receipt in that sequence. Catalog owner
+retirement and before-transport classification are separate requirements.
+
+Spotlight remained inactive with the exact default settings. A synthetic
+opt-in, fixture credential and reserved destination exercised its actual warm-up
+path. Its fetch was still held before transport when the extension and RPC
+retirement receipts arrived on both hosts. Releasing the fixture refused the
+fetch and let the hosts exit normally. These two routes behaved alike across the
+SDK import change. The fixture made no real network request, sent no prompts and
+spent nothing. Private evidence is under `runs/pilot-startup-spotlight-owner-2026-11-18/`.
+
+The default catalog route requires a classified refusal through the existing
+catalog owner. The opt-in experiment requires an explicit startup eligibility
+boundary for the admitting profile. The observed retirement sequence remains a
+partial inventory and startup admission stays closed.
+
+## Direct SDK import for startup observation — 2026-11-18
+
+The prior pinned CLI halted when the first-party observer used a direct SDK
+import. The first two probes surfaced the host's extension-settlement error.
+A bounded diagnostic at the import recorded the actual module-resolution
+failure before the host halted and was reaped.
+
+The [source patch](references/omp-startup-sdk-export.patch) adds an explicit
+`./sdk` export to the same patched `can1357/oh-my-pi@24439066040e006eb08da7b204f0ac41c79d2de9`
+tree. The existing compiled module registry now exposes the SDK module under
+that key. The startup bridge imports it directly for the owner seals and
+receipts. The compiled CLI SHA-256 is
+`f6b729039da6d73a8fb3d5aada47607d938d87f79d3db838a5984797053a3e9b`.
+The materialized bridge SHA-256 is
+`1f81f7a23eb920891d14414f45d4a7ecc0113b2c4390f94b6104718ae8ff8775`.
+
+Six network-denied controls on the new CLI passed. Both the legacy package-root
+import and the direct SDK import produced the expected receipts. The original
+bridge read and the injected factory wait again held extension and RPC
+retirement. Either injected failure exited before retirement. An ordinary RPC
+control retained its legacy root import, metadata subscription, catalog
+updates and both state reads. The reference patch applied byte for byte to its
+pinned input. The package formatter reported the same inherited differences in
+both copies. After formatting independent copies, the only difference was the
+SDK export.
+
+All ten fresh Rust and host checks passed, including 120 pilot unit tests
+(one ignored), 37 frozen-host tests (11 ignored), five current-host tests and
+two source-host consumers. The 13 real startup cases verified the journal and
+fault handling with the new bridge. The normal 17-record journal bound both new
+digests and ended with `startup_inventory_unqualified` and a reaped exit. Four
+default-feature gates reused their prior results on 258 unchanged inputs.
+
+Cleanup removed the generated source tree, package and Rust build caches, and
+seven duplicate native libraries after open-file and checksum checks. The SDK
+round fell from 8,884,797,440 to 523,522,048 allocated bytes before replay. Both
+startup checks passed again from the retained binaries. The completed route and
+workspace controls also yielded twenty matching native library copies for
+cleanup, with the remaining evidence verified by checksum.
+
+This removes the observer's direct dependency on the package-root compatibility
+shim. The complete startup owner inventory, runtime handoff and durable
+acknowledgment remain open. The private red is under
+`runs/pilot-startup-sdk-import-2026-11-18/` and the qualified inputs and controls
+are under `runs/pilot-startup-sdk-export-2026-11-18/`. Provider calls and spend
+were zero. Paid runs and signing remain gated.
+
 ## First-party startup extension loader controls — 2026-11-18
 
 Five native controls used the pinned CLI from [RPC retirement](#restricted-startup-rpc-retirement--2026-11-18).

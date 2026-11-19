@@ -1,0 +1,14 @@
+diff --git a/packages/coding-agent/package.json b/packages/coding-agent/package.json
+--- a/packages/coding-agent/package.json
++++ b/packages/coding-agent/package.json
+@@ -431,6 +431,10 @@
+ 		"./registry/*": {
+ 			"types": "./src/registry/*.ts",
+ 			"import": "./src/registry/*.ts"
++		},
++		"./sdk": {
++			"types": "./src/sdk.ts",
++			"import": "./src/sdk.ts"
+ 		},
+ 		"./secrets": {
+ 			"types": "./src/secrets/index.ts",

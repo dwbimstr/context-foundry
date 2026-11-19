@@ -1750,9 +1750,25 @@ and [native receipt](../../../docs/validation.md#restricted-startup-rpc-retireme
 
 The exact first-party bridge's original graph read and the loader's awaited
 factory edge now have [native hold and failure controls](../../../docs/validation.md#first-party-startup-extension-loader-controls--2026-11-18).
+The selected observer now obtains the startup owner functions from an explicit
+SDK export through the existing compiled module registry. The
+[native controls](../../../docs/validation.md#direct-sdk-import-for-startup-observation--2026-11-18)
+cover the direct import, the legacy root import, and the ordinary RPC path.
 The admitting profile still needs qualification for enabled work started by
 transitive loads, the runtime subscription and command handoff, and the rest of
 the startup inventory.
+
+**Catalog and Spotlight routes observed 2026-11-18.** Both pinned hosts attempted
+the shared catalog GET in the default diagnostic without a private destination
+receipt. Use the existing registry-owned discovery fetch for the classified
+before-transport refusal, with the same private channel and journal. A catalog
+attempt belongs to the catalog owner's open window until that owner retires.
+The currently separate warm-up and catalog retirement claims need their own
+ordering checks. The optional Spotlight experiment starts a warm-up outside
+these owners when enabled. In the selected admitting profile, close that
+experiment's startup eligibility before constructing its client, preserving
+ordinary opt-in behavior. See the [native comparison](../../../docs/validation.md#startup-catalog-and-opt-in-spotlight-route-controls--2026-11-18).
+Both route repairs and their fail-closed controls are open.
 
 The current startup-only parent holds the RPC input pipe open for teardown and
 has no command writer. In the future admitting revision, keep RPC command delivery
@@ -1769,7 +1785,7 @@ facts and leaves these boundaries to qualify before the inventory can be frozen.
 | --- | --- | --- |
 | Connection preparation | The original warm-up caller settles after the parent durably refuses the classified Anthropic HEAD route. | Establish before-I/O ownership for each enabled route and fail closed on unclassified transports. |
 | Tools, MCP, memory and credentials | The sealed identity reports fixed `edit` and `read`, MCP and memory exclusions, and joined credential-usage work. | Bind the final task tools and any admitted MCP integration to actual before-I/O controls. |
-| Catalog, settings and authentication | Source owner receipts cover selected discovery, settings callbacks and the empty authentication profile. | Verify the enabled configuration and any credential owners selected for the admitting profile. |
+| Catalog, settings and authentication | Source owner receipts cover selected discovery, settings callbacks and the empty authentication profile. A native control observes the shared catalog GET before transport. | Require the catalog destination receipt and verify the enabled configuration and any credential owners selected for the admitting profile. |
 | Presence, telemetry, marketplace and logging | The selected owners close or exclude their own work and record the original joins. | Review enabled update and output paths outside these selected owners. |
 | Plugin roots and first-party extension | The diagnostic reports plugin-root retirement and the original extension dispatch join. It excludes managed timers and the selected workspace scan. Native controls cover the exact bridge graph read and the loader's awaited factory. | Check work started by enabled transitive loads, including native timers, discovery and callbacks. |
 | RPC initialization and parent admission | Startup observation joins the initial catalog and its stdout writes, excludes the live subscription and RPC dispatch, and persists the source-bound receipt. The observation parent has no RPC command writer. | Qualify the runtime subscription and dispatch handoff for the admitting profile. Use the complete inventory for the synced acknowledgment and matching Ready echo below. |

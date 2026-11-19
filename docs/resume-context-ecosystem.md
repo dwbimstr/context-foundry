@@ -5,6 +5,20 @@
 Updated 2026-11-16. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
+- **Startup catalog and Spotlight routes, 2026-11-18.** Both native host pins
+  attempted the shared catalog GET without a destination receipt. In a synthetic
+  Spotlight opt-in, both reported extension and RPC retirement while its fetch
+  was held. The exact default profile leaves Spotlight inactive. Keep admission
+  closed while these routes gain before-transport ownership
+  ([record](validation.md#startup-catalog-and-opt-in-spotlight-route-controls--2026-11-18)).
+
+- **Direct SDK import for startup observation, 2026-11-18.** The compiled host
+  now resolves the first-party observer's owner functions through an explicit
+  SDK export. The native controls covered the new import, legacy root import,
+  extension waits and failures, and ordinary RPC. Complete owner inventory and
+  the durable acknowledgment stay open
+  ([record](validation.md#direct-sdk-import-for-startup-observation--2026-11-18)).
+
 - **First-party startup extension loader, 2026-11-18.** The pinned native host
   waited for the exact observer's source read. The original factory loader also
   waited for an injected barrier. Both failure controls reaped the host without
