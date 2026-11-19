@@ -1,5 +1,46 @@
 # Validation
 
+## Durable startup observation prefix — 2026-11-19
+
+The Rust observer reads back the synced journal through
+`startup_rpc_retired` and records its exact count and SHA-256 on the
+`startup_inventory_unqualified` halt row. The normal native run kept 18
+rows, with the halt binding the first 16. The regression failed on the
+previous code because the count field was absent. Real journal controls
+rejected a torn record, same-byte inode replacement and halt append failure
+without issuing a prefix receipt. The host remained on the startup-only
+channel and refused RPC commands.
+
+Six fresh Rust checks passed, including the 14-case native startup matrix
+and the feature suite with 122 tests passed and one ignored. Clippy, formatting
+and the Rust 1.90 check passed. The frozen, current and source compatibility
+receipts retain their existing host pins. Removing the two build caches and
+six duplicate native extractions reclaimed 4,126,011,392 allocated bytes.
+Both native checks passed from the retained test binaries after cleanup.
+Private receipts are under
+`runs/pilot-startup-prefix-hold-2026-11-18/`. The partial inventory
+remains on HOLD, and no startup acknowledgment or Ready echo is issued.
+
+## Built-in model manager eligibility during startup — 2026-11-18
+
+The pinned debugger-fix executable completed the two known refusals with the
+exact startup bridge under OS network denial. The timer probe captured one
+15-second deadline from `#discoverWithModelManagerStartupBody`, cleared before
+catalog retirement. A trusted bridge variant read metadata for the launch's
+93 provider IDs at session start and RPC retirement. It reported no configured
+discovery providers and one state change, for Anthropic, from bundled idle
+to bundled unavailable.
+
+Removing only `web` from the disabled list added a second deadline from that
+owner. Both deadlines cleared. The web discovery state stayed bundled idle.
+Removing only `ollama` reached the private unclassified fault before catalog
+retirement and no Ready appeared. Ordinary RPC answered a state query in a
+separate control. All five groups were reaped under network denial with zero
+provider calls and zero spend. The bridge variants and timer probe are local
+fixtures. The results cover the changed settings and the named owner. The
+complete source and transport inventory remains open. Private receipts are
+under `runs/pilot-startup-model-manager-census-2026-11-18/`.
+
 ## Debugger sweep starts with session registration — 2026-11-18
 
 The [source patch](references/omp-startup-dap-idle-sweep.patch) starts the existing

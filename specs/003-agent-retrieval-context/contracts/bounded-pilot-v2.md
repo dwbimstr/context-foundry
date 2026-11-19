@@ -1790,7 +1790,7 @@ facts and leaves these boundaries to qualify before the inventory can be frozen.
 | --- | --- | --- |
 | Connection preparation | The original warm-up caller settles after the parent durably refuses the classified Anthropic HEAD route. | Establish before-I/O ownership for each enabled route and fail closed on unclassified transports. |
 | Tools, MCP, memory and credentials | The sealed identity reports fixed `edit` and `read`, MCP and memory exclusions, and joined credential-usage work. | Bind the final task tools and any admitted MCP integration to actual before-I/O controls. |
-| Catalog, settings and authentication | Source owner receipts cover selected discovery, settings callbacks and the empty authentication profile. The catalog GET is classified and refused before transport. The fixed registry closes runtime registration, and the catalog receipt requires that fact. | Bind the same closed registry and enabled discovery routes to the final admitting profile. |
+| Catalog, settings and authentication | Source owner receipts cover selected discovery, settings callbacks and the empty authentication profile. The catalog GET is classified and refused before transport. The fixed registry closes runtime registration. Native controls observed one built-in manager deadline in the pinned profile, two with the static web manager enabled, and a private fault with implicit Ollama discovery enabled. | Freeze configured, implicit and built-in eligibility at the registry before any new owner can reach construction or I/O. Bind the remaining enabled catalog route to the final profile. |
 | Presence, telemetry, marketplace and logging | The selected owners close or exclude their own work and record the original joins. | Review enabled update and output paths outside these selected owners. |
 | Plugin roots and first-party extension | The diagnostic reports plugin-root retirement and the original extension dispatch join. It excludes managed timers and the selected workspace scan. Native controls cover the exact bridge graph read and the loader's awaited factory. | Check work started by enabled transitive loads, including native timers, discovery and callbacks. |
 | Advisors | The candidate excludes advisor discovery, tool construction, restore and activation in the explicit profile. The existing restricted-session receipt records the exclusion. Native controls exercised ordinary RPC and a late activation and restore attempt. | Preserve the disposition in the final admitting profile. |
@@ -1812,6 +1812,20 @@ Account for the transports reachable through admitted transitive code. Keep
 the selected debugger, registry, prompt and command dispositions
 bound to the same profile. The diagnostic receipts cover a
 partial inventory. An unresolved edge keeps admission on HOLD.
+
+Freeze model discovery eligibility at the registry. In upstream
+`24439066040e006eb08da7b204f0ac41c79d2de9`,
+`ModelRegistry.#addImplicitDiscoverableProviders` owns automatic local entries.
+`#collectBuiltInModelManagerOptions` separately selects standard descriptors,
+special credential-dependent descriptors and catalog-only providers.
+`#discoverWithModelManagerStartupBody` constructs the selected manager and owns
+its refresh deadline. The restricted launch currently uses an Anthropic
+configuration with empty authentication and a disabled-provider list.
+The [native eligibility controls](../../../docs/validation.md#built-in-model-manager-eligibility-during-startup--2026-11-18)
+show that a broadened list changes which owners execute. The final profile
+must bind effective eligibility and fail closed on an unexpected configured,
+implicit or built-in owner before construction or I/O. A provider's public
+discovery status can stay idle when its manager runs.
 
 Source inspection at `24439066040e006eb08da7b204f0ac41c79d2de9` distinguishes
 `main.ts::buildSessionOptions` assigning `toolNames` for `--tools` from
@@ -1876,6 +1890,14 @@ return the persistence error and publish no successful seal. Preserve consumed
 authority and unknown spend. Restart uses fresh launch/channel/prefix identities;
 journal replay cannot create a new execution authority. No fallback to v1 or an
 unobserved route can convert failed v2 startup into readiness.
+
+The startup diagnostic now reads back its synced owner prefix through
+`startup_rpc_retired` before binding its record count and SHA-256 on the
+`startup_inventory_unqualified` halt row. A prefix readback or halt append
+failure reaps the host and returns a persistence error without a successful
+observation receipt. The count and digest attest this partial inventory.
+The admitting revision still requires the complete inventory, matching private
+Ready and durable echo before opening commands.
 
 For the admitting revision, use the existing private channel and preserve its
 sequence across the handoff. Await the acknowledgment at the RPC boundary after

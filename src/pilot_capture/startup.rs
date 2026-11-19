@@ -463,6 +463,22 @@ fn fault(class: FaultClass, code: &'static str) -> CaptureFault {
     CaptureFault::new(class, code)
 }
 
+const INVENTORY_UNQUALIFIED: &str = "startup_inventory_unqualified";
+
+fn record_inventory_hold(journal: &mut Journal) -> Result<(), CaptureFault> {
+    let prefix_sha256 = journal.digest()?;
+    journal.append(
+        "halt",
+        json!({
+            "phase": "startup_observation",
+            "class": FaultClass::Authority.as_str(),
+            "code": INVENTORY_UNQUALIFIED,
+            "observed_prefix_records": journal.records,
+            "observed_prefix_sha256": prefix_sha256,
+        }),
+    )
+}
+
 impl CaptureSession {
     /// Observe the owned startup seam without constructing a provider transport,
     /// counters or permits. An incomplete inventory always ends in durable HOLD.
@@ -688,13 +704,15 @@ async fn observe(a: ObservationAdmission) -> Result<ObservationReceipt, CaptureF
                 Some(host::HostEvent::BridgeFault(e)) => return Err(fault(FaultClass::Protocol,e.0)),
                 _ => return Err(fault(FaultClass::Protocol,"startup_unexpected_event")),
             }
-            if owners.complete() { return Err(fault(FaultClass::Authority,"startup_inventory_unqualified")); }
+            if owners.complete() { return Ok(()); }
         }
     }).await.unwrap_or_else(|_|Err(fault(FaultClass::Deadline,"startup_observation_deadline")));
-    let terminal = result
-        .err()
-        .unwrap_or_else(|| fault(FaultClass::Authority, "startup_admission_unavailable"));
-    let terminal = journal.admission_refusal("startup_observation", terminal);
+    let terminal = match result {
+        Ok(()) => record_inventory_hold(&mut journal)
+            .err()
+            .unwrap_or_else(|| fault(FaultClass::Authority, INVENTORY_UNQUALIFIED)),
+        Err(error) => journal.admission_refusal("startup_observation", error),
+    };
     // Always reap, including append/readback/write failures. Close grants no IO.
     let _ = host
         .send_startup(ParentMessage::Close {
@@ -706,7 +724,7 @@ async fn observe(a: ObservationAdmission) -> Result<ObservationReceipt, CaptureF
         return Err(terminal);
     }
     journal.append("startup_host_exit",json!({"normal":exit.normal,"forced":exit.forced,"group_gone":exit.group_gone,"stderr_bytes":exit.stderr_bytes,"stderr_sha256":exit.stderr_sha256}))?;
-    if terminal.code != "startup_inventory_unqualified" {
+    if terminal.code != INVENTORY_UNQUALIFIED {
         return Err(terminal);
     }
     if !exit.normal
@@ -745,6 +763,40 @@ async fn observe(a: ObservationAdmission) -> Result<ObservationReceipt, CaptureF
 mod tests {
     use super::*;
     use crate::neural::protocol::write_frame_as;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn inventory_hold_refuses_uncertain_journal_prefixes() {
+        for (failure, expected) in [
+            ("corrupt", "journal_history_mismatch"),
+            ("replace", "journal_identity_mismatch"),
+            ("halt-write", "journal_append_failed"),
+        ] {
+            let directory = tempfile::Builder::new().tempdir_in("/private/tmp").unwrap();
+            fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
+            let path = directory.path().join("journal.jsonl");
+            let mut journal =
+                Journal::create(&path, (failure == "halt-write").then_some(1)).unwrap();
+            journal.append("startup_rpc_retired", json!({})).unwrap();
+            let bytes = fs::read(&path).unwrap();
+            match failure {
+                "corrupt" => fs::write(&path, &bytes[..bytes.len() - 1]).unwrap(),
+                "replace" => {
+                    fs::rename(&path, directory.path().join("original.jsonl")).unwrap();
+                    super::super::write_private_new(&path, &bytes).unwrap();
+                }
+                "halt-write" => (),
+                _ => unreachable!(),
+            }
+            let before = fs::read(&path).unwrap();
+            let error = record_inventory_hold(&mut journal).unwrap_err();
+            assert_eq!(error.class, FaultClass::Persistence);
+            assert_eq!(error.code, expected);
+            assert_eq!(fs::read(&path).unwrap(), before);
+        }
+    }
+
     fn identity() -> ChannelIdentity {
         ChannelIdentity::new("startup-test".into(), "owner-test".into()).unwrap()
     }

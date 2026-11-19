@@ -2,8 +2,26 @@
 
 ## Current status — 2026-11-06
 
-Updated 2026-11-18. This section owns current status; other documents link here,
+Updated 2026-11-19. This section owns current status; other documents link here,
 and dated paragraphs below are history.
+
+- **Durable startup observation prefix, 2026-11-19.** The native observer's
+  HOLD row binds the synced prefix through RPC retirement. The journal
+  rejects a torn record, a replacement inode and an uncommitted halt.
+  The diagnostic still refuses commands. Full inventory, durable
+  acknowledgment and the Ready exchange remain prerequisites for opening
+  the runtime path
+  ([prefix record](validation.md#durable-startup-observation-prefix--2026-11-19)).
+
+- **Startup inventory and acknowledgment sequence, 2026-11-18.** Fresh-context
+  authors traced the remaining owner boundaries. Freeze effective provider
+  eligibility at the registry and qualify the remaining transitive owners and
+  transport routes before opening the private acknowledgment and Ready
+  exchange. A native control showed that the web manager can run even while
+  its public state stays idle. Startup admission and the RPC runtime handoff
+  remain on HOLD
+  ([eligibility record](validation.md#built-in-model-manager-eligibility-during-startup--2026-11-18),
+  [contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md)).
 
 - **Debugger sweep and native socket ownership, 2026-11-18.** The exact
   startup observer stayed free of the debugger sweep through the prior tick

@@ -300,9 +300,18 @@ fn source_startup_refusal_is_durable_and_incomplete_inventory_never_admits() {
             assert_eq!(rows[15]["rpc"]["runtime_callbacks_excluded"], true);
             assert_eq!(rows[15]["rpc"]["output_drained"], true);
             assert_eq!(rows[15]["rpc"]["dispatch_closed"], true);
-            assert!(
-                rows.iter()
-                    .any(|r| r["kind"] == "halt" && r["code"] == "startup_inventory_unqualified")
+            let halt = &rows[16];
+            assert_eq!(halt["kind"], "halt");
+            assert_eq!(halt["code"], "startup_inventory_unqualified");
+            assert_eq!(halt["observed_prefix_records"], 16);
+            let prefix_bytes = bytes
+                .split_inclusive(|byte| *byte == b'\n')
+                .take(16)
+                .map(<[u8]>::len)
+                .sum::<usize>();
+            assert_eq!(
+                halt["observed_prefix_sha256"],
+                pilot_capture::sha256_hex(&bytes[..prefix_bytes])
             );
             if let Some(out) = &output {
                 fixture_private_dirs(out).unwrap();
@@ -317,6 +326,10 @@ fn source_startup_refusal_is_durable_and_incomplete_inventory_never_admits() {
             assert_eq!(error.class, FaultClass::Persistence);
             assert_eq!(error.code, "journal_append_failed");
             assert_eq!(rows.len(), fail_after.unwrap() as usize);
+            assert!(
+                rows.iter()
+                    .all(|row| row["observed_prefix_records"].is_null())
+            );
             if name == "refusal-write" {
                 assert!(!rows.iter().any(|r| r["kind"] == "startup_owner_settled"));
             }
