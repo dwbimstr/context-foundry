@@ -313,6 +313,7 @@ fn source_startup_refusal_is_durable_and_incomplete_inventory_never_admits() {
                 1
             );
             assert_eq!(rows[14]["kind"], "startup_extension_retired");
+            assert_eq!(rows[14]["extension"]["notifications_excluded"], true);
             assert_eq!(rows[15]["kind"], "startup_rpc_retired");
             assert_eq!(rows[15]["rpc"]["initial_catalog_joined"], true);
             assert_eq!(rows[15]["rpc"]["metadata_subscription_excluded"], true);

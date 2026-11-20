@@ -1,0 +1,163 @@
+# Proposed source-host qualification patch; unapplied by Foundry.
+# oh-my-pi 24439066040e006eb08da7b204f0ac41c79d2de9, MIT.
+# Requires omp-startup-extension-owner.patch and omp-startup-managed-timer-exclusion.patch; applies after the 25 earlier startup reference patches.
+# Owner: 003 T006, bounded-pilot-v2 startup observation/admission contract.
+# Upstream license: https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/LICENSE
+# MIT License
+# 
+# Copyright (c) 2025 Mario Zechner
+# Copyright (c) 2025-2026 Can Bölük
+# Copyright (c) 2026 Stencil Labs, Inc.
+# 
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+# 
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+# 
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+diff --git a/packages/coding-agent/src/extensibility/extensions/runner.ts b/packages/coding-agent/src/extensibility/extensions/runner.ts
+--- a/packages/coding-agent/src/extensibility/extensions/runner.ts
++++ b/packages/coding-agent/src/extensibility/extensions/runner.ts
+@@ -1003,6 +1003,10 @@
+ 		// Deferred by one microtask so callers that register an onError listener
+ 		// synchronously after initialize() see handler errors routed through it.
+ 		const pending = this.#pendingCredentialDisabled.splice(0);
++		const pendingMcp = this.#pendingMcpNotifications.splice(0);
++		// Restricted startup owns this runner: buffered notifications are refused before
++		// any handler dispatch, so nothing runs outside the owned session_start join.
++		if (startupExtension?.runner?.deref() === this) return;
+ 		queueMicrotask(() => {
+ 			for (const event of pending) {
+ 				this.emit({ type: "credential_disabled", ...event }).catch((error: unknown) => {
+@@ -1018,7 +1022,6 @@
+ 		// same deferred-microtask ordering as the credential-disabled drain above so any
+ 		// onError listener registered synchronously after initialize() still catches
+ 		// handler errors during flush.
+-		const pendingMcp = this.#pendingMcpNotifications.splice(0);
+ 		queueMicrotask(() => {
+ 			for (const event of pendingMcp) {
+ 				this.emit({ type: "mcp_notification", ...event }).catch((error: unknown) => {
+@@ -1047,6 +1050,7 @@
+ 	 * {@link onError} via {@link emit}'s normal isolation.
+ 	 */
+ 	async emitCredentialDisabled(event: CredentialDisabledEvent): Promise<void> {
++		if (startupExtension?.runner?.deref() === this) return;
+ 		if (!this.#initialized) {
+ 			if (this.#pendingCredentialDisabled.length >= MAX_PENDING_CREDENTIAL_DISABLED) {
+ 				this.#pendingCredentialDisabled.shift();
+@@ -1073,6 +1077,7 @@
+ 	 * via {@link emit}'s normal isolation.
+ 	 */
+ 	async emitMcpNotification(event: Omit<McpNotificationEvent, "type">): Promise<void> {
++		if (startupExtension?.runner?.deref() === this) return;
+ 		if (!this.#initialized) {
+ 			if (this.#pendingMcpNotifications.length >= MAX_PENDING_MCP_NOTIFICATIONS) {
+ 				this.#pendingMcpNotifications.shift();
+@@ -2067,7 +2072,14 @@
+ 		if (event.type === "session_start") this.#sessionStartEvent = event;
+ 		if (owner) {
+ 			while (owner.pending.size) await Promise.all(owner.pending);
+-			if (owner.failed || !owner.ready || owner.handlers < 1 || owner.handlers > 64) {
++			if (
++				owner.failed ||
++				!owner.ready ||
++				owner.handlers < 1 ||
++				owner.handlers > 64 ||
++				this.#pendingCredentialDisabled.length > 0 ||
++				this.#pendingMcpNotifications.length > 0
++			) {
+ 				owner.phase = "failed";
+ 				throw new Error("Startup extension did not settle");
+ 			}
+@@ -2077,6 +2089,7 @@
+ 				callbacks_joined: true as const,
+ 				starts_closed: true as const,
+ 				managed_timers_excluded: true as const,
++				notifications_excluded: true as const,
+ 				handlers: owner.handlers,
+ 			});
+ 			const notify = (globalThis as Record<symbol, unknown>)[
+diff --git a/packages/coding-agent/test/startup-extension-owner.test.ts b/packages/coding-agent/test/startup-extension-owner.test.ts
+--- a/packages/coding-agent/test/startup-extension-owner.test.ts
++++ b/packages/coding-agent/test/startup-extension-owner.test.ts
+@@ -15,8 +15,8 @@
+  const {Settings}=await import(${JSON.stringify(join(src, "config/settings.ts"))});
+  const {logger}=await import('@oh-my-pi/pi-utils'); logger.setTransports({file:false,console:false});
+  const dir=${JSON.stringify(dir)};const auth=await AuthStorage.create(dir+'/auth.db');const registry=new ModelRegistry(auth);
+- const runtime=new l.ExtensionRuntime();let handler=async()=>{};
+- const extension=await l.loadExtensionFromFactory(pi=>{pi.on('session_start',async()=>await handler())},dir,new EventBus(),runtime);
++ const runtime=new l.ExtensionRuntime();let handler=async()=>{};const notified=[];
++ const extension=await l.loadExtensionFromFactory(pi=>{pi.on('session_start',async()=>await handler());for(const type of ['credential_disabled','mcp_notification'])pi.on(type,async e=>{notified.push(e.type)})},dir,new EventBus(),runtime);
+  const runner=new r.ExtensionRunner([extension],runtime,dir,SessionManager.inMemory(dir),registry,undefined,Settings.isolated());
+  ${beforeOwner}
+  const owner=r.ownStartupExtension();r.bindStartupExtension(owner,runner);
+@@ -57,10 +57,57 @@
+ 			callbacks_joined: true,
+ 			starts_closed: true,
+ 			managed_timers_excluded: true,
++			notifications_excluded: true,
+ 			handlers: 1,
+ 		},
+ 	});
+ });
++test("restricted ownership refuses deferred credential and MCP notifications before dispatch", () => {
++	const v = run(`
++  const credential={provider:'synthetic',disabledCause:'synthetic'},mcp={server:'synthetic',method:'notifications/synthetic',params:{}};
++  void runner.emitCredentialDisabled(credential);void runner.emitMcpNotification(mcp);
++  runner.initialize({},{},undefined,undefined,'rpc');await new Promise(r=>setTimeout(r,10));const flushed=[...notified];
++  await runner.emitCredentialDisabled(credential);await runner.emitMcpNotification(mcp);
++  handler=async()=>{r.readyStartupExtension(owner,runner)};await runner.emit({type:'session_start'});
++  await new Promise(r=>setTimeout(r,30));console.log(JSON.stringify({flushed,notified,receipt}));auth.close();
++ `);
++	expect(v.flushed).toEqual([]);
++	expect(v.notified).toEqual([]);
++	expect(v.receipt.notifications_excluded).toBe(true);
++});
++const bufferBeforeBind = `void runner.emitCredentialDisabled({provider:'synthetic',disabledCause:'synthetic'});void runner.emitMcpNotification({server:'synthetic',method:'notifications/synthetic',params:{}});`;
++test("restricted ownership drops notifications buffered before the bind without dispatch at initialize", () => {
++	const v = run(
++		`
++  runner.initialize({},{},undefined,undefined,'rpc');await new Promise(r=>setTimeout(r,10));const flushed=[...notified];
++  handler=async()=>{r.readyStartupExtension(owner,runner)};await runner.emit({type:'session_start'});
++  await new Promise(r=>setTimeout(r,30));console.log(JSON.stringify({flushed,notified,receipt}));auth.close();
++ `,
++		bufferBeforeBind,
++	);
++	expect(v.flushed).toEqual([]);
++	expect(v.notified).toEqual([]);
++	expect(v.receipt?.notifications_excluded).toBe(true);
++});
++test("restricted session_start fails closed while notifications buffered before the bind remain", () => {
++	const v = run(
++		`
++  handler=async()=>{r.readyStartupExtension(owner,runner)};let error=null;
++  try{await runner.emit({type:'session_start'})}catch(e){error=e instanceof Error?e.message:String(e)}
++  await new Promise(r=>setTimeout(r,30));console.log(JSON.stringify({error,notified,receipt}));auth.close();
++ `,
++		bufferBeforeBind,
++	);
++	expect(v).toEqual({ error: "Startup extension did not settle", notified: [], receipt: null });
++});
++test("an unowned runner still flushes deferred credential and MCP notifications after initialize", () => {
++	const v = run(
++		"",
++		`void runner.emitCredentialDisabled({provider:'synthetic',disabledCause:'synthetic'});void runner.emitMcpNotification({server:'synthetic',method:'notifications/synthetic',params:{}});
++  runner.initialize({},{},undefined,undefined,'rpc');await new Promise(r=>setTimeout(r,10));console.log(JSON.stringify({notified}));auth.close();process.exit(0);`,
++	);
++	expect(v).toEqual({ notified: ["credential_disabled", "mcp_notification"] });
++});
+ test("timeout cannot attest while original ignores abort; after release it still fails", () => {
+ 	const v = run(`
+   let release,entered=false,finished=false,settled=false;const held=new Promise(r=>release=r);

@@ -126,6 +126,8 @@ pub enum ChildMessage {
         callbacks_joined: bool,
         starts_closed: bool,
         managed_timers_excluded: bool,
+        /// Deferred credential and MCP notifications are refused before dispatch.
+        notifications_excluded: bool,
         handlers: u32,
     },
     RpcRetired {
@@ -386,12 +388,14 @@ impl ChannelState {
             callbacks_joined,
             starts_closed,
             managed_timers_excluded,
+            notifications_excluded,
             handlers,
         } = &h.msg
             && (!handlers_joined
                 || !callbacks_joined
                 || !starts_closed
                 || !managed_timers_excluded
+                || !notifications_excluded
                 || *handlers == 0
                 || *handlers > 64)
         {
@@ -1193,20 +1197,23 @@ mod tests {
 
     #[test]
     fn startup_extension_requires_joined_closed_bounded_and_exact_fields() {
-        let valid = json!({"type":"extension_retired","handlers_joined":true,"callbacks_joined":true,"starts_closed":true,"managed_timers_excluded":true,"handlers":1});
+        let valid = json!({"type":"extension_retired","handlers_joined":true,"callbacks_joined":true,"starts_closed":true,"managed_timers_excluded":true,"notifications_excluded":true,"handlers":1});
         for field in [
             "handlers_joined",
             "callbacks_joined",
             "starts_closed",
             "managed_timers_excluded",
+            "notifications_excluded",
         ] {
             let mut bad = valid.clone();
             bad[field] = json!(false);
             let msg = serde_json::from_value::<ChildMessage>(bad).unwrap();
-            assert!(
+            assert_eq!(
                 ChannelState::new(identity())
                     .read(&mut frame(1, msg).as_slice())
-                    .is_err()
+                    .unwrap_err()
+                    .0,
+                "startup_extension_unqualified"
             );
         }
         for count in [0, 65] {
@@ -1224,6 +1231,7 @@ mod tests {
             "callbacks_joined",
             "starts_closed",
             "managed_timers_excluded",
+            "notifications_excluded",
             "handlers",
         ] {
             let mut missing = valid.clone();
@@ -1476,6 +1484,7 @@ mod tests {
             callbacks_joined: true,
             starts_closed: true,
             managed_timers_excluded: true,
+            notifications_excluded: true,
             handlers: 1,
         };
         let rpc = ChildMessage::RpcRetired {

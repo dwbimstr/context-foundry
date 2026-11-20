@@ -43,7 +43,7 @@ function createStartupObserver() {
    let extension:any;
    try { extension=consumeExtension(proof); }
    catch { channel.send({type:"fault",code:"unclassified"}); fail(); }
-   if (!startupExact(extension,["handlers_joined","callbacks_joined","starts_closed","managed_timers_excluded","handlers"]) || extension.handlers_joined !== true || extension.callbacks_joined !== true || extension.starts_closed !== true || extension.managed_timers_excluded !== true || !Number.isInteger(extension.handlers) || extension.handlers < 1 || extension.handlers > 64) fail();
+   if (!startupExact(extension,["handlers_joined","callbacks_joined","starts_closed","managed_timers_excluded","notifications_excluded","handlers"]) || extension.handlers_joined !== true || extension.callbacks_joined !== true || extension.starts_closed !== true || extension.managed_timers_excluded !== true || extension.notifications_excluded !== true || !Number.isInteger(extension.handlers) || extension.handlers < 1 || extension.handlers > 64) fail();
    if (!channel.send({type:"extension_retired",...extension})) fail();
    extensionDone = true;
   },
