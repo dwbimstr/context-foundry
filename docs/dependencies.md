@@ -38,6 +38,17 @@ The 2026-10-26 maintenance subset of PR #37 updates rmcp to 3.6.0
 (rmcp-macros 3.7.0), Tokio to 1.54.1, and ureq to 3.5.0 (ureq-proto 0.6.5).
 Licenses are unchanged; rmcp adds an edge to the already locked libc.
 
+On 2026-11-19 the owner chose "Apply 8, hold 3" for Dependabot PR #55
+([decision](validation.md#owner-decisions--2026-11-19)). Applied by hand on the
+experimental line, at the PR's versions: ignore 0.4.34, ureq 3.5.2 (ureq-proto 0.7.1),
+rmcp 3.10.0 (rmcp-macros 3.11.0, still an exact pin), uuid 1.29.2, notify 8.2.2, toml
+1.2.1 (with serde_spanned, toml_datetime and toml_writer), tokio-rustls 0.26.6 and
+rustls-pki-types 1.16.0. notify 8.2.2 replaces fsevent-sys with objc2-core-foundation
+and objc2-core-services 0.3.2 (`Zlib OR Apache-2.0 OR MIT`) and drops the Windows 0.53
+target crates. Every other declared license is unchanged. Held until measured:
+tree-sitter-scala 0.26.13 (parse output and schema), usearch 2.26.6 (ANN graph and G2)
+and redb 4.6.0 (the store database).
+
 On 2026-10-26 pulldown-cmark moved to 0.13.5 (security remediation, default
 features still off): 0.13.4's default parser exits 101 on a 13-byte
 Markdown list/indentation input, and its complexity fixes are upstream, not
@@ -85,12 +96,12 @@ settle the held and open Dependabot updates:
 | clap | 4.6.7 | MIT OR Apache-2.0 | normal |
 | futures-util | 0.3.34 | MIT OR Apache-2.0 | normal |
 | http | 1.5.0 | MIT OR Apache-2.0 | normal |
-| ignore | 0.4.33 | Unlicense OR MIT | normal |
+| ignore | 0.4.34 | Unlicense OR MIT | normal |
 | imbl | 7.0.2 | MPL-2.0+ | normal (009 T008 persistent location snapshots; unmodified) |
 | libc | 0.2.191 | MIT OR Apache-2.0 | normal (held-root opens) |
 | pulldown-cmark | 0.13.6 | MIT | normal (Markdown sections; default features off) |
 | redb | 4.4.0 | MIT OR Apache-2.0 | normal |
-| rmcp | 3.6.0 | Apache-2.0 | normal (server and live-host client); dev adds child-process transport |
+| rmcp | 3.10.0 | Apache-2.0 | normal (server and live-host client); dev adds child-process transport |
 | serde | 1.0.229 | MIT OR Apache-2.0 | normal |
 | serde_json | 1.0.154 | MIT OR Apache-2.0 | normal |
 | sha2 | 0.11.1 | MIT OR Apache-2.0 | normal |
@@ -109,11 +120,11 @@ settle the held and open Dependabot updates:
 | tree-sitter-rust | 0.24.2 | MIT | normal (Rust grammar) |
 | tree-sitter-scala | 0.26.4 | MIT | normal (Scala grammar) |
 | tree-sitter-typescript | 0.23.2 | MIT | normal (TypeScript/TSX grammars) |
-| ureq | 3.5.0 | MIT OR Apache-2.0 | normal (bounded gateway-launcher health check) |
-| uuid | 1.28.0 | Apache-2.0 OR MIT | normal |
+| ureq | 3.5.2 | MIT OR Apache-2.0 | normal (bounded gateway-launcher health check) |
+| uuid | 1.29.2 | Apache-2.0 OR MIT | normal |
 | reqwest | 0.13.5 | MIT OR Apache-2.0 | dev |
 | tempfile | 3.27.0 | MIT OR Apache-2.0 | dev |
-| toml | 1.1.8 | MIT OR Apache-2.0 | dev |
+| toml | 1.2.1 | MIT OR Apache-2.0 | dev |
 
 The 2026-11-11 Tantivy update also moves its bitpacker, columnar, common,
 query-grammar, sstable and stacker crates to 0.27.0 (MIT), datasketches to 0.5.0
@@ -225,7 +236,7 @@ never link `tch`, Foundry calls no npz loader, and the vulnerable npz and build-
 paths (`tch`'s npz reader, `torch-sys`'s build script) never run here. Unfreezing 013
 or adding npz loading must trigger a recheck.
 The probe also pins PyO3 0.29.2, USearch 2.26.2 and rmcp 3.5.0 (the product has
-since moved to rmcp 3.6.0 and USearch 2.26.5); its lock is not the product lock. Contract 013 v4's accepted
+since moved to rmcp 3.10.0 and USearch 2.26.5); its lock is not the product lock. Contract 013 v4's accepted
 baseline was tch 0.24.0/LibTorch 2.11.0; that acceptance does not transfer to this
 migration. USearch has a third-party native C++ core;
 this does not introduce first-party C++ code. Libkrun remains conditional.
