@@ -5,6 +5,13 @@
 Updated 2026-11-20. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
+- **Experimental line merged to `main`, 2026-11-20.** On the owner's instruction,
+  [PR #56](https://github.com/dwbimstr/context-foundry/pull/56) merged the
+  experimental line through `f06c533` into `main` by merge commit `37a3cd8`, covered
+  by the [`455fa03` gates receipt](validation.md#local-gates-on-455fa03--2026-11-20).
+  The Dependabot version-update pause is now in effect. Nothing was tagged or
+  released ([record](validation.md#merge-of-the-experimental-line-to-main--2026-11-20)).
+
 - **Startup notification owner and pilot v2 decisions, 2026-11-20.** A no-provider
   native round closes the extension runner's deferred credential and MCP
   notifications: a runner bound to the startup owner refuses them, the receipt binds
@@ -57,7 +64,7 @@ and dated paragraphs below are history.
   ([analysis](validation.md#t005-loss-analysis--2026-11-19)), and the owner closed
   009 T005 without promotion: the baseline stays, it is a named limitation and no
   longer a release condition, and the 2026-11-18 holdout stays sealed. Pausing
-  Dependabot version updates takes effect only after the next merge to `main`.
+  Dependabot version updates took effect with the 2026-11-20 merge to `main`.
 
 - **Catalog refusal binding, 2026-11-19.** The fixed startup diagnostic
   requires the shared catalog refusal before recording catalog retirement.

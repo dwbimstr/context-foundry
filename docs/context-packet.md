@@ -112,7 +112,7 @@ GPU headroom became a named limitation on 2026-11-06, and two defaults changed. 
 semantic profile without `representation` has selected complete `hierarchy-v1` since
 2026-10-22 ([record](validation.md#f4-and-the-hierarchy-default--2026-10-22));
 semantic retrieval itself stays off by default. Lexical behavioral selection has been
-on by default on the experimental line since 2026-11-11
+on by default on the experimental line since 2026-11-11, and on `main` since 2026-11-20
 ([record](validation.md#t010-singleton-qualification--2026-11-11)). Current status is
 in the [resumable handoff](resume-context-ecosystem.md).)
 

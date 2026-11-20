@@ -305,7 +305,8 @@ or interleave lexical candidates. A named semantic fallback still serves lexical
 results. Lexical behavioral selection has been on by default on the experimental line
 since 2026-11-11, when the singleton candidate passed 001 T010's own gates
 ([context v2](../specs/001-source-state-recovery/contracts/context-v2.md#experimental-behavioral-support--001-t010-2026-10-09),
-[receipt](validation.md#t010-singleton-qualification--2026-11-11)). Pass
+[receipt](validation.md#t010-singleton-qualification--2026-11-11)), and on `main`
+since 2026-11-20. Pass
 `--experimental-behavior-context=false` to `context` or `mcp` for the ordinary lexical
 path; the bare flag still works. The first default attempt of the same day passed G1/G2
 but lost the required `refund` definition in the frozen economics fixture; its

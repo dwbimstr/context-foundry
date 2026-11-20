@@ -8,9 +8,10 @@ was never published and is not a release.
 
 ## [Unreleased]
 
-An entry marked "experimental line" is on the `experimental/context-ecosystem` branch
-and not yet on `main`; `main` receives that branch only through a pull request that the
-owner approves. Current status is in the [handoff](docs/resume-context-ecosystem.md).
+Every entry below is on `main`: the `experimental/context-ecosystem` branch, which
+`main` receives only through a pull request that the owner approves, last merged on
+2026-11-20 ([record](docs/validation.md#merge-of-the-experimental-line-to-main--2026-11-20)).
+Current status is in the [handoff](docs/resume-context-ecosystem.md).
 
 ### Added
 
@@ -51,8 +52,7 @@ owner approves. Current status is in the [handoff](docs/resume-context-ecosystem
   is unverified. A native run over the pinned rust-lang/rust corpus on the owner's Mac
   accepted it on 2026-11-10
   ([record](docs/validation.md#native-mac-watcher-acceptance-001-t011--2026-11-10)).
-  That run used the batched watcher commits listed under Fixed, which are on the
-  experimental line.
+  That run used the batched watcher commits listed under Fixed.
 - Experimental, opt-in commands, described in
   [experimental context](docs/experimental-context.md): `task-context` (recoverable
   task state, also an MCP tool under `mcp --experimental-task-context`), `brief`
@@ -65,7 +65,7 @@ owner approves. Current status is in the [handoff](docs/resume-context-ecosystem
   relationships, is implemented but not accepted; it stays open until an authorized
   run passes (003 T009).
   `brief` and `knowledge` are not advertised for release (see Known limitations).
-- Structured assertions in `task-context` (experimental line): a task entry can carry
+- Structured assertions in `task-context`: a task entry can carry
   exact key and value assertions, and `review` reports a proposed fact that conflicts
   with a stored one or violates a stored requirement or constraint. No model is used.
   The local checks pass; a benefit on real tasks is not established
@@ -73,8 +73,8 @@ owner approves. Current status is in the [handoff](docs/resume-context-ecosystem
 
 ### Changed
 
-- Lexical behavioral selection is on by default in `context` and the MCP owner
-  (experimental line). Behavioral selection chooses evidence for a question about how
+- Lexical behavioral selection is on by default in `context` and the MCP owner.
+  Behavioral selection chooses evidence for a question about how
   code behaves. A question that starts with a recognized phrase, such as "how does" or
   "why does", and names exactly one type gets up to four of that type's methods that
   match the question, in place of the type's body; when no method matches, the earlier
@@ -88,13 +88,13 @@ owner approves. Current status is in the [handoff](docs/resume-context-ecosystem
   coding tasks is claimed
   ([record](docs/validation.md#t010-singleton-qualification--2026-11-11);
   [contract](specs/001-source-state-recovery/contracts/context-v2.md#experimental-behavioral-support--001-t010-2026-10-09)).
-- The parser dependencies move together (experimental line): tree-sitter-scala 0.26.4,
+- The parser dependencies move together: tree-sitter-scala 0.26.4,
   tree-sitter-powershell 0.26.6 and pulldown-cmark 0.13.6. The derived search index
   schema becomes 9, so an index built earlier needs an explicit `repair-index`; the
   store schema stays 12, and sources, memories and tasks are kept. Semantic retrieval
   then needs `semantic prepare` again, which reuses cached vectors for unchanged inputs
   ([record](docs/validation.md#parser-bundle-and-complete-unit-comparison--2026-11-11)).
-- Tantivy moves from 0.26.2 to 0.27.0 (experimental line). This change alone needs no
+- Tantivy moves from 0.26.2 to 0.27.0. This change alone needs no
   repair: in the recorded check, stores written with 0.26.2 opened without one. The
   parser change above is what requires `repair-index`
   ([record](docs/validation.md#tantivy-027-store-compatibility-and-g1-neutrality--2026-11-11)).
@@ -105,17 +105,16 @@ owner approves. Current status is in the [handoff](docs/resume-context-ecosystem
 
 - Opening a store no longer reports `repair_required` while a child process between
   fork and exec still holds the search index's writer lock. The open waits at most one
-  second for that lock and then returns `store_busy` (experimental line;
-  [record](docs/validation.md#derived-writer-contention-after-fork--2026-11-11)).
+  second for that lock and then returns `store_busy`
+  ([record](docs/validation.md#derived-writer-contention-after-fork--2026-11-11)).
 - Semantic and learning workers start with umask 0077, so the files they create with
   default permissions are accessible only to their owner, whatever the caller's umask
-  (experimental line;
-  [record](docs/validation.md#worker-scratch-creation-defaults--2026-11-13)).
+  ([record](docs/validation.md#worker-scratch-creation-defaults--2026-11-13)).
 - A watcher walk commits the files it reads in batches of at most four, where it used
   to force one commit to disk per file, and a background index page holds 32 keys
   instead of eight. This shortened the first reconciliation in the 6,000-file watcher
-  test, which had run past its deadline (experimental line;
-  [record](docs/validation.md#watcher-test-repair-f18--2026-11-10)).
+  test, which had run past its deadline
+  ([record](docs/validation.md#watcher-test-repair-f18--2026-11-10)).
 
 ### Known limitations
 

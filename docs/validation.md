@@ -1,5 +1,22 @@
 # Validation
 
+## Merge of the experimental line to `main` — 2026-11-20
+
+On the owner's instruction of 2026-11-20 (owner decision 21),
+[PR #56](https://github.com/dwbimstr/context-foundry/pull/56) merged at 16:36:50 UTC by
+merge commit as `37a3cd8`. Its parents are the previous `main`, `d94b013`, and the
+experimental head `f06c533`, and the tree of `main` is identical to `f06c533`. The two
+commits after the gated `455fa03` change only this file, so the
+[`455fa03` receipt](#local-gates-on-455fa03--2026-11-20) covers the merged code; the
+merge commit was not gated separately. Its subject ends with `[skip ci]`, and the
+Actions run list showed no run for it afterwards. `main` now carries the paused
+`.github/dependabot.yml` (decision 2), so Dependabot opens no more version-update
+pull requests; alerts and security updates are unaffected. Nothing was tagged or
+released.
+
+Not run: CI (Actions unavailable), the signed-package checks and the native script on a
+signed candidate (no Developer ID identity), and live MCP hosts against rmcp 3.10.0.
+
 ## Local gates on `455fa03` — 2026-11-20
 
 All eight gates exit 0 on `455fa03`, the head proposed for the merge to `main` (owner
@@ -574,7 +591,7 @@ quotes the owner's choice; the last column is the result or where it is recorded
 | # | Item | Owner's choice | Result |
 |---|---|---|---|
 | 1 | Dependabot PR #55, eleven Cargo minor and patch updates | "Apply 8, hold 3" | Done: ignore, ureq, rmcp, uuid, notify, toml, tokio-rustls and rustls-pki-types applied by hand in `afa7b38` at the PR's versions, with a full gates run ([receipt](#local-gates-on-afa7b38--2026-11-20)); tree-sitter-scala (parse output and schema), usearch (ANN graph and G2) and redb (store database) are held until each is measured; the PR is closed. |
-| 2 | Weekly hosted workflow runs on Dependabot branches | "Pause version updates" | `.github/dependabot.yml` sets `open-pull-requests-limit: 0` for both ecosystems. Dependabot reads its configuration from the default branch, `main`, so the pause takes effect only after the next owner-approved merge to `main`. Alerts and security updates are unaffected. |
+| 2 | Weekly hosted workflow runs on Dependabot branches | "Pause version updates" | `.github/dependabot.yml` sets `open-pull-requests-limit: 0` for both ecosystems. Dependabot reads its configuration from the default branch, `main`; the pause took effect when PR #56 merged on 2026-11-20 ([record](#merge-of-the-experimental-line-to-main--2026-11-20)). Alerts and security updates are unaffected. |
 | 3 | Local-only branches of the rejected T005 experiments | "Push as archive branches" | Done: `archive/t005-fragment-order-20261113` (`ac81777`), `archive/t005-kept-body-headers-20261113` (`74b0b26`) and `archive/t005-headers-red-mutant-20261113` (`74b1be9`) are on GitHub. They never merge; they keep the commits the T005 receipts cite. Two of the tip commits lack `[skip ci]`, so the push started two hosted `Rust` workflow runs at 05:06 UTC on 2026-11-20 (about 9 and 31 minutes; one failed, one passed). That spend was not intended; no workflow file was changed, and the branches will not be pushed again. |
 | 4 | Untracked `.mcp.json`, `.omp/mcp.json`, `.omp/tools/` | "Ignore them" | Done: ignored as machine-local in `.gitignore`. |
 | 5 | Next move for 009 T005 | "Analyze, then one more" | Study the recorded development losses without touching the sealed 2026-11-18 holdout; select one more bounded candidate only if the analysis shows a plausible large gain, otherwise return to the owner. The analysis found none ([record](#t005-loss-analysis--2026-11-19)); see row 17. |
@@ -593,7 +610,7 @@ quotes the owner's choice; the last column is the result or where it is recorded
 | 18 | Pilot v2 retrieval arms after 009 T005 closed (2026-11-20) | "Drop retrieval arms" | Pilot v2 tests task context only; the arms item and 003 T006's acceptance are amended so retrieval is no longer a v2 contrast. |
 | 19 | The host's implicit Apple on-device model provider in pilot v2 (2026-11-20) | "Disable in every arm" | Every v2 launch disables the `apple` provider; see the [crash diagnosis](#sandbox-profile-segmentation-fault-diagnosis--2026-11-20). |
 | 20 | Pilot v2 sample-size method (2026-11-20) | "Implement and test it" | The calibrated variance-based paired method is added to `scripts/pilot-v2-power.py` with tests and proposed for the freeze; nothing is frozen until the owner chooses the design. |
-| 21 | Merge of the experimental line to `main` (2026-11-20) | "Open the PR now" | A pull request from `experimental/context-ecosystem` to `main` is opened after the current startup round lands with a gates receipt; the owner merges it with a merge commit. |
+| 21 | Merge of the experimental line to `main` (2026-11-20) | "Open the PR now" | Done: [PR #56](https://github.com/dwbimstr/context-foundry/pull/56) was opened after the startup round landed with a [gates receipt](#local-gates-on-455fa03--2026-11-20), and merged on the owner's instruction as merge commit `37a3cd8` ([record](#merge-of-the-experimental-line-to-main--2026-11-20)). |
 
 The owner chose named limitations in rows 7, 13, 14 and 15 without wording their
 re-entry triggers. The triggers written into the specs and the pilot v2 draft are
