@@ -2,8 +2,9 @@
 
 Planning addition, 2026-10-09: [T010](#t010--retrieve-behavioral-evidence-for-a-named-symbol)
 is authorized for execution by the owner on 2026-10-09 under the [ecosystem plan](../../docs/context-ecosystem-plan.md).
-Existing task acceptance stands; default city-map behavior is unchanged. The
-implemented mixed-intent candidate is opt-in pending its full acceptance gates.
+Existing task acceptance stands. T010's lexical behavioral selection is accepted
+and enabled by default with explicit opt-out; see the
+[current status](../../docs/resume-context-ecosystem.md#current-status--2026-11-06).
 
 Status: T001–T006 implemented and verified locally; not released. T001–T003 were
 verified on 2026-10-01 (owner-approved scope: 001 + 003 first implementation). T004–T006
@@ -150,9 +151,11 @@ There is no general migration framework. Interrupted upgrade is wholly v1 or v2;
 old binaries refuse v2. Unknown versions and authoritative corruption do not migrate.
 Rollback before upgrade uses v1; after upgrade use v2 or a pre-upgrade backup, never
 write v2 with the old binary. D001 must amend this if storage selection changes.
-Since 008 (2026-10-04), the current store schema is **3**. `upgrade-store --to 3`
-performs these v1→v2 steps and the memory/typed-pending-key steps in one transaction
-from v1 or v2, and `--to 2` is refused ([008](../008-scoped-durable-memory/spec.md)).
+From 008 (2026-10-04) the store schema was **3**: `upgrade-store --to 3` performed
+these v1→v2 steps and the memory/typed-pending-key steps in one transaction from v1 or
+v2, and `--to 2` was refused ([008](../008-scoped-durable-memory/spec.md)). (As of
+2026-11-19 the current store schema is **12**: `upgrade-store --to 12` applies the
+cumulative steps from any of v1–v11 in one transaction and refuses every other target.)
 Search index schema v2 (T005) is derived state, not a store-schema change: an upgrade
 stays metadata-only, so an upgraded store, or any store indexed before T005, reports
 `repair_required` with reason `search_schema` until an explicit `repair-index`.
@@ -230,7 +233,14 @@ cooperative cancellation, not a hard deadline on an OS/library call.
   `src/main.rs`, `tests/core.rs` and new `tests/recovery.rs`; no daemon/model work.
 - **Outcome/acceptance (FR-001, FR-005 / SC-001):** implement schema-2 upgrade, metadata-
   only status/export, bounded refresh and explicit repair as above. Unknown schema
-  changes no records; competing open returns `store_busy` without retry/lock stealing.
+  changes no records; competing authoritative open returns `store_busy` without
+  retry/lock stealing. After redb ownership is acquired, a forked child can briefly
+  retain the previous owner's Tantivy descriptor before exec. Only this derived
+  writer's typed `LockBusy` is retried, for at most one second; persistent contention
+  returns `store_busy`, never `repair_required`. No index repair or source mutation
+  occurs during that wait. Missing/corrupt/schema-mismatched indexes still require
+  explicit repair. Real inherited-descriptor and persistent-writer regressions are
+  in `tests/store_lock.rs`.
 - **Verification:** child-process exits at before/after source commit, after search
   commit before pending clear, during repair enqueue, after quarantine, and before
   marker clear. Reopen/retry; exact source hashes, graph rows and feedback records
@@ -555,18 +565,49 @@ on it ([measurement handoff](../../docs/measurement-handoff.md)).
 
 ### T010 — Retrieve behavioral evidence for a named symbol
 
-**Status:** authorized 2026-10-09 (owner: “go for 1 then 2 and onwards”); in progress, not accepted.
+**Status:** authorized 2026-10-09 (owner: “go for 1 then 2 and onwards”); accepted
+at its lexical retrieval scope on 2026-11-11
+([evidence](../../docs/validation.md#t010-singleton-qualification--2026-11-11)).
 Owner decision, 2026-11-06 ("Lexical-only, drop T006 gate";
 [decision record](../../docs/validation.md#owner-decisions--2026-11-06)): T010's own
 local gates below and the 2026-10-19 G2 enable rule ([AGENTS.md](../../AGENTS.md))
 decide the flag; the 003 T006 agent-task gate no longer applies to it, and no
 real-agent benefit is claimed. G2 found that the flag helps lexical-only stores and
 costs the default hierarchy recipe ([validation](../../docs/validation.md)), so its
-effects on semantic stores are to be removed and, once the gates pass, it is to
-default on only where lexical results are served. That code change is still to do.
+effects on semantic stores are removed. Lexical behavioral selection is now enabled
+by default with explicit opt-out. The first default attempt failed the frozen
+economics guard despite passing G1/G2; that
+[failed receipt](../../docs/validation.md#t010-lexical-default--2026-11-11) remains
+separate from the accepted singleton candidate below.
 
-The first candidate is implemented behind `--experimental-behavior-context` (CLI
-context / MCP owner), default off. It changes packing of existing, fresh candidates,
+Implementation continuation, 2026-11-11: qualify one fixed candidate, without ranking
+tuning. Semantic model admission keeps the ordinary anchor rule regardless of this
+option. A supplied dense window (including partial or empty-hit windows) disables
+both prose selection and owned-method support at the shared engine boundary. Off
+and named-fallback plans are lexical and retain the option. Preserve the explicit
+library boolean and existing flag; default promotion is conditional on the local
+guards, full G1 and a fresh 388-question G2 comparison. The first attempt used
+`a456c53` and K = 1; its failed default result remains in the record.
+The scope is retrieval only; no provider spend or real-agent benefit is authorized.
+
+The second candidate, selected 2026-11-11 before its tests, adds conservative
+singleton exact-run priority for lexical prose and preserves long passages through
+the existing selection identity ([contract](contracts/context-v2.md#experimental-anchorless-prose-selection--009-t005-2026-10-10)).
+It uses the accepted parser/Tantivy baseline `68ed776` (records `1b4cf0e`) and K = 2
+for this continuing decision family, requiring p < 0.025 with the other owner
+enable conditions unchanged. The isolated trial includes the proposed default in
+the library, CLI and MCP before G1/G2, with the existing bare enabling flag and
+`--experimental-behavior-context=false` opt-out. The singleton candidate is accepted
+at this written scope after its frozen retrieval checks and the test-only gate
+continuation; there was no score-driven variant. The same six frozen economics
+cases run through both default and explicit-on MCP boundaries, without changing
+their assertions, fixture bytes or token caps. Existing ordinary comparison
+controls explicitly opt out of the new default. The implementation, retained
+failed gates, fixture-option correction and passing continuation are recorded in
+[validation](../../docs/validation.md#t010-singleton-qualification--2026-11-11).
+
+The first candidate was implemented behind `--experimental-behavior-context` (CLI
+context / MCP owner), initially default off. It changes packing of existing, fresh candidates,
 not their recall or the embedding model. The
 [experimental amendment](contracts/context-v2.md#experimental-behavioral-support--001-t010-2026-10-09)
 defines its exact supported intent and ownership/budget behavior. Local trace evidence
@@ -574,7 +615,9 @@ found `QueryRuntime::dense_index` already selected at candidate rank 2 but omitt
 by anchored packing. On that frozen local query the candidate supplies the method
 and the owner's address at 357 delivered tokens versus 437 for the baseline's struct
 alone. This is one development example, not a G1/G2 or real-agent acceptance result.
-The full gates below remain pending; see [validation](../../docs/validation.md).
+The selected retrieval promotion conditions below are satisfied by the singleton
+candidate. See the [dated receipt](../../docs/validation.md#t010-singleton-qualification--2026-11-11)
+and [current status](../../docs/resume-context-ecosystem.md).
 
 - **Problem:** T007 resolves identity well, but its anchored packing can deliver a
   type definition or directory without the implementation needed by a question about
@@ -632,9 +675,11 @@ The full gates below remain pending; see [validation](../../docs/validation.md).
 - **Verification:** targeted core/MCP fixtures for relevant support, identity
   ambiguity, unavailable/stale graph, bounded packing and scope isolation, followed
   by the required implementation checks and the frozen measurements when this task
-  is implemented. Local implementation evidence is recorded in validation; the full
-  benchmark gates are still open. The real-host agent-task gate was dropped for this
-  flag on 2026-11-06.
+  is implemented. The singleton candidate passed the frozen G1 and G2 measurements
+  and, on its test-only continuation, all eight local gates on 2026-11-11
+  ([receipt](../../docs/validation.md#t010-singleton-qualification--2026-11-11)); the
+  receipt also keeps the first full gate run, which failed. The real-host agent-task
+  gate was dropped for this flag on 2026-11-06.
 
 ### G1 — city-map measurement
 
@@ -741,13 +786,16 @@ proxies, they can resolve to a different compiler.
 
 ### T011 — Maintain the admitted workspace from filesystem change hints
 
-Implemented locally 2026-10-09 for the experimental ecosystem; not accepted. The owner
+Implemented locally 2026-10-09; accepted at the owner-selected native scope on
+2026-11-10 ([receipt](../../docs/validation.md#native-mac-watcher-acceptance-001-t011--2026-11-10)). The owner
 requires continuous incremental maintenance at 60,000–80,000 files. Owner decision,
 2026-11-06 ("Native Mac run on rust"): first fix F18, the intermittent 6,000-file
 watcher test ([FOLLOWUP](../../FOLLOWUP.md)), without loosening its assertion; then
-T011 is accepted only by an `mcp --watch` run on the owner's Mac over the 62,116-file
-rust-lang/rust 1.99.0 corpus, against bounds stated before the run. If that run
-fails, T011 stays open. Neither step has run yet. Reuse this spec's
+T011 requires an `mcp --watch` run on the owner's Mac over the pinned
+rust-lang/rust 1.99.0 corpus, against bounds stated before the run. The F18 deadline
+failure was repaired on 2026-11-10 without loosening the test, and the native run
+passed the same day. The receipt corrects the earlier 62,116-file description against
+the pinned corpus inventory; it records the full run and its limits. Reuse this spec's
 source ingestion, ignore/no-follow and reconciliation rules. Watch events do not
 admit roots, certify bytes or become a second source ledger.
 
@@ -796,7 +844,12 @@ the requested file's body. Failed walks never sweep unseen sources. Seen marks u
 existing redb rows, buffered in pages of 128. Source commits and index refresh reuse
 existing freshness and crash-recovery rules, including source-dependent briefs.
 
-One step processes one walk entry/file, 128 sweep keys or eight lexical keys. During
+One step processes one walk entry/file, 128 sweep keys or 32 lexical keys. A walk
+publishes the files it reads in atomic batches of at most four, the foreground
+ingestion bound, and rechecks each by name just before its commit; a single hinted
+path still commits alone. The 2026-11-10 F18 repair set both sizes: every source and
+index commit is forced to disk, and singles with eight-key pages made a first
+reconciliation's time follow the disk's sync latency ([FOLLOWUP](../../FOLLOWUP.md)). During
 long walks and busy edit queues lexical pages publish every 32 source steps;
 remaining index work drains when hints settle. Cancellation is cooperative between
 these steps; an individual OS call or commit is not a hard latency bound. Read failures retry after 2–30 seconds
@@ -812,7 +865,7 @@ on success, error or unwind. Shutdown refuses new watch work; an incomplete scan
 skips futile abort-slot retries against a closing owner and is reconciled on restart.
 The existing page sizes, foreground priority, 25 ms contention fallback and 180-second
 6,000-file test deadline are unchanged. Linux owner-boundary, restart and integration
-checks pass; native throughput requires its own rerun.
+checks pass; the native run is recorded in the acceptance receipt above.
 
 Intentional differences from the pinned Prakarana implementation: native hints drive
 maintenance, idle ticks do not read source bodies, no periodic all-source treadmill,
@@ -820,8 +873,9 @@ and no separate ledger/graph service. Notification loss without a rescan signal 
 not detectable: explicit indexing or restart reconciles it. Ignore files outside the
 root need the same explicit action. Backend errors are visible and need owner restart
 to re-register. Linux native event and synthetic large-workspace evidence is recorded
-in [validation](../../docs/validation.md); macOS, network filesystems, 80,000-file
-throughput and model preparation speed are not inferred from those tests.
+in [validation](../../docs/validation.md). The native acceptance above covers the
+pinned Rust corpus on the owner's Mac; network filesystems, 80,000-file throughput
+and model preparation speed are not established.
 
 T009/T011 efficiency follow-up, selected 2026-10-09: unchanged-source chunk allocation
 avoidance, bounded ingestion pipelining and lexical worker reuse are implemented.

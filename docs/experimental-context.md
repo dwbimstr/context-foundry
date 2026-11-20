@@ -27,10 +27,12 @@ continuous brief regeneration is separately enabled with an explicit knowledge p
 and maintenance option below. A synthetic 80,000-file lexical/watcher check passes;
 see [scope and timings](validation.md#cold-verification-and-changed-input-publication--2026-10-10).
 Mixed-size repositories and semantic/knowledge throughput still need their own evidence.
-For watching, the owner chose on 2026-11-06 an `mcp --watch` run on the 62,116-file
+For watching, the owner chose on 2026-11-06 an `mcp --watch` run on the pinned
 rust-lang/rust corpus on the owner's Mac to accept
-[001 T011](../specs/001-source-state-recovery/spec.md#t011--maintain-the-admitted-workspace-from-filesystem-change-hints);
-it has not run yet.
+[001 T011](../specs/001-source-state-recovery/spec.md#t011--maintain-the-admitted-workspace-from-filesystem-change-hints).
+That run passed on 2026-11-10
+([receipt](validation.md#native-mac-watcher-acceptance-001-t011--2026-11-10)); the
+receipt also corrects the earlier "62,116-file" description of the corpus.
 
 ## Continuous semantic maintenance
 
@@ -180,14 +182,16 @@ generation. These are payload bounds, not total-process RAM guarantees. A comple
 hierarchy of rust-lang/rust (62,000 files, 685,623 unit locations sharing 624,325
 vectors) uses about 89% of the vector bound, so larger repositories need it revisited.
 Cold ANN construction and threshold compaction still build in memory; ordinary small
-edits use the bounded delta described above. Real-model semantic throughput at
-60,000–80,000 files and task-quality improvements remain unaccepted. Under the owner's
-2026-11-06 decision ("Accept the Mac rust run"), 009's scale acceptance is to cite this
-complete rust-lang/rust preparation on the owner's Mac plus a short replay and
-changed-input check there, which has not run yet
-([009](../specs/009-optional-semantic-retrieval/spec.md)). The mixed-size
-8,192-file semantic fixture and historical 80,000-file lexical/watcher check cover
-different boundaries; neither is model-scale acceptance. See [validation](validation.md).
+edits use the bounded delta described above. Under the owner's 2026-11-06 decision
+("Accept the Mac rust run"), 009's scale acceptance cites this complete rust-lang/rust
+preparation on the owner's Mac plus a replay and changed-input check there, which
+passed on 2026-11-10
+([receipt](validation.md#semantic-scale-replay-and-changed-input-acceptance--2026-11-10);
+[009](../specs/009-optional-semantic-retrieval/spec.md)). That accepts the Mac Rust
+scale boundary only. Linux x86 scale and the 67,663-source Rust/Go corpus are a named
+limitation, and retrieval quality and task-quality improvements remain unaccepted. The
+mixed-size 8,192-file semantic fixture and historical 80,000-file lexical/watcher check
+cover different boundaries; neither is model-scale acceptance.
 
 ## Model-aware body/parent chunking
 
@@ -293,16 +297,19 @@ signature fallback: its overlong documentation is still truncated. Short complet
 inputs skip parsing; files without declarations use bounded distributed text samples
 and never a blank opening alone. No source transaction holds the tokenizer or model.
 
-With `--experimental-behavior-context`, complete file-overview results also interleave
-lexical matches first. Long overview/hierarchy hits can deliver an exact local passage
-instead of the file prefix. Its semantic tag describes how the containing unit was
-selected; the passage has no independent vector or similarity score. Diagnostics
-retain both ranges. No-overlap queries keep the ordinary source-unit fallback.
-Owner decision, 2026-11-06 ("Lexical-only, drop T006 gate"): the flag's effects on
-semantic stores, this one included, are to be removed, and once 001 T010's own gates
-pass it is to default on only where lexical results are served
-([context v2](../specs/001-source-state-recovery/contracts/context-v2.md#experimental-behavioral-support--001-t010-2026-10-09)).
-Until that change lands, it behaves as described here.
+Owner decision, 2026-11-06 ("Lexical-only, drop T006 gate"), implemented for
+qualification 2026-11-11: `--experimental-behavior-context` changes lexical delivery
+only. Dense results retain ordinary ordering and their scored source spans; the flag
+does not admit a model call, refine published vectors, focus a semantic unit locally
+or interleave lexical candidates. A named semantic fallback still serves lexical
+results. Lexical behavioral selection has been on by default on the experimental line
+since 2026-11-11, when the singleton candidate passed 001 T010's own gates
+([context v2](../specs/001-source-state-recovery/contracts/context-v2.md#experimental-behavioral-support--001-t010-2026-10-09),
+[receipt](validation.md#t010-singleton-qualification--2026-11-11)). Pass
+`--experimental-behavior-context=false` to `context` or `mcp` for the ordinary lexical
+path; the bare flag still works. The first default attempt of the same day passed G1/G2
+but lost the required `refund` definition in the frozen economics fixture; its
+[receipt](validation.md#t010-lexical-default--2026-11-11) is kept as history.
 
 CLI requests that resolve explicit/defined anchors now skip unused semantic startup,
 using the same path/prose rules as retrieval. Eligible requests still load their
@@ -314,8 +321,10 @@ or guaranteed task evidence. Keep lexical/source retrieval available. Compare ta
 quality before selecting this experimental representation for a deployment.
 
 Ordinary `embed-worker` now includes the checked pooled-output allocation fix.
-Linux CPU uses descriptor `adapter_revision: 3`; the new, unvalidated Metal build uses
-revision 4. Keep every artifact hash, template, dimension and geometry accurate.
+Linux CPU uses descriptor `adapter_revision: 3`; the Metal build uses revision 4, which
+the ad-hoc-signed native acceptance run exercised on the owner's Mac on 2026-11-10
+([receipt](validation.md#native-macos-acceptance--2026-11-10)). Keep every artifact
+hash, template, dimension and geometry accurate.
 Existing revision 1/2 profiles need their original verified worker binary; the new
 runtime does not relabel their caches. The previous geometry-only revision-2 example
 above describes those legacy workers, not the current native binary.
@@ -336,8 +345,9 @@ threads constrain backend/affinity, seconds are a worker-lifetime CPU allowance.
 `memory_ceiling_bytes` also becomes a hard Linux address-space limit before model
 threads start. The checked 8,192-token CPU run used an explicit 8 GiB ceiling; do not
 assume a larger window fits the default ceiling. All native admission still requires
-the existing development-isolation switch. macOS CPU/Metal/package acceptance is
-separate and remains unexecuted here.
+the existing development-isolation switch. macOS acceptance is separate: the CPU and
+Metal checks passed in the 2026-11-10 native run cited above, and signed-package
+acceptance remains unexecuted.
 
 Reproduce the bounded real-model scale diagnostic with `tests/semantic_scale.rs`:
 set `FOUNDRY_SEMANTIC_SCALE_PROFILE`, a new outside-Git `FOUNDRY_SEMANTIC_SCALE_DIR`,
@@ -517,7 +527,8 @@ Generation and embedding inference do not run on the watcher path.
 
 The pending hint queue holds at most 2,048 paths or 1 MiB of path text, then collapses
 to one dirty-root marker. Each owner step handles one walk entry/file, at most 128
-retirements, or eight lexical keys; foreground calls have priority between steps.
+retirements, or 32 lexical keys (a walk commits the files it reads in batches of at
+most four); foreground calls have priority between steps.
 These are work and queue bounds, not whole-process RAM or hard latency guarantees:
 filesystem calls, parsers, database commits and the notification library's OS watch
 registrations have their own costs. Source work gets eight steps before a waiting
@@ -530,11 +541,13 @@ registration failure refuses startup; a later backend error stays visible in
 re-register a failed backend. No durable event log or periodic whole-tree polling is
 added: unreported notification loss is recovered by explicit indexing or restart.
 Ignore files outside the watched root (for example global Git excludes) likewise
-require an explicit index or restart. Native event integration is tested on Linux;
-macOS event behavior awaits the native Mac `mcp --watch` run that the owner chose to
-accept
+require an explicit index or restart. Native event integration is tested on Linux.
+On macOS, the native `mcp --watch` run that the owner chose to accept
 [001 T011](../specs/001-source-state-recovery/spec.md#t011--maintain-the-admitted-workspace-from-filesystem-change-hints)
-(2026-11-06; not run yet), and network-filesystem event behavior remains unverified.
+passed on the pinned rust-lang/rust corpus on 2026-11-10
+([receipt](validation.md#native-mac-watcher-acceptance-001-t011--2026-11-10)). That
+run did not inject queue overflow or ignore-policy changes, which stay covered by the
+existing synthetic checks, and network-filesystem event behavior remains unverified.
 
 ## Recoverable task context
 
@@ -621,6 +634,37 @@ unfinished action or a passed test. It makes no model call or host mutation. Unk
 paths cannot admit a repository. Revision conflicts refuse. Dismissal still applies only
 to rejected attempts; resolve work/questions using existing selection/supersession
 commands. Requirements and constraints remain protected in the task view.
+
+For explicit contradiction or constraint checks, add structured assertions to the
+entry supplied to `apply`, for example:
+
+```json
+{"id":"retry-policy","kind":"constraint","text":"Keep three retries in environment 42.","author":"user","provenance":"explicit task instruction","source_links":[],"assertions":[{"key":"env-42:retry.limit","relation":"equals","value":"3"}]}
+```
+
+Use the task's current returned revision in the review command (5 in this example):
+
+```json
+{"op":"review","expected_revision":5,"paths":[],"finishing":false,"assertions":[{"key":"env-42:retry.limit","relation":"equals","value":"4"}],"max_bytes":4096}
+```
+
+This returns `constraint_violation` with the stored and proposed assertions. An
+observation, hypothesis or decision asserting a different value for the same key
+returns `assertion_conflict`. Requirements/constraints can also use `not_equals`
+to name a forbidden value; proposed review facts use `equals`. A satisfying value
+or absent key is silent unless a path/finishing reminder also applies.
+
+Keys represent caller-defined single-valued facts and include relevant scope or
+environment identity. Values and keys compare exactly, including case and numeric
+spelling. Each entry/review accepts at most sixteen distinct keys; no prose is
+interpreted. Assertions retain their own `assertions_sha256` alongside the original
+text digest and survive folding, restart and export. Review uses selected current
+entries and fresh source links, within its complete-original/byte caps. A returned
+conflict remains a caller-claim comparison with `verified:false`; actual host use
+and intervention quality need their separate outcome checks. See
+[008 T004](../specs/008-scoped-durable-memory/spec.md#t004--experimental-grounded-reminders-and-explicit-promotion)
+for validation, scope and relation bounds.
+
 
 To find a retained observation when its ID has been forgotten, search the originals:
 
@@ -791,8 +835,9 @@ silently cut inside a claim.
 area summaries through a configured OpenAI-compatible Chat Completions endpoint.
 Source indexing alone never launches generation. This experimental CLI owns the store
 exclusively: stop the MCP owner before using this standalone command. To generate inside
-a running MCP owner, use the continuous workflow below. Schema 10
-is required; upgrade an existing store explicitly as described above.
+a running MCP owner, use the continuous workflow below. The store must be at the
+current schema, 12 (schema 10 added the knowledge completion cache and brief lineage);
+upgrade an existing store explicitly as described above.
 
 Create a profile with the actual workspace ID from `status`, the provider's exact
 response model name, and a lowercase 64-hex deployment/artifact digest. The digest is
@@ -889,8 +934,10 @@ acceptance is deferred ("Defer 010 real-model acceptance"), so this generation c
 experimental and unadvertised and the release does not wait on it; unbuilt headroom
 policies are named limitations ("Script checks only",
 [010](../specs/010-source-bound-derived-knowledge/spec.md)). Device acceptance of the
-built controls is what `scripts/native-macos-acceptance.py` checks, and that run has not
-happened. The MCP continuation below now
+built controls is what `scripts/native-macos-acceptance.py` checks. That run passed
+with ad-hoc signing on the owner's Mac on 2026-11-10
+([receipt](validation.md#native-macos-acceptance--2026-11-10)) and must be repeated on
+the signed release candidate. The MCP continuation below now
 implements continuous scheduling and shared client admission. See
 [the implemented contract](../specs/010-source-bound-derived-knowledge/spec.md#t002-implementation-decisions-and-boundaries).
 
@@ -952,11 +999,12 @@ still be running when a query arrives. Payloads and local preparation are bounde
 Foundry cannot enforce CPU/GPU headroom or terminate computation inside an external service.
 Shutdown closes HTTP and discards uncommitted output before releasing the store.
 
-Knowledge tables were introduced in schema 10; the current branch uses schema 11. Selected brief publication does not drain
-unrelated source work. Owned local generation is available below; real-model task quality
-is deferred and global GPU pressure is a named limitation (owner, 2026-11-06); native
-macOS CPU acceptance remains open; shared memory and optional
-Linux CPU admission are described below.
+Knowledge tables were introduced in schema 10; the current store schema is 12. Selected
+brief publication does not drain unrelated source work. Owned local generation is
+available below; real-model task quality is deferred and global GPU pressure is a named
+limitation (owner, 2026-11-06). The native macOS CPU checks passed in the ad-hoc-signed
+run of 2026-11-10 ([receipt](validation.md#native-macos-acceptance--2026-11-10)).
+Shared memory and optional Linux CPU admission are described below.
 
 ## Owned local generation
 
@@ -1101,8 +1149,10 @@ a bounded owner-PID lookup (128 directories, depth 64) to locate the actual grou
 each proc/cgroup text read is bounded to 64 KiB. Cgroup v1, exhausted lookup bounds,
 malformed/unavailable observations or unsupported
 platforms defer with `model_memory_observation_unavailable`. macOS uses immediately free
-VM pages conservatively, without assuming inactive/compressed pages can be reclaimed;
-this path has not been exercised on hardware here.
+VM pages conservatively, without assuming inactive/compressed pages can be reclaimed.
+The two native CPU checks of the 2026-11-10 run read this observation on the owner's Mac
+([receipt](validation.md#native-macos-acceptance--2026-11-10)); their reservations
+allocate no model memory.
 
 A new worker additionally needs headroom for its entire ceiling. Low-memory pressure
 defers both maintenance lanes, and idle generation is reaped on its next maintenance
@@ -1121,8 +1171,10 @@ artifact disk/page cache, other processes and other Foundry owners are outside i
 sum. External HTTP servers have no local worker reservation. Global GPU usage,
 thermal/battery policy and combined embedding-plus-generation residency are named
 limitations (owner, 2026-11-06, "Script checks only": device acceptance covers what
-`scripts/native-macos-acceptance.py` checks); native macOS CPU acceptance remains open. Without
-this option, previous admission and cache behavior is preserved.
+`scripts/native-macos-acceptance.py` checks). The native macOS CPU checks in that
+script passed on 2026-11-10
+([receipt](validation.md#native-macos-acceptance--2026-11-10)). Without this option,
+previous admission and cache behavior is preserved.
 
 
 The optional model resource policy also accepts
@@ -1137,8 +1189,9 @@ do not sample. It preserves idle generation residency under CPU contention.
 This is contention admission, not a hard CPU limit. Ancestors hidden outside the cgroup
 mount, cgroup v1 and affinity masks beyond the platform CPU-set capacity are not covered.
 macOS now has a native host-tick sampler using the same policy and a distinct status
-scope (`macos_host_cpu_ticks`). Its arithmetic/reset behavior is tested on Linux;
-native compilation, sampling and real pressure/resume acceptance are outstanding.
+scope (`macos_host_cpu_ticks`). Its arithmetic/reset behavior is tested on Linux, and
+the native observation and real pressure/pause/resume checks passed on the owner's Mac
+on 2026-11-10 ([receipt](validation.md#native-macos-acceptance--2026-11-10)).
 It does not claim Linux affinity/cgroup limits on macOS. Global GPU pressure and
 thermal/battery policy are named limitations, and 010 task-quality/economics acceptance
 is deferred (owner, 2026-11-06).
@@ -1360,11 +1413,15 @@ Dynamic dispatch, indirect aliases, wrappers and unsupported languages can still
 relevant evidence. At most 32 candidate spans, 32 KiB per span and the existing exact
 delivery allowance apply; each alias candidate charges both import and call spans.
 
-Existing search schemas 5 through 7 need `foundry --store STORE repair-index`
-for schema 8 call postings; schema 7 has the same fields but predates the
-pulldown-cmark 0.13.5 Markdown grammar, and schema 6 additionally lacks
-canonical import-alias names. The semantic source-unit recipe is version 6
-(2026-10-26); a search-only repair still does not itself re-embed, and
-partitions recorded under units 5 refit at the next `semantic prepare`.
+A search index recorded under schema 8 or earlier needs
+`foundry --store STORE repair-index` to reach the current search schema 9
+(2026-11-11), which pairs the Scala 0.26.4, PowerShell 0.26.6 and pulldown-cmark
+0.13.6 parser bundle with source-unit schema 7. Schema 8 (2026-10-26) re-indexed
+Markdown under pulldown-cmark 0.13.5; schema 7 has the same fields but predates
+that Markdown grammar, and schema 6 additionally lacks canonical import-alias
+names. The semantic partition recipes pin source-unit schema 7 (2026-11-11); a
+search-only repair still does not itself re-embed, and partitions recorded under
+units 5 or 6 refit at the next `semantic prepare`
+([repair contract](../specs/001-source-state-recovery/contracts/context-v2.md#parser-bundle--2026-11-11)).
 See the [Linux diagnostic results](validation.md) for
 executed checks, negative retrieval/host findings, fixture scale and real CPU limits.

@@ -7,8 +7,9 @@ context) and its measured run on rust-lang/rust 1.99.0, which passed every crite
 (see validation). T004 (doors, city map) was approved by the owner on 2026-10-07,
 implemented and merged 2026-10-08 (`d00fc19`, cross-lab SHIP, gates green), amended for
 tie groups (`483810a`, cross-lab SHIP); G1 passed with 001 T007 on 2026-10-08. T005:
-the owner accepts it at its written scope (2026-11-06, § T005); the acceptance is
-recorded once the local gates receipt exists, which is still to do. Dependencies: 001; 003
+accepted at its written fixture scope on 2026-11-10 under the owner's 2026-11-06
+decision, using the `65fd799` local gates receipt ([acceptance](../../docs/validation.md#boundary-scope-acceptance-005-t005--2026-11-10)).
+Dependencies: 001; 003
 only for the agent-facing part of T003.
 Authorization: specification refinement.
 Spec-pass decisions recorded 2026-10-03: pinned producer release, UTF-8-only positions,
@@ -510,8 +511,10 @@ T005's whole acceptance. It passes
 ([first record](../../docs/validation.md#boundary-relationships-and-task-evidence--2026-10-10));
 the producer has since grown through `python-http-v7` (FastAPI and Flask) and the
 execution-observation import, so the owner accepts T005 at that scope. The acceptance
-is recorded once the local gates receipt exists (still to do); T005 then stops
-blocking release. Other frameworks and brokers, broader import forms, cross-language
+is recorded on 2026-11-10 using the passing `65fd799` local gates receipt
+([acceptance](../../docs/validation.md#boundary-scope-acceptance-005-t005--2026-11-10));
+T005 no longer blocks release. Other frameworks and brokers, broader import forms,
+cross-language
 identity, dynamic collectors and the other items the dated continuations below leave
 open or pending are named limitations, not open T005 work. This decision supersedes
 those open or pending notes.

@@ -7,13 +7,17 @@ checks and synthetic worker lifecycle checks, then requires a successful Metal
 compute dispatch before downloading pinned public embedding artifacts. A signed
 development worker must produce the full-window receipt and be observed and reaped.
 The runner preserves failures and blocked hardware as such; adding the job does not
-establish acceptance. Its selected checks exclude generation, real-model owner death
-under pressure, global GPU headroom and signed installed-package acceptance.
+establish acceptance. `--generation` adds the owned local generation/change/reuse
+check and `--scale-calibration` adds the fixed 128-input overview sample. Real-model
+owner death under pressure, global GPU headroom and signed installed-package
+acceptance remain outside this development run.
 
 Owner decisions, 2026-11-06. "Once now, unsigned": the runner runs once on the
 owner's Mac with ad-hoc development signing, for the first physical-device receipts,
-and again on the signed release candidate; neither run has happened yet. "Script
-checks only": device acceptance is what this runner checks, and the unbuilt global
+and again on the signed release candidate. The development run, including generation
+and calibration, passed on 2026-11-10 ([receipt](validation.md#native-macos-acceptance--2026-11-10));
+the signed candidate run remains. "Script checks only": device acceptance is what
+this runner checks, and the unbuilt global
 GPU pressure, combined embedding-and-generation residency, thermal/battery and
 embedding-eviction policies become named limitations, each with a re-entry condition,
 and no new code.
@@ -21,8 +25,9 @@ and no new code.
 **2026-10-11 resource-code handoff.** The macOS CPU sampler now exists in
 [`model_resources.rs`](../src/model_resources.rs), using the existing optional
 background CPU policy. Linux verifies tick accounting/reset and policy hysteresis;
-native compilation and actual CPU-pressure behavior have not run here. The current
-Linux environment has no configured native Mac runner or GPU access. On an idle Mac:
+native compilation and actual CPU-pressure behavior had not run in that Linux
+environment, which had no configured native Mac runner or GPU access. Both checks
+below passed on the owner's Mac in the 2026-11-10 run recorded above. On an idle Mac:
 
 ```sh
 cargo test --locked --lib model_resources::tests::native_macos_cpu_observation \
@@ -138,8 +143,8 @@ file scan or fitting inventory alone cannot close semantic scale acceptance.
 
 Owner decision, 2026-11-06: "Accept the Mac rust run". 009 T006–T009 scale
 acceptance cites the complete hierarchy-v1 preparation of rust-lang/rust (62,035
-files) on the owner's Mac, plus a short replay and changed-input check there, which
-has not run yet. The 67,663-source Rust/Go corpus and Linux x86 scale become a named
+Git entries) on the owner's Mac, plus the
+[completed replay and changed-input check](validation.md#semantic-scale-replay-and-changed-input-acceptance--2026-11-10). The 67,663-source Rust/Go corpus and Linux x86 scale become a named
 limitation, and F10 and F11 are retired. The full-corpus and Linux commands below
 remain reproduction instructions; they no longer decide acceptance.
 
@@ -553,7 +558,11 @@ verification steps. Owner decisions, 2026-11-06: "Encrypted off-machine copy" an
 (`datasets/context-foundry-f4`), the G2 harness, the G1 apparatus and the pilot's
 private evidence also go into encrypted, checksummed archives in `~/VSC_DEV/backups`,
 which the owner copies off the Mac ([encrypted backups](resume.md#encrypted-backups)).
-The archives are not built yet.
+The five archives were built and checksum-verified on 2026-11-11 in
+`~/VSC_DEV/backups/foundry-20261111-retry1`
+([receipt](validation.md#encrypted-evidence-backups--2026-11-11)). Copying them off
+the Mac and an authenticated restoration remain with the owner, and neither is
+recorded as done.
 
 | Input | Location | Identity |
 | --- | --- | --- |

@@ -241,7 +241,7 @@ async fn retrieval_trace_preserves_mcp_text_and_records_the_actual_result_and_re
 }
 
 #[tokio::test]
-async fn behavioral_context_is_opt_in_at_the_real_mcp_boundary() {
+async fn lexical_behavior_defaults_on_with_an_explicit_cli_and_mcp_opt_out() {
     let fixture = tempfile::tempdir().unwrap();
     let root = fixture.path().join("workspace");
     let store = fixture.path().join("store");
@@ -253,37 +253,59 @@ async fn behavioral_context_is_opt_in_at_the_real_mcp_boundary() {
     .unwrap();
     bootstrap_apply(&store, &root);
     let query = "How does `Session` retry requests?";
-    let baseline = std::process::Command::new(BIN)
-        .arg("--store")
-        .arg(&store)
-        .args(["context", query])
-        .output()
-        .unwrap();
-    assert!(baseline.status.success());
-    assert!(!String::from_utf8_lossy(&baseline.stdout).contains("exponential_delay"));
-    let client =
-        stdio_client_with(&store, &root, &["--experimental-behavior-context".into()]).await;
-    let result = client
-        .call_tool(
-            CallToolRequestParams::new("context").with_arguments(
-                serde_json::json!({"query":query, "tokens":512})
-                    .as_object()
-                    .unwrap()
-                    .clone(),
-            ),
-        )
-        .await
-        .unwrap();
-    let text = assert_single_text_success(&result);
-    assert!(text.contains("exponential_delay"), "{text}");
-    assert!(count_tokens(&text) <= 512);
-    assert!(
-        v2(&text)
-            .items
-            .iter()
-            .any(|item| item.label.as_deref() == Some("fn Session::retry"))
-    );
-    client.cancel().await.unwrap();
+    let mut default_text = None;
+    for (flag, enabled) in [
+        (None, true),
+        (Some("--experimental-behavior-context"), true),
+        (Some("--experimental-behavior-context=false"), false),
+    ] {
+        let extra: Vec<String> = flag.into_iter().map(str::to_owned).collect();
+        let cli = std::process::Command::new(BIN)
+            .arg("--store")
+            .arg(&store)
+            .arg("context")
+            .args(&extra)
+            .args([query, "--tokens", "512"])
+            .output()
+            .unwrap();
+        assert!(
+            cli.status.success(),
+            "{}",
+            String::from_utf8_lossy(&cli.stderr)
+        );
+        let cli_text = String::from_utf8(cli.stdout).unwrap();
+        let client = stdio_client_with(&store, &root, &extra).await;
+        let result = client
+            .call_tool(
+                CallToolRequestParams::new("context").with_arguments(
+                    serde_json::json!({"query":query, "tokens":512})
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                ),
+            )
+            .await
+            .unwrap();
+        let text = assert_single_text_success(&result);
+        assert_eq!(text, cli_text);
+        assert_eq!(text.contains("exponential_delay"), enabled, "{text}");
+        assert!(count_tokens(&text) <= 512);
+        assert_eq!(
+            v2(&text)
+                .items
+                .iter()
+                .any(|item| item.label.as_deref() == Some("fn Session::retry")),
+            enabled
+        );
+        if enabled {
+            if let Some(previous) = &default_text {
+                assert_eq!(&text, previous);
+            } else {
+                default_text = Some(text);
+            }
+        }
+        client.cancel().await.unwrap();
+    }
 }
 
 fn text_of(result: &rmcp::model::CallToolResult) -> String {

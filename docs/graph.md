@@ -29,8 +29,10 @@ omitted. The result reports staleness and truncation; an empty result does not
 certify the absence of callers or a producer's complete coverage.
 
 The compiler adapter is owned by [005](../specs/005-graph-evidence-lifecycle/spec.md)
-(proposed, unimplemented): its rust-analyzer SCIP import and `references` operation
-add producer capabilities, source census, coordinate validation and stable symbol
-identity. It must not automatically run an indexed repository's build scripts or
+and is implemented: its rust-analyzer SCIP import (`import-scip`) and `references`
+operation were accepted on 2026-10-04
+([record](validation.md#005-compiler-references--t001-and-t002-2026-10-04)). The
+adapter adds producer capabilities, source census, coordinate validation and stable
+symbol identity. It must not automatically run an indexed repository's build scripts or
 pretend syntactic candidates are resolved cross-file calls. Provider execution is
 explicit and outside retrieval.

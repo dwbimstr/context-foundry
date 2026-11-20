@@ -10,10 +10,7 @@
 //! request path decides that before any model call); the candidate assembly
 //! normally places the window's units first, in similarity order, ahead of the
 //! lexical candidates (`Engine::search_candidates_semantic`). Nothing here
-//! rewrites the query or calls a second model. Hierarchy localization (experimental prose selection only)
-//! exactly scores a bounded set of published body vectors from discovered files,
-//! reusing that query vector and retaining only current point-joined locations.
-//! A failure at any
+//! rewrites the query or calls a second model. A failure at any
 //! step is a NAMED fallback ([`Fallback`]) for the baseline path; it never
 //! fails the response.
 use crate::control::Control;
@@ -30,11 +27,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, mpsc};
 use std::time::{Duration, Instant};
 
-mod refinement;
+mod provenance;
 mod runtime;
 use super::area;
-use super::cache;
-pub(crate) use refinement::{OwnerProof, OwnerScope, RefinedHit};
 pub(crate) use runtime::KnowledgeCall;
 pub use runtime::{DocumentCall, MakeProvider, QueryRuntime};
 
@@ -113,9 +108,6 @@ pub struct DenseHit {
 pub struct DenseWindow {
     pub hits: Vec<DenseHit>,
     generation: Arc<DenseIndex>,
-    /// Reused only for bounded exact scoring of already published body
-    /// vectors. Refinement never embeds source or starts preparation in a read.
-    vector: Vec<f32>,
     pub(crate) areas: Vec<crate::store::RecordCandidate>,
 }
 
@@ -280,76 +272,6 @@ impl DenseIndex {
         } else {
             &self.segments[1].keys[label - base.len()]
         }
-    }
-
-    fn label_for_key(&self, key: &str) -> Option<usize> {
-        let mut offset = 0;
-        for segment in &self.segments {
-            if let Ok(ordinal) = segment
-                .keys
-                .binary_search_by(|stored| stored.as_str().cmp(key))
-            {
-                return Some(offset + ordinal);
-            }
-            offset += segment.keys.len();
-        }
-        None
-    }
-
-    fn score_label(
-        &self,
-        query: &[f32],
-        label: usize,
-        scratch: &mut [f32],
-    ) -> Result<DenseHit, Fallback> {
-        if query.len() != self.dimensions || scratch.len() != self.dimensions {
-            return Err(Fallback::new(
-                "index_geometry",
-                "refinement vector dimensions disagree",
-            ));
-        }
-        let mut ordinal = label;
-        for segment in &self.segments {
-            if ordinal >= segment.keys.len() {
-                ordinal -= segment.keys.len();
-                continue;
-            }
-            let count = segment.index.get(ordinal as u64, scratch).map_err(|e| {
-                Fallback::new("index_unavailable", format!("usearch vector lookup: {e}"))
-            })?;
-            if count != 1 {
-                return Err(Fallback::new(
-                    "index_unavailable",
-                    "published body vector is missing",
-                ));
-            }
-            // USearch stores f16 vectors. Account for quantization's small norm
-            // change instead of assuming the restored f32 values have norm 1.
-            let (mut dot, mut query_norm, mut body_norm) = (0.0f64, 0.0f64, 0.0f64);
-            for (&a, &b) in query.iter().zip(scratch.iter()) {
-                let (a, b) = (f64::from(a), f64::from(b));
-                dot += a * b;
-                query_norm += a * a;
-                body_norm += b * b;
-            }
-            if !dot.is_finite()
-                || !query_norm.is_finite()
-                || !body_norm.is_finite()
-                || query_norm <= 0.0
-                || body_norm <= 0.0
-            {
-                return Err(Fallback::new(
-                    "index_geometry",
-                    "refinement vector is nonfinite or zero",
-                ));
-            }
-            let distance = (1.0 - dot / (query_norm * body_norm).sqrt()).clamp(0.0, 2.0) as f32;
-            return Ok(DenseHit { label, distance });
-        }
-        Err(Fallback::new(
-            "index_unavailable",
-            "refinement label is outside generation membership",
-        ))
     }
 
     /// At most two searches and 2*k candidates. Filtering happens INSIDE ANN

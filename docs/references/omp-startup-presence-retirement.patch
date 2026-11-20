@@ -1,0 +1,647 @@
+Experimental source-owned project-presence retirement; not applied by Context Foundry.
+The immutable-handle correction is qualified at the fixed startup boundary;
+complete startup admission remains HOLD.
+Target: can1357/oh-my-pi @ 24439066040e006eb08da7b204f0ac41c79d2de9
+Owner: 003 T006, bounded-pilot-v2 startup observation and admission.
+Requires prior caller/auth/refusal/restricted/catalog/settings/empty-auth patches.
+Modules: launch/presence::{ownStartupDaemonPresence,registerDaemonProjectPresence,
+retireStartupDaemonPresence}; main CLI explicit flag and original observer;
+sdk::{createAgentSession,retireRestrictedStartupPresence}; CLI args/flag table.
+Tests: startup-presence-owner.test.ts; existing daemon-prune/stale-lease, main/CLI,
+auth, restricted SDK, caller/settings and empty-auth suites.
+Difference: --startup-presence requires --restrict-tools and is selected only by the
+explicit startup diagnostic. Keep the real original registration and private file.
+One module owner closes registration admission before joining that original, its
+completion observer and whichever caller first began original cleanup. Cached
+exports and close references retain the same lifecycle. Failed or ambiguous work
+cannot produce a receipt. The owned returned handle is frozen before exposure, so callers cannot replace
+its original close. Ordinary returned handles retain their existing mutability.
+The original close is a shared promise, cancels its
+postmortem callback and verifies absence after real removal; partial failed writes
+are cleaned. Ordinary registration remains available without the option. The CLI
+joins its original logging/catch observer and the SDK binds the exact opaque owner
+to the sealed original session/registry after auth retirement. No paths or user data
+are returned in settlement metadata. Native baseline RPC EOF leaves its old presence
+file; the selected profile removes its file before its retirement receipt.
+No daemon server shutdown, global daemon absence, physical FD release, complete
+inventory, Ready, paid execution or signing is established. Dated receipts retain
+actual native IO, held/error controls and full admission remains HOLD.
+
+MIT License
+
+Copyright (c) 2025 Mario Zechner
+Copyright (c) 2025-2026 Can Bölük
+Copyright (c) 2026 Stencil Labs, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+diff --git a/packages/coding-agent/src/cli/args.ts b/packages/coding-agent/src/cli/args.ts
+--- a/packages/coding-agent/src/cli/args.ts
++++ b/packages/coding-agent/src/cli/args.ts
+@@ -83,6 +83,7 @@
+ 	/** Restrict SDK initialization to the explicitly selected tools. */
+ 	restrictTools?: boolean;
+ 	startupEmptyAuth?: boolean;
++	startupPresence?: boolean;
+ 	noLsp?: boolean;
+ 	noPty?: boolean;
+ 	hooks?: string[];
+@@ -367,6 +368,8 @@
+ 			result.noSession = true;
+ 		} else if (arg === "--no-tools") {
+ 			result.noTools = true;
++		} else if (arg === "--startup-presence") {
++			result.startupPresence = true;
+ 		} else if (arg === "--startup-empty-auth") {
+ 			result.startupEmptyAuth = true;
+ 		} else if (arg === "--restrict-tools") {
+diff --git a/packages/coding-agent/src/cli/flag-tables.ts b/packages/coding-agent/src/cli/flag-tables.ts
+--- a/packages/coding-agent/src/cli/flag-tables.ts
++++ b/packages/coding-agent/src/cli/flag-tables.ts
+@@ -356,6 +356,7 @@
+ 	"--no-tools",
+ 	"--restrict-tools",
+ 	"--startup-empty-auth",
++	"--startup-presence",
+ 	"--no-lsp",
+ 	"--no-pty",
+ 	"--hide-thinking",
+diff --git a/packages/coding-agent/src/launch/presence.ts b/packages/coding-agent/src/launch/presence.ts
+--- a/packages/coding-agent/src/launch/presence.ts
++++ b/packages/coding-agent/src/launch/presence.ts
+@@ -1,5 +1,5 @@
+ import type { Dirent } from "node:fs";
+-import * as fs from "node:fs/promises";
++import fs from "node:fs/promises";
+ import * as path from "node:path";
+ import { isEnoent, logger, postmortem } from "@oh-my-pi/pi-utils";
+ import { canonicalProjectDir, daemonRuntimeDir } from "./paths";
+@@ -32,8 +32,88 @@
+ 	close(): Promise<void>;
+ }
+ 
++/** Opaque identity for the one explicitly owned CLI presence lifetime. */
++export interface StartupDaemonPresence {
++	readonly kind: "startup-daemon-presence";
++}
++export interface StartupDaemonPresenceReceipt {
++	readonly presence_retired: true;
++	readonly registration_joined: true;
++	readonly callbacks_joined: true;
++	readonly cleanup_joined: true;
++	readonly presence_removed: true;
++}
++let presenceStarts = 0;
++let startupPresence:
++	| {
++			handle: StartupDaemonPresence;
++			phase: "open" | "closing" | "closed";
++			original?: Promise<DaemonProjectPresence>;
++			observer?: Promise<void>;
++			violated: boolean;
++	  }
++	| undefined;
++
++/** Must precede every registration, including calls through previously captured exports. */
++export function ownStartupDaemonPresence(): StartupDaemonPresence {
++	if (startupPresence || presenceStarts) throw new Error("Startup presence ownership is late or repeated");
++	const handle = Object.freeze({ kind: "startup-daemon-presence" as const });
++	startupPresence = { handle, phase: "open", violated: false };
++	return handle;
++}
++export function isStartupDaemonPresence(handle: unknown): handle is StartupDaemonPresence {
++	return (
++		!!startupPresence &&
++		startupPresence.handle === handle &&
++		startupPresence.phase === "open" &&
++		!!startupPresence.original
++	);
++}
++
++/** Refuse new registration before any path resolution or filesystem work. */
++export function registerDaemonProjectPresence(
++	projectDir: string,
++	runtimeOverride?: string,
++): Promise<DaemonProjectPresence> {
++	const owner = startupPresence;
++	presenceStarts = Math.min(2, presenceStarts + 1);
++	if (owner && (owner.phase !== "open" || owner.original)) {
++		if (owner.phase === "open") owner.violated = true;
++		return Promise.reject(new Error("Startup presence registration is closed"));
++	}
++	const original = registerOriginalDaemonProjectPresence(projectDir, runtimeOverride);
++	if (owner) {
++		owner.original = original;
++		owner.observer = original.then(
++			() => {},
++			() => {},
++		);
++	}
++	return original;
++}
++
++/** Join original registration, its observer and whichever caller first began close. */
++export async function retireStartupDaemonPresence(handle: unknown): Promise<StartupDaemonPresenceReceipt> {
++	const owner = startupPresence;
++	if (!owner || owner.handle !== handle || owner.phase !== "open" || !owner.original || !owner.observer)
++		throw new Error("Startup presence identity or state mismatch");
++	owner.phase = "closing";
++	const [registered] = await Promise.allSettled([owner.original, owner.observer]);
++	if (owner.violated || registered.status !== "fulfilled")
++		throw new Error("Startup presence registration did not qualify");
++	await registered.value.close();
++	owner.phase = "closed";
++	return Object.freeze({
++		presence_retired: true,
++		registration_joined: true,
++		callbacks_joined: true,
++		cleanup_joined: true,
++		presence_removed: true,
++	});
++}
++
+ /** Register this omp process so project daemons survive while it remains alive. */
+-export async function registerDaemonProjectPresence(
++async function registerOriginalDaemonProjectPresence(
+ 	projectDir: string,
+ 	runtimeOverride?: string,
+ ): Promise<DaemonProjectPresence> {
+@@ -43,18 +123,35 @@
+ 	await fs.mkdir(clientsDir, { recursive: true, mode: 0o700 });
+ 	const id = `${process.pid}-${crypto.randomUUID()}`;
+ 	const presencePath = path.join(clientsDir, `${id}.json`);
+-	await Bun.write(presencePath, JSON.stringify({ pid: process.pid, id, projectDir: canonical }));
+-	// POSIX modes are meaningless on Windows; chmod there only costs another syscall.
+-	if (process.platform !== "win32") await fs.chmod(presencePath, 0o600);
+-	let closed = false;
+-	const close = async (): Promise<void> => {
+-		if (closed) return;
+-		closed = true;
++	try {
++		await Bun.write(presencePath, JSON.stringify({ pid: process.pid, id, projectDir: canonical }));
++		// POSIX modes are meaningless on Windows.
++		if (process.platform !== "win32") await fs.chmod(presencePath, 0o600);
++	} catch (error) {
++		await fs.rm(presencePath, { force: true });
++		throw error;
++	}
++	let closing: Promise<void> | undefined;
++	let cancelCleanup = () => {};
++	const close = (): Promise<void> => {
++		if (closing) return closing;
+ 		cancelCleanup();
+-		await fs.rm(presencePath, { force: true });
++		closing = (async () => {
++			await fs.rm(presencePath, { force: true });
++			try {
++				await fs.stat(presencePath);
++			} catch (error) {
++				if (isEnoent(error)) return;
++				throw error;
++			}
++			throw new Error("Daemon presence remains after original cleanup");
++		})();
++		return closing;
+ 	};
+-	const cancelCleanup = postmortem.register(`daemon-presence:${id}`, () => close());
+-	return { close };
++	cancelCleanup = postmortem.register(`daemon-presence:${id}`, () => close());
++	// A late postmortem registration may invoke its callback synchronously.
++	if (closing) cancelCleanup();
++	return startupPresence ? Object.freeze({ close }) : { close };
+ }
+ 
+ /** Return whether a registered omp process in this runtime directory is still alive. */
+diff --git a/packages/coding-agent/src/main.ts b/packages/coding-agent/src/main.ts
+--- a/packages/coding-agent/src/main.ts
++++ b/packages/coding-agent/src/main.ts
+@@ -78,7 +78,7 @@
+ 	scheduleMarketplaceAutoUpdate,
+ 	type MarketplaceAutoUpdateOptions,
+ } from "./extensibility/plugins/marketplace-auto-update";
+-import { registerDaemonProjectPresence } from "./launch/presence";
++import { ownStartupDaemonPresence, registerDaemonProjectPresence } from "./launch/presence";
+ import type { MCPManager } from "./mcp";
+ import type { InteractiveMode } from "./modes/interactive-mode";
+ import { formatSessionContinuationNotice } from "./modes/persistence-failure";
+@@ -1852,6 +1852,8 @@
+ 		await logger.time("initTheme:initial", ensureTheme);
+ 
+ 		const parsedArgs = parsed;
++		if (parsedArgs.startupPresence && !parsedArgs.restrictTools)
++			throw new Error("--startup-presence requires --restrict-tools");
+ 		if (parsedArgs.startupEmptyAuth && !parsedArgs.restrictTools)
+ 			throw new Error("--startup-empty-auth requires --restrict-tools");
+ 		try {
+@@ -2375,11 +2377,12 @@
+ 		await pluginPreloadPromise;
+ 		// Pure file I/O: overlap it with session-option building, but land it before
+ 		// extensions load or the session can start project daemons.
++		const startupPresence = parsedArgs.startupPresence ? ownStartupDaemonPresence() : undefined;
+ 		const daemonPresencePromise =
+ 			deps === DEFAULT_RUN_ROOT_DEPENDENCIES
+ 				? logger.time("registerDaemonProjectPresence", registerDaemonProjectPresence, cwd)
+ 				: undefined;
+-		daemonPresencePromise?.catch(() => {});
++		const daemonPresenceObserver = daemonPresencePromise?.catch(() => {});
+ 
+ 		let startupTelemetry: CreateAgentSessionOptions["telemetry"];
+ 		let startupExtensions: CreateAgentSessionOptions["extensions"];
+@@ -2408,6 +2411,7 @@
+ 				settingsInstance,
+ 				startupWarning,
+ 			);
++			if (startupPresence) options.startupDaemonPresence = startupPresence;
+ 			options.authStorage = authStorage;
+ 			options.modelRegistry = modelRegistry;
+ 			options.hasUI = isInteractive || mode === "rpc-ui";
+@@ -2449,6 +2453,7 @@
+ 			startupTelemetry = sessionOptions.telemetry;
+ 		}
+ 		await daemonPresencePromise;
++		await daemonPresenceObserver;
+ 
+ 		// Handle CLI --api-key as runtime override (not persisted)
+ 		if (parsedArgs.apiKey) {
+diff --git a/packages/coding-agent/src/sdk.ts b/packages/coding-agent/src/sdk.ts
+--- a/packages/coding-agent/src/sdk.ts
++++ b/packages/coding-agent/src/sdk.ts
+@@ -1,4 +1,5 @@
+ import * as path from "node:path";
++import { isStartupDaemonPresence, retireStartupDaemonPresence, type StartupDaemonPresence } from "./launch/presence";
+ import {
+ 	Agent,
+ 	type AgentEvent,
+@@ -860,6 +861,8 @@
+ 	mountedToolNames?: string[];
+ 	/** Limit the session to explicitly supplied tool names, without discovered extras. */
+ 	restrictToolNames?: boolean;
++	/** Exact source-owned CLI presence, only for the explicit restricted startup profile. */
++	startupDaemonPresence?: StartupDaemonPresence;
+ 	/**
+ 	 * Permit only caller-supplied SDK custom tools inside a restricted session.
+ 	 * They must still be named in {@link toolNames}; discovered extensions, MCP,
+@@ -1045,6 +1048,8 @@
+ 			registry: WeakRef<ModelRegistry>;
+ 			auth: WeakRef<AuthStorage>;
+ 			settingsRetired?: true;
++			authRetired?: true;
++			presence?: WeakRef<StartupDaemonPresence>;
+ 			receipt: SealedRestrictedStartupReceipt;
+ 	  }
+ 	| undefined;
+@@ -1137,7 +1142,30 @@
+ 		registry.authStorage !== auth
+ 	)
+ 		throw new Error("Restricted auth owner identity or state mismatch");
+-	return await auth.retireStartupEmptyAuth();
++	const receipt = await auth.retireStartupEmptyAuth();
++	owner.authRetired = true;
++	return receipt;
++}
++
++/** Retire only the actual CLI presence bound to the sealed restricted session. */
++export async function retireRestrictedStartupPresence(sessionManager: unknown, modelRegistry: unknown) {
++	const owner = restrictedOwner,
++		session = owner?.session.deref(),
++		registry = owner?.registry.deref(),
++		presence = owner?.presence?.deref();
++	if (
++		!restrictedSealed ||
++		restrictedStarts !== 1 ||
++		!owner?.authRetired ||
++		!session ||
++		session.isDisposed ||
++		session.sessionManager !== sessionManager ||
++		!registry ||
++		registry !== modelRegistry ||
++		!presence
++	)
++		throw new Error("Restricted presence owner identity or state mismatch");
++	return await retireStartupDaemonPresence(presence);
+ }
+ 
+ /** Result from createAgentSession */
+@@ -2060,6 +2088,11 @@
+  * ```
+  */
+ export async function createAgentSession(options: CreateAgentSessionOptions = {}): Promise<CreateAgentSessionResult> {
++	if (
++		options.startupDaemonPresence !== undefined &&
++		(options.restrictToolNames !== true || !isStartupDaemonPresence(options.startupDaemonPresence))
++	)
++		throw new Error("Startup presence requires its exact restricted CLI owner");
+ 	if (restrictedSealed) throw new Error("Restricted startup owner sealed");
+ 	restrictedStarts = Math.min(2, restrictedStarts + 1);
+ 	if (restrictedStarts !== 1) restrictedOwner = undefined;
+@@ -2082,6 +2115,7 @@
+ 				session: new WeakRef(result.session),
+ 				registry: new WeakRef(options.modelRegistry),
+ 				auth: new WeakRef(options.authStorage ?? options.modelRegistry.authStorage),
++				...(options.startupDaemonPresence ? { presence: new WeakRef(options.startupDaemonPresence) } : {}),
+ 				receipt: Object.freeze({ ...result.startupRestrictions, credential_usage_joined: true }),
+ 			};
+ 	}
+diff --git a/packages/coding-agent/test/startup-presence-owner.test.ts b/packages/coding-agent/test/startup-presence-owner.test.ts
+new file mode 100644
+--- /dev/null
++++ b/packages/coding-agent/test/startup-presence-owner.test.ts
+@@ -0,0 +1,282 @@
++import { afterEach, expect, test } from "bun:test";
++import fs from "node:fs/promises";
++import os from "node:os";
++import path from "node:path";
++import { postmortem } from "@oh-my-pi/pi-utils";
++const nativeRm = fs.rm,
++	nativeWrite = Bun.write,
++	nativeChmod = fs.chmod;
++const roots: string[] = [];
++const load = async (): Promise<typeof import("../src/launch/presence")> =>
++	import("../src/launch/presence.ts?case=" + crypto.randomUUID());
++const deferred = () => {
++	let resolve!: () => void;
++	const promise = new Promise<void>(r => {
++		resolve = r;
++	});
++	return { promise, resolve };
++};
++async function scope() {
++	const root = await fs.mkdtemp(path.join(os.tmpdir(), "owned-presence-"));
++	roots.push(root);
++	const cwd = path.join(root, "project");
++	await fs.mkdir(cwd);
++	return { cwd, runtime: path.join(root, "runtime") };
++}
++async function presenceFiles(runtime: string) {
++	try {
++		return await fs.readdir(path.join(runtime, "clients"));
++	} catch {
++		return [];
++	}
++}
++afterEach(async () => {
++	fs.rm = nativeRm;
++	fs.chmod = nativeChmod;
++	Bun.write = nativeWrite;
++	for (const root of roots.splice(0)) await nativeRm(root, { recursive: true, force: true });
++});
++
++test("ordinary registration keeps a real private presence until original cleanup", async () => {
++	const m = await load(),
++		s = await scope();
++	const presence = await m.registerDaemonProjectPresence(s.cwd, s.runtime);
++	const names = await presenceFiles(s.runtime);
++	expect(names).toHaveLength(1);
++	const file = path.join(s.runtime, "clients", names[0]);
++	expect((await fs.stat(file)).mode & 0o777).toBe(0o600);
++	expect((await Bun.file(file).json()).pid).toBe(process.pid);
++	await presence.close();
++	expect(await presenceFiles(s.runtime)).toEqual([]);
++});
++test("concurrent captured close calls return and join the exact original removal promise", async () => {
++	const m = await load(),
++		s = await scope(),
++		presence = await m.registerDaemonProjectPresence(s.cwd, s.runtime),
++		held = deferred(),
++		started = deferred();
++	let removes = 0;
++	fs.rm = (async (file, options) => {
++		if (String(file).includes("/clients/")) {
++			removes++;
++			started.resolve();
++			await held.promise;
++		}
++		return await nativeRm(file, options);
++	}) as typeof fs.rm;
++	const close = presence.close,
++		one = close();
++	await started.promise;
++	const two = close();
++	expect(two).toBe(one);
++	let done = false;
++	two.then(() => {
++		done = true;
++	});
++	await Bun.sleep(20);
++	expect(done).toBe(false);
++	expect(await presenceFiles(s.runtime)).toHaveLength(1);
++	held.resolve();
++	await one;
++	await two;
++	expect(removes).toBe(1);
++	expect(await presenceFiles(s.runtime)).toEqual([]);
++	await postmortem.cleanup();
++	expect(removes).toBe(1);
++});
++test("owned retirement waits for held original registration and its completion observer", async () => {
++	const m = await load(),
++		s = await scope(),
++		owner = m.ownStartupDaemonPresence(),
++		held = deferred(),
++		started = deferred();
++	Bun.write = (async (...args: Parameters<typeof Bun.write>) => {
++		if (String(args[0]).includes("/clients/")) {
++			started.resolve();
++			await held.promise;
++		}
++		return await Reflect.apply(nativeWrite, Bun, args);
++	}) as typeof Bun.write;
++	const registration = m.registerDaemonProjectPresence(s.cwd, s.runtime);
++	await started.promise;
++	let settled = false;
++	const retirement = m.retireStartupDaemonPresence(owner);
++	retirement.then(
++		() => {
++			settled = true;
++		},
++		() => {
++			settled = true;
++		},
++	);
++	await Bun.sleep(20);
++	expect(settled).toBe(false);
++	held.resolve();
++	await registration;
++	expect(await retirement).toEqual({
++		presence_retired: true,
++		registration_joined: true,
++		callbacks_joined: true,
++		cleanup_joined: true,
++		presence_removed: true,
++	});
++	expect(await presenceFiles(s.runtime)).toEqual([]);
++});
++test("retirement joins cleanup already begun by another original close caller", async () => {
++	const m = await load(),
++		s = await scope(),
++		owner = m.ownStartupDaemonPresence(),
++		presence = await m.registerDaemonProjectPresence(s.cwd, s.runtime),
++		held = deferred(),
++		started = deferred();
++	fs.rm = (async (file, options) => {
++		if (String(file).includes("/clients/")) {
++			started.resolve();
++			await held.promise;
++		}
++		return await nativeRm(file, options);
++	}) as typeof fs.rm;
++	const closing = presence.close();
++	await started.promise;
++	let settled = false;
++	const retiring = m.retireStartupDaemonPresence(owner);
++	retiring.then(
++		() => {
++			settled = true;
++		},
++		() => {
++			settled = true;
++		},
++	);
++	await Bun.sleep(20);
++	expect(settled).toBe(false);
++	expect(await presenceFiles(s.runtime)).toHaveLength(1);
++	held.resolve();
++	await closing;
++	await retiring;
++	expect(await presenceFiles(s.runtime)).toEqual([]);
++});
++test("wrong and forged owner identities cannot retire the original presence", async () => {
++	const m = await load(),
++		s = await scope(),
++		owner = m.ownStartupDaemonPresence();
++	await m.registerDaemonProjectPresence(s.cwd, s.runtime);
++	expect(m.isStartupDaemonPresence(owner)).toBe(true);
++	await expect(m.retireStartupDaemonPresence({ kind: owner.kind })).rejects.toThrow("identity");
++	expect(await presenceFiles(s.runtime)).toHaveLength(1);
++	await m.retireStartupDaemonPresence(owner);
++});
++test("closed admission covers captured registration references before any filesystem work", async () => {
++	const m = await load(),
++		s = await scope(),
++		captured = m.registerDaemonProjectPresence,
++		owner = m.ownStartupDaemonPresence();
++	await captured(s.cwd, s.runtime);
++	await m.retireStartupDaemonPresence(owner);
++	const foreign = path.join(s.runtime, "must-not-create");
++	await expect(captured(s.cwd, foreign)).rejects.toThrow("closed");
++	await expect(fs.stat(foreign)).rejects.toMatchObject({ code: "ENOENT" });
++	await expect(m.retireStartupDaemonPresence(owner)).rejects.toThrow("state");
++	expect(m.isStartupDaemonPresence(owner)).toBe(false);
++});
++test("late or repeated ownership and absent registration cannot yield a receipt", async () => {
++	const m = await load(),
++		owner = m.ownStartupDaemonPresence();
++	expect(() => m.ownStartupDaemonPresence()).toThrow("repeated");
++	await expect(m.retireStartupDaemonPresence(owner)).rejects.toThrow("state");
++	const ordinary = await load(),
++		s = await scope(),
++		handle = await ordinary.registerDaemonProjectPresence(s.cwd, s.runtime);
++	expect(() => ordinary.ownStartupDaemonPresence()).toThrow("late");
++	await handle.close();
++});
++test("ambiguous duplicate registration poisons retirement but cannot create a second file", async () => {
++	const m = await load(),
++		s = await scope(),
++		owner = m.ownStartupDaemonPresence(),
++		p = await m.registerDaemonProjectPresence(s.cwd, s.runtime);
++	await expect(m.registerDaemonProjectPresence(s.cwd, s.runtime)).rejects.toThrow("closed");
++	expect(await presenceFiles(s.runtime)).toHaveLength(1);
++	await expect(m.retireStartupDaemonPresence(owner)).rejects.toThrow("qualify");
++	await p.close();
++});
++test("registration failure removes the partial real file and cannot attest retirement", async () => {
++	const m = await load(),
++		s = await scope(),
++		owner = m.ownStartupDaemonPresence();
++	fs.chmod = (async () => {
++		throw new Error("synthetic chmod failure");
++	}) as typeof fs.chmod;
++	await expect(m.registerDaemonProjectPresence(s.cwd, s.runtime)).rejects.toThrow("chmod");
++	expect(await presenceFiles(s.runtime)).toEqual([]);
++	await expect(m.retireStartupDaemonPresence(owner)).rejects.toThrow("qualify");
++});
++test("original cleanup failure is retained and cannot attest retirement", async () => {
++	const m = await load(),
++		s = await scope(),
++		owner = m.ownStartupDaemonPresence(),
++		p = await m.registerDaemonProjectPresence(s.cwd, s.runtime);
++	fs.rm = (async (file, options) => {
++		if (String(file).includes("/clients/")) throw new Error("synthetic remove failure");
++		return await nativeRm(file, options);
++	}) as typeof fs.rm;
++	await expect(m.retireStartupDaemonPresence(owner)).rejects.toThrow("remove");
++	await expect(p.close()).rejects.toThrow("remove");
++	expect(await presenceFiles(s.runtime)).toHaveLength(1);
++	await expect(m.retireStartupDaemonPresence(owner)).rejects.toThrow("state");
++});
++test("a falsely fulfilled remover cannot attest an existing presence file", async () => {
++	const m = await load(),
++		s = await scope(),
++		owner = m.ownStartupDaemonPresence();
++	await m.registerDaemonProjectPresence(s.cwd, s.runtime);
++	fs.rm = (async (file, options) => {
++		if (String(file).includes("/clients/")) return;
++		return await nativeRm(file, options);
++	}) as typeof fs.rm;
++	await expect(m.retireStartupDaemonPresence(owner)).rejects.toThrow("remains");
++	expect(await presenceFiles(s.runtime)).toHaveLength(1);
++});
++
++test("SDK rejects forged presence before it starts session initialization", async () => {
++	const { createAgentSession } = await import("../src/sdk");
++	await expect(
++		createAgentSession({ restrictToolNames: true, startupDaemonPresence: { kind: "startup-daemon-presence" } }),
++	).rejects.toThrow("exact restricted CLI owner");
++	await expect(createAgentSession({ startupDaemonPresence: { kind: "startup-daemon-presence" } })).rejects.toThrow(
++		"exact restricted CLI owner",
++	);
++});
++test("the explicit presence flag is parsed as valueless without consuming model arguments", async () => {
++	const { parseArgs } = await import("../src/cli/args"),
++		{ VALUELESS_FLAGS } = await import("../src/cli/flag-tables");
++	const args = parseArgs([
++		"--startup-presence",
++		"--model",
++		"synthetic/model",
++		"--restrict-tools",
++		"--tools",
++		"read,edit",
++	]);
++	expect(args.startupPresence).toBe(true);
++	expect(args.model).toBe("synthetic/model");
++	expect(VALUELESS_FLAGS.has("--startup-presence")).toBe(true);
++});
++
++test("owned registration cannot substitute a fake cleanup and obtain retirement", async () => {
++	const m = await load(),
++		s = await scope(),
++		owner = m.ownStartupDaemonPresence();
++	const presence = await m.registerDaemonProjectPresence(s.cwd, s.runtime),
++		close = presence.close;
++	let fakeCalls = 0;
++	const replaced = Reflect.set(presence, "close", async () => {
++		fakeCalls++;
++	});
++	const receipt = await m.retireStartupDaemonPresence(owner);
++	expect(receipt.presence_removed).toBe(true);
++	expect(fakeCalls).toBe(0);
++	expect(await presenceFiles(s.runtime)).toEqual([]);
++	expect(replaced).toBe(false);
++	expect(presence.close).toBe(close);
++});

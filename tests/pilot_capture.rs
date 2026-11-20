@@ -9,10 +9,20 @@
 //! than skipping it.
 //!
 //! Run: `cargo test --features pilot-capture --test pilot_capture`.
+//! `CF_PILOT_TEST_OMP` may select an archived host at compile time; its bytes
+//! must still match the frozen host pin. The installed-host default is unchanged.
 #![cfg(all(feature = "pilot-capture", target_os = "macos"))]
 
+#[path = "pilot_capture/channel.rs"]
+mod channel;
 #[path = "pilot_capture/fixture.rs"]
 mod fixture;
+#[path = "pilot_capture/startup.rs"]
+mod startup;
+#[path = "pilot_capture/startup_receipts.rs"]
+mod startup_receipts;
+#[path = "pilot_capture/telemetry.rs"]
+mod telemetry;
 
 use std::path::{Path, PathBuf};
 
@@ -24,9 +34,2575 @@ use context_foundry::pilot_capture::{
 use fixture::{Fixture, Reply};
 use serde_json::{Value, json};
 
-const OMP: &str = "/Users/satishlomte/.local/bin/omp";
+const OMP: &str = match option_env!("CF_PILOT_TEST_OMP") {
+    Some(path) => path,
+    None => "/Users/satishlomte/.local/bin/omp",
+};
 const CANARY: &str = "sk-ant-verify-canary-7f3c1e9a5b2d4c6e8f0a1b3c5d7e9f11";
 const TASK: &str = "Repair malformed percent escapes in src/lib.rs so no bytes are dropped.";
+
+/// A separately pinned diagnostic consumer; this never changes v1 admission.
+/// Run explicitly with CF_PILOT_CURRENT_OMP pointing at the owned 18.18.1 copy.
+#[tokio::test]
+#[ignore = "needs explicit CF_PILOT_CURRENT_OMP; no-provider current-host diagnostic"]
+async fn current_host_first_request_preserves_full_history() {
+    qualify_current_host_history(false, pilot_capture::host::CatalogProfile::HostDefault).await;
+}
+
+#[tokio::test]
+#[ignore = "needs explicit CF_PILOT_CURRENT_OMP; no-provider current-host diagnostic"]
+async fn current_host_tool_followup_preserves_full_history() {
+    qualify_current_host_history(true, pilot_capture::host::CatalogProfile::HostDefault).await;
+}
+
+#[tokio::test]
+#[ignore = "needs explicit CF_PILOT_CURRENT_OMP; no-provider current-host diagnostic"]
+async fn current_host_owned_catalog_preserves_full_history() {
+    let baseline = qualify_current_host_history(
+        true,
+        pilot_capture::host::CatalogProfile::OwnedQualification,
+    )
+    .await;
+    assert_eq!(
+        baseline["native_model_sha256"],
+        "53bec6f047bbd7eeab26c93c1a6dd6c0e4ccc30d50a29d79e416c28692d5a027"
+    );
+    assert_eq!(baseline["native_warmup_deadline_readback"], true);
+}
+
+/// Source-built diagnostic only; current/frozen host pins are unchanged.
+#[tokio::test]
+#[ignore = "needs explicit CF_PILOT_SOURCE_OMP; no-provider source-host diagnostic"]
+async fn source_host_owned_catalog_preserves_full_history() {
+    let report = qualify_current_host_history(
+        true,
+        pilot_capture::host::CatalogProfile::SourceQualification,
+    )
+    .await;
+    assert_eq!(
+        report["native_model_sha256"],
+        "53bec6f047bbd7eeab26c93c1a6dd6c0e4ccc30d50a29d79e416c28692d5a027"
+    );
+    assert_eq!(report["native_warmup_deadline_readback"], true);
+}
+
+#[tokio::test]
+#[ignore = "needs explicit CF_PILOT_STARTUP_OMP; no-provider startup command boundary"]
+async fn source_startup_profile_refuses_rpc_commands() {
+    use pilot_capture::host::{
+        CatalogProfile, Host, HostEvent, HostSpec, RpcEvent, sandbox_policy,
+    };
+    use pilot_capture::protocol::ChannelIdentity;
+    use std::time::Duration;
+
+    let omp = PathBuf::from(
+        std::env::var_os("CF_PILOT_STARTUP_OMP").expect("explicit startup source host"),
+    );
+    let e = env();
+    let spec = HostSpec {
+        omp,
+        root: e.run_dir,
+        workspace: e.workspace,
+        real_home: std::fs::canonicalize(std::env::var_os("HOME").unwrap()).unwrap(),
+        deny: vec![],
+        deny_literals: vec![],
+        identity: ChannelIdentity::new("startup-rpc".into(), "test-host".into()).unwrap(),
+        catalog: CatalogProfile::StartupObservation,
+    };
+    let (host, mut events) = Host::launch(&spec).unwrap();
+    let actual_policy_sha256 = host.launch.policy_sha256.clone();
+    let mut expected_policy = sandbox_policy(
+        &spec.omp,
+        &host.paths.root,
+        &spec.workspace,
+        &spec.real_home,
+        &spec.deny,
+        &spec.deny_literals,
+    )
+    .unwrap();
+    expected_policy.push_str("(deny process-fork)");
+    let first = tokio::time::timeout(Duration::from_secs(10), events.recv()).await;
+    let result = host
+        .send_rpc(&json!({"id": "startup-control", "type": "get_state"}))
+        .await;
+    let (drained, exit) = host.finish(events, Duration::from_secs(10)).await;
+
+    assert!(matches!(first, Ok(Some(HostEvent::Startup(_)))));
+    let error = result.unwrap_err();
+    assert_eq!(error.class, FaultClass::Protocol);
+    assert_eq!(error.code, "rpc_on_startup_channel");
+    assert!(exit.group_gone && !exit.forced);
+    assert_eq!(
+        actual_policy_sha256,
+        pilot_capture::sha256_hex(expected_policy.as_bytes()),
+        "startup launch must bind the process-fork denial"
+    );
+    assert!(
+        !drained
+            .iter()
+            .any(|event| matches!(event, HostEvent::Rpc(RpcEvent::Response { .. })))
+    );
+}
+
+/// Actual source-built CLI, shared FIFOs and the capture journal; no model
+/// delivery API is available in this startup-only profile.
+#[test]
+#[ignore = "needs explicit CF_PILOT_STARTUP_OMP; no-provider startup refusal diagnostic"]
+fn source_startup_refusal_is_durable_and_incomplete_inventory_never_admits() {
+    use pilot_capture::startup::ObservationAdmission;
+    let omp = PathBuf::from(
+        std::env::var_os("CF_PILOT_STARTUP_OMP").expect("explicit startup source host"),
+    );
+    let output = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT").map(PathBuf::from);
+    for (name, fail_after) in [
+        ("normal", None),
+        ("refusal-write", Some(2)),
+        ("catalog-refusal-write", Some(3)),
+        ("catalog-write", Some(6)),
+        ("settings-write", Some(7)),
+        ("auth-write", Some(8)),
+        ("presence-write", Some(9)),
+        ("telemetry-write", Some(10)),
+        ("marketplace-write", Some(11)),
+        ("logging-write", Some(12)),
+        ("plugin-roots-write", Some(13)),
+        ("extension-write", Some(14)),
+        ("rpc-write", Some(15)),
+        ("halt-write", Some(16)),
+    ] {
+        let e = env();
+        let run_dir = e._root.path().join("startup-observation");
+        let receipt = CaptureSession::observe_startup(ObservationAdmission {
+            run_dir: run_dir.clone(),
+            omp: omp.clone(),
+            workspace: e.workspace.clone(),
+            faults: VerificationFaults {
+                journal_fail_after: fail_after,
+            },
+        });
+        let bytes = std::fs::read(run_dir.join("journal.jsonl")).unwrap();
+        if let Some(out) = &output {
+            fixture_private_dirs(out).unwrap();
+            fixture_private_write(out.join(format!("{name}-journal.jsonl")), &bytes).unwrap();
+        }
+        let rows: Vec<Value> = bytes
+            .split(|b| *b == b'\n')
+            .filter(|b| !b.is_empty())
+            .map(|b| serde_json::from_slice(b).unwrap())
+            .collect();
+        assert!(!rows.iter().any(|r| matches!(
+            r["kind"].as_str(),
+            Some(
+                "startup_ack"
+                    | "startup_settled"
+                    | "bridge_ready"
+                    | "prompt_sent"
+                    | "permit"
+                    | "counter_result"
+                    | "provider_attempt"
+            )
+        )));
+        if name == "normal" {
+            let receipt = receipt.unwrap();
+            assert_eq!(receipt.attempts, 2);
+            assert_eq!(receipt.terminal_code, "startup_inventory_unqualified");
+            assert!(receipt.exit.normal && !receipt.exit.forced && receipt.exit.group_gone);
+            assert_eq!(receipt.journal_sha256, pilot_capture::sha256_hex(&bytes));
+            assert_eq!(receipt.journal_records, 18);
+            let launch = &rows[1];
+            assert_eq!(launch["kind"], "host_launched");
+            let host_root = run_dir.join("hosts/startup-owner");
+            for (relative, field) in [
+                ("agent/models.yml", "models_yml_sha256"),
+                ("agent/config.yml", "config_yml_sha256"),
+                ("bridge/bridge.ts", "bridge_sha256"),
+            ] {
+                let materialized = std::fs::read(host_root.join(relative)).unwrap();
+                assert_eq!(launch[field], pilot_capture::sha256_hex(&materialized));
+            }
+            for field in ["argv_sha256", "policy_sha256", "env_sha256"] {
+                let digest = launch[field].as_str().unwrap();
+                assert_eq!(digest.len(), 64);
+                assert!(digest.bytes().all(|byte| byte.is_ascii_hexdigit()));
+            }
+            let attempts: Vec<_> = rows
+                .iter()
+                .filter(|r| r["kind"] == "startup_refused")
+                .collect();
+            assert_eq!(attempts.len(), 2);
+            assert_eq!(attempts[0]["attempt"]["owner"], "model_connection_warmup");
+            assert_eq!(attempts[0]["attempt"]["attempt"], 1);
+            assert_eq!(attempts[1]["attempt"]["owner"], "model_catalog_discovery");
+            assert_eq!(attempts[1]["attempt"]["attempt"], 2);
+            assert_eq!(attempts[1]["attempt"]["method"], "GET");
+            assert_eq!(attempts[1]["attempt"]["hostname"], "catalog.stencil.so");
+            assert_eq!(attempts[1]["attempt"]["route"], "stencil_catalog");
+            assert!(attempts[1]["seq"].as_u64().unwrap() < rows[6]["seq"].as_u64().unwrap());
+            assert_eq!(rows[6]["kind"], "startup_catalog_retired");
+            assert_eq!(rows[6]["catalog"]["runtime_providers_excluded"], true);
+            assert_eq!(rows[6]["catalog"]["discovery_providers_fixed"], true);
+            assert_eq!(
+                rows.iter()
+                    .filter(|r| r["kind"] == "startup_owner_settled")
+                    .count(),
+                1
+            );
+            assert_eq!(
+                rows.iter()
+                    .filter(|r| r["kind"] == "startup_restrictions_settled")
+                    .count(),
+                1
+            );
+            assert!(
+                rows.iter()
+                    .any(|r| r["kind"] == "startup_restrictions_settled"
+                        && r["restrictions"]["advisors_excluded"] == true)
+            );
+            assert_eq!(
+                rows.iter()
+                    .filter(|r| r["kind"] == "startup_catalog_retired")
+                    .count(),
+                1
+            );
+            assert_eq!(
+                rows.iter()
+                    .filter(|r| r["kind"] == "startup_settings_retired")
+                    .count(),
+                1
+            );
+            assert_eq!(
+                rows.iter()
+                    .filter(|r| r["kind"] == "startup_auth_retired")
+                    .count(),
+                1
+            );
+            assert_eq!(
+                rows.iter()
+                    .filter(|r| r["kind"] == "startup_presence_retired")
+                    .count(),
+                1
+            );
+            assert_eq!(
+                rows.iter()
+                    .filter(|r| r["kind"] == "startup_telemetry_retired")
+                    .count(),
+                1
+            );
+            assert_eq!(
+                rows.iter()
+                    .filter(|r| r["kind"] == "startup_marketplace_retired")
+                    .count(),
+                1
+            );
+            assert_eq!(
+                rows.iter()
+                    .filter(|r| r["kind"] == "startup_logging_retired")
+                    .count(),
+                1
+            );
+            assert_eq!(
+                rows.iter()
+                    .filter(|r| r["kind"] == "startup_plugin_roots_retired")
+                    .count(),
+                1
+            );
+            assert_eq!(
+                rows.iter()
+                    .filter(|r| r["kind"] == "startup_extension_retired")
+                    .count(),
+                1
+            );
+            assert_eq!(rows[14]["kind"], "startup_extension_retired");
+            assert_eq!(rows[14]["extension"]["notifications_excluded"], true);
+            assert_eq!(rows[15]["kind"], "startup_rpc_retired");
+            assert_eq!(rows[15]["rpc"]["initial_catalog_joined"], true);
+            assert_eq!(rows[15]["rpc"]["metadata_subscription_excluded"], true);
+            assert_eq!(rows[15]["rpc"]["runtime_callbacks_excluded"], true);
+            assert_eq!(rows[15]["rpc"]["output_drained"], true);
+            assert_eq!(rows[15]["rpc"]["dispatch_closed"], true);
+            let halt = &rows[16];
+            assert_eq!(halt["kind"], "halt");
+            assert_eq!(halt["code"], "startup_inventory_unqualified");
+            assert_eq!(halt["observed_prefix_records"], 16);
+            let prefix_bytes = bytes
+                .split_inclusive(|byte| *byte == b'\n')
+                .take(16)
+                .map(<[u8]>::len)
+                .sum::<usize>();
+            assert_eq!(
+                halt["observed_prefix_sha256"],
+                pilot_capture::sha256_hex(&bytes[..prefix_bytes])
+            );
+            if let Some(out) = &output {
+                fixture_private_dirs(out).unwrap();
+                fixture_private_write(
+                    out.join("normal-result.json"),
+                    serde_json::to_vec_pretty(&receipt).unwrap(),
+                )
+                .unwrap();
+            }
+        } else {
+            let error = receipt.unwrap_err();
+            assert_eq!(error.class, FaultClass::Persistence);
+            assert_eq!(error.code, "journal_append_failed");
+            assert_eq!(rows.len(), fail_after.unwrap() as usize);
+            assert!(
+                rows.iter()
+                    .all(|row| row["observed_prefix_records"].is_null())
+            );
+            if name == "refusal-write" {
+                assert!(!rows.iter().any(|r| r["kind"] == "startup_owner_settled"));
+            }
+            if name == "catalog-refusal-write" {
+                assert_eq!(rows[2]["attempt"]["owner"], "model_connection_warmup");
+                assert!(!rows.iter().any(|r| r["kind"] == "startup_catalog_retired"));
+            }
+        }
+        assert!(
+            CaptureSession::observe_startup(ObservationAdmission {
+                run_dir: run_dir.clone(),
+                omp: omp.clone(),
+                workspace: e.workspace,
+                faults: VerificationFaults::default()
+            })
+            .is_err()
+        );
+    }
+}
+
+async fn startup_control_configuration(
+    omp: &Path,
+    base: &Path,
+    workspace: &Path,
+    catalog: pilot_capture::host::CatalogProfile,
+) -> (Vec<u8>, Vec<u8>) {
+    use pilot_capture::host::{Host, HostEvent, HostSpec, RpcEvent};
+    use pilot_capture::protocol::{ChannelIdentity, ChildMessage, CloseReason, ParentMessage};
+    use std::time::Duration;
+    // Obtain configuration from its real owner rather than duplicating provider
+    // inventory or adding a test-only network override to the product launcher.
+    let spec = HostSpec {
+        omp: omp.to_path_buf(),
+        root: base.join("actual host with spaces"),
+        workspace: workspace.to_path_buf(),
+        real_home: std::env::var_os("HOME").unwrap().into(),
+        deny: vec![base.to_path_buf()],
+        deny_literals: vec![],
+        identity: ChannelIdentity::new("startup-control".into(), "configuration".into()).unwrap(),
+        catalog,
+    };
+    let (host, mut events) = Host::launch(&spec).unwrap();
+    let config = std::fs::read(host.paths.agent.join("config.yml")).unwrap();
+    let models = std::fs::read(host.paths.agent.join("models.yml")).unwrap();
+    assert!(config.len() <= 16384 && models.len() <= 16384);
+    assert_eq!(
+        pilot_capture::sha256_hex(&config),
+        host.launch.config_yml_sha256
+    );
+    assert_eq!(
+        pilot_capture::sha256_hex(&models),
+        host.launch.models_yml_sha256
+    );
+    let ready = tokio::time::timeout(Duration::from_secs(30), async {
+        let (mut rpc, mut bridge) = (false, false);
+        while !(rpc && bridge) {
+            match events.recv().await.ok_or("startup EOF")? {
+                HostEvent::Rpc(RpcEvent::Ready) => rpc = true,
+                HostEvent::Bridge(inbound) if matches!(inbound.msg, ChildMessage::Ready { .. }) => {
+                    bridge = true
+                }
+                HostEvent::Rpc(RpcEvent::Other) => {}
+                _ => return Err("unexpected startup event"),
+            }
+        }
+        Ok(())
+    })
+    .await;
+    let _ = host
+        .send_bridge(
+            ParentMessage::Close {
+                reason: CloseReason::Completed,
+            },
+            vec![],
+        )
+        .await;
+    let (_, exit) = host.finish(events, Duration::from_secs(30)).await;
+    assert!(ready.is_ok_and(|v| v.is_ok()) && exit.normal && !exit.forced && exit.group_gone);
+    (config, models)
+}
+
+#[tokio::test]
+#[ignore = "needs explicit CF_PILOT_SOURCE_OMP; no-provider source-auth diagnostic"]
+async fn source_host_auth_lifecycle_has_native_controls() {
+    let omp = PathBuf::from(std::env::var_os("CF_PILOT_SOURCE_OMP").expect("explicit source host"));
+    assert_eq!(
+        pilot_capture::sha256_hex(&std::fs::read(&omp).unwrap()),
+        pilot_capture::host::SOURCE_QUALIFICATION_OMP_SHA256
+    );
+    let e = env();
+    let base = std::fs::canonicalize(e._root.path()).unwrap();
+    let (config, models) = startup_control_configuration(
+        &omp,
+        &base,
+        &e.workspace,
+        pilot_capture::host::CatalogProfile::SourceQualification,
+    )
+    .await;
+    for kind in [
+        "source-retirement-active",
+        "source-retirement-retire",
+        "source-retirement-queued",
+    ] {
+        let root = base.join(format!("{kind} control with spaces"));
+        let report = startup::control(&omp, &root, &e.workspace, &config, &models, kind).await;
+        if let Some(path) = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT") {
+            let out = PathBuf::from(format!(
+                "{}-source-auth-controls",
+                PathBuf::from(path).display()
+            ));
+            fixture_private_dirs(&out).unwrap();
+            fixture_private_write(
+                out.join(format!("{kind}.json")),
+                serde_json::to_vec_pretty(&report).unwrap(),
+            )
+            .unwrap();
+        }
+        assert_owned_private_tree(
+            &root,
+            Some(Path::new(
+                "home/.omp/natives/18.18.1/pi_natives.darwin-arm64.node",
+            )),
+        );
+        assert_eq!(report["connections"], 0);
+        assert_eq!(report["retirement_second_state"], true);
+        assert_eq!(
+            report["native_model_sha256"],
+            "83aac156b7678be8faab3ca2d09fbf4e9773214fc968f1c4a13839dc718317c9"
+        );
+        assert_eq!(
+            report["retirement_witness_sha256"],
+            pilot_capture::sha256_hex(include_bytes!("pilot_capture/source_auth_witness.mjs"))
+        );
+        let retired = kind != "source-retirement-active";
+        assert_eq!(report["trace"]["auth_retired"], retired);
+        let witness = &report["witness"];
+        assert_eq!(witness["wrong_settings_rejected"], true);
+        assert_eq!(witness["duplicate_binding_rejected"], true);
+        assert_eq!(witness["actual_receiver"], true);
+        assert_eq!(witness["restored"], true);
+        assert_eq!(witness["final_value"], 10);
+        assert_eq!(witness["override_after"], false);
+        assert_eq!(
+            witness["policy_calls"],
+            if kind == "source-retirement-queued" {
+                json!([10])
+            } else if retired {
+                json!([])
+            } else {
+                json!([11, 10])
+            }
+        );
+        if retired {
+            assert_eq!(witness["retired"], true);
+            assert_eq!(witness["no_future_work"], true);
+            assert_eq!(
+                witness["policy_calls_at_retirement"],
+                witness["policy_calls"]
+            );
+        }
+    }
+}
+
+/// Native controls for the Agent route, credential prefetch and off-memory start.
+/// Raw sockets remain a bypass; injected OAuth metadata is not OAuth integration.
+#[tokio::test]
+#[ignore = "needs explicit CF_PILOT_CURRENT_OMP; no-provider current-host diagnostic"]
+async fn current_host_startup_owners_have_native_controls() {
+    use pilot_capture::host::CatalogProfile;
+    let omp = PathBuf::from(std::env::var_os("CF_PILOT_CURRENT_OMP").expect("explicit owned host"));
+    assert_eq!(
+        pilot_capture::sha256_hex(&std::fs::read(&omp).unwrap()),
+        pilot_capture::host::QUALIFICATION_OMP_SHA256
+    );
+    let e = env();
+    let base = std::fs::canonicalize(e._root.path()).unwrap();
+    let (config, models) = startup_control_configuration(
+        &omp,
+        &base,
+        &e.workspace,
+        CatalogProfile::OwnedQualification,
+    )
+    .await;
+    let mut marketplace_reports = Vec::new();
+    for kind in [
+        "marketplace-enabled",
+        "marketplace-owned",
+        "marketplace-disabled",
+        "marketplace-late",
+    ] {
+        let root = base.join(format!("{kind} control with spaces"));
+        let report = startup::control(&omp, &root, &e.workspace, &config, &models, kind).await;
+        assert_owned_private_tree(
+            &root,
+            Some(Path::new(
+                "home/.omp/natives/18.18.1/pi_natives.darwin-arm64.node",
+            )),
+        );
+        if let Some(path) = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT") {
+            let out = PathBuf::from(format!(
+                "{}-marketplace-controls",
+                PathBuf::from(path).display()
+            ));
+            fixture_private_dirs(&out).unwrap();
+            fixture_private_write(
+                out.join(format!("{kind}.json")),
+                serde_json::to_vec_pretty(&report).unwrap(),
+            )
+            .unwrap();
+        }
+        marketplace_reports.push(report);
+    }
+    for (index, report) in marketplace_reports.iter().enumerate() {
+        let enabled = matches!(index, 0 | 3);
+        let witness = &report["witness"];
+        assert_eq!(
+            report["native_model_sha256"],
+            marketplace_reports[0]["native_model_sha256"]
+        );
+        assert_eq!(report["connections"], 0);
+        assert_eq!(witness["methods_restored"], true);
+        assert_eq!(witness["overflow"], false);
+        assert_eq!(
+            witness["factory_setting"],
+            if enabled { "notify" } else { "off" },
+            "initial marketplace exclusion: {marketplace_reports:?}"
+        );
+        assert_eq!(
+            witness["session_setting"],
+            if index == 0 { "notify" } else { "off" }
+        );
+        assert_eq!(
+            witness["original_promises_seen"],
+            if enabled { 2 } else { 0 }
+        );
+        let calls = witness["calls"].as_array().unwrap();
+        assert_eq!(calls.len(), if enabled { 2 } else { 0 });
+        if enabled {
+            assert_eq!(calls[0]["name"], "refreshStaleMarketplaces");
+            assert_eq!(calls[1]["name"], "checkForUpdates");
+            assert!(calls.iter().all(|call| call["native_receiver"] == true
+                && call["arguments"] == 0
+                && call["completed"] == true
+                && call["rejected"] == false));
+        }
+    }
+    for kind in [
+        "retirement-active",
+        "retirement-retire",
+        "retirement-queued",
+    ] {
+        let root = base.join(format!("{kind} control with spaces"));
+        let report = startup::control(&omp, &root, &e.workspace, &config, &models, kind).await;
+        assert_owned_private_tree(
+            &root,
+            Some(Path::new(
+                "home/.omp/natives/18.18.1/pi_natives.darwin-arm64.node",
+            )),
+        );
+        if let Some(path) = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT") {
+            let out = PathBuf::from(format!(
+                "{}-retirement-controls",
+                PathBuf::from(path).display()
+            ));
+            fixture_private_dirs(&out).unwrap();
+            fixture_private_write(
+                out.join(format!("{kind}.json")),
+                serde_json::to_vec_pretty(&report).unwrap(),
+            )
+            .unwrap();
+        }
+        let retired = kind != "retirement-active";
+        let queued = kind == "retirement-queued";
+        assert_eq!(report["connections"], 0);
+        assert_eq!(report["retirement_second_state"], true);
+        assert_eq!(
+            report["native_model_sha256"],
+            marketplace_reports[0]["native_model_sha256"]
+        );
+        assert_eq!(
+            report["retirement_witness_sha256"],
+            pilot_capture::sha256_hex(include_bytes!("pilot_capture/retirement_witness.mjs"))
+        );
+        assert_eq!(report["trace"]["auth_retired"], retired);
+        let witness = &report["witness"];
+        assert_eq!(witness["actual_receiver"], true);
+        assert_eq!(witness["restored"], true);
+        assert_eq!(witness["final_value"], 10);
+        assert_eq!(witness["override_after"], false);
+        assert_eq!(
+            witness["policy_calls"],
+            if queued {
+                json!([10, 10])
+            } else if retired {
+                json!([])
+            } else {
+                json!([11, 10])
+            }
+        );
+        if retired {
+            assert_eq!(witness["no_future_work"], true);
+            assert_eq!(
+                witness["retired"],
+                json!({"subscriptions":4,"continuations":if queued {2} else {0},"initial_resolver_joined":true,"store_closed":true})
+            );
+        }
+        if queued {
+            assert_eq!(witness["pending_before_remove"], 1);
+        }
+        let pairs = witness["pairs"].as_array().unwrap();
+        assert_eq!(pairs.len(), if retired && !queued { 0 } else { 2 });
+        for pair in pairs {
+            assert_eq!(pair["source_fulfilled"], true);
+            assert_eq!(pair["return_fulfilled"], true);
+            assert_eq!(pair["rejected"], false);
+        }
+    }
+    for kind in [
+        "settings-chain-baseline",
+        "settings-chain-serial",
+        "settings-chain-coalesced",
+    ] {
+        let root = base.join(format!("{kind} control with spaces"));
+        let report = startup::control(&omp, &root, &e.workspace, &config, &models, kind).await;
+        assert_owned_private_tree(
+            &root,
+            Some(Path::new(
+                "home/.omp/natives/18.18.1/pi_natives.darwin-arm64.node",
+            )),
+        );
+        if let Some(path) = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT") {
+            let out = PathBuf::from(format!(
+                "{}-settings-chain-controls",
+                PathBuf::from(path).display()
+            ));
+            fixture_private_dirs(&out).unwrap();
+            fixture_private_write(
+                out.join(format!("{kind}.json")),
+                serde_json::to_vec_pretty(&report).unwrap(),
+            )
+            .unwrap();
+        }
+        assert_eq!(report["connections"], 0);
+        assert_eq!(report["settings_chain_second_state"], true);
+        assert_eq!(
+            report["native_model_sha256"],
+            marketplace_reports[0]["native_model_sha256"]
+        );
+        assert_eq!(
+            report["settings_chain_witness_sha256"],
+            pilot_capture::sha256_hex(include_bytes!("pilot_capture/settings_chain_witness.mjs"))
+        );
+        let witness = &report["witness"];
+        for field in ["restored", "actual_auth_class", "actual_auth_receiver"] {
+            assert_eq!(witness[field], true, "{kind}: {field}");
+        }
+        assert_eq!(witness["overflow"], false);
+        assert_eq!(
+            witness["native_sync_sha256"],
+            "25f681643c58b0b08a43f839ab6760b76ab1cbd65e5ff3ba61d110fff8c03ca9"
+        );
+        assert_eq!(witness["before_value"], 10);
+        assert_eq!(witness["after_value"], 10);
+        assert_eq!(witness["override_before"], false);
+        assert_eq!(witness["override_after"], false);
+        let changed = kind != "settings-chain-baseline";
+        assert_eq!(
+            witness["before_joins"],
+            if changed {
+                json!([{"pair_count":1,"policy_calls":0,"last_derived_fulfilled":false},{"pair_count":2,"policy_calls":1,"last_derived_fulfilled":false}])
+            } else {
+                json!([])
+            }
+        );
+        assert_eq!(
+            witness["chain_continuity"],
+            if changed {
+                json!([null, true])
+            } else {
+                json!([])
+            }
+        );
+        for phase in ["after_join", "session_entry", "rows"] {
+            let rows = witness[phase].as_array().unwrap();
+            assert_eq!(rows.len(), if changed { 2 } else { 0 });
+            for row in rows {
+                assert_eq!(
+                    row["callback_sha256"],
+                    "73e10fcea65a780ac7077e5857e780e8442086c285b36d9c75c345e4e634602c"
+                );
+                for field in [
+                    "source_is_promise",
+                    "derived_is_promise",
+                    "source_fulfilled",
+                    "derived_fulfilled",
+                ] {
+                    assert_eq!(row[field], true);
+                }
+                for field in ["source_rejected", "derived_rejected"] {
+                    assert_eq!(row[field], false);
+                }
+            }
+        }
+        let calls = witness["policy_calls"].as_array().unwrap();
+        assert_eq!(calls.len(), if changed { 2 } else { 0 });
+        for (index, call) in calls.iter().enumerate() {
+            assert_eq!(call["native_receiver"], true);
+            assert_eq!(call["arguments"], 1);
+            assert_eq!(call["return_undefined"], true);
+            assert_eq!(
+                call["default_reserve_pct"],
+                if index == 1 {
+                    10
+                } else if kind == "settings-chain-serial" {
+                    11
+                } else {
+                    12
+                }
+            );
+        }
+    }
+    for kind in ["resolver-joined", "resolver-pending", "resolver-rejected"] {
+        let root = base.join(format!("{kind} control with spaces"));
+        let report = startup::control(&omp, &root, &e.workspace, &config, &models, kind).await;
+        assert_owned_private_tree(
+            &root,
+            Some(Path::new(
+                "home/.omp/natives/18.18.1/pi_natives.darwin-arm64.node",
+            )),
+        );
+        if let Some(path) = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT") {
+            let out = PathBuf::from(format!(
+                "{}-resolver-controls",
+                PathBuf::from(path).display()
+            ));
+            fixture_private_dirs(&out).unwrap();
+            fixture_private_write(
+                out.join(format!("{kind}.json")),
+                serde_json::to_vec_pretty(&report).unwrap(),
+            )
+            .unwrap();
+        }
+        assert_eq!(report["connections"], 0);
+        assert_eq!(report["resolver_second_state"], true);
+        assert_eq!(
+            report["native_model_sha256"],
+            marketplace_reports[0]["native_model_sha256"]
+        );
+        assert_eq!(
+            report["resolver_witness_sha256"],
+            pilot_capture::sha256_hex(include_bytes!("pilot_capture/resolver_witness.mjs"))
+        );
+        let witness = &report["witness"];
+        for field in [
+            "installed",
+            "restored",
+            "seed_receiver_exact",
+            "seed_return_exact",
+            "native_join",
+        ] {
+            assert_eq!(witness[field], true, "{kind}: {field}");
+        }
+        assert_eq!(witness["overflow"], false);
+        assert_eq!(witness["native_function_name"], "aee");
+        assert_eq!(
+            witness["native_function_sha256"],
+            "25f681643c58b0b08a43f839ab6760b76ab1cbd65e5ff3ba61d110fff8c03ca9"
+        );
+        assert_eq!(witness["seed_join"], kind != "resolver-rejected");
+        for phase in ["factory", "after_join", "session_entry", "rows"] {
+            let rows = witness[phase].as_array().unwrap();
+            assert_eq!(rows.len(), 2);
+            assert_eq!(rows[0]["seed"], true);
+            assert_eq!(rows[1]["seed"], false);
+            for row in rows {
+                assert_eq!(row["source_is_promise"], true);
+                assert_eq!(row["derived_is_promise"], true);
+                assert_eq!(row["derived_rejected"], false);
+            }
+            assert_eq!(rows[1]["source_fulfilled"], true);
+            assert_eq!(rows[1]["derived_fulfilled"], true);
+            assert_eq!(rows[1]["source_rejected"], false);
+            let finished = phase != "factory";
+            assert_eq!(
+                rows[0]["source_fulfilled"],
+                finished && kind != "resolver-rejected"
+            );
+            assert_eq!(
+                rows[0]["source_rejected"],
+                finished && kind == "resolver-rejected"
+            );
+            assert_eq!(rows[0]["derived_fulfilled"], finished);
+        }
+        if kind == "resolver-pending" {
+            assert_eq!(witness["pending_control"]["returned_while_pending"], false);
+            assert_eq!(
+                witness["pending_control"]["before"][0]["source_fulfilled"],
+                false
+            );
+            assert_eq!(
+                witness["pending_control"]["before"][0]["derived_fulfilled"],
+                false
+            );
+        }
+    }
+    let mut watchdog_reports = Vec::new();
+    for kind in ["watchdog-baseline", "watchdog-active", "watchdog-uncleared"] {
+        let root = base.join(format!("{kind} control with spaces"));
+        let report = startup::control(&omp, &root, &e.workspace, &config, &models, kind).await;
+        assert_owned_private_tree(
+            &root,
+            Some(Path::new(
+                "home/.omp/natives/18.18.1/pi_natives.darwin-arm64.node",
+            )),
+        );
+        if let Some(path) = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT") {
+            let out = PathBuf::from(format!(
+                "{}-watchdog-controls",
+                PathBuf::from(path).display()
+            ));
+            fixture_private_dirs(&out).unwrap();
+            fixture_private_write(
+                out.join(format!("{kind}.json")),
+                serde_json::to_vec_pretty(&report).unwrap(),
+            )
+            .unwrap();
+        }
+        watchdog_reports.push(report);
+    }
+    for (index, report) in watchdog_reports.iter().enumerate() {
+        assert_eq!(report["connections"], 0);
+        assert_eq!(report["watchdog_second_state"], true);
+        assert_eq!(
+            report["watchdog_witness_sha256"],
+            pilot_capture::sha256_hex(include_bytes!("pilot_capture/watchdog_witness.mjs"))
+        );
+        assert_eq!(
+            report["native_model_sha256"],
+            marketplace_reports[0]["native_model_sha256"]
+        );
+        let witness = &report["witness"];
+        assert_eq!(witness["other_ten_second_intervals"], 0);
+        assert_eq!(
+            witness["factory"],
+            json!([{"pending":true,"clear_attempts":0,"native_clears":0}])
+        );
+        assert_eq!(
+            witness["session"],
+            json!([{"pending":index == 2,"clear_attempts":1,"native_clears":if index == 2 { 0 } else { 1 }}])
+        );
+        let rows = witness["rows"].as_array().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0]["source_sha256"],
+            "749865907ec3a454d6eadc0146e603c933a980d0863ae36cd253682f311bcccc"
+        );
+        assert_eq!(rows[0]["callback_preserved"], true);
+        assert_eq!(rows[0]["arguments_preserved"], true);
+        assert_eq!(rows[0]["native_ms"], 10000);
+        assert_eq!(rows[0]["clear_attempts"], 1);
+        assert_eq!(rows[0]["native_clears"], if index == 2 { 0 } else { 1 });
+        assert_eq!(rows[0]["pending"], index == 2);
+        if index < 2 {
+            assert_eq!(report["watchdog_notices"], index);
+        } else {
+            assert!((2..=4).contains(&report["watchdog_notices"].as_u64().unwrap()));
+        }
+    }
+    let mut reports = Vec::new();
+    for kind in ["stock", "guarded", "raw"] {
+        let root = base.join(format!("{kind} control with spaces"));
+        let report = startup::control(&omp, &root, &e.workspace, &config, &models, kind).await;
+        assert_owned_private_tree(
+            &root,
+            Some(Path::new(
+                "home/.omp/natives/18.18.1/pi_natives.darwin-arm64.node",
+            )),
+        );
+        if let Some(path) = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT") {
+            let path = PathBuf::from(format!(
+                "{}-startup-controls",
+                PathBuf::from(path).display()
+            ));
+            fixture_private_dirs(&path).unwrap();
+            fixture_private_write(
+                path.join(format!("{kind}.json")),
+                serde_json::to_vec_pretty(&report).unwrap(),
+            )
+            .unwrap();
+            if kind != "stock" {
+                fixture_private_write(
+                    path.join(format!("{kind}-startup.jsonl")),
+                    std::fs::read(root.join("startup.jsonl")).unwrap(),
+                )
+                .unwrap();
+            }
+        }
+        reports.push(report);
+    }
+    assert_eq!(
+        reports[0]["native_model_sha256"],
+        reports[1]["native_model_sha256"]
+    );
+    assert_eq!(
+        reports[0]["native_model_sha256"],
+        reports[2]["native_model_sha256"]
+    );
+    assert_eq!(reports[0]["connections"], 1);
+    assert_eq!(
+        reports[0]["native_model_sha256"],
+        marketplace_reports[0]["native_model_sha256"]
+    );
+    assert_eq!(reports[0]["witness"]["outcome"], "native_error");
+    assert_eq!(reports[2]["connections"], 1);
+    assert_eq!(reports[2]["witness"]["outcome"], "raw_open");
+    assert_eq!(
+        reports[1]["connections"], 0,
+        "embedded Agent guard: {reports:?}"
+    );
+    assert_eq!(reports[1]["witness"]["outcome"], "owned_refusal");
+    assert_eq!(reports[1]["trace"]["observed_attempts"], 2);
+    assert_eq!(reports[2]["trace"]["observed_attempts"], 1);
+    for report in &reports[1..] {
+        assert!(
+            report["trace"]["rows"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|r| r["kind"] == "attempt")
+                .all(|r| r["transport"] == "agent_add_request")
+        );
+        assert_eq!(
+            report["probe_sha256"],
+            pilot_capture::sha256_hex(pilot_capture::host::QUALIFICATION_STARTUP_PROBE)
+        );
+        assert_eq!(report["trace"]["complete_startup_admission"], false);
+    }
+    let mut auth_model = None;
+    for kind in [
+        "auth-success",
+        "auth-late",
+        "auth-oauth",
+        "auth-unknown",
+        "auth-unsettled",
+        "auth-wrong-owner",
+        "auth-duplicate",
+        "auth-restart",
+    ] {
+        let root = base.join(format!("{kind} control with spaces"));
+        let report = startup::control(&omp, &root, &e.workspace, &config, &models, kind).await;
+        assert_owned_private_tree(
+            &root,
+            Some(Path::new(
+                "home/.omp/natives/18.18.1/pi_natives.darwin-arm64.node",
+            )),
+        );
+        assert_eq!(report["connections"], 0);
+        assert_eq!(
+            report["auth_sha256"],
+            pilot_capture::sha256_hex(pilot_capture::host::QUALIFICATION_STARTUP_AUTH)
+        );
+        if let Some(model) = &auth_model {
+            assert_eq!(&report["native_model_sha256"], model);
+        } else {
+            auth_model = Some(report["native_model_sha256"].clone());
+        }
+        let success = matches!(kind, "auth-success" | "auth-restart");
+        assert_eq!(
+            report["witness"]["outcome"],
+            if success { "sealed" } else { "refused" }
+        );
+        if success {
+            assert_eq!(
+                report["witness"]["summary"],
+                json!({"calls":1,"completed":1,"source_checks":1,"non_oauth_checks":1})
+            );
+        }
+        assert_eq!(
+            report["exit_code"],
+            if kind == "auth-restart" { 75 } else { 0 }
+        );
+        if let Some(path) = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT") {
+            let path = PathBuf::from(format!("{}-auth-controls", PathBuf::from(path).display()));
+            fixture_private_dirs(&path).unwrap();
+            fixture_private_write(
+                path.join(format!("{kind}.json")),
+                serde_json::to_vec_pretty(&report).unwrap(),
+            )
+            .unwrap();
+        }
+    }
+    for kind in [
+        "memory-success",
+        "memory-late",
+        "memory-active-backend",
+        "memory-auto-learn",
+        "memory-unsettled",
+        "memory-wrong-settings",
+        "memory-wrong-registry",
+        "memory-duplicate",
+        "memory-restart",
+    ] {
+        let root = base.join(format!("{kind} control with spaces"));
+        let report = startup::control(&omp, &root, &e.workspace, &config, &models, kind).await;
+        assert_owned_private_tree(
+            &root,
+            Some(Path::new(
+                "home/.omp/natives/18.18.1/pi_natives.darwin-arm64.node",
+            )),
+        );
+        assert_eq!(report["connections"], 0);
+        assert_eq!(
+            report["memory_sha256"],
+            pilot_capture::sha256_hex(pilot_capture::host::QUALIFICATION_STARTUP_MEMORY)
+        );
+        assert_eq!(&report["native_model_sha256"], auth_model.as_ref().unwrap());
+        let expected = match kind {
+            "memory-success" | "memory-restart" => "sealed",
+            "memory-active-backend" | "memory-auto-learn" => "before_sdk_refused",
+            _ => "refused",
+        };
+        assert_eq!(report["witness"]["outcome"], expected);
+        if expected == "sealed" {
+            assert_eq!(
+                report["witness"]["summary"],
+                json!({"calls":1,"completed":1})
+            );
+        }
+        assert_eq!(
+            report["exit_code"],
+            if kind == "memory-restart" { 75 } else { 0 }
+        );
+        if let Some(path) = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT") {
+            let path = PathBuf::from(format!("{}-memory-controls", PathBuf::from(path).display()));
+            fixture_private_dirs(&path).unwrap();
+            fixture_private_write(
+                path.join(format!("{kind}.json")),
+                serde_json::to_vec_pretty(&report).unwrap(),
+            )
+            .unwrap();
+        }
+    }
+    let mut telemetry_reports = Vec::new();
+    for kind in [
+        "warmup-success",
+        "warmup-missing",
+        "warmup-unsettled",
+        "warmup-repeat-seal",
+        "warmup-restart",
+    ] {
+        let result =
+            startup::control(&omp, &base.join(kind), &e.workspace, &config, &models, kind).await;
+        let expected = if matches!(kind, "warmup-missing" | "warmup-unsettled") {
+            "refused"
+        } else {
+            "sealed"
+        };
+        assert_eq!(
+            result["witness"]["outcome"], expected,
+            "warmup control: {kind}: {result}"
+        );
+        assert_eq!(result["connections"], 0);
+        if expected == "sealed" {
+            assert_eq!(
+                result["witness"]["summary"],
+                json!({"known_requests":1,"listener_released":true,"native_timeout_ms":10000,"deadline_elapsed":true,"observer_removed":true})
+            );
+            assert_eq!(result["trace"]["warmup_settled"], true);
+        }
+        if let Some(path) = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT") {
+            let out = PathBuf::from(format!("{}-warmup-controls", PathBuf::from(path).display()));
+            fixture_private_dirs(&out).unwrap();
+            fixture_private_write(
+                out.join(format!("{kind}.json")),
+                serde_json::to_vec_pretty(&result).unwrap(),
+            )
+            .unwrap();
+        }
+    }
+    for kind in ["logging-enabled", "logging-stop-only", "logging-owned"] {
+        let result =
+            startup::control(&omp, &base.join(kind), &e.workspace, &config, &models, kind).await;
+        let witness = &result["witness"];
+        assert_eq!(result["connections"], 0);
+        assert_eq!(witness["before"]["timers"].as_array().unwrap().len(), 1);
+        assert_eq!(witness["before"]["timers"][0]["pending"], true);
+        assert_eq!(witness["before"]["immediates"].as_array().unwrap().len(), 1);
+        assert_eq!(witness["before"]["immediates"][0]["pending"], true);
+        assert_eq!(
+            witness["factory"]["immediates"][0]["pending"],
+            kind != "logging-owned"
+        );
+        assert_eq!(
+            witness["tail"],
+            json!({"events":1,"unwound":1,"disposed":1,"expected":true})
+        );
+        assert_eq!(result["logging_io"]["before_marker"], true);
+        assert_eq!(
+            result["logging_io"]["after_marker"],
+            kind == "logging-enabled"
+        );
+        if kind == "logging-enabled" {
+            assert_eq!(witness["timers"][0]["fired"], 1);
+            assert_eq!(witness["timers"][0]["cleared"], 0);
+        } else {
+            assert_eq!(witness["timers"].as_array().unwrap().len(), 1);
+            assert_eq!(witness["timers"][0]["fired"], 0);
+            assert_eq!(witness["timers"][0]["cleared"], 1);
+        }
+        assert_eq!(result["trace"]["logging_quiesced"], kind == "logging-owned");
+        assert_eq!(
+            result["logging_sha256"],
+            pilot_capture::sha256_hex(pilot_capture::host::QUALIFICATION_STARTUP_LOGGING)
+        );
+        if let Some(path) = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT") {
+            let out = PathBuf::from(format!(
+                "{}-logging-controls",
+                PathBuf::from(path).display()
+            ));
+            fixture_private_dirs(&out).unwrap();
+            fixture_private_write(
+                out.join(format!("{kind}.json")),
+                serde_json::to_vec_pretty(&result).unwrap(),
+            )
+            .unwrap();
+        }
+    }
+    for kind in ["telemetry-enabled", "telemetry-owned", "telemetry-disabled"] {
+        let root = base.join(format!("{kind} control with spaces"));
+        let report = startup::control(&omp, &root, &e.workspace, &config, &models, kind).await;
+        assert_owned_private_tree(
+            &root,
+            Some(Path::new(
+                "home/.omp/natives/18.18.1/pi_natives.darwin-arm64.node",
+            )),
+        );
+        assert_eq!(&report["native_model_sha256"], auth_model.as_ref().unwrap());
+        assert_eq!(report["witness"]["globals_stable"], true);
+        if let Some(path) = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT") {
+            let path = PathBuf::from(format!(
+                "{}-telemetry-controls",
+                PathBuf::from(path).display()
+            ));
+            fixture_private_dirs(&path).unwrap();
+            fixture_private_write(
+                path.join(format!("{kind}.json")),
+                serde_json::to_vec_pretty(&report).unwrap(),
+            )
+            .unwrap();
+        }
+        telemetry_reports.push(report);
+    }
+    for (index, report) in telemetry_reports.iter().enumerate() {
+        let enabled = index == 0;
+        assert_eq!(
+            report["witness"]["export_setting"], enabled,
+            "owned telemetry exclusion: {telemetry_reports:?}"
+        );
+        for provider in ["trace", "metric", "log"] {
+            assert_eq!(
+                report["witness"][format!("{provider}_provider_present")],
+                enabled
+            );
+        }
+        let requests = report["otlp"]["requests"].as_array().unwrap();
+        if enabled {
+            for route in ["/v1/traces", "/v1/logs", "/v1/metrics"] {
+                assert!(requests.iter().any(|r| r["path"] == route
+                    && r["marker"] == true
+                    && r["accepted"] == true
+                    && r["chunked"] == true));
+            }
+            assert!(requests.iter().all(|r| r["accepted"] == true));
+            assert!(report["connections"].as_u64().unwrap() >= 1);
+        } else {
+            assert!(requests.is_empty());
+            assert_eq!(report["connections"], 0);
+        }
+    }
+    assert_eq!(
+        pilot_capture::sha256_hex(&std::fs::read(&omp).unwrap()),
+        pilot_capture::host::QUALIFICATION_OMP_SHA256
+    );
+}
+
+/// The fixed owned profile excludes project MCP commands and later disk edits.
+/// The ordinary profile provides positive controls for both SDK settings.
+#[tokio::test]
+#[ignore = "needs explicit CF_PILOT_CURRENT_OMP; no-provider current-host diagnostic"]
+async fn current_host_owned_settings_exclude_project_mcp_and_disk_edits() {
+    use pilot_capture::host::{CatalogProfile, Host, HostEvent, HostSpec, RpcEvent};
+    use pilot_capture::protocol::{ChannelIdentity, ChildMessage, CloseReason, ParentMessage};
+    use std::time::Duration;
+    let omp = PathBuf::from(std::env::var_os("CF_PILOT_CURRENT_OMP").expect("explicit owned host"));
+    assert_eq!(
+        pilot_capture::sha256_hex(&std::fs::read(&omp).unwrap()),
+        pilot_capture::host::QUALIFICATION_OMP_SHA256
+    );
+    let mut reports = Vec::new();
+    for (name, catalog) in [
+        ("ordinary", CatalogProfile::HostDefault),
+        ("owned", CatalogProfile::OwnedQualification),
+    ] {
+        let e = env();
+        let base = std::fs::canonicalize(e._root.path()).unwrap();
+        let witness = e.workspace.join("mcp-startup-witness");
+        fixture_private_write(
+            e.workspace.join(".mcp.json"),
+            serde_json::to_vec(&json!({"mcpServers":{"cf-owned-startup-witness":{
+                "command":"/usr/bin/touch","args":[witness]
+            }}}))
+            .unwrap(),
+        )
+        .unwrap();
+        let spec = HostSpec {
+            omp: omp.clone(),
+            root: base.join("settings host with spaces"),
+            workspace: e.workspace.clone(),
+            real_home: std::env::var_os("HOME").unwrap().into(),
+            deny: vec![base],
+            deny_literals: vec![],
+            identity: ChannelIdentity::new("settings-control".into(), name.into()).unwrap(),
+            catalog,
+        };
+        let (host, mut events) = Host::launch(&spec).unwrap();
+        let config_sha = host.launch.config_yml_sha256.clone();
+        assert_eq!(
+            pilot_capture::sha256_hex(&std::fs::read(host.paths.agent.join("config.yml")).unwrap()),
+            config_sha
+        );
+        let capture = tokio::time::timeout(Duration::from_secs(30), async {
+            let (mut rpc, mut bridge) = (false, false);
+            while !(rpc && bridge) {
+                match events.recv().await.ok_or("startup EOF")? {
+                    HostEvent::Rpc(RpcEvent::Ready) => rpc = true,
+                    HostEvent::Bridge(inbound)
+                        if matches!(inbound.msg, ChildMessage::Ready { .. }) =>
+                    {
+                        bridge = true
+                    }
+                    HostEvent::Rpc(RpcEvent::Other) => {}
+                    _ => return Err("unexpected startup event"),
+                }
+            }
+            let mut states = Vec::new();
+            for id in ["before-edit", "after-edit"] {
+                if id == "after-edit" {
+                    let path = host.paths.agent.join("config.yml");
+                    let original = std::fs::read_to_string(&path).map_err(|_| "config read")?;
+                    let marker = "compaction:\n  enabled: false";
+                    if original.matches(marker).count() != 1 {
+                        return Err("config control marker");
+                    }
+                    let changed = original.replace(marker, "compaction:\n  enabled: true");
+                    std::fs::write(&path, &changed).map_err(|_| "config edit")?;
+                    // This is the positive control's watch/debounce window, not
+                    // a startup settlement criterion or an admission authority.
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    if std::fs::read_to_string(path).map_err(|_| "config readback")? != changed {
+                        return Err("config edit overwritten");
+                    }
+                }
+                host.send_rpc(&json!({"id":id,"type":"get_state"}))
+                    .await
+                    .map_err(|_| "state write")?;
+                loop {
+                    match events.recv().await.ok_or("state EOF")? {
+                        HostEvent::Rpc(RpcEvent::Response {
+                            id: Some(response),
+                            success: true,
+                            state: Some(state),
+                            ..
+                        }) if response == id => {
+                            states.push(state);
+                            break;
+                        }
+                        HostEvent::Rpc(RpcEvent::Other) => {}
+                        _ => return Err("unexpected state event"),
+                    }
+                }
+            }
+            Ok(states)
+        })
+        .await;
+        let _ = host
+            .send_bridge(
+                ParentMessage::Close {
+                    reason: CloseReason::Completed,
+                },
+                vec![],
+            )
+            .await;
+        let (_, exit) = host.finish(events, Duration::from_secs(30)).await;
+        assert!(exit.normal && !exit.forced && exit.group_gone && exit.stderr_bytes == 0);
+        let states = capture
+            .expect("settings deadline")
+            .expect("settings control");
+        assert_eq!(states[0].auto_compaction, Some(false));
+        assert_eq!(states[0].native_model_sha256, states[1].native_model_sha256);
+        if catalog == CatalogProfile::OwnedQualification {
+            assert_eq!(
+                states[0].native_model_sha256.as_deref(),
+                Some("53bec6f047bbd7eeab26c93c1a6dd6c0e4ccc30d50a29d79e416c28692d5a027")
+            );
+        }
+        assert_owned_private_tree(&e.workspace, None);
+        reports.push(json!({"case":name,"compaction_before":states[0].auto_compaction,
+            "compaction_after":states[1].auto_compaction,"native_model_sha256":states[1].native_model_sha256,
+            "project_mcp_witness_started":witness.exists(),"config_yml_sha256":config_sha,
+            "disk_edit_retained":true,"normal_exit":exit.normal,"forced":exit.forced,
+            "group_gone":exit.group_gone,"no_prompt":true,"provider_calls":0}));
+    }
+    if let Some(path) = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT") {
+        let path = PathBuf::from(format!(
+            "{}-settings-control",
+            PathBuf::from(path).display()
+        ));
+        fixture_private_dirs(&path).unwrap();
+        fixture_private_write(
+            path.join("result.json"),
+            serde_json::to_vec_pretty(&reports).unwrap(),
+        )
+        .unwrap();
+    }
+    assert_eq!(
+        reports[0]["compaction_after"], true,
+        "native watching control: {reports:?}"
+    );
+    assert_eq!(
+        reports[1]["compaction_after"], false,
+        "owned settings quiescence: {reports:?}"
+    );
+    assert_eq!(
+        reports[0]["project_mcp_witness_started"], true,
+        "native project MCP control: {reports:?}"
+    );
+    assert_eq!(
+        reports[1]["project_mcp_witness_started"], false,
+        "owned project MCP exclusion: {reports:?}"
+    );
+    assert_eq!(
+        pilot_capture::sha256_hex(&std::fs::read(&omp).unwrap()),
+        pilot_capture::host::QUALIFICATION_OMP_SHA256
+    );
+}
+
+async fn qualify_current_host_history(
+    tool_followup: bool,
+    catalog: pilot_capture::host::CatalogProfile,
+) -> Value {
+    use pilot_capture::host::{Host, HostEvent, HostSpec, RpcEvent, ToolPolicy, ToolVerdict};
+    use pilot_capture::protocol::{
+        ChannelIdentity, ChildMessage, CloseReason, ParentMessage, ToolOutcome,
+    };
+    use std::collections::BTreeSet;
+    use std::time::Duration;
+
+    let source_catalog = catalog == pilot_capture::host::CatalogProfile::SourceQualification;
+    let sha = if source_catalog {
+        pilot_capture::host::SOURCE_QUALIFICATION_OMP_SHA256
+    } else {
+        pilot_capture::host::QUALIFICATION_OMP_SHA256
+    };
+    let owned_catalog = catalog.is_owned();
+    let parse_probe_rows =
+        |bytes: &[u8], expected_exit| startup_probe_rows(bytes, expected_exit, source_catalog);
+    let parse_probe = |bytes: &[u8]| startup_probe_rows(bytes, Some(0), source_catalog);
+    let prompt = if tool_followup {
+        "Read src/lib.rs once, then state the function name."
+    } else {
+        "Say only: local qualification. Do not use tools."
+    };
+    let fixture = tool_followup.then(|| {
+        Fixture::start(vec![
+            Reply::Count(1340),
+            fixture::tool_reply(
+                "msg_current_read",
+                "toolu_current_read",
+                "read",
+                json!({"path":"src/lib.rs"}),
+            ),
+            Reply::Count(1240),
+            fixture::text_reply("msg_current_done", "The function is decode."),
+        ])
+    });
+    let transport = fixture.as_ref().map(|fx| {
+        wire::Transport::new(
+            &wire::Endpoint::Verification {
+                addr: fx.addr,
+                ca_pem: fx.ca_pem.clone(),
+            },
+            wire::Credential::new(CANARY).unwrap(),
+        )
+        .unwrap()
+    });
+    let omp = PathBuf::from(
+        std::env::var_os(if source_catalog {
+            "CF_PILOT_SOURCE_OMP"
+        } else {
+            "CF_PILOT_CURRENT_OMP"
+        })
+        .expect("explicit owned host"),
+    );
+    assert_eq!(
+        pilot_capture::sha256_hex(&std::fs::read(&omp).unwrap()),
+        sha
+    );
+    let e = env();
+    let root = std::fs::canonicalize(e._root.path()).unwrap();
+    let spec = HostSpec {
+        omp: omp.clone(),
+        root: if owned_catalog {
+            e.run_dir.with_file_name("run with spaces")
+        } else {
+            e.run_dir.clone()
+        },
+        workspace: e.workspace.clone(),
+        real_home: std::env::var_os("HOME").expect("real home path").into(),
+        deny: vec![root],
+        deny_literals: Vec::new(),
+        identity: ChannelIdentity::new("current-qualification".into(), "current-host".into())
+            .unwrap(),
+        catalog,
+    };
+    let (host, mut events) = Host::launch(&spec).unwrap();
+    let bridge_sha = host.launch.bridge_sha256.clone();
+    let config_sha = host.launch.config_yml_sha256.clone();
+    let models_sha = host.launch.models_yml_sha256.clone();
+    let startup_probe_sha = host.launch.startup_probe_sha256.clone();
+    let startup_auth_sha = host.launch.startup_auth_sha256.clone();
+    let startup_memory_sha = host.launch.startup_memory_sha256.clone();
+    let startup_logging_sha = host.launch.startup_logging_sha256.clone();
+    assert_eq!(
+        startup_logging_sha,
+        owned_catalog
+            .then(|| pilot_capture::sha256_hex(pilot_capture::host::QUALIFICATION_STARTUP_LOGGING))
+    );
+    assert_eq!(
+        host.paths.root.join("bridge/startup_logging.ts").exists(),
+        owned_catalog
+    );
+    if owned_catalog {
+        assert_eq!(
+            startup_logging_sha,
+            Some(pilot_capture::sha256_hex(
+                &std::fs::read(host.paths.root.join("bridge/startup_logging.ts")).unwrap()
+            ))
+        );
+    }
+    assert_eq!(
+        startup_memory_sha,
+        owned_catalog
+            .then(|| pilot_capture::sha256_hex(pilot_capture::host::QUALIFICATION_STARTUP_MEMORY))
+    );
+    assert_eq!(
+        host.paths.root.join("bridge/startup_memory.ts").exists(),
+        owned_catalog
+    );
+    if owned_catalog {
+        assert_eq!(
+            startup_memory_sha,
+            Some(pilot_capture::sha256_hex(
+                &std::fs::read(host.paths.root.join("bridge/startup_memory.ts")).unwrap()
+            ))
+        );
+    }
+    assert_eq!(
+        startup_auth_sha,
+        owned_catalog
+            .then(|| pilot_capture::sha256_hex(pilot_capture::host::QUALIFICATION_STARTUP_AUTH))
+    );
+    assert_eq!(
+        host.paths.root.join("bridge/startup_auth.ts").exists(),
+        owned_catalog
+    );
+    if owned_catalog {
+        assert_eq!(
+            startup_auth_sha,
+            Some(pilot_capture::sha256_hex(
+                &std::fs::read(host.paths.root.join("bridge/startup_auth.ts")).unwrap()
+            ))
+        );
+    }
+    assert_eq!(
+        startup_probe_sha,
+        owned_catalog
+            .then(|| pilot_capture::sha256_hex(pilot_capture::host::QUALIFICATION_STARTUP_PROBE))
+    );
+    assert_eq!(
+        host.launch
+            .env_names
+            .iter()
+            .any(|name| name == "BUN_OPTIONS"),
+        owned_catalog
+    );
+    let channel_path = host.paths.root.join("bridge/bridge_channel.ts");
+    assert_eq!(channel_path.exists(), source_catalog);
+    assert_eq!(
+        host.launch
+            .env_names
+            .iter()
+            .any(|name| name == "CF_PILOT_EARLY_CHANNEL"),
+        source_catalog
+    );
+    if source_catalog {
+        use std::os::unix::fs::MetadataExt;
+        assert_eq!(
+            std::fs::read(&channel_path).unwrap(),
+            pilot_capture::host::CHANNEL_SOURCE
+        );
+        assert_eq!(
+            std::fs::metadata(&channel_path).unwrap().mode() & 0o777,
+            0o600
+        );
+    }
+    let host_root = host.paths.root.clone();
+    assert_eq!(
+        pilot_capture::sha256_hex(&std::fs::read(host.paths.agent.join("config.yml")).unwrap()),
+        config_sha
+    );
+    assert_eq!(
+        pilot_capture::sha256_hex(&std::fs::read(host.paths.agent.join("models.yml")).unwrap()),
+        models_sha
+    );
+    let native_sessions = host.paths.sessions.clone();
+    let source_before = std::fs::read(e.workspace.join("src/lib.rs")).unwrap();
+    let mut requests = Vec::<(Value, Vec<u8>)>::new();
+    let mut negative_control = false;
+    let mut observations = Vec::<Value>::new();
+    let mut projections = Vec::<Vec<u8>>::new();
+    let mut startup_before_prompt: Option<Vec<u8>> = None;
+    let mut startup_at_ready: Option<Vec<u8>> = None;
+    let mut native_model_sha = None;
+    let mut native_warmup_deadline_readback = false;
+    let mut bridge_fault = None;
+    let collect = async {
+        let (mut rpc, mut bridge, mut setup, mut sent) = (false, false, false, false);
+        let mut pending = BTreeSet::<String>::new();
+        let mut prior: Option<wire::PriorGeneration> = None;
+        let mut tool_checked = false;
+        let mut tool_completed = false;
+        let expect = wire::RequestExpectation {
+            initial_user_text: prompt.into(),
+            workspace: pilot_capture::host_display_path(&e.workspace),
+        };
+        loop {
+            let event = events.recv().await.ok_or("host channels closed")?;
+            match event {
+                HostEvent::Rpc(RpcEvent::Ready) => rpc = true,
+                HostEvent::Bridge(inbound) => match inbound.msg {
+                    ChildMessage::Ready {
+                        api,
+                        delegate,
+                        model,
+                        thinking_level,
+                        mut active_tools,
+                    } => {
+                        active_tools.sort();
+                        if bridge
+                            || api != policy::BRIDGE_API
+                            || delegate != "function"
+                            || model.provider != policy::PROVIDER
+                            || model.id != policy::MODEL
+                            || model.api != policy::BRIDGE_API
+                            || model.max_tokens != policy::MAX_OUTPUT_TOKENS
+                            || thinking_level != policy::THINKING_LEVEL
+                            || active_tools != ["edit", "read"]
+                        {
+                            return Err("bridge settings differ");
+                        }
+                        if owned_catalog {
+                            startup_at_ready = std::fs::read(host_root.join("startup.jsonl")).ok();
+                            let ready = startup_at_ready
+                                .as_deref()
+                                .map_or(Value::Null, |bytes| parse_probe_rows(bytes, None));
+                            if ready["valid"] != true
+                                || ready["warmup_settled"] != true
+                                || ready["logging_quiesced"] != true
+                                || ready["auth_retired"] != true
+                            {
+                                return Err("native startup owners unfinished at capture Ready");
+                            }
+                        }
+                        bridge = true;
+                    }
+                    ChildMessage::FetchBegin {
+                        invocation,
+                        fetch,
+                        method,
+                        url,
+                        headers,
+                    } => {
+                        if tool_followup {
+                            requests.push((
+                                json!({"method":&method,"url":&url,"headers":&headers}),
+                                inbound.payload.clone(),
+                            ));
+                            let generation = requests.len();
+                            if !sent || generation > 2 || invocation as usize != generation {
+                                let _ = host
+                                    .send_bridge(
+                                        ParentMessage::ResponseError {
+                                            fetch,
+                                            class: FaultClass::Authority,
+                                        },
+                                        Vec::new(),
+                                    )
+                                    .await;
+                                return Err("unexpected continuation ordering");
+                            }
+                            let admitted = wire::validate_request(
+                                &method,
+                                &url,
+                                &headers,
+                                &inbound.payload,
+                                &expect,
+                                prior.as_ref(),
+                            )
+                            .map_err(|_| "current request admission failed")?;
+                            let document: Value = serde_json::from_slice(&inbound.payload)
+                                .map_err(|_| "invalid request JSON")?;
+                            if document.get("thread").is_some() {
+                                return Err("server history appeared");
+                            }
+                            if generation == 2 {
+                                let mut incomplete =
+                                    prior.clone().ok_or("missing prior generation")?;
+                                incomplete.completed_calls.clear();
+                                negative_control = wire::validate_request(
+                                    &method,
+                                    &url,
+                                    &headers,
+                                    &inbound.payload,
+                                    &expect,
+                                    Some(&incomplete),
+                                )
+                                .is_err_and(|f| {
+                                    f.class == FaultClass::Retry
+                                        && f.code == "followup_not_tool_progression"
+                                });
+                                if !admitted.followup
+                                    || admitted.message_count != 3
+                                    || !String::from_utf8_lossy(&inbound.payload)
+                                        .contains("pub fn decode")
+                                    || !negative_control
+                                {
+                                    return Err("full history or completion guard missing");
+                                }
+                            }
+                            projections.push(admitted.count_projection.clone());
+                            let transport = transport
+                                .as_ref()
+                                .ok_or("missing owned fixture transport")?;
+                            let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+                            let count = transport
+                                .count(&admitted.count_projection, &admitted.beta, deadline)
+                                .await
+                                .map_err(|_| "owned counter fixture failed")?;
+                            let mut stream = transport
+                                .messages(&inbound.payload, &admitted.beta, deadline)
+                                .await
+                                .map_err(|_| "owned messages fixture failed")?;
+                            host.send_bridge(
+                                ParentMessage::ResponseStart {
+                                    fetch,
+                                    status: stream.status(),
+                                    headers: stream.relay_headers(),
+                                },
+                                Vec::new(),
+                            )
+                            .await
+                            .map_err(|_| "response start failed")?;
+                            while let Some(event) = stream
+                                .next_event(deadline)
+                                .await
+                                .map_err(|_| "synthetic SSE admission failed")?
+                            {
+                                host.send_bridge(
+                                    ParentMessage::ResponseData { fetch },
+                                    event.to_vec(),
+                                )
+                                .await
+                                .map_err(|_| "response relay failed")?;
+                            }
+                            let observed = stream.observation();
+                            if !observed.terminal
+                                || !observed.usage.complete()
+                                || observed.usage.inclusive_input() != Some(count.input_tokens)
+                            {
+                                return Err("synthetic stream did not reconcile");
+                            }
+                            let mut native_usage = json!({
+                                "input":observed.usage.uncached_input.as_ref().unwrap().value,
+                                "output":observed.usage.output.as_ref().unwrap().value,
+                                "cacheRead":observed.usage.cache_read_input.as_ref().unwrap().value,
+                                "cacheWrite":observed.usage.cache_creation_input.as_ref().unwrap().value,
+                                "totalTokens":observed.usage.total().unwrap(),
+                            });
+                            if let Some(reasoning) = &observed.usage.reasoning {
+                                native_usage["reasoningTokens"] = json!(reasoning.value);
+                            }
+                            observations.push(json!({"message_id":observed.message_id,"model":observed.returned_model,"terminal":observed.terminal,
+                                "synthetic_input_tokens":count.input_tokens,"synthetic_usage_complete":observed.usage.complete(),"tool_uses":observed.tool_uses.len(),
+                                "expected_native_usage":native_usage}));
+                            prior = Some(wire::PriorGeneration {
+                                messages: admitted.messages,
+                                system_sha256: admitted.system_sha256,
+                                tools_sha256: admitted.tools_sha256,
+                                settings_sha256: admitted.settings_sha256,
+                                beta: admitted.beta,
+                                tool_uses: observed.tool_uses,
+                                completed_calls: Vec::new(),
+                            });
+                            host.send_bridge(ParentMessage::ResponseEnd { fetch }, Vec::new())
+                                .await
+                                .map_err(|_| "response end failed")?;
+                            continue;
+                        }
+                        host.send_bridge(
+                            ParentMessage::ResponseError {
+                                fetch,
+                                class: FaultClass::Authority,
+                            },
+                            Vec::new(),
+                        )
+                        .await
+                        .map_err(|_| "local refusal failed")?;
+                        if !sent || invocation != 1 {
+                            return Err("unexpected request ordering");
+                        }
+                        return Ok((
+                            json!({"method": method, "url": url, "headers": headers}),
+                            inbound.payload,
+                        ));
+                    }
+                    ChildMessage::ToolCheck { call, name } if tool_followup => {
+                        let allow = !tool_checked
+                            && call == "toolu_current_read"
+                            && name == "read"
+                            && serde_json::from_slice::<Value>(&inbound.payload)
+                                .is_ok_and(|v| v == json!({"path":"src/lib.rs"}))
+                            && pilot_capture::host::admit_tool(
+                                &ToolPolicy::pilot(e.workspace.clone()),
+                                &name,
+                                &inbound.payload,
+                            ) == ToolVerdict::Allow;
+                        host.send_bridge(ParentMessage::ToolDecision { call, allow }, Vec::new())
+                            .await
+                            .map_err(|_| "tool decision failed")?;
+                        if !allow {
+                            return Err("unexpected tool attempted");
+                        }
+                        tool_checked = true;
+                    }
+                    ChildMessage::ToolDone { call, outcome, .. } if tool_followup => {
+                        if !tool_checked
+                            || tool_completed
+                            || call != "toolu_current_read"
+                            || outcome != ToolOutcome::Ok
+                        {
+                            return Err("tool completion differs");
+                        }
+                        tool_completed = true;
+                        prior
+                            .as_mut()
+                            .ok_or("tool precedes response settlement")?
+                            .completed_calls
+                            .push(call);
+                    }
+                    ChildMessage::Fault { code } => {
+                        bridge_fault = Some(code);
+                        return Err("host bridge fault");
+                    }
+                    _ => return Err("unexpected bridge event"),
+                },
+                HostEvent::Rpc(RpcEvent::Response {
+                    id,
+                    command,
+                    success,
+                    state,
+                }) => {
+                    let id = id.unwrap_or_default();
+                    if id == "p1" && command == "prompt" && success && sent {
+                        continue;
+                    }
+                    if !success || !pending.remove(&id) {
+                        return Err("setup RPC refused or unexpected");
+                    }
+                    if id == "c4" || id == "c5" {
+                        let s = state.ok_or("settings missing")?;
+                        if id == "c5" && s.native_model_sha256 != native_model_sha {
+                            return Err("post-deadline native model differs");
+                        }
+                        native_model_sha = s.native_model_sha256.clone();
+                        if s.provider.as_deref() != Some(policy::PROVIDER)
+                            || s.model.as_deref() != Some(policy::MODEL)
+                            || s.api.as_deref() != Some(policy::BRIDGE_API)
+                            || s.max_tokens != Some(policy::MAX_OUTPUT_TOKENS)
+                            || s.thinking_level.as_deref() != Some(policy::THINKING_LEVEL)
+                            || s.auto_compaction != Some(false)
+                        {
+                            return Err("settings readback differs");
+                        }
+                        if id == "c5" {
+                            native_warmup_deadline_readback = true;
+                        } else if owned_catalog {
+                            // Cross the pinned SDK's 10-second warm-up deadline,
+                            // then require a fresh native response before any prompt.
+                            // Waiting alone does not establish startup settlement.
+                            tokio::time::sleep(Duration::from_secs(12)).await;
+                            pending.insert("c5".into());
+                            host.send_rpc(&json!({"id":"c5","type":"get_state"}))
+                                .await
+                                .map_err(|_| "post-deadline state send failed")?;
+                        }
+                    }
+                    if pending.is_empty() && !sent {
+                        if owned_catalog {
+                            startup_before_prompt = std::fs::read(host_root.join("startup.jsonl"))
+                                .ok()
+                                .filter(|bytes| bytes.len() <= 8192)
+                                .and_then(|bytes| {
+                                    bytes
+                                        .iter()
+                                        .rposition(|b| *b == b'\n')
+                                        .map(|last| bytes[..=last].to_vec())
+                                });
+                        }
+                        host.send_rpc(&json!({"id":"p1", "type":"prompt", "message":prompt}))
+                            .await
+                            .map_err(|_| "prompt send failed")?;
+                        sent = true;
+                    }
+                }
+                HostEvent::Rpc(RpcEvent::PromptResult { id, status }) if tool_followup => {
+                    if id.as_deref() != Some("p1")
+                        || status != "completed"
+                        || requests.len() != 2
+                        || !tool_completed
+                    {
+                        return Err("prompt did not complete the two-generation fixture");
+                    }
+                    return requests.last().cloned().ok_or("missing final request");
+                }
+                HostEvent::Rpc(RpcEvent::Other | RpcEvent::SessionSettled | RpcEvent::AgentEnd) => {
+                }
+                _ => return Err("unexpected host event"),
+            }
+            if rpc && bridge && !setup {
+                setup = true;
+                for (id, command) in [
+                    (
+                        "c1",
+                        json!({"id":"c1", "type":"set_auto_retry", "enabled":false}),
+                    ),
+                    (
+                        "c2",
+                        json!({"id":"c2", "type":"set_auto_compaction", "enabled":false}),
+                    ),
+                    (
+                        "c3",
+                        json!({"id":"c3", "type":"set_cache_warming", "mode":"off"}),
+                    ),
+                    ("c4", json!({"id":"c4", "type":"get_state"})),
+                ] {
+                    pending.insert(id.into());
+                    host.send_rpc(&command)
+                        .await
+                        .map_err(|_| "setup send failed")?;
+                }
+            }
+        }
+    };
+    let captured = tokio::time::timeout(Duration::from_secs(120), collect).await;
+    let completed = tool_followup && matches!(&captured, Ok(Ok(_)));
+    let _ = host
+        .send_bridge(
+            ParentMessage::Close {
+                reason: if completed {
+                    CloseReason::Completed
+                } else {
+                    CloseReason::Halted
+                },
+            },
+            Vec::new(),
+        )
+        .await;
+    if !completed {
+        let _ = host.send_rpc(&json!({"id":"a1", "type":"abort"})).await;
+    }
+    let (drained, exit) = host.finish(events, Duration::from_secs(30)).await;
+    let evidence_root = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT").map(|path| {
+        let mut out=PathBuf::from(path);
+        if owned_catalog {out.set_file_name(format!("{}-owned-catalog",out.file_name().unwrap().to_string_lossy()));}
+        else if tool_followup {out.set_file_name(format!("{}-followup",out.file_name().unwrap().to_string_lossy()));}
+        fixture_private_dir(&out).unwrap();
+        for (index,(meta,bytes)) in requests.iter().enumerate() {
+            fixture_private_write(out.join(format!("request-{}.json",index+1)),bytes).unwrap();
+            fixture_private_write(out.join(format!("request-{}-metadata.json",index+1)),serde_json::to_vec_pretty(meta).unwrap()).unwrap();
+        }
+        let failure=match &captured {Ok(Ok(_))=>None,Ok(Err(code))=>Some(*code),Err(_)=>Some("capture deadline")};
+        fixture_private_write(out.join("capture-result.json"),serde_json::to_vec_pretty(&json!({"capture_error":failure,"bridge_fault":bridge_fault,
+            "captured_requests":requests.len(),"owned_fixture_http_requests":fixture.as_ref().map_or(0,|fx|fx.seen().len()),
+            "native_model_sha256":native_model_sha,"native_warmup_deadline_readback":native_warmup_deadline_readback,
+            "native_warmup_settled_at_ready":startup_at_ready.as_deref().is_some_and(|bytes| parse_probe_rows(bytes,None)["warmup_settled"]==true),
+            "native_logging_quiesced_at_ready":startup_at_ready.as_deref().is_some_and(|bytes| parse_probe_rows(bytes,None)["logging_quiesced"]==true),
+            "normal_exit":exit.normal,"exit_code":exit.code,"stderr_bytes":exit.stderr_bytes,"stderr_sha256":exit.stderr_sha256,
+            "forced":exit.forced,"group_gone":exit.group_gone})).unwrap()).unwrap();
+        if let Some(bytes) = &startup_at_ready {
+            fixture_private_write(out.join("startup-at-ready.jsonl"), bytes).unwrap();
+        }
+        if let Some(fx)=&fixture {
+            for (index,seen) in fx.seen().iter().enumerate() {
+                fixture_private_write(out.join(format!("http-{}.body",index+1)),&seen.body).unwrap();
+            }
+        }
+        out
+    });
+    let catalog_cache = if owned_catalog {
+        let observed = current_native_catalog_cache(&host_root.join("agent/models.db"));
+        if let Some(out) = &evidence_root {
+            fixture_private_write(
+                out.join("native-catalog-cache.json"),
+                serde_json::to_vec_pretty(&observed).unwrap(),
+            )
+            .unwrap();
+        }
+        observed
+    } else {
+        Value::Null
+    };
+    let catalog_passed = !owned_catalog || catalog_cache["matched"] == true;
+    let startup_probe = if owned_catalog {
+        let path = host_root.join("startup.jsonl");
+        let bytes = std::fs::symlink_metadata(&path)
+            .ok()
+            .filter(|m| m.is_file() && m.len() <= 8192)
+            .and_then(|_| std::fs::read(&path).ok());
+        let mut observed = bytes.as_ref().map_or_else(
+            || json!({"valid":false,"fault":"missing_or_oversized_trace"}),
+            |b| parse_probe(b),
+        );
+        if let Some(bytes) = bytes.filter(|_| observed["valid"] == true) {
+            let prefix = startup_before_prompt.as_deref().unwrap_or_default();
+            let prefix_matches = !prefix.is_empty() && bytes.starts_with(prefix);
+            let before = parse_probe_rows(prefix, None)["observed_attempts"]
+                .as_u64()
+                .unwrap_or_default();
+            let ready = startup_at_ready.as_deref().unwrap_or_default();
+            observed["settled_at_ready"] = json!(
+                bytes.starts_with(ready)
+                    && parse_probe_rows(ready, None)["warmup_settled"] == true
+                    && parse_probe_rows(ready, None)["logging_quiesced"] == true
+                    && parse_probe_rows(ready, None)["auth_retired"] == true
+            );
+            observed["before_prompt_prefix_matches"] = json!(prefix_matches);
+            observed["observed_before_prompt_attempts"] = json!(before);
+            observed["observed_after_prompt_attempts"] = json!(
+                observed["observed_attempts"]
+                    .as_u64()
+                    .unwrap()
+                    .saturating_sub(before)
+            );
+            let mut controls = Vec::new();
+            let rows = observed["rows"].as_array().unwrap().clone();
+            let encode = |rows: &[Value]| {
+                rows.iter()
+                    .map(|row| format!("{row}\n"))
+                    .collect::<String>()
+            };
+            controls
+                .push(parse_probe(encode(&rows[..rows.len() - 1]).as_bytes())["valid"] == false);
+            for (key, value) in [
+                ("code", json!(1)),
+                ("sequence", json!(rows.len())),
+                ("body", json!("forbidden")),
+            ] {
+                let mut changed = rows.clone();
+                changed.last_mut().unwrap()[key] = value;
+                controls.push(parse_probe(encode(&changed).as_bytes())["valid"] == false);
+            }
+            let mut changed = rows.clone();
+            changed[0]["runtime"] = json!("unqualified");
+            controls.push(parse_probe(encode(&changed).as_bytes())["valid"] == false);
+            let mut changed = rows.clone();
+            changed.push(rows.last().unwrap().clone());
+            controls.push(parse_probe(encode(&changed).as_bytes())["valid"] == false);
+            let states: Vec<_> = rows
+                .iter()
+                .enumerate()
+                .filter(|(_, row)| row["kind"] == "warmup")
+                .map(|(i, _)| i)
+                .collect();
+            if states.len() == 3 {
+                for (state, value) in [("native_timeout_ms", json!(1)), ("state", json!("unknown"))]
+                {
+                    let mut changed = rows.clone();
+                    changed[states[1]][state] = value;
+                    controls.push(parse_probe(encode(&changed).as_bytes())["valid"] == false);
+                }
+                for (target, source) in [
+                    (states[0], states[1]),
+                    (states[1], states[2]),
+                    (states[2], states[0]),
+                ] {
+                    let mut changed = rows.clone();
+                    changed[target]["state"] = rows[source]["state"].clone();
+                    controls.push(parse_probe(encode(&changed).as_bytes())["valid"] == false);
+                }
+                let mut changed = rows.clone();
+                changed[states[0]]["body"] = json!("forbidden");
+                controls.push(parse_probe(encode(&changed).as_bytes())["valid"] == false);
+            }
+            if let Some(logging) = rows.iter().position(|row| row["kind"] == "logging") {
+                for (key, value) in [("state", json!("unknown")), ("body", json!("forbidden"))] {
+                    let mut changed = rows.clone();
+                    changed[logging][key] = value;
+                    controls.push(parse_probe(encode(&changed).as_bytes())["valid"] == false);
+                }
+                for duplicate in [false, true] {
+                    let mut changed = rows.clone();
+                    if duplicate {
+                        changed.insert(logging, rows[logging].clone());
+                    } else {
+                        changed.remove(logging);
+                    }
+                    for (i, row) in changed.iter_mut().enumerate() {
+                        row["sequence"] = json!(i);
+                    }
+                    controls.push(parse_probe(encode(&changed).as_bytes())["valid"] == false);
+                }
+            }
+            let auth: Vec<_> = rows
+                .iter()
+                .enumerate()
+                .filter(|(_, row)| row["kind"] == "auth")
+                .map(|(i, _)| i)
+                .collect();
+            if auth.len() == 2 {
+                for (position, key, value) in [
+                    (auth[0], "subscriptions", json!(3)),
+                    (auth[1], "store_closed", json!(false)),
+                    (auth[1], "initial_resolver_joined", json!(false)),
+                    (auth[1], "continuations", json!(9)),
+                    (auth[1], "body", json!("forbidden")),
+                ] {
+                    let mut changed = rows.clone();
+                    changed[position][key] = value;
+                    controls.push(parse_probe(encode(&changed).as_bytes())["valid"] == false);
+                }
+                for duplicate in [false, true] {
+                    let mut changed = rows.clone();
+                    if duplicate {
+                        changed.insert(auth[0], rows[auth[0]].clone());
+                    } else {
+                        changed.remove(auth[0]);
+                    }
+                    for (i, row) in changed.iter_mut().enumerate() {
+                        row["sequence"] = json!(i);
+                    }
+                    controls.push(parse_probe(encode(&changed).as_bytes())["valid"] == false);
+                }
+            }
+            if source_catalog && auth.len() == 2 {
+                for (key, value) in [
+                    ("binding", json!("unknown")),
+                    ("chain_joined", json!(false)),
+                ] {
+                    let mut changed = rows.clone();
+                    changed[auth[1]][key] = value;
+                    controls.push(parse_probe(encode(&changed).as_bytes())["valid"] == false);
+                }
+            }
+            observed["mutation_controls_rejected"] = json!(controls.iter().filter(|x| **x).count());
+            observed["valid"] = json!(
+                prefix_matches
+                    && observed["settled_at_ready"] == true
+                    && controls.len() == if source_catalog { 25 } else { 23 }
+                    && controls.iter().all(|x| *x)
+            );
+            if let Some(out) = &evidence_root {
+                fixture_private_write(out.join("startup.jsonl"), bytes).unwrap();
+                fixture_private_write(out.join("startup-before-prompt.jsonl"), prefix).unwrap();
+            }
+        }
+        if let Some(out) = &evidence_root {
+            fixture_private_write(
+                out.join("startup-readback.json"),
+                serde_json::to_vec_pretty(&observed).unwrap(),
+            )
+            .unwrap();
+        }
+        observed
+    } else {
+        assert!(!host_root.join("startup.jsonl").exists());
+        Value::Null
+    };
+    let startup_probe_passed = !owned_catalog || startup_probe["valid"] == true;
+    let mut native_report = Value::Null;
+    let mut native_usage_passed = !tool_followup;
+    if tool_followup {
+        let native = pilot_capture::host::read_native_session(&native_sessions);
+        native_report = match native {
+            Ok(Some(native)) => {
+                let bytes = std::fs::read(&native.path).unwrap();
+                assert_eq!(pilot_capture::sha256_hex(&bytes), native.sha256);
+                if let Some(out) = &evidence_root {
+                    fixture_private_write(out.join("native-session.jsonl"), &bytes).unwrap();
+                }
+                let rows: Result<Vec<Value>, _> = bytes
+                    .split(|b| *b == b'\n')
+                    .filter(|line| !line.iter().all(u8::is_ascii_whitespace))
+                    .map(serde_json::from_slice)
+                    .collect();
+                let mut controls = Vec::new();
+                let matches = rows.as_ref().is_ok_and(|rows| {
+                    if !current_native_usage_matches(rows, &observations) {
+                        return false;
+                    }
+                    let index = rows
+                        .iter()
+                        .position(|r| r["message"]["role"] == "assistant")
+                        .unwrap();
+                    let mut altered = rows.clone();
+                    altered[index]["message"]["responseId"] = json!("msg_unobserved");
+                    controls.push(!current_native_usage_matches(&altered, &observations));
+                    for key in ["input", "output", "cacheRead", "cacheWrite", "totalTokens"] {
+                        for bad in [Value::Null, json!(-1), json!(1.5), json!(99999)] {
+                            let mut altered = rows.clone();
+                            altered[index]["message"]["usage"][key] = bad;
+                            controls.push(!current_native_usage_matches(&altered, &observations));
+                        }
+                        let mut altered = rows.clone();
+                        altered[index]["message"]["usage"]
+                            .as_object_mut()
+                            .unwrap()
+                            .remove(key);
+                        controls.push(!current_native_usage_matches(&altered, &observations));
+                    }
+                    let mut altered = rows.clone();
+                    altered[index]["message"]["usage"]["reasoningTokens"] = json!(0);
+                    controls.push(!current_native_usage_matches(&altered, &observations));
+                    let mut altered = rows.clone();
+                    altered.push(rows[index].clone());
+                    controls.push(!current_native_usage_matches(&altered, &observations));
+                    let mut altered = rows.clone();
+                    altered.push(json!({"type":"model_usage"}));
+                    controls.push(!current_native_usage_matches(&altered, &observations));
+                    true
+                });
+                native_usage_passed = matches
+                    && native.unparsed_lines == 0
+                    && native.model_usage_entries == 0
+                    && native.assistant.len() == 2
+                    && controls.len() == 29
+                    && controls.iter().all(|rejected| *rejected);
+                json!({"session_sha256":native.sha256,"session_bytes":native.bytes,
+                    "assistant_entries":native.assistant.len(),"model_usage_entries":native.model_usage_entries,
+                    "unparsed_lines":native.unparsed_lines,"four_category_usage_matches":matches,
+                    "negative_controls_rejected":controls.iter().filter(|rejected| **rejected).count(),
+                    "expected_negative_controls":29,"passed":native_usage_passed})
+            }
+            Ok(None) => json!({"passed":false,"fault":"native_session_missing"}),
+            Err(fault) => json!({"passed":false,"fault":fault.to_string()}),
+        };
+        if let Some(out) = &evidence_root {
+            fixture_private_write(
+                out.join("native-usage-readback.json"),
+                serde_json::to_vec_pretty(&native_report).unwrap(),
+            )
+            .unwrap();
+        }
+    }
+    let (metadata, body) = captured
+        .expect("capture deadline")
+        .expect("actual host request");
+    let headers: Vec<(String, String)> =
+        serde_json::from_value(metadata["headers"].clone()).unwrap();
+    let admitted = (!tool_followup).then(|| {
+        wire::validate_request(
+            metadata["method"].as_str().unwrap(),
+            metadata["url"].as_str().unwrap(),
+            &headers,
+            &body,
+            &wire::RequestExpectation {
+                initial_user_text: prompt.into(),
+                workspace: pilot_capture::host_display_path(&e.workspace),
+            },
+            None,
+        )
+    });
+    let document: Value = serde_json::from_slice(&body).unwrap();
+    let no_thread = document.get("thread").is_none();
+    let followup_passed = tool_followup
+        && (!owned_catalog || native_warmup_deadline_readback)
+        && catalog_passed
+        && startup_probe_passed
+        && native_usage_passed
+        && requests.len() == 2
+        && negative_control
+        && observations.len() == 2
+        && fixture.as_ref().is_some_and(|fx| {
+            fx.paths()
+                == [
+                    "/v1/messages/count_tokens",
+                    "/v1/messages",
+                    "/v1/messages/count_tokens",
+                    "/v1/messages",
+                ]
+                && fx.remaining_script() == 0
+                && {
+                    let seen = fx.seen();
+                    seen.len() == 4
+                        && projections.len() == 2
+                        && seen.iter().all(|s| s.method == "POST")
+                        && seen[0].body == projections[0]
+                        && seen[1].body == requests[0].1
+                        && seen[2].body == projections[1]
+                        && seen[3].body == requests[1].1
+                }
+        })
+        && !drained.iter().any(
+            |e| matches!(e,HostEvent::Bridge(i) if matches!(i.msg,ChildMessage::FetchBegin{..})),
+        )
+        && std::fs::read(e.workspace.join("src/lib.rs")).unwrap() == source_before;
+    let request_passed = if tool_followup {
+        followup_passed
+    } else {
+        admitted.as_ref().is_some_and(Result::is_ok)
+    };
+    let report = json!({"host_sha256": sha, "bridge_sha256": bridge_sha,
+        "body_sha256": pilot_capture::sha256_hex(&body), "body_bytes":body.len(),
+        "config_yml_sha256":config_sha,"models_yml_sha256":models_sha,
+        "native_model_sha256":native_model_sha,
+        "native_warmup_deadline_readback":native_warmup_deadline_readback,
+        "startup_probe_sha256":startup_probe_sha,
+        "startup_auth_sha256":startup_auth_sha,
+        "startup_memory_sha256":startup_memory_sha,
+        "startup_logging_sha256":startup_logging_sha,
+        "no_thread_field":no_thread, "validator_passed":request_passed,
+        "validator_fault":admitted.as_ref().and_then(|r|r.as_ref().err()).map(ToString::to_string),
+        "qualified_requests":if tool_followup {requests.len()} else {1},"missing_completion_control_rejected":negative_control,
+        "synthetic_observations":observations,"synthetic_usage_is_not_provider_usage":tool_followup,
+        "native_usage_readback":native_report,
+        "owned_catalog_profile":owned_catalog,"source_built_profile":source_catalog,"native_catalog_cache":catalog_cache,
+        "native_startup_probe":startup_probe,
+        "owned_fixture_http_requests":fixture.as_ref().map_or(0,|fx|fx.seen().len()),
+        "external_provider_calls":0,
+        "normal_exit":exit.normal, "forced":exit.forced, "group_gone":exit.group_gone,
+        "stderr_bytes":exit.stderr_bytes, "provider_calls":0, "v1_host_admission":false});
+    if let Some(out) = evidence_root {
+        fixture_private_write(out.join("request-body.json"), &body).unwrap();
+        fixture_private_write(
+            out.join("request-metadata.json"),
+            serde_json::to_vec_pretty(&metadata).unwrap(),
+        )
+        .unwrap();
+        fixture_private_write(
+            out.join("result.json"),
+            serde_json::to_vec_pretty(&report).unwrap(),
+        )
+        .unwrap();
+    }
+    assert_owned_private_tree(
+        &host_root,
+        Some(Path::new(
+            "home/.omp/natives/18.18.1/pi_natives.darwin-arm64.node",
+        )),
+    );
+    assert_eq!(
+        pilot_capture::sha256_hex(&std::fs::read(&omp).unwrap()),
+        sha
+    );
+    assert!(
+        no_thread && request_passed && exit.normal && !exit.forced && exit.group_gone,
+        "{report}"
+    );
+    report
+}
+
+/// Negative native controls name their expected exit; ordinary capture keeps zero.
+fn current_startup_probe_exit(bytes: &[u8], expected_exit: u8) -> Value {
+    current_startup_probe_rows(bytes, Some(expected_exit))
+}
+
+// None validates a live prefix; only the capture consumer requires sealed warmup.
+fn current_startup_probe_rows(bytes: &[u8], expected_exit: Option<u8>) -> Value {
+    startup_probe_rows(bytes, expected_exit, false)
+}
+
+fn startup_probe_rows(bytes: &[u8], expected_exit: Option<u8>, source_profile: bool) -> Value {
+    let invalid = || json!({"valid":false});
+    if bytes.len() > 8192 || bytes.last() != Some(&b'\n') {
+        return invalid();
+    }
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return invalid();
+    };
+    let rows: Result<Vec<Value>, _> = text.lines().map(serde_json::from_str).collect();
+    let Ok(rows) = rows else { return invalid() };
+    if !(if expected_exit.is_some() { 2 } else { 1 }..=26).contains(&rows.len()) {
+        return invalid();
+    }
+    let keys = |row: &Value, wanted: &[&str]| {
+        row.as_object()
+            .is_some_and(|o| o.len() == wanted.len() && wanted.iter().all(|k| o.contains_key(*k)))
+    };
+    if !keys(
+        &rows[0],
+        &["sequence", "kind", "runtime", "workspace_restored"],
+    ) || rows[0]["kind"] != "installed"
+        || rows[0]["runtime"] != "1.4.4"
+        || rows[0]["workspace_restored"] != true
+        || expected_exit.is_some_and(|exit| {
+            !keys(rows.last().unwrap(), &["sequence", "kind", "code"])
+                || rows.last().unwrap()["kind"] != "exit"
+                || rows.last().unwrap()["code"] != exit
+        })
+    {
+        return invalid();
+    }
+    let mut attempts = 0;
+    let mut known_attempts = 0;
+    let mut warmup = 0;
+    let mut logging_quiesced = false;
+    let mut auth = 0;
+    for (index, row) in rows.iter().enumerate() {
+        if row["sequence"].as_u64() != Some(index as u64) {
+            return invalid();
+        }
+        if index == 0 || (expected_exit.is_some() && index == rows.len() - 1) {
+            continue;
+        }
+        if row["kind"] == "logging" {
+            if !keys(row, &["sequence", "kind", "state"])
+                || row["state"] != "quiesced"
+                || logging_quiesced
+            {
+                return invalid();
+            }
+            logging_quiesced = true;
+            continue;
+        }
+        if row["kind"] == "auth" {
+            if source_profile {
+                if row["binding"] != "cli_source" {
+                    return invalid();
+                }
+                match row["state"].as_str() {
+                    Some("registered")
+                        if auth == 0 && keys(row, &["sequence", "kind", "state", "binding"]) =>
+                    {
+                        auth = 1
+                    }
+                    Some("retired")
+                        if auth == 1
+                            && keys(
+                                row,
+                                &[
+                                    "sequence",
+                                    "kind",
+                                    "state",
+                                    "binding",
+                                    "initial_resolver_joined",
+                                    "chain_joined",
+                                    "store_closed",
+                                ],
+                            )
+                            && row["initial_resolver_joined"] == true
+                            && row["chain_joined"] == true
+                            && row["store_closed"] == true =>
+                    {
+                        auth = 2
+                    }
+                    _ => return invalid(),
+                }
+                continue;
+            }
+            if row["subscriptions"] != 4 {
+                return invalid();
+            }
+            match row["state"].as_str() {
+                Some("registered")
+                    if auth == 0 && keys(row, &["sequence", "kind", "state", "subscriptions"]) =>
+                {
+                    auth = 1
+                }
+                Some("retired")
+                    if auth == 1
+                        && keys(
+                            row,
+                            &[
+                                "sequence",
+                                "kind",
+                                "state",
+                                "subscriptions",
+                                "continuations",
+                                "initial_resolver_joined",
+                                "store_closed",
+                            ],
+                        )
+                        && row["continuations"].as_u64().is_some_and(|n| n <= 8)
+                        && row["initial_resolver_joined"] == true
+                        && row["store_closed"] == true =>
+                {
+                    auth = 2
+                }
+                _ => return invalid(),
+            }
+            continue;
+        }
+        if row["kind"] == "warmup" {
+            let states = ["listener_released", "deadline_elapsed", "sealed"];
+            if !keys(row, &["sequence", "kind", "state", "native_timeout_ms"])
+                || warmup >= states.len()
+                || row["state"] != states[warmup]
+                || row["native_timeout_ms"] != 10000
+                || known_attempts != 1
+                || (warmup == 2 && !logging_quiesced)
+            {
+                return invalid();
+            }
+            warmup += 1;
+            continue;
+        }
+        attempts += 1;
+        if attempts > 20 {
+            return invalid();
+        }
+        if !keys(
+            row,
+            &[
+                "sequence",
+                "kind",
+                "transport",
+                "method",
+                "scheme",
+                "host",
+                "port",
+                "route",
+            ],
+        ) || row["kind"] != "attempt"
+            || ![
+                "global_fetch",
+                "fetch_preconnect",
+                "client_request_end",
+                "agent_add_request",
+            ]
+            .iter()
+            .any(|x| row["transport"] == *x)
+            || !["http:", "https:"].iter().any(|x| row["scheme"] == *x)
+            || !["anthropic_connection_prewarm", "shared_catalog", "other"]
+                .iter()
+                .any(|x| row["route"] == *x)
+            || !row["method"].as_str().is_some_and(|s| {
+                !s.is_empty() && s.len() <= 16 && s.bytes().all(|b| b.is_ascii_uppercase())
+            })
+            || !row["host"].as_str().is_some_and(|s| {
+                !s.is_empty()
+                    && s.len() <= 253
+                    && s.bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b".-:[]".contains(&b))
+            })
+            || !row["port"].as_str().is_some_and(|s| {
+                s.is_empty()
+                    || (s.len() <= 5
+                        && s.bytes().all(|b| b.is_ascii_digit())
+                        && s.parse::<u16>().is_ok())
+            })
+        {
+            return invalid();
+        }
+        if row["transport"] == "agent_add_request"
+            && row["method"] == "HEAD"
+            && row["scheme"] == "https:"
+            && row["host"] == "api.anthropic.com"
+            && row["port"] == ""
+            && row["route"] == "anthropic_connection_prewarm"
+        {
+            known_attempts += 1;
+        }
+    }
+    json!({"valid":true,"runtime":"1.4.4","observed_attempts":attempts,"warmup_settled":warmup==3,"logging_quiesced":logging_quiesced,"auth_retired":auth==2,"rows":rows,"complete_startup_admission":false})
+}
+
+/// Compare the current host's actual native ledger with the accepted fixture wire
+/// observations. This diagnostic does not change production native import policy.
+fn current_native_usage_matches(rows: &[Value], observations: &[Value]) -> bool {
+    if observations.len() != 2 || rows.iter().any(|row| row["type"] == "model_usage") {
+        return false;
+    }
+    let assistant: Vec<_> = rows
+        .iter()
+        .filter(|row| row["type"] == "message" && row["message"]["role"] == "assistant")
+        .collect();
+    assistant.len() == observations.len()
+        && assistant.iter().zip(observations).all(|(row, observed)| {
+            let message = &row["message"];
+            let expected = &observed["expected_native_usage"];
+            row["id"].as_str().is_some_and(|id| !id.is_empty())
+                && message["responseId"]
+                    .as_str()
+                    .is_some_and(|id| !id.is_empty() && Some(id) == observed["message_id"].as_str())
+                && message["model"] == observed["model"]
+                && message["provider"] == policy::PROVIDER
+                && message["stopReason"]
+                    == if observed["tool_uses"] == 0 {
+                        "stop"
+                    } else {
+                        "toolUse"
+                    }
+                && ["input", "output", "cacheRead", "cacheWrite", "totalTokens"]
+                    .iter()
+                    .all(|key| {
+                        expected[key].as_u64().is_some()
+                            && message["usage"][key].as_u64() == expected[key].as_u64()
+                    })
+                && message["usage"].get("reasoningTokens") == expected.get("reasoningTokens")
+        })
+}
+
+/// Observe the current SDK's derived cache after its process has exited. This
+/// readback is test evidence and never participates in production admission.
+fn current_native_catalog_cache(path: &Path) -> Value {
+    if !path.is_file() || std::fs::metadata(path).unwrap().len() > 64 * 1024 * 1024 {
+        return json!({"matched":false,"fault":"catalog_cache_missing_or_oversized"});
+    }
+    let output = std::process::Command::new("/usr/bin/sqlite3")
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .env("HOME", path.parent().unwrap())
+        .args(["-readonly", "-batch", "-init", "/dev/null", "-json"])
+        .arg(path)
+        .arg("SELECT provider_id,authoritative,models FROM model_cache WHERE provider_id='anthropic' AND length(models)<=65536;")
+        .output()
+        .unwrap();
+    if !output.status.success() || !output.stderr.is_empty() {
+        return json!({"matched":false,"fault":"catalog_cache_query_failed"});
+    }
+    let rows: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap_or_default();
+    let models: Vec<Value> = rows
+        .first()
+        .and_then(|row| row["models"].as_str())
+        .and_then(|text| serde_json::from_str(text).ok())
+        .unwrap_or_default();
+    let matched = rows.len() == 1
+        && rows[0]["authoritative"] == 1
+        && models.len() == 1
+        && models[0]["id"] == policy::MODEL
+        && models[0]["provider"] == policy::PROVIDER;
+    json!({"matched":matched,"rows":rows,"model_count":models.len(),
+        "database_sha256":pilot_capture::sha256_hex(&std::fs::read(path).unwrap())})
+}
 
 fn require_host() {
     let bytes = std::fs::read(OMP).expect("pinned OMP host is required for this qualification");
@@ -45,23 +2621,23 @@ struct Env {
 
 /// A fresh synthetic five-file workspace plus an unclaimed run path.
 fn env() -> Env {
-    let root = tempfile::tempdir().unwrap();
+    let root = fixture_private_tempdir().unwrap();
     let base = std::fs::canonicalize(root.path()).unwrap();
     let ws = base.join("ws");
-    std::fs::create_dir_all(ws.join("src")).unwrap();
-    std::fs::write(
+    fixture_private_dirs(ws.join("src")).unwrap();
+    fixture_private_write(
         ws.join("Cargo.toml"),
         "[package]\nname = \"records\"\nversion = \"0.0.0\"\n",
     )
     .unwrap();
-    std::fs::write(
+    fixture_private_write(
         ws.join("src/lib.rs"),
         "pub fn decode(input: &[u8]) -> Vec<u8> { input.to_vec() }\n",
     )
     .unwrap();
-    std::fs::write(ws.join("src/ascii_set.rs"), "pub struct AsciiSet;\n").unwrap();
-    std::fs::write(ws.join("LICENSE-MIT"), "MIT synthetic\n").unwrap();
-    std::fs::write(ws.join("LICENSE-APACHE"), "Apache synthetic\n").unwrap();
+    fixture_private_write(ws.join("src/ascii_set.rs"), "pub struct AsciiSet;\n").unwrap();
+    fixture_private_write(ws.join("LICENSE-MIT"), "MIT synthetic\n").unwrap();
+    fixture_private_write(ws.join("LICENSE-APACHE"), "Apache synthetic\n").unwrap();
     Env {
         run_dir: base.join("run"),
         workspace: ws,
@@ -141,8 +2717,126 @@ fn assert_absent_under(dir: &Path, needle: &str) {
     }
 }
 
+// Expected values are independently spelled out for the producer/consumer tests.
+// No ambient environment values, private credential or private source is read.
+fn checker_expected_environment(root: &Path) -> std::collections::BTreeMap<String, String> {
+    let root = root.to_str().unwrap();
+    [
+        ("HOME", format!("{root}/home")),
+        ("LANG", "C".into()),
+        ("PATH", "/usr/bin:/bin".into()),
+        ("TMPDIR", format!("{root}/tmp/")),
+        ("XDG_CONFIG_HOME", format!("{root}/home/.config")),
+        ("XDG_DATA_HOME", format!("{root}/home/.local/share")),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.into(), v))
+    .collect()
+}
+
+fn checker_account_home() -> PathBuf {
+    // SAFETY: caller-owned buffers, with all pointers checked before use.
+    unsafe {
+        let mut pwd: libc::passwd = std::mem::zeroed();
+        let mut buf = vec![0 as libc::c_char; 16 * 1024];
+        let mut out: *mut libc::passwd = std::ptr::null_mut();
+        assert_eq!(
+            libc::getpwuid_r(
+                libc::getuid(),
+                &mut pwd,
+                buf.as_mut_ptr(),
+                buf.len(),
+                &mut out
+            ),
+            0
+        );
+        assert!(!out.is_null() && !pwd.pw_dir.is_null());
+        let home = std::ffi::CStr::from_ptr(pwd.pw_dir).to_str().unwrap();
+        std::fs::canonicalize(home).unwrap()
+    }
+}
+
+fn checker_expected_profile(root: &Path) -> String {
+    let root = root.to_str().unwrap();
+    let home = checker_account_home();
+    let home = home.to_str().unwrap();
+    format!(
+        "(version 1)(allow default)(deny network*)\
+         (deny file-read-data (subpath \"{home}\"))(deny file-write* (subpath \"{home}\"))\
+         (deny file-write* (subpath \"/private/tmp\"))(deny file-write* (subpath \"/private/var/folders\"))\
+         (allow file-read-data (subpath \"{root}\"))(allow file-write* (subpath \"{root}\"))"
+    )
+}
+
+fn checker_assert_diagnostics(receipt: &IndependentCheckReceipt) {
+    use std::os::unix::fs::MetadataExt;
+    let root = &receipt.checker_root;
+    assert_eq!(receipt.kind, "bounded-pilot-v1-check-v2");
+    assert_eq!(receipt.environment, checker_expected_environment(root));
+    assert_eq!(receipt.sandbox_profile, checker_expected_profile(root));
+    assert_eq!(receipt.compiler, Path::new(policy::RUSTC));
+    assert_eq!(receipt.compiler_sha256, policy::RUSTC_SHA256);
+    for directory in [root.clone(), root.join("diagnostics")] {
+        let meta = std::fs::symlink_metadata(directory).unwrap();
+        assert!(meta.is_dir());
+        assert_eq!(meta.mode() & 0o7777, 0o700);
+        assert_eq!(meta.uid(), unsafe { libc::getuid() });
+    }
+    for step in &receipt.steps {
+        assert_eq!(
+            step.stderr_path,
+            format!("diagnostics/{}.stderr", step.step)
+        );
+        let path = root.join(&step.stderr_path);
+        let meta = std::fs::symlink_metadata(&path).unwrap();
+        assert!(meta.is_file() && !meta.file_type().is_symlink());
+        assert_eq!(meta.mode() & 0o7777, 0o600);
+        assert_eq!(meta.uid(), unsafe { libc::getuid() });
+        let bytes = std::fs::read(path).unwrap();
+        assert!(bytes.len() <= 1_048_576);
+        assert_eq!(step.stderr_bytes, bytes.len() as u64);
+        assert_eq!(step.stderr_sha256, pilot_capture::sha256_hex(&bytes));
+        let executable = if step.step == "oracle_run" {
+            assert_eq!(step.artifacts.len(), 1);
+            step.artifacts[0].1.as_str()
+        } else {
+            policy::RUSTC_SHA256
+        };
+        assert_eq!(step.executable_sha256, executable);
+    }
+}
+
+// The receipt fixture owns this fresh directory; create it with the same
+// declared privacy as the real checker instead of inheriting an ambient mask.
+fn private_checker_tempdir() -> tempfile::TempDir {
+    use std::os::unix::fs::PermissionsExt;
+    let directory = fixture_private_tempdir().unwrap();
+    std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    directory
+}
+
 fn fixture_receipt(capture: &pilot_capture::SlotCapture, root: &Path) -> IndependentCheckReceipt {
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt};
     let root_s = root.to_str().unwrap();
+    let diagnostics = root.join("diagnostics");
+    if !diagnostics.exists() {
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&diagnostics)
+            .unwrap();
+    }
+    assert_eq!(
+        std::fs::symlink_metadata(&diagnostics).unwrap().mode() & 0o7777,
+        0o700
+    );
+    for (name, _) in policy::CHECK_RECIPE {
+        let path = diagnostics.join(format!("{name}.stderr"));
+        if path.exists() {
+            assert_eq!(std::fs::read(path).unwrap(), b"");
+        } else {
+            private_fixture_file(&path, b"");
+        }
+    }
     let steps = policy::CHECK_RECIPE
         .iter()
         .map(|(name, argv)| CheckStep {
@@ -151,13 +2845,41 @@ fn fixture_receipt(capture: &pilot_capture::SlotCapture, root: &Path) -> Indepen
             exit: Some(0),
             signal: None,
             timed_out: false,
-            stdout_sha256: pilot_capture::sha256_hex(name.as_bytes()),
+            // Synthetic consumer receipt: expected metadata, not an observed
+            // execution of the private oracle. Root verified this fixed digest.
+            stdout_sha256: if *name == "oracle_run" {
+                "aac03c0ded8403eb8bd3ca53e9880313cde11fa658db4fc7444d737eef33127d".into()
+            } else {
+                pilot_capture::sha256_hex(name.as_bytes())
+            },
+            executable_sha256: if *name == "oracle_run" {
+                pilot_capture::sha256_hex(b"owned synthetic checker image; never executed")
+            } else {
+                policy::RUSTC_SHA256.into()
+            },
+            stderr_path: format!("diagnostics/{name}.stderr"),
+            stderr_bytes: 0,
             stderr_sha256: pilot_capture::sha256_hex(b""),
-            artifacts: vec![],
+            artifacts: match *name {
+                "noalloc_compile" => vec![(
+                    "out/librecords-noalloc.rlib".into(),
+                    pilot_capture::sha256_hex(b"owned synthetic noalloc object"),
+                )],
+                "alloc_compile" => vec![(
+                    "out/librecords-alloc.rlib".into(),
+                    pilot_capture::sha256_hex(b"owned synthetic alloc object"),
+                )],
+                "oracle_compile" | "oracle_run" => vec![(
+                    "out/check".into(),
+                    pilot_capture::sha256_hex(b"owned synthetic checker image; never executed"),
+                )],
+                _ => unreachable!("frozen checker step"),
+            },
             wall_ms: 100,
         })
         .collect();
     IndependentCheckReceipt {
+        kind: "bounded-pilot-v1-check-v2".into(),
         slot_id: capture.slot_id.clone(),
         checker_root: root.to_path_buf(),
         candidate: capture.candidate_inventory.clone(),
@@ -165,7 +2887,8 @@ fn fixture_receipt(capture: &pilot_capture::SlotCapture, root: &Path) -> Indepen
         compiler: policy::RUSTC.into(),
         compiler_sha256: policy::RUSTC_SHA256.into(),
         compiler_version: "rustc 1.97.1 (fixture)".into(),
-        env_names: vec!["PATH".into(), "HOME".into()],
+        environment: checker_expected_environment(root),
+        sandbox_profile: checker_expected_profile(root),
         steps,
         fixture: true,
     }
@@ -179,6 +2902,69 @@ fn fixture_receipt(capture: &pilot_capture::SlotCapture, root: &Path) -> Indepen
 /// exactly one count then one unchanged generation, the native response
 /// path, identity join and normal exit; then the clean probe-to-coding
 /// handoff preserves counters and the paid deadline.
+#[test]
+fn probe_seal_refuses_changed_journal_and_stays_halted() {
+    require_host();
+    for mutation in ["changed-prefix", "replacement", "truncation"] {
+        let e = env();
+        let fx = Fixture::start(vec![
+            Reply::Count(2048),
+            fixture::text_reply("msg_readback_probe", "PILOT_TRANSPORT_OK"),
+        ]);
+        let mut session =
+            CaptureSession::open(verification(&e, &fx, Scope::Probe, Default::default())).unwrap();
+        let capture = session
+            .run_slot(slot(&e, policy::PROBE_SLOT, policy::PROBE_INSTRUCTION))
+            .unwrap();
+        assert!(matches!(capture.disposition, Disposition::Completed { .. }));
+        assert_eq!(fx.seen().len(), 2);
+        let path = e.run_dir.join("journal.jsonl");
+        let bytes = std::fs::read(&path).unwrap();
+        match mutation {
+            "changed-prefix" => fixture_private_write(
+                &path,
+                String::from_utf8(bytes)
+                    .unwrap()
+                    .replacen("admitted", "modifiex", 1),
+            )
+            .unwrap(),
+            "replacement" => {
+                std::fs::rename(&path, e.run_dir.join("journal-original.jsonl")).unwrap();
+                fixture_private_write(&path, bytes).unwrap();
+            }
+            "truncation" => {
+                let end = bytes.iter().position(|&b| b == b'\n').unwrap() + 1;
+                fixture_private_write(&path, &bytes[..end]).unwrap();
+            }
+            _ => unreachable!(),
+        }
+        let fault = session.seal_probe(&capture).unwrap_err();
+        assert_eq!(fault.class, FaultClass::Persistence);
+        assert_eq!(session.halted().unwrap().class, FaultClass::Persistence);
+        assert_eq!(
+            session.seal_probe(&capture).unwrap_err().code,
+            "probe_session_halted"
+        );
+        assert_eq!(
+            session
+                .run_slot(slot(&e, policy::PROBE_SLOT, policy::PROBE_INSTRUCTION))
+                .unwrap_err()
+                .code,
+            "session_halted"
+        );
+        assert!(session.finish().is_err());
+        assert_eq!(fx.seen().len(), 2);
+        assert_eq!(
+            CaptureSession::open(verification(&e, &fx, Scope::Probe, Default::default()))
+                .err()
+                .unwrap()
+                .code,
+            "run_dir_claim_failed"
+        );
+        assert_absent_under(&e.run_dir, CANARY);
+    }
+}
+
 #[test]
 fn stage1_probe_end_to_end_and_clean_handoff() {
     require_host();
@@ -222,6 +3008,7 @@ fn stage1_probe_end_to_end_and_clean_handoff() {
     }
     // The Messages body is the host's exact serialized body.
     let records = journal(session.run_dir());
+    assert_eq!(records[0]["kind"], "admitted");
     let validated = records
         .iter()
         .find(|r| r["kind"] == "request_validated")
@@ -308,10 +3095,9 @@ fn stage1_probe_end_to_end_and_clean_handoff() {
         discovery.iter().all(|l| l.contains("EPERM")),
         "{discovery:?}"
     );
-    // OMP 18.13.2 unconditionally prewarms a connection to its initial
-    // model's origin (an unauthenticated HEAD through its own transport)
-    // while creating the session. The sandbox denies it before name
-    // resolution; that is the only provider-named host line allowed.
+    // Check the pinned host's expected provider-named prewarm diagnostic.
+    // Its reported ENOTFOUND does not establish OS-level denial ordering or
+    // a complete inventory of startup network attempts.
     let provider_lines: Vec<&str> = logs
         .lines()
         .filter(|l| l.contains("api.anthropic.com"))
@@ -330,6 +3116,7 @@ fn stage1_probe_end_to_end_and_clean_handoff() {
     assert_eq!(receipt.journal_records, seal.journal_records);
     assert_eq!(receipt.journal_sha256, seal.journal_sha256);
     assert_eq!(seal.attempt_seq, 2);
+    let sealed_bytes = std::fs::read(e.run_dir.join("journal.jsonl")).unwrap();
 
     // Verification never accepts a credential it does not own, also not
     // through the handoff.
@@ -390,6 +3177,214 @@ fn stage1_probe_end_to_end_and_clean_handoff() {
     let handoff = after.last().unwrap();
     assert_eq!(handoff["kind"], "coding_handoff");
     assert_eq!(after.len() as u64, seal.journal_records + 1);
+    assert!(
+        std::fs::read(coding.run_dir().join("journal.jsonl"))
+            .unwrap()
+            .starts_with(&sealed_bytes)
+    );
+    assert_owned_private_run_tree(&e.run_dir);
+    assert_owned_private_tree(&e.workspace, None);
+}
+
+/// An owned malformed key reaches the same claimed-run boundary as live
+/// credential loading. No host is launched and the TLS fixture sees no HTTP.
+#[test]
+fn claimed_credential_refusal_is_durable_and_append_failure_stays_closed() {
+    require_host();
+    for (fail_after, expected) in [
+        (None, "credential_shape_invalid"),
+        (Some(0), "journal_append_failed"),
+    ] {
+        let e = env();
+        let fx = Fixture::start(vec![]);
+        let malformed = format!("{CANARY} invalid");
+        let mut admission = match verification(
+            &e,
+            &fx,
+            Scope::Probe,
+            VerificationFaults {
+                journal_fail_after: fail_after,
+            },
+        ) {
+            LaunchAdmission::Verification(v) => v,
+            LaunchAdmission::Live(_) => unreachable!(),
+        };
+        admission.credential = malformed.clone();
+        let fault = CaptureSession::open(LaunchAdmission::Verification(admission))
+            .err()
+            .unwrap();
+        assert_eq!(fault.code, expected);
+        assert!(!fault.to_string().contains(CANARY));
+        assert!(e.run_dir.join("claim.json").is_file());
+        assert!(
+            fx.seen().is_empty(),
+            "credential refusal sent an HTTP request"
+        );
+        assert_eq!(
+            std::fs::read_dir(e.run_dir.join("hosts")).unwrap().count(),
+            0
+        );
+        if fail_after.is_none() {
+            let records = journal(&e.run_dir);
+            assert_eq!(records.len(), 1);
+            assert_eq!(records[0]["kind"], "halt");
+            assert_eq!(records[0]["phase"], "credential_admission");
+            assert_eq!(records[0]["class"], "authority");
+            assert_eq!(records[0]["code"], "credential_shape_invalid");
+            assert_eq!(records[0]["seq"], 1);
+            assert_eq!(records[0]["prev"], "");
+        } else {
+            assert_eq!(fault.class, FaultClass::Persistence);
+            assert!(
+                std::fs::read(e.run_dir.join("journal.jsonl"))
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+        assert_absent_under(&e.run_dir, CANARY);
+        assert_absent_under(&e.run_dir, &malformed);
+        assert_eq!(
+            CaptureSession::open(verification(&e, &fx, Scope::Probe, Default::default()))
+                .err()
+                .unwrap()
+                .code,
+            "run_dir_claim_failed",
+            "credential refusal must not release the consumed run claim"
+        );
+        assert!(fx.seen().is_empty());
+    }
+}
+
+#[test]
+fn coding_credential_refusal_preserves_the_seal_and_prevents_continuation() {
+    require_host();
+    let e = env();
+    let fx = Fixture::start(vec![
+        Reply::Count(2048),
+        fixture::text_reply("msg_refusal_probe", "PILOT_TRANSPORT_OK"),
+    ]);
+    let mut probe =
+        CaptureSession::open(verification(&e, &fx, Scope::Probe, Default::default())).unwrap();
+    let capture = probe
+        .run_slot(slot(&e, policy::PROBE_SLOT, policy::PROBE_INSTRUCTION))
+        .unwrap();
+    let seal = probe.seal_probe(&capture).unwrap();
+    probe.finish().unwrap();
+    let journal_path = e.run_dir.join("journal.jsonl");
+    let prefix = std::fs::read(&journal_path).unwrap();
+    assert_eq!(pilot_capture::sha256_hex(&prefix), seal.journal_sha256);
+    assert_eq!(journal(&e.run_dir)[0]["kind"], "admitted");
+    assert_eq!(fx.seen().len(), 2);
+
+    let malformed = format!("{CANARY} invalid");
+    let mut admission = match verification(&e, &fx, Scope::Coding, Default::default()) {
+        LaunchAdmission::Verification(v) => v,
+        LaunchAdmission::Live(_) => unreachable!(),
+    };
+    admission.credential = malformed.clone();
+    let fault = CaptureSession::open_after_probe(&seal, LaunchAdmission::Verification(admission))
+        .err()
+        .unwrap();
+    assert_eq!(fault.code, "credential_shape_invalid");
+    assert!(!fault.to_string().contains(CANARY));
+    let bytes = std::fs::read(&journal_path).unwrap();
+    assert!(bytes.starts_with(&prefix));
+    let records = journal(&e.run_dir);
+    assert_eq!(records.len() as u64, seal.journal_records + 1);
+    let refusal = records.last().unwrap();
+    assert_eq!(refusal["kind"], "halt");
+    assert_eq!(refusal["phase"], "credential_admission");
+    assert_eq!(refusal["code"], "credential_shape_invalid");
+    let previous = prefix
+        .split(|b| *b == b'\n')
+        .rfind(|line| !line.is_empty())
+        .unwrap();
+    assert_eq!(refusal["prev"], pilot_capture::sha256_hex(previous));
+    assert_eq!(refusal["seq"], seal.journal_records + 1);
+    assert_absent_under(&e.run_dir, CANARY);
+    assert_absent_under(&e.run_dir, &malformed);
+    assert_eq!(
+        fx.seen().len(),
+        2,
+        "coding refusal sent another HTTP request"
+    );
+
+    // Verification admission must refuse before opening even a missing
+    // caller-selected journal. An unowned credential is an admission failure,
+    // not an admitted credential-shape refusal to append to a run.
+    let root = e.run_dir.parent().unwrap();
+    let missing_journal = pilot_capture::ProbeSeal {
+        run_dir: root.join("missing-probe-run"),
+        ..seal.clone()
+    };
+    assert!(!missing_journal.run_dir.exists());
+    let mut unowned = match verification(&e, &fx, Scope::Coding, Default::default()) {
+        LaunchAdmission::Verification(v) => v,
+        LaunchAdmission::Live(_) => unreachable!(),
+    };
+    unowned.credential = "not-owned-and-must-not-be-examined".into();
+    assert_eq!(
+        CaptureSession::open_after_probe(&missing_journal, LaunchAdmission::Verification(unowned))
+            .err()
+            .unwrap()
+            .code,
+        "verification_credential_not_owned"
+    );
+    // An owned-prefix credential passes admission but has invalid wire shape.
+    // The terminal journal must refuse first, without appending another halt.
+    let mut owned_malformed = match verification(&e, &fx, Scope::Coding, Default::default()) {
+        LaunchAdmission::Verification(v) => v,
+        LaunchAdmission::Live(_) => unreachable!(),
+    };
+    owned_malformed.credential = malformed.clone();
+    assert_eq!(
+        CaptureSession::open_after_probe(&seal, LaunchAdmission::Verification(owned_malformed))
+            .err()
+            .unwrap()
+            .code,
+        "journal_digest_mismatch"
+    );
+    // Live cannot inspect a verification journal, even when its path is missing.
+    let unopened = root.join("unopened-evidence");
+    assert_eq!(
+        CaptureSession::open_after_probe(
+            &missing_journal,
+            LaunchAdmission::Live(LiveAdmission {
+                run_dir: e.run_dir.clone(),
+                omp: unopened.clone(),
+                scope: Scope::Coding,
+                contract: unopened.clone(),
+                authority: root.join("unused-authority.json"),
+                launch_manifest: unopened.clone(),
+                ratecard: unopened.clone(),
+                compatibility: Some(unopened.clone()),
+                credential_file: unopened,
+            })
+        )
+        .err()
+        .unwrap()
+        .code,
+        "probe_handoff_mode_mismatch"
+    );
+    assert!(!root.join("unused-authority.json.claim").exists());
+    // Replacing the supplied seal's digest/count cannot legitimize the halt.
+    let rewritten = pilot_capture::ProbeSeal {
+        journal_sha256: pilot_capture::sha256_hex(&bytes),
+        journal_records: seal.journal_records + 1,
+        ..seal.clone()
+    };
+    assert_eq!(
+        CaptureSession::open_after_probe(
+            &rewritten,
+            verification(&e, &fx, Scope::Coding, Default::default()),
+        )
+        .err()
+        .unwrap()
+        .code,
+        "probe_seal_not_journaled"
+    );
+    assert_eq!(std::fs::read(&journal_path).unwrap(), bytes);
+    assert_eq!(fx.seen().len(), 2);
 }
 
 /// Retry refusal: a failed generation is never re-sent, including by the
@@ -543,7 +3538,7 @@ fn coding_slot_tool_followup_seal_and_order() {
         session.run_slot(slot(&e, "1A", TASK)).unwrap_err().code,
         "previous_slot_unsealed"
     );
-    let checker = tempfile::tempdir().unwrap();
+    let checker = private_checker_tempdir();
     let root = std::fs::canonicalize(checker.path()).unwrap();
     let sealed = session
         .seal_slot(&capture, &fixture_receipt(&capture, &root))
@@ -554,6 +3549,8 @@ fn coding_slot_tool_followup_seal_and_order() {
     assert_eq!(receipt.slots.len(), 8);
     assert_eq!(receipt.slots[0].state, "sealed");
     assert!(receipt.slots[1..].iter().all(|s| s.state == "not_started"));
+    assert_owned_private_run_tree(&e.run_dir);
+    assert_owned_private_tree(&e.workspace, None);
 }
 
 /// A forbidden path is blocked before execution (behaviour failure, not a
@@ -588,7 +3585,7 @@ fn forbidden_edit_is_blocked_and_recorded_without_effect() {
     assert_eq!(sources(&e.workspace), before);
     // An independent check whose recipe drifted is a provenance fault that
     // halts the session; it is never a correctness result.
-    let checker = tempfile::tempdir().unwrap();
+    let checker = private_checker_tempdir();
     let root = std::fs::canonicalize(checker.path()).unwrap();
     let mut drifted = fixture_receipt(&capture, &root);
     drifted.steps[1].argv.retain(|a| a != "--cfg");
@@ -897,7 +3894,7 @@ fn truncated_all_success_check_receipt_is_a_provenance_fault() {
     let mut session =
         CaptureSession::open(verification(&e, &fx, Scope::Coding, Default::default())).unwrap();
     let capture = session.run_slot(slot(&e, "1B", TASK)).unwrap();
-    let checker = tempfile::tempdir().unwrap();
+    let checker = private_checker_tempdir();
     let root = std::fs::canonicalize(checker.path()).unwrap();
     let mut truncated = fixture_receipt(&capture, &root);
     truncated.steps.truncate(2);
@@ -941,9 +3938,18 @@ fn full_pilot_pipeline_qualifies_without_provider() {
     let inputs: EvidenceInputs =
         serde_json::from_slice(&std::fs::read(&inputs_path).unwrap()).unwrap();
     let verified = inputs.verify().unwrap();
-    let tmp = tempfile::tempdir().unwrap();
-    let root =
-        PilotRoot::create(&std::fs::canonicalize(tmp.path()).unwrap().join("pilot")).unwrap();
+    // Retain this private run on success or failure. An explicit fresh parent
+    // lets the owner keep the full proof outside temporary-directory cleanup.
+    let evidence = std::env::var_os("CF_PILOT_PIPELINE_EVIDENCE_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| fixture_private_tempdir().unwrap().keep());
+    use std::os::unix::fs::MetadataExt;
+    let metadata = std::fs::symlink_metadata(&evidence).unwrap();
+    assert!(metadata.is_dir() && !metadata.file_type().is_symlink());
+    assert_eq!(metadata.uid(), unsafe { libc::getuid() });
+    assert_eq!(metadata.mode() & 0o7777, 0o700);
+    let root = PilotRoot::create(&std::fs::canonicalize(evidence).unwrap().join("pilot")).unwrap();
+    eprintln!("retained full-pipeline evidence: {}", root.root.display());
     apparatus::install_seed(&root, &verified).unwrap();
     let views = apparatus::materialize_views(&root, &verified).unwrap();
     assert_eq!(views.len(), 4);
@@ -952,7 +3958,10 @@ fn full_pilot_pipeline_qualifies_without_provider() {
             .iter()
             .all(|v| v.header.contains("semantic:ready") && v.delivered_o200k_tokens <= 2048)
     );
-    let (probe_manifest, coding_manifest) = apparatus::build_manifests(&root, &verified).unwrap();
+    PilotRoot::open(&root.root).unwrap();
+    let capture_run = root.root.join("runs/pilot");
+    let (probe_manifest, coding_manifest) =
+        apparatus::build_manifests(&root, &verified, &capture_run).unwrap();
 
     // The scripted model: the upstream repair is one replaced hunk.
     let seed = std::fs::read_to_string(inputs.paired_root.join("inputs/seed-lib.rs")).unwrap();
@@ -1015,12 +4024,37 @@ fn full_pilot_pipeline_qualifies_without_provider() {
     let seal =
         seal.unwrap_or_else(|f| panic!("probe not sealed: {f:?} {:?}", probe_capture.disposition));
     probe.finish().unwrap();
-    let coding = CaptureSession::open_after_probe(
-        &seal,
-        admission(Scope::Coding, "unused", coding_manifest),
+    assert_owned_private_run_tree(&capture_run);
+    PilotRoot::open(&root.root).unwrap();
+    let sealed_bytes = std::fs::read(capture_run.join("journal.jsonl")).unwrap();
+    let request_count = fx.seen().len();
+    assert_eq!(
+        CaptureSession::open_after_probe(
+            &seal,
+            admission(Scope::Coding, "unused", coding_manifest.clone()),
+        )
+        .err()
+        .unwrap()
+        .code,
+        "run_dir_authority_mismatch"
+    );
+    assert_eq!(
+        std::fs::read(capture_run.join("journal.jsonl")).unwrap(),
+        sealed_bytes
+    );
+    assert_eq!(fx.seen().len(), request_count);
+    assert!(!root.root.join("runs/unused").exists());
+    let coding =
+        CaptureSession::open_after_probe(&seal, admission(Scope::Coding, "pilot", coding_manifest))
+            .unwrap();
+    assert_eq!(coding.counters(), seal.counters);
+    let report = apparatus::run_coding(coding, &root, &verified).unwrap();
+    // Test-owned archival output, not a claim about the production CLI writer.
+    fixture_private_write(
+        root.root.join("renders/full-pipeline-report.json"),
+        serde_json::to_vec_pretty(&report).unwrap(),
     )
     .unwrap();
-    let report = apparatus::run_coding(coding, &root, &verified).unwrap();
 
     assert_eq!(report.receipt.halt, None, "{:?}", report.slots);
     assert!(
@@ -1054,6 +4088,11 @@ fn full_pilot_pipeline_qualifies_without_provider() {
     assert_absent_under(&root.root, CANARY);
     // Every planned arm left its archived workspace or its live one.
     assert!(root.root.join("archive/after-1B").is_dir());
+    assert_owned_private_run_tree(&capture_run);
+    PilotRoot::open(&root.root).unwrap();
+    inputs
+        .verify()
+        .expect("frozen input hashes must remain unchanged");
 }
 
 /// Every live gate refuses by name, in order, before any credential is
@@ -1069,7 +4108,7 @@ fn live_gates_refuse_in_order_and_claim_the_authority_once() {
     let dir = e.run_dir.parent().unwrap().to_path_buf();
     let write = |name: &str, bytes: &[u8]| {
         let p = dir.join(name);
-        std::fs::write(&p, bytes).unwrap();
+        fixture_private_write(&p, bytes).unwrap();
         p
     };
     let sha = |p: &Path| pilot_capture::sha256_hex(&std::fs::read(p).unwrap());
@@ -1094,7 +4133,8 @@ fn live_gates_refuse_in_order_and_claim_the_authority_once() {
         })
         .collect();
     let manifest = LaunchManifest {
-        kind: "bounded-pilot-v1-launch".into(),
+        kind: pilot_capture::LAUNCH_MANIFEST_KIND.into(),
+        run_dir: dir.join("run-5"),
         contract_sha256: policy::CONTRACT_SHA256.into(),
         omp_sha256: policy::OMP_SHA256.into(),
         slots: vec![ManifestSlot {
@@ -1174,30 +4214,1521 @@ fn live_gates_refuse_in_order_and_claim_the_authority_once() {
         "authority-1.json",
         &serde_json::to_vec(&receipt(false, &exe, &bound)).unwrap(),
     );
-    assert_eq!(open(&a1, &bound, "run-1"), "rights_not_approved");
+    assert_eq!(open(&a1, &bound, "run-5"), "rights_not_approved");
+    assert!(!dir.join("authority-1.json.claim").exists());
+    assert!(!dir.join("run-5").exists());
     let a2 = write(
         "authority-2.json",
         &serde_json::to_vec(&receipt(true, &"c".repeat(64), &bound)).unwrap(),
     );
-    assert_eq!(open(&a2, &bound, "run-2"), "implementation_digest_mismatch");
+    assert_eq!(open(&a2, &bound, "run-5"), "implementation_digest_mismatch");
+    assert!(!dir.join("authority-2.json.claim").exists());
+    assert!(!dir.join("run-5").exists());
     let a3 = write(
         "authority-3.json",
         &serde_json::to_vec(&receipt(true, &exe, &unbound)).unwrap(),
     );
-    assert_eq!(open(&a3, &unbound, "run-3"), "ratecard_account_unbound");
-    std::fs::write(dir.join("view-2.txt"), b"tampered").unwrap();
+    assert_eq!(open(&a3, &unbound, "run-5"), "ratecard_account_unbound");
+    assert!(!dir.join("authority-3.json.claim").exists());
+    assert!(!dir.join("run-5").exists());
+    fixture_private_write(dir.join("view-2.txt"), b"tampered").unwrap();
     let a4 = write(
         "authority-4.json",
         &serde_json::to_vec(&receipt(true, &exe, &bound)).unwrap(),
     );
-    assert_eq!(open(&a4, &bound, "run-4"), "launch_view_changed");
-    std::fs::write(dir.join("view-2.txt"), b"view 2").unwrap();
+    assert_eq!(open(&a4, &bound, "run-5"), "launch_view_changed");
+    assert!(!dir.join("authority-4.json.claim").exists());
+    assert!(!dir.join("run-5").exists());
+    fixture_private_write(dir.join("view-2.txt"), b"view 2").unwrap();
     // Every gate passes; the credential is the last thing read and is
     // absent, after the authority and the run were claimed exclusively.
     assert_eq!(open(&a4, &bound, "run-5"), "credential_missing");
     assert!(dir.join("authority-4.json.claim").is_file());
-    assert_eq!(open(&a4, &bound, "run-6"), "authority_already_claimed");
-    for run in ["run-1", "run-2", "run-3", "run-4", "run-6"] {
+    assert!(dir.join("run-5/claim.json").is_file());
+    let refused = journal(&dir.join("run-5"));
+    assert_eq!(refused.len(), 1);
+    assert_eq!(refused[0]["kind"], "halt");
+    assert_eq!(refused[0]["phase"], "credential_admission");
+    assert_eq!(refused[0]["class"], "privacy");
+    assert_eq!(refused[0]["code"], "credential_missing");
+    assert_eq!(refused[0]["prev"], "");
+    assert_eq!(refused[0]["seq"], 1);
+    assert_eq!(open(&a4, &bound, "run-6"), "run_dir_authority_mismatch");
+
+    // A distinct authority is consumed by an owned malformed file as well.
+    // These bytes are synthetic, private and outside the claimed run.
+    use std::os::unix::fs::PermissionsExt;
+    let malformed = format!("{CANARY} invalid");
+    let key_path = write("no-such-credential", malformed.as_bytes());
+    std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    // A new positive claim has its own manifest-bound target. Earlier owned
+    // fixture bytes are preserved; the open closure below selects this path.
+    let malformed_manifest_path = write(
+        "malformed-key-manifest.json",
+        &serde_json::to_vec(&LaunchManifest {
+            run_dir: dir.join("run-7"),
+            ..manifest.clone()
+        })
+        .unwrap(),
+    );
+    let a5 = write(
+        "authority-5.json",
+        &serde_json::to_vec(&AuthorityReceipt {
+            launch_manifest_sha256: sha(&malformed_manifest_path),
+            ..receipt(true, &exe, &bound)
+        })
+        .unwrap(),
+    );
+    let malformed_open = |run: &str| {
+        CaptureSession::open(LaunchAdmission::Live(LiveAdmission {
+            run_dir: dir.join(run),
+            omp: OMP.into(),
+            scope: Scope::Probe,
+            contract: contract.clone(),
+            authority: a5.clone(),
+            launch_manifest: malformed_manifest_path.clone(),
+            ratecard: bound.clone(),
+            compatibility: None,
+            credential_file: key_path.clone(),
+        }))
+        .err()
+        .unwrap()
+        .code
+    };
+    assert_eq!(malformed_open("run-7"), "credential_shape_invalid");
+    assert!(dir.join("authority-5.json.claim").is_file());
+    assert!(dir.join("run-7/claim.json").is_file());
+    let refused = journal(&dir.join("run-7"));
+    assert_eq!(refused.len(), 1);
+    assert_eq!(refused[0]["kind"], "halt");
+    assert_eq!(refused[0]["class"], "authority");
+    assert_eq!(refused[0]["code"], "credential_shape_invalid");
+    assert_absent_under(&dir.join("run-7"), CANARY);
+    assert_absent_under(&dir.join("run-7"), &malformed);
+    assert_eq!(malformed_open("run-8"), "run_dir_authority_mismatch");
+    assert!(!dir.join("run-8").exists());
+    // Single-use claim behavior is covered directly by the library test;
+    // a differently named root must now fail identity before claim reuse.
+    for run in ["run-6", "run-8"] {
         assert!(!dir.join(run).exists(), "{run} claimed despite refusal");
     }
+
+    // A synthetic Live-shaped coding admission must reach the journal gate,
+    // not stop at mode/manifest/authority validation. The owned verification
+    // probe supplies current boot/clock/bridge fields only: relabeling this
+    // evidence does not establish an actual Live-compatible probe history.
+    // This auxiliary Verification probe is a distinct run. Keep its real host
+    // outputs outside the Live fixture's isolation root, whose executable
+    // declaration belongs only to the run named by its authority manifest.
+    let probe_env = env();
+    let fx = Fixture::start(vec![
+        Reply::Count(2048),
+        fixture::text_reply("msg_live_shape_probe", "PILOT_TRANSPORT_OK"),
+    ]);
+    let mut probe = CaptureSession::open(verification(
+        &probe_env,
+        &fx,
+        Scope::Probe,
+        Default::default(),
+    ))
+    .unwrap();
+    let capture = probe
+        .run_slot(slot(
+            &probe_env,
+            policy::PROBE_SLOT,
+            policy::PROBE_INSTRUCTION,
+        ))
+        .unwrap();
+    let verification_seal = probe.seal_probe(&capture).unwrap();
+    probe.finish().unwrap();
+    assert_eq!(fx.seen().len(), 2);
+
+    let terminal_run = dir.join("run-5");
+    let terminal_path = terminal_run.join("journal.jsonl");
+    let terminal_bytes = std::fs::read(&terminal_path).unwrap();
+    let live_shape = pilot_capture::ProbeSeal {
+        mode: pilot_capture::Mode::Live,
+        run_dir: terminal_run.clone(),
+        journal_sha256: pilot_capture::sha256_hex(&terminal_bytes),
+        journal_records: journal(&terminal_run).len() as u64,
+        ..verification_seal
+    };
+    let cited = write(
+        "synthetic-live-seal.json",
+        &serde_json::to_vec(&live_shape).unwrap(),
+    );
+    let coding_manifest = LaunchManifest {
+        run_dir: terminal_run.clone(),
+        slots: policy::SLOT_ORDER
+            .iter()
+            .map(|id| ManifestSlot {
+                slot_id: (*id).into(),
+                arm: id.chars().last().unwrap().to_string(),
+                ..manifest.slots[0].clone()
+            })
+            .collect(),
+        ..manifest.clone()
+    };
+    let coding_manifest_path = write(
+        "coding-manifest.json",
+        &serde_json::to_vec(&coding_manifest).unwrap(),
+    );
+    let coding_authority = write(
+        "unused-coding-authority.json",
+        &serde_json::to_vec(&AuthorityReceipt {
+            scope: Scope::Coding,
+            launch_manifest_sha256: sha(&coding_manifest_path),
+            ..receipt(true, &exe, &bound)
+        })
+        .unwrap(),
+    );
+    let missing_key = dir.join("coding-key-must-not-be-read");
+    assert!(!missing_key.exists());
+    let fault = CaptureSession::open_after_probe(
+        &live_shape,
+        LaunchAdmission::Live(LiveAdmission {
+            run_dir: terminal_run,
+            omp: OMP.into(),
+            scope: Scope::Coding,
+            contract: contract.clone(),
+            authority: coding_authority,
+            launch_manifest: coding_manifest_path,
+            ratecard: bound.clone(),
+            compatibility: Some(cited),
+            credential_file: missing_key,
+        }),
+    )
+    .err()
+    .unwrap();
+    assert_eq!(
+        fault.code, "probe_seal_not_journaled",
+        "validated Live coding admission must reject the terminal journal before claim/key"
+    );
+    assert!(
+        !dir.join("unused-coding-authority.json.claim").exists(),
+        "terminal evidence must not consume fresh coding authority"
+    );
+    assert_eq!(std::fs::read(&terminal_path).unwrap(), terminal_bytes);
+    assert_eq!(
+        fx.seen().len(),
+        2,
+        "no additional fixture request is permitted"
+    );
+}
+
+// Owned JSON files intentionally keep this test-only addition compilable on
+// the preceding capture format. The format/path failures must be runtime results.
+struct AuthorityFiles {
+    root: PathBuf,
+    scope: Scope,
+    manifest: Value,
+    authority: Value,
+}
+
+fn private_fixture_file(path: &Path, bytes: &[u8]) {
+    use std::os::unix::fs::PermissionsExt;
+    fixture_private_write(path, bytes).unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+}
+
+impl AuthorityFiles {
+    fn new(e: &Env, label: &str, scope: Scope, run_dir: &Path) -> Self {
+        use std::os::unix::fs::PermissionsExt;
+        let root = e.run_dir.parent().unwrap().join(label);
+        fixture_private_dir(&root).unwrap();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let pinned = root.join("pinned.txt");
+        private_fixture_file(&pinned, b"owned admission fixture");
+        let views: Vec<Value> = (1..=4u8)
+            .map(|pair| {
+                let path = root.join(format!("view-{pair}.txt"));
+                private_fixture_file(&path, format!("owned view {pair}").as_bytes());
+                json!({"pair":pair, "path":path,
+                    "sha256":pilot_capture::sha256_hex(&std::fs::read(&path).unwrap()),
+                    "delivered_o200k_tokens":3, "store_revision":"owned-fixture",
+                    "citations_sha256":"0".repeat(64), "recipe_id":"owned-fixture"})
+            })
+            .collect();
+        let ids = match scope {
+            Scope::Probe => vec![policy::PROBE_SLOT],
+            Scope::Coding => policy::SLOT_ORDER.to_vec(),
+        };
+        let slots: Vec<Value> = ids.into_iter().map(|id| json!({
+            "slot_id":id, "arm":if id == policy::PROBE_SLOT { "probe".to_string() } else { id.chars().last().unwrap().to_string() },
+            "workspace":e.workspace, "prompt_sha256":"0".repeat(64), "sources":sources(&e.workspace),
+            "render":{"system_sha256":"", "tools_sha256":"", "settings_sha256":"", "stable_prefix_sha256":"",
+                      "beta":"", "cache_layout":[], "initial_user_sha256":""}
+        })).collect();
+        let card = json!({"kind":"bounded-pilot-v1-ratecard", "model":policy::MODEL,
+            "service":"standard", "input_usd_per_mtok":"2", "cache_write_usd_per_mtok":"2.5",
+            "cache_read_usd_per_mtok":"0.1", "output_usd_per_mtok":"10",
+            "account_identity_sha256":"b".repeat(64), "evidence_sha256":"a".repeat(64)});
+        let card_bytes = serde_json::to_vec(&card).unwrap();
+        private_fixture_file(&root.join("ratecard.json"), &card_bytes);
+        let mut files = Self {
+            root,
+            scope,
+            manifest: json!({"kind":"bounded-pilot-v1-launch-v2", "run_dir":run_dir,
+                "contract_sha256":policy::CONTRACT_SHA256, "omp_sha256":policy::OMP_SHA256,
+                "slots":slots, "pins":[{"name":"owned input", "path":pinned,
+                    "sha256":pilot_capture::sha256_hex(b"owned admission fixture")}],
+                "allocation_sha256":"0".repeat(64), "views":views,
+                "isolation_root":e.run_dir.parent().unwrap()}),
+            authority: json!({"kind":"bounded-pilot-v1-authority", "contract_sha256":policy::CONTRACT_SHA256,
+                "implementation_sha256":pilot_capture::sha256_hex(&std::fs::read(std::env::current_exe().unwrap()).unwrap()),
+                "launch_manifest_sha256":"", "ratecard_sha256":pilot_capture::sha256_hex(&card_bytes),
+                "scope":scope, "authorized_by":"owned synthetic test", "authorized_at":"2026-11-11",
+                "rights_approved":true}),
+        };
+        files.save_manifest();
+        files
+    }
+
+    fn save_manifest(&mut self) {
+        let bytes = serde_json::to_vec(&self.manifest).unwrap();
+        private_fixture_file(&self.root.join("manifest.json"), &bytes);
+        self.authority["launch_manifest_sha256"] = json!(pilot_capture::sha256_hex(&bytes));
+        private_fixture_file(
+            &self.root.join("authority.json"),
+            &serde_json::to_vec(&self.authority).unwrap(),
+        );
+    }
+
+    fn admission(&self, run_dir: &Path, compatibility: Option<PathBuf>) -> LaunchAdmission {
+        LaunchAdmission::Live(LiveAdmission {
+            run_dir: run_dir.to_path_buf(),
+            omp: OMP.into(),
+            scope: self.scope,
+            contract: Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("specs/003-agent-retrieval-context/contracts/bounded-pilot-v1.md"),
+            authority: self.root.join("authority.json"),
+            launch_manifest: self.root.join("manifest.json"),
+            ratecard: self.root.join("ratecard.json"),
+            compatibility,
+            credential_file: self.root.join("synthetic-key"),
+        })
+    }
+
+    fn authority_sha256(&self) -> String {
+        pilot_capture::sha256_hex(&std::fs::read(self.root.join("authority.json")).unwrap())
+    }
+
+    fn assert_unclaimed(&self) {
+        assert!(!self.root.join("authority.json.claim").exists());
+    }
+}
+
+#[test]
+fn authority_missing_or_legacy_run_binding_refuses_before_claim() {
+    require_host();
+    for (label, kind, remove_run) in [
+        ("legacy", "bounded-pilot-v1-launch", true),
+        ("missing", "bounded-pilot-v1-launch-v2", true),
+        ("null", "bounded-pilot-v1-launch-v2", false),
+    ] {
+        let e = env();
+        let mut files = AuthorityFiles::new(&e, label, Scope::Probe, &e.run_dir);
+        files.manifest["kind"] = json!(kind);
+        if remove_run {
+            files.manifest.as_object_mut().unwrap().remove("run_dir");
+        } else {
+            files.manifest["run_dir"] = Value::Null;
+        }
+        files.save_manifest();
+        let before = std::fs::read(files.root.join("manifest.json")).unwrap();
+        let fault = CaptureSession::open(files.admission(&e.run_dir, None))
+            .err()
+            .unwrap();
+        assert_eq!(fault.code, "launch_manifest_invalid", "{label}");
+        files.assert_unclaimed();
+        assert!(!e.run_dir.exists());
+        assert!(!files.root.join("synthetic-key").exists());
+        assert_eq!(
+            std::fs::read(files.root.join("manifest.json")).unwrap(),
+            before
+        );
+    }
+}
+
+#[test]
+fn authority_run_mismatch_and_noncanonical_binding_refuse_before_claim() {
+    require_host();
+    let e = env();
+    let mut files = AuthorityFiles::new(&e, "path-authority", Scope::Probe, &e.run_dir);
+    let other = e.run_dir.with_file_name("other-run");
+    let fault = CaptureSession::open(files.admission(&other, None))
+        .err()
+        .unwrap();
+    assert_eq!(fault.code, "run_dir_authority_mismatch");
+    files.assert_unclaimed();
+    assert!(!e.run_dir.exists() && !other.exists());
+    // Equivalent filesystem resolution must not silently canonicalize the
+    // authorized bytes: the manifest itself must already name the canonical root.
+    let alias_parent = e.run_dir.with_file_name("parent-alias");
+    std::os::unix::fs::symlink(e.run_dir.parent().unwrap(), &alias_parent).unwrap();
+    // Path equality can normalize away '.', so retain the exact JSON spelling.
+    for stored in [
+        "run".to_string(),
+        format!("{}/./run", e.run_dir.parent().unwrap().display()),
+        alias_parent.join("run").to_str().unwrap().to_string(),
+    ] {
+        files.manifest["run_dir"] = json!(stored);
+        files.save_manifest();
+        let fault = CaptureSession::open(files.admission(&e.run_dir, None))
+            .err()
+            .unwrap();
+        assert_eq!(fault.code, "launch_manifest_run_not_canonical", "{stored}");
+        files.assert_unclaimed();
+        assert!(!e.run_dir.exists());
+        assert!(!files.root.join("synthetic-key").exists());
+    }
+}
+
+#[test]
+fn authority_probe_admission_is_chained_before_a_session_is_returned() {
+    require_host();
+    let e = env();
+    let files = AuthorityFiles::new(&e, "positive-authority", Scope::Probe, &e.run_dir);
+    // Only this owned dummy is read. open/finish construct and close a client;
+    // run_slot/count/messages are never called, and no host is launched.
+    private_fixture_file(&files.root.join("synthetic-key"), CANARY.as_bytes());
+    let session = CaptureSession::open(files.admission(&e.run_dir, None)).unwrap();
+    let records = journal(session.run_dir());
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["kind"], "admitted");
+    assert_eq!(
+        records[0]["authority_receipt_sha256"],
+        files.authority_sha256()
+    );
+    assert_eq!(
+        records[0]["run_dir"],
+        json!(std::fs::canonicalize(&e.run_dir).unwrap())
+    );
+    assert_eq!(records[0]["scope"], json!(Scope::Probe));
+    assert_eq!(records[0]["prev"], "");
+    assert_eq!(records[0]["seq"], 1);
+    assert_eq!(session.counters().count_calls, 0);
+    assert_eq!(session.counters().messages_attempts, 0);
+    assert_eq!(
+        std::fs::read_dir(e.run_dir.join("hosts")).unwrap().count(),
+        0
+    );
+    assert_absent_under(&e.run_dir, CANARY);
+    let receipt = session.finish().unwrap();
+    assert!(!receipt.paid_started);
+}
+
+#[test]
+fn authority_journal_admission_append_failure_returns_no_session() {
+    require_host();
+    let e = env();
+    let fx = Fixture::start(vec![]);
+    let fault = CaptureSession::open(verification(
+        &e,
+        &fx,
+        Scope::Probe,
+        VerificationFaults {
+            journal_fail_after: Some(0),
+        },
+    ))
+    .err()
+    .unwrap();
+    assert_eq!(fault.code, "journal_append_failed");
+    assert_eq!(fault.class, FaultClass::Persistence);
+    assert!(e.run_dir.join("claim.json").is_file());
+    assert!(
+        std::fs::read(e.run_dir.join("journal.jsonl"))
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        std::fs::read_dir(e.run_dir.join("hosts")).unwrap().count(),
+        0
+    );
+    assert!(fx.seen().is_empty());
+}
+
+#[test]
+fn authority_handoff_path_mismatch_preserves_sealed_bytes_and_requests() {
+    require_host();
+    let e = env();
+    let fx = Fixture::start(vec![
+        Reply::Count(2048),
+        fixture::text_reply("msg_path_probe", "PILOT_TRANSPORT_OK"),
+    ]);
+    let mut probe =
+        CaptureSession::open(verification(&e, &fx, Scope::Probe, Default::default())).unwrap();
+    let capture = probe
+        .run_slot(slot(&e, policy::PROBE_SLOT, policy::PROBE_INSTRUCTION))
+        .unwrap();
+    let seal = probe.seal_probe(&capture).unwrap();
+    probe.finish().unwrap();
+    let bytes = std::fs::read(e.run_dir.join("journal.jsonl")).unwrap();
+    let other = e.run_dir.with_file_name("other-owned-run");
+    fixture_private_dir(&other).unwrap();
+    let alias = e.run_dir.with_file_name("wrong-run-alias");
+    std::os::unix::fs::symlink(&other, &alias).unwrap();
+    for declared in [e.run_dir.with_file_name("unused"), alias] {
+        let mut admission = match verification(&e, &fx, Scope::Coding, Default::default()) {
+            LaunchAdmission::Verification(v) => v,
+            LaunchAdmission::Live(_) => unreachable!(),
+        };
+        admission.run_dir = declared;
+        assert_eq!(
+            CaptureSession::open_after_probe(&seal, LaunchAdmission::Verification(admission))
+                .err()
+                .unwrap()
+                .code,
+            "probe_run_dir_mismatch"
+        );
+        assert_eq!(
+            std::fs::read(e.run_dir.join("journal.jsonl")).unwrap(),
+            bytes
+        );
+        assert_eq!(fx.seen().len(), 2);
+    }
+    let coding = CaptureSession::open_after_probe(
+        &seal,
+        verification(&e, &fx, Scope::Coding, Default::default()),
+    )
+    .unwrap();
+    assert_eq!(coding.counters(), seal.counters);
+    let rows = journal(coding.run_dir());
+    let last = rows.last().unwrap();
+    assert_eq!(last["kind"], "coding_handoff");
+    assert_eq!(last["run_dir"], json!(seal.run_dir));
+    assert_eq!(last["scope"], json!(Scope::Coding));
+    assert!(last.get("authority_receipt_sha256").unwrap().is_null());
+    assert_eq!(fx.seen().len(), 2);
+}
+
+#[test]
+fn authority_journal_handoff_append_failure_returns_no_session() {
+    require_host();
+    let e = env();
+    let fx = Fixture::start(vec![
+        Reply::Count(2048),
+        fixture::text_reply("msg_append_probe", "PILOT_TRANSPORT_OK"),
+    ]);
+    let mut probe =
+        CaptureSession::open(verification(&e, &fx, Scope::Probe, Default::default())).unwrap();
+    let capture = probe
+        .run_slot(slot(&e, policy::PROBE_SLOT, policy::PROBE_INSTRUCTION))
+        .unwrap();
+    let seal = probe.seal_probe(&capture).unwrap();
+    probe.finish().unwrap();
+    let bytes = std::fs::read(e.run_dir.join("journal.jsonl")).unwrap();
+    let hosts = std::fs::read_dir(e.run_dir.join("hosts")).unwrap().count();
+    let fault = CaptureSession::open_after_probe(
+        &seal,
+        verification(
+            &e,
+            &fx,
+            Scope::Coding,
+            VerificationFaults {
+                journal_fail_after: Some(seal.journal_records),
+            },
+        ),
+    )
+    .err()
+    .unwrap();
+    assert_eq!(fault.code, "journal_append_failed");
+    assert_eq!(fault.class, FaultClass::Persistence);
+    assert_eq!(
+        std::fs::read(e.run_dir.join("journal.jsonl")).unwrap(),
+        bytes
+    );
+    assert_eq!(
+        std::fs::read_dir(e.run_dir.join("hosts")).unwrap().count(),
+        hosts
+    );
+    assert_eq!(fx.seen().len(), 2);
+    // No permanent burn is claimed for an injected Verification append failure.
+}
+
+#[test]
+fn authority_live_shaped_handoff_is_chained_to_exact_coding_authority() {
+    require_host();
+    let e = env();
+    // This auxiliary Verification probe is a distinct run. Keep its real host
+    // outputs outside the Live fixture's isolation root, whose executable
+    // declaration belongs only to the run named by its authority manifest.
+    let probe_env = env();
+    let fx = Fixture::start(vec![
+        Reply::Count(2048),
+        fixture::text_reply("msg_synthetic_live_probe", "PILOT_TRANSPORT_OK"),
+    ]);
+    let mut probe = CaptureSession::open(verification(
+        &probe_env,
+        &fx,
+        Scope::Probe,
+        Default::default(),
+    ))
+    .unwrap();
+    let capture = probe
+        .run_slot(slot(
+            &probe_env,
+            policy::PROBE_SLOT,
+            policy::PROBE_INSTRUCTION,
+        ))
+        .unwrap();
+    let verification_seal = probe.seal_probe(&capture).unwrap();
+    probe.finish().unwrap();
+
+    let live_run = e.run_dir.with_file_name("synthetic-live-run");
+    let probe_files = AuthorityFiles::new(&e, "live-probe-authority", Scope::Probe, &live_run);
+    private_fixture_file(&probe_files.root.join("synthetic-key"), CANARY.as_bytes());
+    let live_constructor = CaptureSession::open(probe_files.admission(&live_run, None)).unwrap();
+    let first = journal(&live_run).remove(0);
+    drop(live_constructor); // No run_slot, paid attempt or real Live probe.
+    assert_eq!(
+        first["authority_receipt_sha256"],
+        probe_files.authority_sha256()
+    );
+
+    // Explicitly synthetic handoff input: the real constructor's admission
+    // plus re-chained verification records. This is not Live-compatible history.
+    let mut rows = journal(&probe_env.run_dir);
+    rows[0] = first;
+    rows.last_mut().unwrap()["run_dir"] = json!(live_run);
+    let mut bytes = Vec::new();
+    let mut prev = String::new();
+    for (index, row) in rows.iter_mut().enumerate() {
+        row["seq"] = json!(index + 1);
+        row["prev"] = json!(prev);
+        let line = serde_json::to_vec(row).unwrap();
+        prev = pilot_capture::sha256_hex(&line);
+        bytes.extend(line);
+        bytes.push(b'\n');
+    }
+    private_fixture_file(&live_run.join("journal.jsonl"), &bytes);
+    let seal = pilot_capture::ProbeSeal {
+        mode: pilot_capture::Mode::Live,
+        run_dir: live_run.clone(),
+        journal_sha256: pilot_capture::sha256_hex(&bytes),
+        journal_records: rows.len() as u64,
+        ..verification_seal
+    };
+    let files = AuthorityFiles::new(&e, "live-coding-authority", Scope::Coding, &live_run);
+    let cited = files.root.join("synthetic-seal.json");
+    private_fixture_file(&cited, &serde_json::to_vec(&seal).unwrap());
+    private_fixture_file(&files.root.join("synthetic-key"), CANARY.as_bytes());
+    let wrong_run = e.run_dir.with_file_name("different-existing-run");
+    fixture_private_dir(&wrong_run).unwrap();
+    assert_eq!(
+        CaptureSession::open_after_probe(&seal, files.admission(&wrong_run, Some(cited.clone())))
+            .err()
+            .unwrap()
+            .code,
+        "run_dir_authority_mismatch"
+    );
+    files.assert_unclaimed();
+    assert_eq!(
+        std::fs::read(live_run.join("journal.jsonl")).unwrap(),
+        bytes
+    );
+    assert_eq!(fx.seen().len(), 2);
+    let coding =
+        CaptureSession::open_after_probe(&seal, files.admission(&live_run, Some(cited))).unwrap();
+    assert_eq!(coding.counters(), seal.counters);
+    let rows = journal(&live_run);
+    let last = rows.last().unwrap();
+    assert_eq!(last["kind"], "coding_handoff");
+    assert_eq!(last["scope"], json!(Scope::Coding));
+    assert_eq!(last["run_dir"], json!(live_run));
+    assert_eq!(last["authority_receipt_sha256"], files.authority_sha256());
+    assert_ne!(
+        last["authority_receipt_sha256"],
+        probe_files.authority_sha256()
+    );
+    let previous_line = bytes
+        .split(|b| *b == b'\n')
+        .rfind(|line| !line.is_empty())
+        .unwrap();
+    assert_eq!(last["prev"], pilot_capture::sha256_hex(previous_line));
+    assert_eq!(last["seq"], seal.journal_records + 1);
+    assert!(
+        std::fs::read(live_run.join("journal.jsonl"))
+            .unwrap()
+            .starts_with(&bytes)
+    );
+    assert_eq!(fx.seen().len(), 2);
+    coding.finish().unwrap();
+}
+
+#[test]
+fn authority_manifests_cli_requires_explicit_run_dir_before_inputs() {
+    let tmp = fixture_private_tempdir().unwrap();
+    let root = tmp.path().join("must-not-be-created");
+    let inputs = tmp.path().join("nonexistent-inputs.json");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_foundry-pilot-capture"))
+        .args(["manifests", "--pilot-root"])
+        .arg(&root)
+        .arg("--inputs")
+        .arg(&inputs)
+        .current_dir(tmp.path())
+        .env_clear()
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.starts_with("usage:"), "{stderr}");
+    assert!(
+        stderr
+            .lines()
+            .any(|line| line.contains("foundry-pilot-capture manifests")
+                && line.contains("--run-dir DIR")),
+        "{stderr}"
+    );
+    assert!(output.stdout.is_empty());
+    assert!(!root.exists() && !inputs.exists());
+}
+
+// Independent expected metadata recovered and verified by the owner from the
+// pinned oracle's existing successful evidence. No private output bytes are here.
+const FIXTURE_ORACLE_COMPLETION_SHA256: &str =
+    "aac03c0ded8403eb8bd3ca53e9880313cde11fa658db4fc7444d737eef33127d";
+
+/// Synthetic receipt only: these inert byte identities are not compiler output
+/// or proof of running the private oracle. Keep every other new binding valid
+/// when mutating one assertion's field, so the refusal reaches its intended gate.
+fn oracle_bound_fixture_receipt(
+    capture: &pilot_capture::SlotCapture,
+    root: &Path,
+) -> IndependentCheckReceipt {
+    let mut receipt = fixture_receipt(capture, root);
+    receipt.steps[0].artifacts = vec![(
+        "out/librecords-noalloc.rlib".into(),
+        pilot_capture::sha256_hex(b"owned synthetic noalloc object"),
+    )];
+    receipt.steps[1].artifacts = vec![(
+        "out/librecords-alloc.rlib".into(),
+        pilot_capture::sha256_hex(b"owned synthetic alloc object"),
+    )];
+    let checker = pilot_capture::sha256_hex(b"owned synthetic checker image; never executed");
+    receipt.steps[2].artifacts = vec![("out/check".into(), checker.clone())];
+    receipt.steps[3].artifacts = vec![("out/check".into(), checker)];
+    receipt.steps[3].stdout_sha256 = FIXTURE_ORACLE_COMPLETION_SHA256.into();
+    receipt
+}
+
+/// The existing partial-slot pattern reaches the real seal_slot consumer using
+/// exactly one owned CountTokens fixture response, without a Messages request.
+fn oracle_awaiting_capture(e: &Env, fx: &Fixture) -> (CaptureSession, pilot_capture::SlotCapture) {
+    let mut session =
+        CaptureSession::open(verification(e, fx, Scope::Coding, Default::default())).unwrap();
+    let capture = session.run_slot(slot(e, "1B", TASK)).unwrap();
+    assert!(matches!(capture.disposition, Disposition::Partial { .. }));
+    assert_eq!(fx.paths(), vec!["/v1/messages/count_tokens"]);
+    assert!(session.halted().is_none());
+    (session, capture)
+}
+
+fn oracle_assert_terminal_refusal(
+    mut session: CaptureSession,
+    capture: &pilot_capture::SlotCapture,
+    receipt: &IndependentCheckReceipt,
+    e: &Env,
+    fx: &Fixture,
+    code: &str,
+) {
+    let request_count = fx.seen().len();
+    let fault = session.seal_slot(capture, receipt).unwrap_err();
+    assert_eq!(fault.class, FaultClass::CheckerProvenance);
+    assert_eq!(fault.code, code);
+    assert_eq!(session.halted(), Some(fault));
+    assert_eq!(
+        session.run_slot(slot(e, "1A", TASK)).unwrap_err().code,
+        "session_halted"
+    );
+    assert_eq!(fx.seen().len(), request_count);
+    let report = session.finish().unwrap();
+    assert_eq!(
+        report.halt,
+        Some((FaultClass::CheckerProvenance.as_str().into(), code.into()))
+    );
+    assert!(report.slots[1..].iter().all(|s| s.state == "not_started"));
+    let rows = journal(&e.run_dir);
+    assert_eq!(rows.iter().filter(|r| r["kind"] == "halt").count(), 1);
+    assert!(!rows.iter().any(|r| r["kind"] == "slot_sealed"));
+    let refused = rows.iter().find(|r| r["kind"] == "check_refused").unwrap();
+    assert_eq!(
+        refused["receipt_sha256"],
+        pilot_capture::sha256_hex(&serde_json::to_vec(receipt).unwrap())
+    );
+    assert_eq!(rows.last().unwrap()["kind"], "finished");
+    assert_eq!(fx.seen().len(), request_count);
+}
+
+#[test]
+fn oracle_zero_exit_without_exact_completion_is_a_terminal_provenance_fault() {
+    require_host();
+    for stdout in [b"".as_slice(), b"owned wrong completion\n".as_slice()] {
+        let e = env();
+        let fx = Fixture::start(vec![Reply::Count(30_721)]);
+        let (session, capture) = oracle_awaiting_capture(&e, &fx);
+        let checker = private_checker_tempdir();
+        let mut receipt =
+            oracle_bound_fixture_receipt(&capture, &std::fs::canonicalize(checker.path()).unwrap());
+        receipt.steps[3].stdout_sha256 = pilot_capture::sha256_hex(stdout);
+        assert!(receipt.steps.iter().all(|step| step.exit == Some(0)));
+        oracle_assert_terminal_refusal(
+            session,
+            &capture,
+            &receipt,
+            &e,
+            &fx,
+            "check_oracle_completion_mismatch",
+        );
+    }
+}
+
+#[test]
+fn oracle_successful_steps_require_the_exact_named_artifact() {
+    require_host();
+    for (index, wrong_name) in [(0, false), (1, false), (2, false), (3, false), (2, true)] {
+        let e = env();
+        let fx = Fixture::start(vec![Reply::Count(30_721)]);
+        let (session, capture) = oracle_awaiting_capture(&e, &fx);
+        let checker = private_checker_tempdir();
+        let mut receipt =
+            oracle_bound_fixture_receipt(&capture, &std::fs::canonicalize(checker.path()).unwrap());
+        if wrong_name {
+            receipt.steps[index].artifacts[0].0 = "out/not-the-executed-checker".into();
+        } else {
+            receipt.steps[index].artifacts.clear();
+        }
+        oracle_assert_terminal_refusal(
+            session,
+            &capture,
+            &receipt,
+            &e,
+            &fx,
+            "check_artifact_unbound",
+        );
+    }
+}
+
+#[test]
+fn oracle_executed_checker_must_match_the_compiled_checker() {
+    require_host();
+    let e = env();
+    let fx = Fixture::start(vec![Reply::Count(30_721)]);
+    let (session, capture) = oracle_awaiting_capture(&e, &fx);
+    let checker = private_checker_tempdir();
+    let mut receipt =
+        oracle_bound_fixture_receipt(&capture, &std::fs::canonicalize(checker.path()).unwrap());
+    receipt.steps[3].artifacts[0].1 =
+        pilot_capture::sha256_hex(b"different owned synthetic executable");
+    oracle_assert_terminal_refusal(
+        session,
+        &capture,
+        &receipt,
+        &e,
+        &fx,
+        "check_oracle_executable_mismatch",
+    );
+}
+
+#[test]
+fn oracle_bound_success_and_observed_nonzero_keep_distinct_outcomes() {
+    require_host();
+    for nonzero in [false, true] {
+        let e = env();
+        let fx = Fixture::start(vec![Reply::Count(30_721)]);
+        let (mut session, capture) = oracle_awaiting_capture(&e, &fx);
+        let checker = private_checker_tempdir();
+        let mut receipt =
+            oracle_bound_fixture_receipt(&capture, &std::fs::canonicalize(checker.path()).unwrap());
+        if nonzero {
+            receipt.steps[3].exit = Some(101);
+            receipt.steps[3].stdout_sha256 =
+                pilot_capture::sha256_hex(b"owned failing-program output");
+        }
+        let expected = if nonzero {
+            pilot_capture::CheckOutcome::Fail
+        } else {
+            pilot_capture::CheckOutcome::Pass
+        };
+        assert_eq!(
+            session.seal_slot(&capture, &receipt).unwrap().outcome,
+            expected
+        );
+        assert!(session.halted().is_none());
+        let report = session.finish().unwrap();
+        assert_eq!(report.halt, None);
+        assert_eq!(report.slots[0].check, Some(expected));
+        assert_eq!(report.slots[0].state, "sealed");
+        assert!(report.slots[1..].iter().all(|s| s.state == "not_started"));
+        assert_eq!(fx.paths(), vec!["/v1/messages/count_tokens"]);
+        let rows = journal(&e.run_dir);
+        let sealed = rows.iter().find(|r| r["kind"] == "slot_sealed").unwrap();
+        assert_eq!(sealed["outcome"], json!(expected));
+        assert_eq!(
+            sealed["receipt_sha256"],
+            pilot_capture::sha256_hex(&serde_json::to_vec(&receipt).unwrap())
+        );
+        assert!(!rows.iter().any(|r| r["kind"] == "halt"));
+    }
+}
+
+/// Actual changed checker producer only: no CaptureSession, host, model, view
+/// materialization or provider. Explicit private paths are supplied by the owner;
+/// missing inputs fail rather than skipping or weakening the frozen oracle pin.
+#[test]
+#[ignore = "needs explicit CF_PILOT_ORACLE_SOURCE and CF_PILOT_POSITIVE_CANDIDATE; actual fixed compiler/oracle on fresh owned copies"]
+fn oracle_actual_producer_binds_completion_binary_and_owned_sources() {
+    use context_foundry::pilot_capture::apparatus::run_independent_check;
+    use std::os::unix::fs::DirBuilderExt;
+    use std::os::unix::fs::PermissionsExt;
+
+    const EXPECTED_ORACLE: &str =
+        "f5ac14d370d852090c49ead61e23f4d9185eed491b33b123ba6e6ff2dec09bb9";
+    // Independently recovered historical success identity, not derived from
+    // this execution or read from the new production completion constant.
+    const EXPECTED_COMPLETION: &str =
+        "aac03c0ded8403eb8bd3ca53e9880313cde11fa658db4fc7444d737eef33127d";
+    let oracle = PathBuf::from(
+        std::env::var_os("CF_PILOT_ORACLE_SOURCE")
+            .expect("CF_PILOT_ORACLE_SOURCE must name the owner-verified pinned oracle"),
+    );
+    let source =
+        PathBuf::from(std::env::var_os("CF_PILOT_POSITIVE_CANDIDATE").expect(
+            "CF_PILOT_POSITIVE_CANDIDATE must name a newly owned copied positive candidate",
+        ));
+    assert!(
+        oracle.is_absolute() && source.is_absolute(),
+        "explicit absolute inputs required"
+    );
+    assert!(
+        std::fs::symlink_metadata(&oracle).unwrap().is_file(),
+        "oracle must be a regular file"
+    );
+    assert!(
+        std::fs::symlink_metadata(&source).unwrap().is_dir(),
+        "candidate must be a real directory"
+    );
+    assert!(
+        std::fs::symlink_metadata(source.join("src"))
+            .unwrap()
+            .is_dir(),
+        "candidate src must be a real directory"
+    );
+    let oracle = std::fs::canonicalize(oracle).unwrap();
+    let source = std::fs::canonicalize(source).unwrap();
+    let oracle_before = std::fs::read(&oracle).unwrap();
+    assert_eq!(pilot_capture::sha256_hex(&oracle_before), EXPECTED_ORACLE);
+    assert_eq!(policy::ORACLE_SHA256, EXPECTED_ORACLE);
+    let source_before: Vec<(String, Vec<u8>)> = policy::READ_SET
+        .iter()
+        .map(|rel| {
+            let path = source.join(rel);
+            assert!(
+                std::fs::symlink_metadata(&path).unwrap().is_file(),
+                "nonregular candidate source: {rel}"
+            );
+            ((*rel).to_string(), std::fs::read(path).unwrap())
+        })
+        .collect();
+    let source_identity: Vec<(String, String)> = source_before
+        .iter()
+        .map(|(rel, bytes)| (rel.clone(), pilot_capture::sha256_hex(bytes)))
+        .collect();
+
+    // Retain this new private root on red, green or panic, so the owner can
+    // inspect complete producer outputs. Only this owned root is written.
+    let owned_temp = tempfile::Builder::new()
+        .prefix("cf-oracle-producer-")
+        .tempdir()
+        .unwrap();
+    std::fs::set_permissions(owned_temp.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(
+        std::fs::metadata(owned_temp.path())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o7777,
+        0o700
+    );
+    let owned = std::fs::canonicalize(owned_temp.path()).unwrap();
+    std::mem::forget(owned_temp);
+    eprintln!("owned oracle producer evidence: {}", owned.display());
+    private_fixture_file(&owned.join("input-identities.json"), &serde_json::to_vec_pretty(&json!({
+        "oracle_sha256":EXPECTED_ORACLE, "positive_candidate":source_identity,
+        "completion_stdout_sha256":EXPECTED_COMPLETION,
+        "completion_bytes":106, "completion_bytes_source":"historical owner-verified pin, not an observed receipt field"
+    })).unwrap());
+    let copy_candidate = |name: &str, fail_compile: bool| {
+        let target = owned.join(name);
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&target)
+            .unwrap();
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(target.join("src"))
+            .unwrap();
+        for (rel, bytes) in &source_before {
+            let mut bytes = bytes.clone();
+            if fail_compile && rel == "src/lib.rs" {
+                bytes.extend_from_slice(
+                    b"\ncompile_error!(\"owned checker-producer regression\");\n",
+                );
+            }
+            private_fixture_file(&target.join(rel), &bytes);
+        }
+        target
+    };
+    let inventory = |workspace: &Path| -> Vec<(String, String)> {
+        policy::READ_SET
+            .iter()
+            .map(|rel| {
+                (
+                    (*rel).to_string(),
+                    pilot_capture::sha256_hex(&std::fs::read(workspace.join(rel)).unwrap()),
+                )
+            })
+            .collect()
+    };
+    let unchanged_inputs = || {
+        assert!(
+            std::fs::read(&oracle).unwrap() == oracle_before,
+            "original oracle bytes changed; raw private bytes withheld"
+        );
+        for (rel, bytes) in &source_before {
+            assert!(
+                &std::fs::read(source.join(rel)).unwrap() == bytes,
+                "input candidate changed: {rel}; raw private bytes withheld"
+            );
+        }
+    };
+    let order: Vec<String> = policy::READ_SET
+        .iter()
+        .map(|rel| (*rel).to_string())
+        .collect();
+    let positive = copy_candidate("positive-candidate", false);
+    let positive_before = inventory(&positive);
+    assert_eq!(positive_before, source_identity);
+    let positive_checker = owned.join("positive-checker");
+    assert!(!positive_checker.exists());
+    let positive_receipt =
+        run_independent_check("1B", &positive, &order, &oracle, &positive_checker).unwrap();
+    private_fixture_file(
+        &owned.join("positive-receipt.json"),
+        &serde_json::to_vec_pretty(&positive_receipt).unwrap(),
+    );
+    // Check input identity before the provenance/diagnostic assertions, including
+    // on a deliberately disabled-guard or producer-observation control.
+    unchanged_inputs();
+    assert_eq!(inventory(&positive), positive_before);
+    assert_eq!(inventory(&positive_checker), positive_before);
+    assert_eq!(positive_receipt.candidate, positive_before);
+    assert_eq!(
+        positive_receipt.checker_root,
+        std::fs::canonicalize(&positive_checker).unwrap()
+    );
+    assert_eq!(positive_receipt.oracle_sha256, EXPECTED_ORACLE);
+    assert_eq!(
+        pilot_capture::sha256_hex(&std::fs::read(positive_checker.join("check.rs")).unwrap()),
+        EXPECTED_ORACLE
+    );
+    assert_eq!(positive_receipt.compiler, Path::new(policy::RUSTC));
+    assert_eq!(positive_receipt.compiler_sha256, policy::RUSTC_SHA256);
+    assert_eq!(
+        pilot_capture::sha256_hex(&std::fs::read(policy::RUSTC).unwrap()),
+        policy::RUSTC_SHA256
+    );
+    checker_assert_diagnostics(&positive_receipt);
+    assert!(!positive_receipt.fixture);
+    assert_eq!(positive_receipt.steps.len(), 4);
+    let checker_text = positive_checker.to_str().unwrap();
+    for (step, (name, argv)) in positive_receipt.steps.iter().zip(policy::CHECK_RECIPE) {
+        assert_eq!(step.step, name);
+        assert_eq!(
+            step.argv,
+            argv.iter()
+                .map(|arg| arg.replace("<ROOT>", checker_text))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            step.exit,
+            Some(0),
+            "actual checker step failed: {}",
+            step.step
+        );
+        assert_eq!(step.signal, None);
+        assert!(!step.timed_out);
+    }
+    assert_eq!(positive_receipt.steps[3].stdout_sha256, EXPECTED_COMPLETION);
+    // Preserve the accepted actual pre-execution observation and its binding
+    // to the compile output while extending diagnostic/provenance coverage.
+    let executed = &positive_receipt.steps[3].artifacts;
+    assert_eq!(
+        executed.len(),
+        1,
+        "oracle_run must bind its actual pre-execution out/check image"
+    );
+    assert_eq!(executed[0].0, "out/check");
+    let expected_artifacts = [
+        "out/librecords-noalloc.rlib",
+        "out/librecords-alloc.rlib",
+        "out/check",
+        "out/check",
+    ];
+    for (step, name) in positive_receipt.steps.iter().zip(expected_artifacts) {
+        let actual_digest =
+            pilot_capture::sha256_hex(&std::fs::read(positive_checker.join(name)).unwrap());
+        assert_eq!(
+            step.artifacts,
+            vec![(name.to_string(), actual_digest)],
+            "{} artifact differs",
+            step.step
+        );
+    }
+    assert_eq!(
+        positive_receipt.steps[2].artifacts,
+        positive_receipt.steps[3].artifacts
+    );
+
+    // A distinct new owned candidate fails during compilation, without
+    // executing the oracle or rerunning the historical seeded-negative control.
+    let negative = copy_candidate("compile-error-candidate", true);
+    let negative_before = inventory(&negative);
+    assert_ne!(negative_before, positive_before);
+    let negative_checker = owned.join("compile-error-checker");
+    assert!(!negative_checker.exists());
+    let negative_receipt =
+        run_independent_check("1B", &negative, &order, &oracle, &negative_checker).unwrap();
+    private_fixture_file(
+        &owned.join("compile-error-receipt.json"),
+        &serde_json::to_vec_pretty(&negative_receipt).unwrap(),
+    );
+    assert_eq!(negative_receipt.candidate, negative_before);
+    assert_eq!(inventory(&negative), negative_before);
+    assert_eq!(inventory(&negative_checker), negative_before);
+    assert_eq!(negative_receipt.oracle_sha256, EXPECTED_ORACLE);
+    assert_eq!(
+        pilot_capture::sha256_hex(&std::fs::read(negative_checker.join("check.rs")).unwrap()),
+        EXPECTED_ORACLE
+    );
+    checker_assert_diagnostics(&negative_receipt);
+    let negative_stderr =
+        std::fs::read(negative_checker.join(&negative_receipt.steps[0].stderr_path)).unwrap();
+    let marker = b"owned checker-producer regression";
+    assert!(
+        negative_stderr.windows(marker.len()).any(|w| w == marker),
+        "the actual compiler stderr must retain the owned compile_error marker"
+    );
+    assert!(!negative_receipt.fixture);
+    assert_eq!(negative_receipt.steps.len(), 1);
+    let failed = &negative_receipt.steps[0];
+    assert_eq!(failed.step, "noalloc_compile");
+    assert!(failed.exit.is_some_and(|code| code != 0));
+    assert_eq!(failed.signal, None);
+    assert!(!failed.timed_out);
+    assert!(!negative_checker.join("out/check").exists());
+    // Ok(receipt) with this observed nonzero exit remains an ordinary producer
+    // result. The separate seal_slot tests cover its consumer Fail disposition.
+    unchanged_inputs();
+    private_fixture_file(
+        &owned.join("input-readback.json"),
+        &serde_json::to_vec_pretty(&json!({
+            "unchanged_input_bytes":true, "positive_candidate":inventory(&source),
+            "oracle_sha256":pilot_capture::sha256_hex(&std::fs::read(&oracle).unwrap())
+        }))
+        .unwrap(),
+    );
+    assert_owned_private_tree(&positive_checker, Some(Path::new("out/check")));
+    assert_owned_private_tree(&negative_checker, Some(Path::new("out/check")));
+}
+
+#[test]
+fn checker_stderr_tampering_is_terminal_before_another_fixture_request() {
+    require_host();
+    let e = env();
+    let fx = Fixture::start(vec![Reply::Count(30_721)]);
+    let (session, capture) = oracle_awaiting_capture(&e, &fx);
+    let checker = private_checker_tempdir();
+    let root = std::fs::canonicalize(checker.path()).unwrap();
+    let receipt = fixture_receipt(&capture, &root);
+    checker_assert_diagnostics(&receipt);
+    private_fixture_file(
+        &root.join(&receipt.steps[0].stderr_path),
+        b"owned changed diagnostic",
+    );
+    oracle_assert_terminal_refusal(session, &capture, &receipt, &e, &fx, "check_stderr_unbound");
+}
+
+// Compatibility setup for NEW owned synthetic fixtures only. Existing
+// entries keep their modes, so deliberate negative mutations stay negative.
+// These helpers do not participate in product permission qualification.
+fn fixture_private_tempdir() -> std::io::Result<tempfile::TempDir> {
+    use std::os::unix::fs::PermissionsExt;
+    let temp = tempfile::Builder::new()
+        .prefix("cf-owned-pilot-fixture-")
+        .tempdir_in("/private/tmp")?;
+    std::fs::set_permissions(temp.path(), std::fs::Permissions::from_mode(0o700))?;
+    Ok(temp)
+}
+
+fn fixture_private_dir(path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(path.as_ref())?;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+}
+
+fn fixture_private_dirs(path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
+    let mut missing = Vec::new();
+    let mut cursor = path.as_ref();
+    while !cursor.try_exists()? {
+        missing.push(cursor.to_path_buf());
+        cursor = cursor
+            .parent()
+            .ok_or_else(|| std::io::Error::other("owned fixture has no parent"))?;
+    }
+    for directory in missing.into_iter().rev() {
+        fixture_private_dir(directory)?;
+    }
+    Ok(())
+}
+
+fn fixture_private_write(
+    path: impl AsRef<std::path::Path>,
+    bytes: impl AsRef<[u8]>,
+) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let existed = path.as_ref().symlink_metadata().is_ok();
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path.as_ref())?;
+    if !existed {
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
+    file.write_all(bytes.as_ref())
+}
+
+#[test]
+fn privacy_named_admission_documents_refuse_before_claim_without_normalizing_inputs() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
+    require_host();
+    for case in [
+        "authority",
+        "manifest",
+        "ratecard",
+        "view",
+        "container",
+        "manifest-symlink",
+    ] {
+        eprintln!("owned private admission case: {case}");
+        let e = env();
+        let files = AuthorityFiles::new(&e, "private-admission", Scope::Probe, &e.run_dir);
+        let path = files.root.join(match case {
+            "authority" => "authority.json",
+            "manifest" | "manifest-symlink" => "manifest.json",
+            "ratecard" => "ratecard.json",
+            "view" => "view-1.txt",
+            "container" => "authority.json",
+            _ => unreachable!(),
+        });
+        let before = std::fs::read(&path).unwrap();
+        if case == "container" {
+            std::fs::set_permissions(&files.root, std::fs::Permissions::from_mode(0o750)).unwrap();
+        } else if case == "manifest-symlink" {
+            let target = files.root.join("owned-manifest-target");
+            std::fs::rename(&path, &target).unwrap();
+            symlink(target, &path).unwrap();
+        } else {
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+        }
+        let fault = CaptureSession::open(files.admission(&e.run_dir, None))
+            .err()
+            .unwrap();
+        assert_eq!(
+            (fault.class, fault.code),
+            (FaultClass::Privacy, "private_artifact_not_private")
+        );
+        files.assert_unclaimed();
+        assert!(!e.run_dir.exists());
+        assert!(!files.root.join("synthetic-key").exists());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        if case == "container" {
+            assert_eq!(
+                std::fs::metadata(&files.root).unwrap().mode() & 0o7777,
+                0o750
+            );
+        } else if case == "manifest-symlink" {
+            assert!(
+                std::fs::symlink_metadata(path)
+                    .unwrap()
+                    .file_type()
+                    .is_symlink()
+            );
+        } else {
+            assert_eq!(std::fs::metadata(path).unwrap().mode() & 0o7777, 0o640);
+        }
+    }
+}
+
+#[test]
+fn privacy_prelaunch_refusal_consumes_no_fixture_http_or_permit() {
+    use std::os::unix::fs::PermissionsExt;
+    require_host();
+    let e = env();
+    let fx = Fixture::start(vec![]);
+    let mut session =
+        CaptureSession::open(verification(&e, &fx, Scope::Coding, Default::default())).unwrap();
+    let file = e.workspace.join("src/lib.rs");
+    let before = std::fs::read(&file).unwrap();
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o640)).unwrap();
+    let fault = session.run_slot(slot(&e, "1B", TASK)).unwrap_err();
+    assert_eq!(
+        (fault.class, fault.code),
+        (FaultClass::Privacy, "private_artifact_not_private")
+    );
+    assert_eq!(session.halted(), Some(fault));
+    assert_eq!(session.counters(), pilot_capture::Counters::default());
+    assert!(fx.seen().is_empty());
+    assert_eq!(std::fs::read(&file).unwrap(), before);
+    let report = session.finish().unwrap();
+    assert_eq!(report.counters, pilot_capture::Counters::default());
+    let rows = journal(&e.run_dir);
+    assert_eq!(rows.iter().filter(|r| r["kind"] == "halt").count(), 1);
+    assert!(!rows.iter().any(|r| r["kind"] == "http_begin"
+        || r["kind"] == "reservation"
+        || r["kind"] == "host_launched"));
+    assert_eq!(rows.last().unwrap()["kind"], "finished");
+}
+
+#[test]
+fn privacy_send_gates_preserve_observed_http_and_refuse_the_next_send() {
+    for after_count in [true, false] {
+        eprintln!(
+            "owned privacy send-gate case: {}",
+            if after_count {
+                "after-count"
+            } else {
+                "before-followup-count"
+            }
+        );
+        require_host();
+        let e = env();
+        let changed = e.workspace.join("src/lib.rs");
+        let before = std::fs::read(&changed).unwrap();
+        let mutate = |reply| Reply::ModeThen {
+            path: changed.clone(),
+            mode: 0o640,
+            reply: Box::new(reply),
+        };
+        let fx = Fixture::start(if after_count {
+            vec![
+                mutate(Reply::Count(3000)),
+                fixture::text_reply("msg_owned_privacy_unexpected_message", "Done."),
+            ]
+        } else {
+            vec![
+                Reply::Count(3000),
+                mutate(fixture::tool_reply(
+                    "msg_owned_privacy_tool",
+                    "toolu_owned_privacy_read",
+                    "read",
+                    json!({"path":"src/lib.rs", "i":"inspect"}),
+                )),
+                Reply::Count(3400),
+                fixture::text_reply("msg_owned_privacy_unexpected_followup", "Done."),
+            ]
+        });
+        let mut session =
+            CaptureSession::open(verification(&e, &fx, Scope::Coding, Default::default())).unwrap();
+        let capture = session.run_slot(slot(&e, "1B", TASK)).unwrap();
+        let fault = session.halted().expect("privacy refusal must be terminal");
+        assert_eq!(
+            (fault.class, fault.code),
+            (FaultClass::Privacy, "private_artifact_not_private")
+        );
+        assert!(matches!(capture.disposition, Disposition::Halted { .. }));
+        assert!(
+            capture.native.is_none(),
+            "unsafe native readback must not be accepted after the privacy failure"
+        );
+        assert!(
+            capture.candidate_inventory.is_empty(),
+            "unsafe candidate inventory must not be published"
+        );
+        assert!(capture.host_exit.as_ref().unwrap().group_gone);
+        assert_eq!(capture.generations.len(), 1);
+        let generation = &capture.generations[0];
+        assert_eq!(generation.count_status, Some(200));
+        assert_eq!(generation.estimate_lexeme.as_deref(), Some("3000"));
+        let counters = session.counters();
+        assert_eq!(counters.count_calls, 1);
+        assert_eq!(
+            counters.generation_permits, 1,
+            "an unsent followup must not consume a permit"
+        );
+        assert_eq!(counters.outstanding_micro_usd, 0);
+        if after_count {
+            assert_eq!(fx.paths(), ["/v1/messages/count_tokens"]);
+            assert_eq!(counters.messages_attempts, 0);
+            assert_eq!(counters.provider_http_attempts, 1);
+            assert_eq!(counters.spent_micro_usd, 0);
+            assert_eq!(generation.messages_attempt, None);
+            assert_eq!(generation.outcome, "privacy_before_messages");
+        } else {
+            assert_eq!(fx.paths(), ["/v1/messages/count_tokens", "/v1/messages"]);
+            assert_eq!(counters.messages_attempts, 1);
+            assert_eq!(counters.provider_http_attempts, 2);
+            assert_eq!(
+                generation.message_id.as_deref(),
+                Some("msg_owned_privacy_tool")
+            );
+            assert!(generation.usage.as_ref().unwrap().complete);
+            assert_eq!(counters.spent_micro_usd, generation.cost_micro_usd.unwrap());
+            assert!(counters.spent_micro_usd > 0);
+        }
+        assert_eq!(std::fs::read(&changed).unwrap(), before);
+        let observed_requests = fx.seen().len();
+        assert_eq!(
+            session.run_slot(slot(&e, "1A", TASK)).unwrap_err().code,
+            "session_halted"
+        );
+        let report = session.finish().unwrap();
+        assert_eq!(report.counters, counters);
+        assert_eq!(report.slots[0].state, "closed");
+        assert_eq!(
+            report.slots[0].disposition.as_ref(),
+            Some(&capture.disposition)
+        );
+        assert!(report.slots[1..].iter().all(|s| s.state == "not_started"));
+        assert_eq!(fx.seen().len(), observed_requests);
+        let rows = journal(&e.run_dir);
+        assert_eq!(rows.iter().filter(|r| r["kind"] == "halt").count(), 1);
+        assert_eq!(
+            rows.iter().filter(|r| r["kind"] == "http_begin").count(),
+            observed_requests
+        );
+        assert_eq!(
+            rows.iter().filter(|r| r["kind"] == "reservation").count(),
+            1
+        );
+        let closed: Vec<_> = rows.iter().filter(|r| r["kind"] == "slot_closed").collect();
+        assert_eq!(closed.len(), 1);
+        assert_eq!(closed[0]["generations"], 1);
+        assert_eq!(
+            closed[0]["disposition"],
+            serde_json::to_value(&capture.disposition).unwrap()
+        );
+        assert_eq!(
+            closed[0]["counters"],
+            serde_json::to_value(counters).unwrap()
+        );
+        assert_eq!(rows.last().unwrap()["kind"], "finished");
+    }
+}
+
+// Actual successful run roots only. Workspaces and checker roots continue
+// through the ordinary helper and receive no host-native exception.
+fn assert_owned_private_run_tree(run: &Path) {
+    const NATIVE: &str = "home/.omp/natives/18.13.2/pi_natives.darwin-arm64.node";
+    let hosts = std::fs::read_dir(run.join("hosts"))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert!(
+        !hosts.is_empty(),
+        "successful actual host flow must retain its host root"
+    );
+    for entry in hosts {
+        let metadata = std::fs::symlink_metadata(entry.path().join(NATIVE)).unwrap();
+        assert!(metadata.is_file() && !metadata.file_type().is_symlink());
+    }
+    assert_owned_private_tree_in_run(run, None, Some(run));
+}
+
+fn assert_owned_private_tree(root: &Path, executable: Option<&Path>) {
+    assert_owned_private_tree_in_run(root, executable, None);
+}
+
+fn assert_owned_private_tree_in_run(root: &Path, executable: Option<&Path>, run: Option<&Path>) {
+    if let Some(run) = run {
+        assert_eq!(root, run, "native exception requires the actual run root");
+    }
+    use std::os::unix::fs::MetadataExt;
+    let mut pending = vec![root.to_path_buf()];
+    let mut seen = 0;
+    while let Some(path) = pending.pop() {
+        seen += 1;
+        assert!(seen <= 16_384, "owned test output tree exceeded its bound");
+        let meta = std::fs::symlink_metadata(&path).unwrap();
+        assert_eq!(meta.uid(), unsafe { libc::getuid() });
+        assert!(
+            !meta.file_type().is_symlink(),
+            "owned output contains symlink"
+        );
+        if meta.is_dir() {
+            assert_eq!(meta.mode() & 0o7777, 0o700, "owned directory mode");
+            pending.extend(std::fs::read_dir(path).unwrap().map(|e| e.unwrap().path()));
+        } else {
+            assert!(meta.is_file(), "owned output is not a regular file");
+            let native = run.is_some_and(|run| {
+                let hosts = run.join("hosts");
+                let Ok(relative) = path.strip_prefix(&hosts) else {
+                    return false;
+                };
+                let mut components = relative.components();
+                matches!(components.next(), Some(std::path::Component::Normal(_)))
+                    && components.as_path()
+                        == Path::new("home/.omp/natives/18.13.2/pi_natives.darwin-arm64.node")
+            });
+            let expected = if native || executable.is_some_and(|rel| path == root.join(rel)) {
+                0o700
+            } else {
+                0o600
+            };
+            assert_eq!(meta.mode() & 0o7777, expected, "owned file mode");
+        }
+    }
+}
+
+#[test]
+fn startup_auth_trace_profiles_are_closed() {
+    let encode = |rows: Vec<Value>| {
+        rows.iter()
+            .map(|row| format!("{row}\n"))
+            .collect::<String>()
+    };
+    let installed =
+        json!({"sequence":0,"kind":"installed","runtime":"1.4.4","workspace_restored":true});
+    let source = encode(vec![
+        installed.clone(),
+        json!({"sequence":1,"kind":"auth","state":"registered","binding":"cli_source"}),
+        json!({"sequence":2,"kind":"auth","state":"retired","binding":"cli_source","initial_resolver_joined":true,"chain_joined":true,"store_closed":true}),
+    ]);
+    let legacy = encode(vec![
+        installed,
+        json!({"sequence":1,"kind":"auth","state":"registered","subscriptions":4}),
+        json!({"sequence":2,"kind":"auth","state":"retired","subscriptions":4,"continuations":0,"initial_resolver_joined":true,"store_closed":true}),
+    ]);
+    assert_eq!(
+        startup_probe_rows(source.as_bytes(), None, true)["auth_retired"],
+        true
+    );
+    assert_eq!(
+        startup_probe_rows(source.as_bytes(), None, false)["valid"],
+        false
+    );
+    assert_eq!(
+        startup_probe_rows(legacy.as_bytes(), None, false)["auth_retired"],
+        true
+    );
+    assert_eq!(
+        startup_probe_rows(legacy.as_bytes(), None, true)["valid"],
+        false
+    );
 }

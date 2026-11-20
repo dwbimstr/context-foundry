@@ -1,0 +1,399 @@
+Experimental source-owned startup logging; not automatically applied by Context Foundry.
+Target: can1357/oh-my-pi @ 24439066040e006eb08da7b204f0ac41c79d2de9
+Owner: 003 T006 bounded-pilot-v2 startup observation and admission.
+Requires prior caller/auth/refusal/restricted/catalog/settings/empty-auth/presence/telemetry/marketplace patches.
+Modules: utils/logger::{ownStartupLogging,retireStartupLogging,setTransports,registerLogSink,setLogForwarder,schedulePruneStaleProcessLogs}; CLI and sdk exact-session binding.
+Tests: startup-logging-owner.test.ts, startup-logging-cli.test.ts, existing logger, SDK and CLI suites.
+Difference: --startup-no-logging requires --restrict-tools and owns the local logger;
+it closes original transport, joins queued original retention callbacks and blocks
+late transport, sink and forwarder changes. Ordinary logging remains available
+without the flag. Other logging implementations, complete inventory, Ready, paid
+execution, signing and release acceptance remain open.
+
+MIT License
+
+Copyright (c) 2025 Mario Zechner
+Copyright (c) 2025-2026 Can Bölük
+Copyright (c) 2026 Stencil Labs, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+diff --git a/packages/coding-agent/src/cli/args.ts b/packages/coding-agent/src/cli/args.ts
+--- a/packages/coding-agent/src/cli/args.ts
++++ b/packages/coding-agent/src/cli/args.ts
+@@ -86,6 +86,7 @@
+ 	startupPresence?: boolean;
+ 	startupNoTelemetry?: boolean;
+ 	startupNoMarketplace?: boolean;
++	startupNoLogging?: boolean;
+ 	noLsp?: boolean;
+ 	noPty?: boolean;
+ 	hooks?: string[];
+@@ -370,6 +371,8 @@
+ 			result.noSession = true;
+ 		} else if (arg === "--no-tools") {
+ 			result.noTools = true;
++		} else if (arg === "--startup-no-logging") {
++			result.startupNoLogging = true;
+ 		} else if (arg === "--startup-no-marketplace") {
+ 			result.startupNoMarketplace = true;
+ 		} else if (arg === "--startup-no-telemetry") {
+diff --git a/packages/coding-agent/src/cli/flag-tables.ts b/packages/coding-agent/src/cli/flag-tables.ts
+--- a/packages/coding-agent/src/cli/flag-tables.ts
++++ b/packages/coding-agent/src/cli/flag-tables.ts
+@@ -359,6 +359,7 @@
+ 	"--startup-presence",
+ 	"--startup-no-telemetry",
+ 	"--startup-no-marketplace",
++	"--startup-no-logging",
+ 	"--no-lsp",
+ 	"--no-pty",
+ 	"--hide-thinking",
+diff --git a/packages/coding-agent/src/main.ts b/packages/coding-agent/src/main.ts
+--- a/packages/coding-agent/src/main.ts
++++ b/packages/coding-agent/src/main.ts
+@@ -1850,10 +1850,13 @@
+ 	rawArgs: string[],
+ 	deps: RunRootCommandDependencies = DEFAULT_RUN_ROOT_DEPENDENCIES,
+ ): Promise<void> {
++	if (parsed.startupNoLogging && !parsed.restrictTools)
++		throw new Error("--startup-no-logging requires --restrict-tools");
+ 	if (parsed.startupNoMarketplace && !parsed.restrictTools)
+ 		throw new Error("--startup-no-marketplace requires --restrict-tools");
+ 	if (parsed.startupNoTelemetry && !parsed.restrictTools)
+ 		throw new Error("--startup-no-telemetry requires --restrict-tools");
++	const startupLoggingOwner = parsed.startupNoLogging ? logger.ownStartupLogging() : undefined;
+ 	const startupTelemetryOwner = parsed.startupNoTelemetry ? ownStartupTelemetry() : undefined;
+ 	const startupMarketplaceOwner = parsed.startupNoMarketplace ? ownStartupMarketplace() : undefined;
+ 	logger.startTiming();
+@@ -2426,6 +2429,7 @@
+ 			if (startupPresence) options.startupDaemonPresence = startupPresence;
+ 			if (startupTelemetryOwner) options.startupTelemetryOwner = startupTelemetryOwner;
+ 			if (startupMarketplaceOwner) options.startupMarketplaceOwner = startupMarketplaceOwner;
++			if (startupLoggingOwner) options.startupLoggingOwner = startupLoggingOwner;
+ 			options.authStorage = authStorage;
+ 			options.modelRegistry = modelRegistry;
+ 			options.hasUI = isInteractive || mode === "rpc-ui";
+diff --git a/packages/coding-agent/src/sdk.ts b/packages/coding-agent/src/sdk.ts
+--- a/packages/coding-agent/src/sdk.ts
++++ b/packages/coding-agent/src/sdk.ts
+@@ -871,6 +871,7 @@
+ 	startupDaemonPresence?: StartupDaemonPresence;
+ 	startupTelemetryOwner?: StartupTelemetryOwner;
+ 	startupMarketplaceOwner?: StartupMarketplaceOwner;
++	startupLoggingOwner?: logger.StartupLoggingOwner;
+ 	/**
+ 	 * Permit only caller-supplied SDK custom tools inside a restricted session.
+ 	 * They must still be named in {@link toolNames}; discovered extensions, MCP,
+@@ -1062,6 +1063,8 @@
+ 			telemetry?: WeakRef<StartupTelemetryOwner>;
+ 			telemetryRetired?: true;
+ 			marketplace?: WeakRef<StartupMarketplaceOwner>;
++			marketplaceRetired?: true;
++			logging?: WeakRef<logger.StartupLoggingOwner>;
+ 			receipt: SealedRestrictedStartupReceipt;
+ 	  }
+ 	| undefined;
+@@ -1223,7 +1226,30 @@
+ 		!marketplace
+ 	)
+ 		throw new Error("Restricted marketplace owner identity or state mismatch");
+-	return retireStartupMarketplace(marketplace);
++	const receipt = retireStartupMarketplace(marketplace);
++	owner.marketplaceRetired = true;
++	return receipt;
++}
++
++/** Retire the exact source-owned local logger after marketplace. */
++export async function retireRestrictedStartupLogging(sessionManager: unknown, modelRegistry: unknown) {
++	const owner = restrictedOwner,
++		session = owner?.session.deref(),
++		registry = owner?.registry.deref(),
++		logging = owner?.logging?.deref();
++	if (
++		!restrictedSealed ||
++		restrictedStarts !== 1 ||
++		!owner?.marketplaceRetired ||
++		!session ||
++		session.isDisposed ||
++		session.sessionManager !== sessionManager ||
++		!registry ||
++		registry !== modelRegistry ||
++		!logging
++	)
++		throw new Error("Restricted logging owner identity or state mismatch");
++	return await logger.retireStartupLogging(logging);
+ }
+ 
+ /** Result from createAgentSession */
+@@ -2147,6 +2173,11 @@
+  */
+ export async function createAgentSession(options: CreateAgentSessionOptions = {}): Promise<CreateAgentSessionResult> {
+ 	if (
++		options.startupLoggingOwner !== undefined &&
++		(options.restrictToolNames !== true || !logger.isStartupLogging(options.startupLoggingOwner))
++	)
++		throw new Error("Startup logging requires its exact restricted CLI owner");
++	if (
+ 		options.startupMarketplaceOwner !== undefined &&
+ 		(options.restrictToolNames !== true || !isStartupMarketplace(options.startupMarketplaceOwner))
+ 	)
+@@ -2186,6 +2217,7 @@
+ 				...(options.startupDaemonPresence ? { presence: new WeakRef(options.startupDaemonPresence) } : {}),
+ 				...(options.startupTelemetryOwner ? { telemetry: new WeakRef(options.startupTelemetryOwner) } : {}),
+ 				...(options.startupMarketplaceOwner ? { marketplace: new WeakRef(options.startupMarketplaceOwner) } : {}),
++				...(options.startupLoggingOwner ? { logging: new WeakRef(options.startupLoggingOwner) } : {}),
+ 				receipt: Object.freeze({ ...result.startupRestrictions, credential_usage_joined: true }),
+ 			};
+ 	}
+diff --git a/packages/coding-agent/test/startup-logging-cli.test.ts b/packages/coding-agent/test/startup-logging-cli.test.ts
+new file mode 100644
+--- /dev/null
++++ b/packages/coding-agent/test/startup-logging-cli.test.ts
+@@ -0,0 +1,22 @@
++import { expect, test } from "bun:test";
++test("logging owner flag is valueless", async () => {
++	const { parseArgs } = await import("../src/cli/args");
++	const { VALUELESS_FLAGS } = await import("../src/cli/flag-tables");
++	const args = parseArgs([
++		"--startup-no-logging",
++		"--model",
++		"synthetic/model",
++		"--restrict-tools",
++		"--tools",
++		"read,edit",
++	]);
++	expect(args.startupNoLogging).toBe(true);
++	expect(args.model).toBe("synthetic/model");
++	expect(VALUELESS_FLAGS.has("--startup-no-logging")).toBe(true);
++});
++test("forged logging owner cannot initialize SDK", async () => {
++	const { createAgentSession } = await import("../src/sdk");
++	await expect(
++		createAgentSession({ restrictToolNames: true, startupLoggingOwner: { kind: "startup-logging" } }),
++	).rejects.toThrow("exact restricted CLI owner");
++});
+diff --git a/packages/utils/src/logger.ts b/packages/utils/src/logger.ts
+--- a/packages/utils/src/logger.ts
++++ b/packages/utils/src/logger.ts
+@@ -68,6 +68,7 @@
+  * For worker threads, whose main thread owns the process log file.
+  */
+ export function setLogForwarder(forwarder: LogForwarder | undefined): void {
++	if (startupLogging) throw new Error("Startup logging forwarder is closed");
+ 	logForwarder = forwarder;
+ }
+ 
+@@ -139,6 +140,7 @@
+ 
+ /** Register an out-of-band log sink and return a disposer. */
+ export function registerLogSink(sink: LogSink): () => void {
++	if (startupLogging) throw new Error("Startup logging sinks are closed");
+ 	logSinks.add(sink);
+ 	return () => {
+ 		logSinks.delete(sink);
+@@ -272,16 +274,42 @@
+ }
+ 
+ const scheduledPruneDirs = new Set<string>();
++const pendingPruneCallbacks = new Set<Promise<void>>();
++const pendingPruneHandles = new Set<ReturnType<typeof setImmediate>>();
++let pruneCallbackFailed = false;
+ 
+ /** Run shared retention only after logger construction has returned to the event loop. */
+ function schedulePruneStaleProcessLogs(dir: string): void {
+ 	if (scheduledPruneDirs.has(dir)) return;
+ 	scheduledPruneDirs.add(dir);
+-	const immediate = setImmediate(() => {
++	let finish!: () => void;
++	const pending = new Promise<void>(resolve => {
++		finish = resolve;
++	});
++	pendingPruneCallbacks.add(pending);
++	try {
++		const immediate = setImmediate(() => {
++			try {
++				scheduledPruneDirs.delete(dir);
++				pruneStaleProcessLogs(dir);
++			} catch (error) {
++				pruneCallbackFailed = true;
++				throw error;
++			} finally {
++				pendingPruneCallbacks.delete(pending);
++				pendingPruneHandles.delete(immediate);
++				finish();
++			}
++		});
++		pendingPruneHandles.add(immediate);
++		immediate.unref();
++	} catch (error) {
++		pendingPruneCallbacks.delete(pending);
+ 		scheduledPruneDirs.delete(dir);
+-		pruneStaleProcessLogs(dir);
+-	});
+-	immediate.unref();
++		pruneCallbackFailed = true;
++		finish();
++		throw error;
++	}
+ }
+ 
+ /** Ensure a logs directory exists; return the resolved path. */
+@@ -541,7 +569,59 @@
+  * The previous file transport writes its buffered records before closing, and
+  * the file level (`OMP_LOG_LEVEL`) is re-read on each reconfiguration.
+  */
++export interface StartupLoggingOwner {
++	readonly kind: "startup-logging";
++}
++let startupLogging: { handle: StartupLoggingOwner; phase: "open" | "closing" | "closed" | "failed" } | undefined;
++
++/** Own this module's local logger before restricted startup can reconfigure it. */
++export function ownStartupLogging(): StartupLoggingOwner {
++	if (startupLogging || logForwarder || logSinks.size)
++		throw new Error("Startup logging ownership is late or repeated");
++	const handle = Object.freeze({ kind: "startup-logging" as const });
++	startupLogging = { handle, phase: "open" };
++	try {
++		setTransportsOriginal({ console: false, file: false });
++	} catch (error) {
++		startupLogging.phase = "failed";
++		throw error;
++	}
++	return handle;
++}
++export function isStartupLogging(handle: unknown): handle is StartupLoggingOwner {
++	return !!startupLogging && startupLogging.handle === handle && startupLogging.phase === "open";
++}
++/** Close admission and join the original already-queued retention callbacks. */
++export async function retireStartupLogging(handle: unknown) {
++	const owner = startupLogging;
++	if (!owner || owner.handle !== handle || owner.phase !== "open")
++		throw new Error("Startup logging identity or state mismatch");
++	owner.phase = "closing";
++	for (const immediate of pendingPruneHandles) immediate.ref();
++	await Promise.all([...pendingPruneCallbacks]);
++	if (
++		pruneCallbackFailed ||
++		pendingPruneCallbacks.size ||
++		logForwarder ||
++		logSinks.size ||
++		activeTransports?.file ||
++		activeTransports?.console
++	) {
++		owner.phase = "failed";
++		throw new Error("Startup logging remained active");
++	}
++	owner.phase = "closed";
++	return Object.freeze({
++		logging_closed: true as const,
++		transport_closed: true as const,
++		retention_joined: true as const,
++	});
++}
+ export function setTransports(opts: { console?: boolean; file?: boolean | string }): void {
++	if (startupLogging) throw new Error("Startup logging transports are closed");
++	setTransportsOriginal(opts);
++}
++function setTransportsOriginal(opts: { console?: boolean; file?: boolean | string }): void {
+ 	transportOpts = opts;
+ 	if (!activeTransports) return; // applied lazily when local logging is first initialized
+ 	const previousTransports = activeTransports;
+diff --git a/packages/utils/test/startup-logging-owner.test.ts b/packages/utils/test/startup-logging-owner.test.ts
+new file mode 100644
+--- /dev/null
++++ b/packages/utils/test/startup-logging-owner.test.ts
+@@ -0,0 +1,77 @@
++import { expect, test } from "bun:test";
++import { mkdtempSync, rmSync } from "node:fs";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++
++const loggerPath = join(import.meta.dir, "../src/logger.ts");
++function run(code: string) {
++	const dir = mkdtempSync(join(tmpdir(), "foundry-logger-test-"));
++	try {
++		const p = Bun.spawnSync(
++			[
++				process.execPath,
++				"-e",
++				`import * as logger from ${JSON.stringify(loggerPath)};\nconst dir=${JSON.stringify(dir)};\n${code}`,
++			],
++			{ stdout: "pipe", stderr: "pipe" },
++		);
++		if (p.exitCode !== 0) throw new Error(p.stderr.toString());
++		return JSON.parse(p.stdout.toString());
++	} finally {
++		rmSync(dir, { recursive: true, force: true });
++	}
++}
++test("owns and joins actual native logger and rejects late cached entry points", () => {
++	const out = run(`
++  const fs = await import('node:fs'); const path = await import('node:path');
++  const cachedTransport = logger.setTransports, cachedSink = logger.registerLogSink, cachedForwarder = logger.setLogForwarder;
++  cachedTransport({file:dir,console:false}); logger.info('BEFORE');
++  const owner = logger.ownStartupLogging();
++  let wrong=false,duplicate=false,transport=false,sink=false,forwarder=false,late=false;
++  try {await logger.retireStartupLogging({kind:'startup-logging'});} catch {wrong=true;}
++  const result = await logger.retireStartupLogging(owner);
++  try {await logger.retireStartupLogging(owner);} catch {duplicate=true;}
++  try {cachedTransport({file:dir});} catch {transport=true;}
++  try {cachedSink(()=>{});} catch {sink=true;}
++  try {cachedForwarder({emit(){},flush(){}});} catch {forwarder=true;}
++  try {logger.ownStartupLogging();} catch {late=true;}
++  logger.warn('AFTER');
++  const contents=fs.readdirSync(dir).map(f=>fs.readFileSync(path.join(dir,f),'utf8')).join('');
++  console.log(JSON.stringify({wrong,duplicate,transport,sink,forwarder,late,result,before:contents.includes('BEFORE'),after:contents.includes('AFTER')}));
++ `);
++	expect(out).toEqual({
++		wrong: true,
++		duplicate: true,
++		transport: true,
++		sink: true,
++		forwarder: true,
++		late: true,
++		result: { logging_closed: true, transport_closed: true, retention_joined: true },
++		before: true,
++		after: false,
++	});
++});
++test("ownership refuses an existing sink or forwarder without invoking either", () => {
++	for (const setup of [
++		"logger.registerLogSink(()=>{throw Error('called')})",
++		"logger.setLogForwarder({emit(){throw Error('called')},flush(){throw Error('called')}})",
++	]) {
++		const out = run(
++			`${setup}; let refused=false; try {logger.ownStartupLogging();} catch {refused=true;} console.log(JSON.stringify({refused}));`,
++		);
++		expect(out.refused).toBe(true);
++	}
++});
++
++test("retirement waits for the original held retention callback", () => {
++	const out = run(`
++  const original=globalThis.setImmediate; let held;
++  globalThis.setImmediate=(fn,...args)=>{held=()=>fn(...args);return {unref(){},ref(){}}};
++  logger.setTransports({file:dir,console:false}); logger.info('INITIALIZE'); globalThis.setImmediate=original;
++  const owner=logger.ownStartupLogging(); let settled=false;
++  const retirement=logger.retireStartupLogging(owner).then(()=>{settled=true});
++  await new Promise(resolve=>setTimeout(resolve,10)); const before=settled;
++  held(); await retirement; console.log(JSON.stringify({before,after:settled}));
++ `);
++	expect(out).toEqual({ before: false, after: true });
++});

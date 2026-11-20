@@ -9,13 +9,13 @@
 //! file. Forced termination is a cleanup failure, never a manufactured
 //! success.
 
-use std::fs::{self, File};
+use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Component, Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -25,12 +25,46 @@ use tokio::sync::mpsc;
 use super::protocol::{
     ChannelIdentity, FaultClass, Inbound, InboundState, OutboundState, ParentMessage, ProtocolFault,
 };
-use super::{CaptureFault, create_private_dir, policy, sha256_hex, write_private_new};
+use super::{
+    CaptureFault, PrivateArtifact, PrivateTreeBudget, create_private_dir, open_private_file,
+    policy, private_child, require_private_directory, sha256_hex, verify_private_tree,
+    write_private_new,
+};
 
 /// The bridge source, embedded from the repository and materialized with
 /// its exact bytes into each private host root.
-pub const BRIDGE_SOURCE: &[u8] = include_bytes!("bridge.ts");
+pub const BRIDGE_SOURCE: &[u8] = concat!(
+    include_str!("bridge_channel.ts"),
+    "\n",
+    include_str!("bridge.ts")
+)
+.as_bytes();
+/// The same channel implementation loaded early by the source-profile preload.
+pub const CHANNEL_SOURCE: &[u8] = include_bytes!("bridge_channel.ts");
+/// Bounded startup metadata diagnostic, loaded only by the owned qualifier.
+/// It does not establish startup settlement or grant capture admission.
+pub const QUALIFICATION_STARTUP_PROBE: &[u8] = include_bytes!("startup_probe.ts");
+/// Original credential-prefetch owner check, only for the pinned owned qualifier.
+pub const QUALIFICATION_STARTUP_AUTH: &[u8] = include_bytes!("startup_auth.ts");
+/// Fixed off-memory owner check, only for the pinned owned qualifier.
+pub const QUALIFICATION_STARTUP_MEMORY: &[u8] = include_bytes!("startup_memory.ts");
+/// Owned qualifier's native logging retirement; never installed by ordinary capture.
+pub const QUALIFICATION_STARTUP_LOGGING: &[u8] = include_bytes!("startup_logging.ts");
 pub const SANDBOX_EXEC: &str = "/usr/bin/sandbox-exec";
+/// Exact owned extraction path of the pinned OMP 18.13.2 macOS arm64 host.
+/// This declares private executable metadata, not a per-request content hash.
+pub(crate) const NATIVE_MODULE_RELATIVE_PATH: &str =
+    "home/.omp/natives/18.13.2/pi_natives.darwin-arm64.node";
+
+/// Match a bounded walk's inventoried path at hosts/<one-root>/<exact module>.
+/// No workspace, store, other host version, or arbitrary-depth path is admitted.
+pub(crate) fn is_run_native_module(relative: &Path) -> bool {
+    let mut parts = relative.components();
+    matches!(parts.next(), Some(Component::Normal(name)) if name == "hosts")
+        && matches!(parts.next(), Some(Component::Normal(_)))
+        && parts.as_path().as_os_str() == std::ffi::OsStr::new(NATIVE_MODULE_RELATIVE_PATH)
+}
+
 /// Longest RPC stdout line kept for parsing (agent_end carries messages).
 const MAX_RPC_LINE_BYTES: usize = 32 * 1024 * 1024;
 /// Largest native session file read back for identity reconciliation.
@@ -56,6 +90,164 @@ fn fault(class: FaultClass, code: &'static str) -> CaptureFault {
     CaptureFault::new(class, code)
 }
 
+fn materialize_source(
+    path: &Path,
+    source: &[u8],
+    unreadable: &'static str,
+    mismatch: &'static str,
+) -> Result<String, CaptureFault> {
+    write_private_new(path, source)?;
+    let written = fs::read(path).map_err(|_| fault(FaultClass::Bootstrap, unreadable))?;
+    let digest = sha256_hex(&written);
+    if digest != sha256_hex(source) {
+        return Err(fault(FaultClass::Bootstrap, mismatch));
+    }
+    Ok(digest)
+}
+
+/// Catalog behavior is explicit; ordinary capture never selects the qualifier.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CatalogProfile {
+    /// Preserve the host configuration used by ordinary capture sessions.
+    HostDefault,
+    /// Current-artifact, no-provider qualification; never selected by Live admission.
+    OwnedQualification,
+    /// Source-built SDK diagnostic; never selected by Live admission.
+    SourceQualification,
+    /// Source startup refusal diagnostic; never capture admission.
+    StartupObservation,
+}
+
+/// Artifact whose catalog API and inventory this qualification profile exercises.
+/// This is separate from the frozen live host pin in `policy`.
+pub const QUALIFICATION_OMP_SHA256: &str =
+    "ce80099f10c5ea4367523767230cb5b920f30cc139b9cf8758c1cc4b2f1f9409";
+
+/// Separate source-built diagnostic pin; source/patch identities are in validation.
+pub const SOURCE_QUALIFICATION_OMP_SHA256: &str =
+    "b5e50ce94846e29ea3db04ddab00f716208f21c0299263a30aee725c006ff9e9";
+
+pub const STARTUP_OBSERVATION_OMP_SHA256: &str =
+    "28c61efffbcc0806f6a7cab0721ea55c826b37decd39825aa5dfa7b1e2605406";
+pub const STARTUP_OBSERVER_SOURCE: &[u8] = concat!(
+    include_str!("bridge_channel.ts"),
+    "\n",
+    include_str!("startup_observer.ts")
+)
+.as_bytes();
+
+impl CatalogProfile {
+    pub fn is_owned(self) -> bool {
+        matches!(self, Self::OwnedQualification | Self::SourceQualification)
+    }
+
+    fn artifact_pin(self) -> Option<&'static str> {
+        match self {
+            Self::HostDefault => None,
+            Self::OwnedQualification => Some(QUALIFICATION_OMP_SHA256),
+            Self::SourceQualification => Some(SOURCE_QUALIFICATION_OMP_SHA256),
+            Self::StartupObservation => Some(STARTUP_OBSERVATION_OMP_SHA256),
+        }
+    }
+}
+
+// Shipped catalog union enumerated on the artifact above (bundled, shared,
+// descriptors, implicit and special managers); includes legacy minimax-cn.
+const QUALIFICATION_DISABLED_PROVIDERS: &[&str] = &[
+    "abliteration",
+    "aiand",
+    "aimlapi",
+    "alibaba-coding-plan",
+    "alibaba-token-plan",
+    "amazon-bedrock",
+    "apple",
+    "azure",
+    "baseten",
+    "bedrock-mantle",
+    "cerebras",
+    "charm-hyper",
+    "cline-pass",
+    "cloudflare-ai-gateway",
+    "cloudflare-workers-ai",
+    "commandcode",
+    "coralbricks",
+    "coreweave",
+    "cursor",
+    "deepinfra",
+    "deepseek",
+    "devin",
+    "factory-droid",
+    "firepass",
+    "fireworks",
+    "github-copilot",
+    "gitlab-duo",
+    "gitlab-duo-agent",
+    "gmi-cloud",
+    "google",
+    "google-antigravity",
+    "google-gemini-cli",
+    "google-vertex",
+    "groq",
+    "helmcode",
+    "huggingface",
+    "inception",
+    "kilo",
+    "kimi-code",
+    "litellm",
+    "llama.cpp",
+    "lm-studio",
+    "local",
+    "meta",
+    "minimax",
+    "minimax-cn",
+    "minimax-code",
+    "minimax-code-cn",
+    "mistral",
+    "modular",
+    "moonshot",
+    "muse-code",
+    "nanogpt",
+    "novita",
+    "nvidia",
+    "ollama",
+    "ollama-cloud",
+    "openai",
+    "openai-codex",
+    "opencode-go",
+    "opencode-zen",
+    "openrouter",
+    "qianfan",
+    "qwen-portal",
+    "sakana",
+    "sambanova",
+    "scaleway",
+    "siliconflow",
+    "siliconflow-cn",
+    "singularityapi-dev",
+    "singularityapi-tech",
+    "snowflake",
+    "stepfun",
+    "synthetic",
+    "together",
+    "typesafe",
+    "umans",
+    "venice",
+    "vercel-ai-gateway",
+    "vllm",
+    "wafer-serverless",
+    "web",
+    "xai",
+    "xai-oauth",
+    "xiaomi",
+    "xiaomi-token-plan-ams",
+    "xiaomi-token-plan-cn",
+    "xiaomi-token-plan-sgp",
+    "yolo-auto",
+    "zai",
+    "zenmux",
+    "zhipu-coding-plan",
+];
+
 /// Everything needed to launch one fresh native host.
 #[derive(Clone, Debug)]
 pub struct HostSpec {
@@ -73,6 +265,7 @@ pub struct HostSpec {
     /// Literal files the host must not read (the credential file).
     pub deny_literals: Vec<PathBuf>,
     pub identity: ChannelIdentity,
+    pub catalog: CatalogProfile,
 }
 
 /// Paths of a launched host root.
@@ -95,12 +288,19 @@ pub struct LaunchRecord {
     pub bridge_sha256: String,
     pub models_yml_sha256: String,
     pub config_yml_sha256: String,
+    pub startup_probe_sha256: Option<String>,
+    pub startup_auth_sha256: Option<String>,
+    pub startup_memory_sha256: Option<String>,
+    pub startup_logging_sha256: Option<String>,
     pub env_names: Vec<String>,
+    pub startup_env_sha256: Option<String>,
 }
 
 /// Summary of a native session `get_state` response.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct HostState {
+    /// Digest of the complete native model object; no model headers are retained.
+    pub native_model_sha256: Option<String>,
     pub provider: Option<String>,
     pub model: Option<String>,
     pub api: Option<String>,
@@ -137,6 +337,7 @@ pub enum RpcEvent {
 #[derive(Debug)]
 pub enum HostEvent {
     Bridge(Inbound),
+    Startup(super::startup::Inbound),
     BridgeFault(ProtocolFault),
     BridgeEof,
     Rpc(RpcEvent),
@@ -160,13 +361,25 @@ pub struct HostExit {
     pub stderr_sha256: String,
 }
 
+enum BridgeOutbound {
+    Capture(ParentMessage, Vec<u8>),
+    Startup(super::startup::ParentMessage),
+}
+
+enum RpcInput {
+    Commands(mpsc::Sender<Vec<u8>>),
+    // Keep the pipe open until teardown without starting a command writer.
+    Startup { _stdin: ChildStdin },
+}
+
 pub struct Host {
     pub paths: HostPaths,
     pub launch: LaunchRecord,
     child: Child,
     pgid: i32,
-    bridge_out: Option<mpsc::Sender<(ParentMessage, Vec<u8>)>>,
-    rpc_out: Option<mpsc::Sender<Vec<u8>>>,
+    bridge_out: Option<mpsc::Sender<BridgeOutbound>>,
+    startup_observation: bool,
+    rpc_input: Option<RpcInput>,
     threads: Vec<JoinHandle<()>>,
     stderr: std::sync::Arc<std::sync::Mutex<StderrDigest>>,
 }
@@ -300,11 +513,20 @@ impl Host {
     /// Returns the host and the receiver of its events (kept separate so
     /// the driver can await events while sending frames).
     pub fn launch(spec: &HostSpec) -> Result<(Host, mpsc::Receiver<HostEvent>), CaptureFault> {
+        let startup_observation = spec.catalog == CatalogProfile::StartupObservation;
+        if let Some(pin) = spec.catalog.artifact_pin() {
+            let bytes = fs::read(&spec.omp)
+                .map_err(|_| fault(FaultClass::Pins, "qualification_host_unreadable"))?;
+            if sha256_hex(&bytes) != pin {
+                return Err(fault(FaultClass::Pins, "qualification_host_pin_mismatch"));
+            }
+        }
         let workspace = fs::canonicalize(&spec.workspace)
             .map_err(|_| fault(FaultClass::Bootstrap, "workspace_missing"))?;
         if workspace != spec.workspace {
             return Err(fault(FaultClass::Bootstrap, "workspace_not_canonical"));
         }
+        verify_private_tree(&workspace, &[], &mut PrivateTreeBudget::new(None))?;
         if workspace.join(".omp").symlink_metadata().is_ok() {
             return Err(fault(
                 FaultClass::Bootstrap,
@@ -332,16 +554,79 @@ impl Host {
             create_private_dir(dir)?;
         }
         write_private_new(&paths.agent.join("models.yml"), MODELS_YML.as_bytes())?;
-        write_private_new(&paths.agent.join("config.yml"), CONFIG_YML.as_bytes())?;
-        write_private_new(&paths.bridge, BRIDGE_SOURCE)?;
-        let written = fs::read(&paths.bridge)
-            .map_err(|_| fault(FaultClass::Bootstrap, "bridge_unreadable"))?;
-        let bridge_sha256 = sha256_hex(&written);
-        if bridge_sha256 != sha256_hex(BRIDGE_SOURCE) {
-            return Err(fault(FaultClass::Bootstrap, "bridge_bytes_mismatch"));
+        let config = match spec.catalog {
+            CatalogProfile::HostDefault => CONFIG_YML.to_owned(),
+            CatalogProfile::OwnedQualification
+            | CatalogProfile::SourceQualification
+            | CatalogProfile::StartupObservation => format!(
+                "{CONFIG_YML}\ndisabledProviders: {}\nmcp:\n  enableProjectConfig: false\n\ntelemetry:\n  otlpExportEnabled: false\n\nmarketplace:\n  autoUpdate: off\n",
+                serde_json::to_string(QUALIFICATION_DISABLED_PROVIDERS)
+                    .expect("literal provider inventory")
+            ),
+        };
+        write_private_new(&paths.agent.join("config.yml"), config.as_bytes())?;
+        let bridge_sha256 = materialize_source(
+            &paths.bridge,
+            if startup_observation {
+                STARTUP_OBSERVER_SOURCE
+            } else {
+                BRIDGE_SOURCE
+            },
+            "bridge_unreadable",
+            "bridge_bytes_mismatch",
+        )?;
+        if spec.catalog == CatalogProfile::SourceQualification || startup_observation {
+            materialize_source(
+                &root.join("bridge/bridge_channel.ts"),
+                CHANNEL_SOURCE,
+                "channel_unreadable",
+                "channel_bytes_mismatch",
+            )?;
         }
+        let startup_probe_sha256 = if spec.catalog.is_owned() {
+            Some(materialize_source(
+                &root.join("bridge/startup_probe.ts"),
+                QUALIFICATION_STARTUP_PROBE,
+                "startup_probe_unreadable",
+                "startup_probe_bytes_mismatch",
+            )?)
+        } else {
+            None
+        };
 
-        let policy_text = sandbox_policy(
+        let startup_auth_sha256 = if spec.catalog.is_owned() {
+            Some(materialize_source(
+                &root.join("bridge/startup_auth.ts"),
+                QUALIFICATION_STARTUP_AUTH,
+                "startup_auth_unreadable",
+                "startup_auth_bytes_mismatch",
+            )?)
+        } else {
+            None
+        };
+        let startup_memory_sha256 = if spec.catalog.is_owned() {
+            Some(materialize_source(
+                &root.join("bridge/startup_memory.ts"),
+                QUALIFICATION_STARTUP_MEMORY,
+                "startup_memory_unreadable",
+                "startup_memory_bytes_mismatch",
+            )?)
+        } else {
+            None
+        };
+
+        let startup_logging_sha256 = if spec.catalog.is_owned() {
+            Some(materialize_source(
+                &root.join("bridge/startup_logging.ts"),
+                QUALIFICATION_STARTUP_LOGGING,
+                "startup_logging_unreadable",
+                "startup_logging_bytes_mismatch",
+            )?)
+        } else {
+            None
+        };
+
+        let mut policy_text = sandbox_policy(
             &spec.omp,
             &root,
             &workspace,
@@ -349,7 +634,21 @@ impl Host {
             &spec.deny,
             &spec.deny_literals,
         )?;
-        let args = omp_args(&paths);
+        if startup_observation {
+            policy_text.push_str("(deny process-fork)");
+        }
+        let mut args = omp_args(&paths);
+        if startup_observation {
+            args.push("--restrict-tools".into());
+            args.push("--startup-empty-auth".into());
+            args.push("--startup-presence".into());
+            args.push("--startup-no-telemetry".into());
+            args.push("--startup-no-marketplace".into());
+            args.push("--startup-no-logging".into());
+            args.push("--startup-plugin-roots".into());
+            args.push("--startup-extension".into());
+            args.push("--startup-rpc-observation".into());
+        }
 
         let (c2r_read, c2r_write) =
             std::io::pipe().map_err(|_| fault(FaultClass::Bootstrap, "pipe_create_failed"))?;
@@ -359,20 +658,66 @@ impl Host {
         let r2c_read: OwnedFd = r2c_read.into();
         let tx_ino = fstat_ino(c2r_write.as_raw_fd())?;
         let rx_ino = fstat_ino(r2c_read.as_raw_fd())?;
-        let env = host_env(&paths, &spec.identity, tx_ino, rx_ino);
+        let mut env = host_env(&paths, &spec.identity, tx_ino, rx_ino);
+        if startup_observation {
+            env.iter_mut()
+                .find(|(name, _)| name == "CF_PILOT_API")
+                .expect("fixed environment")
+                .1 = "cf-pilot-startup-v2".into();
+            env.push(("BUN_OPTIONS".into(), "--preload ./bridge/bridge.ts".into()));
+        }
+
+        if spec.catalog == CatalogProfile::SourceQualification {
+            env.push(("CF_PILOT_EARLY_CHANNEL".into(), "1".into()));
+        }
+        if spec.catalog.is_owned() {
+            env.push((
+                "CF_PILOT_CATALOG".into(),
+                if spec.catalog == CatalogProfile::SourceQualification {
+                    "owned-source-fixed-v1"
+                } else {
+                    "owned-bundled-fixed-v1"
+                }
+                .into(),
+            ));
+            env.push((
+                "BUN_OPTIONS".into(),
+                "--preload ./bridge/startup_probe.ts".into(),
+            ));
+            env.push((
+                "CF_PILOT_PROBE_WORKSPACE".into(),
+                workspace.to_string_lossy().into_owned(),
+            ));
+            env.push((
+                "CF_PILOT_PROBE_TRACE".into(),
+                root.join("startup.jsonl").to_string_lossy().into_owned(),
+            ));
+        }
 
         let mut cmd = Command::new(SANDBOX_EXEC);
         cmd.arg("-p")
             .arg(&policy_text)
             .arg(&spec.omp)
             .args(&args)
-            .current_dir(&workspace)
+            // Relative preload arguments avoid Bun's whitespace parsing. The
+            // qualifier restores the canonical workspace before SDK startup.
+            .current_dir(if startup_probe_sha256.is_some() || startup_observation {
+                &root
+            } else {
+                &workspace
+            })
             .env_clear()
             .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .process_group(0);
+        verify_private_tree(
+            &root,
+            &[Path::new(NATIVE_MODULE_RELATIVE_PATH)],
+            &mut PrivateTreeBudget::new(None),
+        )?;
+        private_child(&mut cmd);
         let child_write = c2r_write.as_raw_fd();
         let child_read = r2c_read.as_raw_fd();
         // SAFETY: only async-signal-safe libc calls (fcntl, dup2, close)
@@ -395,8 +740,17 @@ impl Host {
             policy_sha256: sha256_hex(policy_text.as_bytes()),
             bridge_sha256,
             models_yml_sha256: sha256_hex(MODELS_YML.as_bytes()),
-            config_yml_sha256: sha256_hex(CONFIG_YML.as_bytes()),
+            config_yml_sha256: sha256_hex(config.as_bytes()),
+            startup_probe_sha256,
+            startup_auth_sha256,
+            startup_memory_sha256,
+            startup_logging_sha256,
             env_names: env.iter().map(|(k, _)| k.clone()).collect(),
+            startup_env_sha256: startup_observation.then(|| {
+                // This ordered list is the cleared process environment, including
+                // the private channel's fresh session and inherited pipe identities.
+                sha256_hex(&serde_json::to_vec(&env).expect("fixed startup environment"))
+            }),
         };
 
         let (event_tx, events) = mpsc::channel(EVENT_QUEUE);
@@ -420,14 +774,29 @@ impl Host {
             let identity = spec.identity.clone();
             let mut reader = c2r_read;
             threads.push(std::thread::spawn(move || {
-                let mut state = InboundState::new(identity);
+                let mut legacy =
+                    (!startup_observation).then(|| InboundState::new(identity.clone()));
+                let mut startup =
+                    startup_observation.then(|| super::startup::ChannelState::new(identity));
                 loop {
-                    let event = match state.read(&mut reader) {
-                        Ok(Some(inbound)) => HostEvent::Bridge(inbound),
-                        Ok(None) => HostEvent::BridgeEof,
-                        Err(f) => HostEvent::BridgeFault(f),
+                    let event = if let Some(state) = &mut startup {
+                        match state.read(&mut reader) {
+                            Ok(Some(inbound)) => HostEvent::Startup(inbound),
+                            Ok(None) => HostEvent::BridgeEof,
+                            Err(f) => HostEvent::BridgeFault(f),
+                        }
+                    } else {
+                        match legacy
+                            .as_mut()
+                            .expect("selected legacy codec")
+                            .read(&mut reader)
+                        {
+                            Ok(Some(inbound)) => HostEvent::Bridge(inbound),
+                            Ok(None) => HostEvent::BridgeEof,
+                            Err(f) => HostEvent::BridgeFault(f),
+                        }
                     };
-                    let stop = !matches!(event, HostEvent::Bridge(_));
+                    let stop = !matches!(event, HostEvent::Bridge(_) | HostEvent::Startup(_));
                     if tx.blocking_send(event).is_err() || stop {
                         break;
                     }
@@ -435,15 +804,28 @@ impl Host {
             }));
         }
         // Bridge writer: bounded queue → fd 4 frames.
-        let (bridge_tx, mut bridge_rx) = mpsc::channel::<(ParentMessage, Vec<u8>)>(WRITE_QUEUE);
+        let (bridge_tx, mut bridge_rx) = mpsc::channel::<BridgeOutbound>(WRITE_QUEUE);
         {
             let tx = event_tx.clone();
             let identity = spec.identity.clone();
             let mut writer = r2c_write;
             threads.push(std::thread::spawn(move || {
-                let mut state = OutboundState::new(identity);
-                while let Some((msg, payload)) = bridge_rx.blocking_recv() {
-                    if let Err(ProtocolFault(code)) = state.write(&mut writer, msg, &payload) {
+                let mut legacy =
+                    (!startup_observation).then(|| OutboundState::new(identity.clone()));
+                let mut startup =
+                    startup_observation.then(|| super::startup::ChannelState::new(identity));
+                while let Some(message) = bridge_rx.blocking_recv() {
+                    let result = match message {
+                        BridgeOutbound::Capture(msg, payload) => legacy
+                            .as_mut()
+                            .ok_or(ProtocolFault("capture_on_startup_channel"))
+                            .and_then(|state| state.write(&mut writer, msg, &payload)),
+                        BridgeOutbound::Startup(msg) => startup
+                            .as_mut()
+                            .ok_or(ProtocolFault("startup_on_capture_channel"))
+                            .and_then(|state| state.write(&mut writer, msg)),
+                    };
+                    if let Err(ProtocolFault(code)) = result {
                         let _ = tx.blocking_send(HostEvent::BridgeWriteFailed(code));
                         break;
                     }
@@ -456,10 +838,14 @@ impl Host {
             let tx = event_tx.clone();
             threads.push(std::thread::spawn(move || {
                 let mut reader = BufReader::with_capacity(64 * 1024, stdout);
+                let mut startup_catalog_seen = false;
                 loop {
-                    match read_bounded_line(&mut reader, MAX_RPC_LINE_BYTES) {
+                    match read_bounded_line(&mut reader, MAX_RPC_LINE_BYTES, startup_observation) {
                         Ok(Some(line)) => {
-                            let event = match parse_rpc_line(&line) {
+                            let event = match parse_rpc_output(
+                                &line,
+                                startup_observation.then_some(&mut startup_catalog_seen),
+                            ) {
                                 // Streaming updates and other frames are
                                 // summarized away here, never queued.
                                 Ok(RpcEvent::Other) => continue,
@@ -474,7 +860,12 @@ impl Host {
                             }
                         }
                         Ok(None) => {
-                            let _ = tx.blocking_send(HostEvent::RpcEof);
+                            let event = if startup_observation && !startup_catalog_seen {
+                                HostEvent::RpcFault("startup_rpc_catalog_missing")
+                            } else {
+                                HostEvent::RpcEof
+                            };
+                            let _ = tx.blocking_send(event);
                             break;
                         }
                         Err(code) => {
@@ -486,9 +877,11 @@ impl Host {
                 }
             }));
         }
-        // RPC stdin writer: dropping the sender closes stdin (EOF).
-        let (rpc_tx, mut rpc_rx) = mpsc::channel::<Vec<u8>>(WRITE_QUEUE);
-        {
+        let rpc_input = if startup_observation {
+            RpcInput::Startup { _stdin: stdin }
+        } else {
+            // RPC stdin writer: dropping the sender closes stdin (EOF).
+            let (rpc_tx, mut rpc_rx) = mpsc::channel::<Vec<u8>>(WRITE_QUEUE);
             let tx = event_tx.clone();
             let mut stdin = stdin;
             threads.push(std::thread::spawn(move || {
@@ -500,7 +893,8 @@ impl Host {
                 }
                 drop(stdin);
             }));
-        }
+            RpcInput::Commands(rpc_tx)
+        };
         // stderr: count and hash only; content is never retained.
         let digest = std::sync::Arc::new(std::sync::Mutex::new(StderrDigest {
             hasher: Some(<sha2::Sha256 as sha2::Digest>::new()),
@@ -536,7 +930,8 @@ impl Host {
             child,
             pgid,
             bridge_out: Some(bridge_tx),
-            rpc_out: Some(rpc_tx),
+            startup_observation,
+            rpc_input: Some(rpc_input),
             threads,
             stderr: digest,
         };
@@ -553,17 +948,38 @@ impl Host {
             .bridge_out
             .as_ref()
             .ok_or(fault(FaultClass::Protocol, "bridge_channel_closed"))?;
-        out.send((msg, payload))
+        if self.startup_observation {
+            return Err(fault(FaultClass::Protocol, "capture_on_startup_channel"));
+        }
+        out.send(BridgeOutbound::Capture(msg, payload))
+            .await
+            .map_err(|_| fault(FaultClass::Protocol, "bridge_channel_closed"))
+    }
+
+    pub(crate) async fn send_startup(
+        &self,
+        msg: super::startup::ParentMessage,
+    ) -> Result<(), CaptureFault> {
+        if !self.startup_observation {
+            return Err(fault(FaultClass::Protocol, "startup_on_capture_channel"));
+        }
+        self.bridge_out
+            .as_ref()
+            .ok_or(fault(FaultClass::Protocol, "bridge_channel_closed"))?
+            .send(BridgeOutbound::Startup(msg))
             .await
             .map_err(|_| fault(FaultClass::Protocol, "bridge_channel_closed"))
     }
 
     /// Send one RPC command (a JSON object) as a JSONL line.
     pub async fn send_rpc(&self, command: &Value) -> Result<(), CaptureFault> {
-        let out = self
-            .rpc_out
-            .as_ref()
-            .ok_or(fault(FaultClass::Bootstrap, "rpc_stdin_closed"))?;
+        let out = match &self.rpc_input {
+            Some(RpcInput::Commands(out)) => out,
+            Some(RpcInput::Startup { .. }) => {
+                return Err(fault(FaultClass::Protocol, "rpc_on_startup_channel"));
+            }
+            None => return Err(fault(FaultClass::Bootstrap, "rpc_stdin_closed")),
+        };
         let mut line = serde_json::to_vec(command)
             .map_err(|_| fault(FaultClass::Bootstrap, "rpc_encode_failed"))?;
         line.push(b'\n');
@@ -579,7 +995,7 @@ impl Host {
 
     /// Close RPC stdin: the host disposes its session and exits.
     pub fn close_rpc(&mut self) {
-        self.rpc_out = None;
+        self.rpc_input = None;
     }
 
     /// Wait for the host to exit on its own within `grace`, draining events
@@ -592,7 +1008,7 @@ impl Host {
         grace: Duration,
     ) -> (Vec<HostEvent>, HostExit) {
         self.bridge_out = None;
-        self.rpc_out = None;
+        self.close_rpc();
         let deadline = tokio::time::Instant::now() + grace;
         let mut drained = Vec::new();
         let mut status = None;
@@ -737,13 +1153,20 @@ fn drain<R: Read>(r: &mut R) {
     while matches!(r.read(&mut buf), Ok(n) if n > 0) {}
 }
 
-/// Read one LF-terminated line of at most `max` bytes. `Ok(None)` at EOF
-/// with nothing buffered; a final unterminated line is returned as is.
-fn read_bounded_line<R: BufRead>(r: &mut R, max: usize) -> Result<Option<Vec<u8>>, &'static str> {
+/// Read one line of at most `max` bytes. Ordinary RPC also accepts a final
+/// unterminated line. Startup observation requires each frame to end in LF.
+fn read_bounded_line<R: BufRead>(
+    r: &mut R,
+    max: usize,
+    require_newline: bool,
+) -> Result<Option<Vec<u8>>, &'static str> {
     let mut line = Vec::new();
     loop {
         let buf = r.fill_buf().map_err(|_| "rpc_stdout_read_failed")?;
         if buf.is_empty() {
+            if require_newline && !line.is_empty() {
+                return Err("startup_rpc_line_unterminated");
+            }
             return Ok(if line.is_empty() { None } else { Some(line) });
         }
         match buf.iter().position(|&b| b == b'\n') {
@@ -774,14 +1197,43 @@ fn str_field(v: &Value, key: &str) -> Option<String> {
 /// Summarize one RPC stdout line. Unknown frame types are `Other`; frames
 /// the pilot forbids are flagged; nothing textual is retained.
 pub fn parse_rpc_line(line: &[u8]) -> Result<RpcEvent, &'static str> {
+    parse_rpc_output(line, None)
+}
+
+fn parse_rpc_output(
+    line: &[u8],
+    startup_catalog_seen: Option<&mut bool>,
+) -> Result<RpcEvent, &'static str> {
     if line.iter().all(u8::is_ascii_whitespace) {
-        return Ok(RpcEvent::Other);
+        return if startup_catalog_seen.is_some() {
+            Err("startup_rpc_unexpected_output")
+        } else {
+            Ok(RpcEvent::Other)
+        };
     }
     let v: Value = serde_json::from_slice(line).map_err(|_| "rpc_line_not_json")?;
     let kind = v
         .get("type")
         .and_then(Value::as_str)
         .ok_or("rpc_line_untyped")?;
+    if let Some(catalog_seen) = startup_catalog_seen {
+        if kind == "ready" {
+            return Err("startup_raw_ready");
+        }
+        if kind != "available_commands_update" {
+            return Err("startup_rpc_unexpected_output");
+        }
+        if !v.as_object().is_some_and(|fields| fields.len() == 2)
+            || !v.get("commands").is_some_and(Value::is_array)
+        {
+            return Err("startup_rpc_catalog_shape");
+        }
+        if *catalog_seen {
+            return Err("startup_rpc_catalog_repeated");
+        }
+        *catalog_seen = true;
+        return Ok(RpcEvent::Other);
+    }
     Ok(match kind {
         "ready" => RpcEvent::Ready,
         "response" => {
@@ -821,6 +1273,9 @@ pub fn parse_rpc_line(line: &[u8]) -> Result<RpcEvent, &'static str> {
 fn state_from(data: &Value) -> HostState {
     let model = data.get("model");
     HostState {
+        native_model_sha256: model
+            .filter(|m| m.is_object())
+            .map(|m| sha256_hex(&serde_json::to_vec(m).expect("parsed native model"))),
         provider: model.and_then(|m| str_field(m, "provider")),
         model: model.and_then(|m| str_field(m, "id")),
         api: model.and_then(|m| str_field(m, "api")),
@@ -1067,6 +1522,8 @@ pub struct NativeSession {
 /// modifying it. `Ok(None)` when no session file exists (no assistant
 /// message was produced).
 pub fn read_native_session(sessions: &Path) -> Result<Option<NativeSession>, CaptureFault> {
+    require_private_directory(sessions)?;
+    verify_private_tree(sessions, &[], &mut PrivateTreeBudget::new(None))?;
     let mut files = Vec::new();
     for entry in fs::read_dir(sessions)
         .map_err(|_| fault(FaultClass::Usage, "native_sessions_unreadable"))?
@@ -1084,15 +1541,20 @@ pub fn read_native_session(sessions: &Path) -> Result<Option<NativeSession>, Cap
         _ => return Err(fault(FaultClass::Usage, "native_session_ambiguous")),
     }
     let path = files.remove(0);
-    let meta = fs::symlink_metadata(&path)
+    let file = open_private_file(&path, PrivateArtifact::File)?;
+    let meta = file
+        .metadata()
         .map_err(|_| fault(FaultClass::Usage, "native_session_unreadable"))?;
-    if !meta.is_file() || meta.len() > MAX_NATIVE_SESSION_BYTES {
+    if meta.len() > MAX_NATIVE_SESSION_BYTES {
         return Err(fault(FaultClass::Usage, "native_session_shape"));
     }
-    let mut bytes = Vec::with_capacity(meta.len() as usize);
-    File::open(&path)
-        .and_then(|mut f| f.read_to_end(&mut bytes))
+    let mut bytes = Vec::new();
+    file.take(MAX_NATIVE_SESSION_BYTES + 1)
+        .read_to_end(&mut bytes)
         .map_err(|_| fault(FaultClass::Usage, "native_session_unreadable"))?;
+    if bytes.len() as u64 > MAX_NATIVE_SESSION_BYTES {
+        return Err(fault(FaultClass::Usage, "native_session_shape"));
+    }
     let mut assistant = Vec::new();
     let mut model_usage_entries = 0u32;
     let mut unparsed_lines = 0u32;
@@ -1136,16 +1598,96 @@ pub fn file_identity(path: &Path) -> Option<(u64, u64)> {
 
 #[cfg(test)]
 mod tests {
+    // Compatibility setup for NEW owned synthetic fixtures only. Existing
+    // entries keep their modes, so deliberate negative mutations stay negative.
+    // These helpers do not participate in product permission qualification.
+    fn fixture_private_tempdir() -> std::io::Result<tempfile::TempDir> {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::Builder::new()
+            .prefix("cf-owned-pilot-fixture-")
+            .tempdir_in("/private/tmp")?;
+        std::fs::set_permissions(temp.path(), std::fs::Permissions::from_mode(0o700))?;
+        Ok(temp)
+    }
+
+    fn fixture_private_dir(path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(path.as_ref())?;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+    }
+
+    fn fixture_private_dirs(path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
+        let mut missing = Vec::new();
+        let mut cursor = path.as_ref();
+        while !cursor.try_exists()? {
+            missing.push(cursor.to_path_buf());
+            cursor = cursor
+                .parent()
+                .ok_or_else(|| std::io::Error::other("owned fixture has no parent"))?;
+        }
+        for directory in missing.into_iter().rev() {
+            fixture_private_dir(directory)?;
+        }
+        Ok(())
+    }
+
+    fn fixture_private_write(
+        path: impl AsRef<std::path::Path>,
+        bytes: impl AsRef<[u8]>,
+    ) -> std::io::Result<()> {
+        use std::io::Write;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let existed = path.as_ref().symlink_metadata().is_ok();
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(path.as_ref())?;
+        if !existed {
+            file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        }
+        file.write_all(bytes.as_ref())
+    }
+
     use super::*;
 
     fn workspace() -> (tempfile::TempDir, ToolPolicy) {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = fixture_private_tempdir().unwrap();
         let ws = fs::canonicalize(dir.path()).unwrap();
-        fs::create_dir_all(ws.join("src")).unwrap();
+        fixture_private_dirs(ws.join("src")).unwrap();
         for f in policy::READ_SET {
-            fs::write(ws.join(f), b"x").unwrap();
+            fixture_private_write(ws.join(f), b"x").unwrap();
         }
         (dir, ToolPolicy::pilot(ws))
+    }
+
+    #[test]
+    fn owned_catalog_rejects_an_unqualified_artifact_before_creating_host_state() {
+        let (dir, policy) = workspace();
+        let omp = policy.workspace.join("not-omp");
+        fixture_private_write(&omp, b"not the qualified artifact").unwrap();
+        let root = policy.workspace.join("new-host");
+        let spec = HostSpec {
+            omp,
+            root: root.clone(),
+            workspace: policy.workspace,
+            real_home: dir.path().to_path_buf(),
+            deny: Vec::new(),
+            deny_literals: Vec::new(),
+            identity: ChannelIdentity::new("qualification-test".into(), "host-test".into())
+                .unwrap(),
+            catalog: CatalogProfile::OwnedQualification,
+        };
+        let Err(error) = Host::launch(&spec) else {
+            panic!("unqualified host must not launch");
+        };
+        assert_eq!(error.class, FaultClass::Pins);
+        assert_eq!(error.code, "qualification_host_pin_mismatch");
+        assert!(!root.exists());
     }
 
     #[test]
@@ -1233,7 +1775,7 @@ mod tests {
             admit_tool(&p, "edit", br#"{"path":"src/lib.rs:1"}"#),
             ToolVerdict::Refuse("path_uri_or_device_forbidden")
         );
-        fs::write(p.workspace.join("src/lib.rs:1"), b"shadow").unwrap();
+        fixture_private_write(p.workspace.join("src/lib.rs:1"), b"shadow").unwrap();
         assert_eq!(
             admit_tool(&p, "read", br#"{"path":"src/lib.rs:1"}"#),
             ToolVerdict::Refuse("selector_literal_shadow")
@@ -1250,7 +1792,7 @@ mod tests {
             ToolVerdict::Refuse("path_symlink")
         );
         fs::remove_file(p.workspace.join("Cargo.toml")).unwrap();
-        fs::create_dir(p.workspace.join("Cargo.toml")).unwrap();
+        fixture_private_dir(p.workspace.join("Cargo.toml")).unwrap();
         assert_eq!(
             admit_tool(&p, "read", br#"{"path":"Cargo.toml"}"#),
             ToolVerdict::Refuse("not_regular_file")
@@ -1286,16 +1828,78 @@ mod tests {
     }
 
     #[test]
+    fn startup_stdout_accepts_only_one_command_catalog() {
+        let mut seen = false;
+        let catalog = br#"{"type":"available_commands_update","commands":[]}"#;
+        for (line, code) in [
+            (b" ".as_slice(), "startup_rpc_unexpected_output"),
+            (b"malformed", "rpc_line_not_json"),
+            (b"{}", "rpc_line_untyped"),
+            (br#"{"type":"ready"}"#, "startup_raw_ready"),
+            (
+                br#"{"type":"advisor_cost_changed"}"#,
+                "startup_rpc_unexpected_output",
+            ),
+            (
+                br#"{"type":"response","command":"get_state","success":true}"#,
+                "startup_rpc_unexpected_output",
+            ),
+            (
+                br#"{"type":"available_commands_update","commands":{}}"#,
+                "startup_rpc_catalog_shape",
+            ),
+            (
+                br#"{"type":"available_commands_update","commands":[],"extra":true}"#,
+                "startup_rpc_catalog_shape",
+            ),
+        ] {
+            assert_eq!(parse_rpc_output(line, Some(&mut seen)), Err(code));
+            assert!(!seen);
+        }
+        assert_eq!(
+            parse_rpc_output(catalog, Some(&mut seen)),
+            Ok(RpcEvent::Other)
+        );
+        assert!(seen);
+        assert_eq!(
+            parse_rpc_output(catalog, Some(&mut seen)),
+            Err("startup_rpc_catalog_repeated")
+        );
+        assert_eq!(parse_rpc_line(br#"{"type":"ready"}"#), Ok(RpcEvent::Ready));
+        assert_eq!(
+            parse_rpc_line(br#"{"type":"advisor_cost_changed"}"#),
+            Ok(RpcEvent::Other)
+        );
+    }
+
+    #[test]
     fn bounded_lines_refuse_oversize() {
         let mut r = std::io::Cursor::new(b"abc\ndef".to_vec());
-        assert_eq!(read_bounded_line(&mut r, 8).unwrap().unwrap(), b"abc");
-        assert_eq!(read_bounded_line(&mut r, 8).unwrap().unwrap(), b"def");
-        assert!(read_bounded_line(&mut r, 8).unwrap().is_none());
+        assert_eq!(
+            read_bounded_line(&mut r, 8, false).unwrap().unwrap(),
+            b"abc"
+        );
+        assert_eq!(
+            read_bounded_line(&mut r, 8, false).unwrap().unwrap(),
+            b"def"
+        );
+        assert!(read_bounded_line(&mut r, 8, false).unwrap().is_none());
         let mut r = std::io::Cursor::new(vec![b'x'; 20]);
         assert_eq!(
-            read_bounded_line(&mut r, 8).unwrap_err(),
+            read_bounded_line(&mut r, 8, false).unwrap_err(),
             "rpc_line_too_large"
         );
+    }
+
+    #[test]
+    fn startup_stdout_requires_lf_termination() {
+        let mut r = b"{}\n{}".as_slice();
+        assert_eq!(read_bounded_line(&mut r, 8, true), Ok(Some(b"{}".to_vec())));
+        assert_eq!(
+            read_bounded_line(&mut r, 8, true),
+            Err("startup_rpc_line_unterminated")
+        );
+        assert_eq!(read_bounded_line(&mut r, 8, true), Ok(None));
     }
 
     #[test]
@@ -1334,9 +1938,9 @@ mod tests {
 
     #[test]
     fn native_session_identity_is_read_back() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = fixture_private_tempdir().unwrap();
         assert!(read_native_session(dir.path()).unwrap().is_none());
-        fs::write(
+        fixture_private_write(
             dir.path().join("2026_x.jsonl"),
             b"{\"type\":\"session\",\"id\":\"s\"}\n{\"type\":\"message\",\"id\":\"e1\",\"message\":{\"role\":\"assistant\",\"responseId\":\"msg_1\",\"stopReason\":\"stop\"}}\n",
         )
@@ -1345,5 +1949,48 @@ mod tests {
         assert_eq!(s.assistant.len(), 1);
         assert_eq!(s.assistant[0].response_id.as_deref(), Some("msg_1"));
         assert_eq!(s.model_usage_entries, 0);
+    }
+    #[test]
+    fn privacy_native_session_readback_requires_private_regular_files() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let bytes=b"{\"type\":\"session\",\"id\":\"owned\"}\n{\"type\":\"message\",\"id\":\"owned-entry\",\"message\":{\"role\":\"assistant\",\"responseId\":\"msg_owned\",\"stopReason\":\"stop\"}}\n";
+        for case in ["private", "wide", "executable", "special", "symlink"] {
+            eprintln!("owned native-session privacy case: {case}");
+            let temp = fixture_private_tempdir().unwrap();
+            let root = fs::canonicalize(temp.path()).unwrap();
+            let sessions = root.join("sessions");
+            create_private_dir(&sessions).unwrap();
+            let path = sessions.join("owned.jsonl");
+            write_private_new(&path, bytes).unwrap();
+            match case {
+                "wide" => fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap(),
+                "executable" => {
+                    fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap()
+                }
+                "special" => {
+                    fs::set_permissions(&path, fs::Permissions::from_mode(0o1600)).unwrap()
+                }
+                "symlink" => {
+                    let target = root.join("owned-target");
+                    fs::rename(&path, &target).unwrap();
+                    symlink(target, &path).unwrap();
+                }
+                "private" => {}
+                _ => unreachable!(),
+            }
+            let result = read_native_session(&sessions);
+            if case == "private" {
+                assert_eq!(
+                    result.unwrap().unwrap().assistant[0].response_id.as_deref(),
+                    Some("msg_owned")
+                );
+            } else {
+                let fault = result.unwrap_err();
+                assert_eq!(
+                    (fault.class, fault.code),
+                    (FaultClass::Privacy, "private_artifact_not_private")
+                );
+            }
+        }
     }
 }

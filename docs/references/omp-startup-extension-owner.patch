@@ -1,0 +1,502 @@
+Experimental source-owned startup extension dispatch; not automatically applied by Context Foundry.
+Target: can1357/oh-my-pi @ 24439066040e006eb08da7b204f0ac41c79d2de9
+Owner: 003 T006 bounded-pilot-v2 startup observation and admission.
+Requires prior caller/auth/refusal/restricted/catalog/settings/empty-auth/presence/telemetry/marketplace/logging/plugin-roots patches.
+Modules: extensions/runner::{raceHandlerWithTimeout,ExtensionRunner.emit,addExtensions}; CLI and SDK exact-session binding.
+Tests: startup-extension-owner.test.ts and existing extensions-runner, SDK and CLI suites.
+Difference: --startup-extension requires --restrict-tools and binds the exact runner;
+it joins original session_start handlers and observers, refuses timeout and failure,
+rejects repeated dispatch or additions, and emits a one-use identity-bound receipt
+outside the handler. Ordinary extension behavior remains available without the flag.
+Other extension work, complete inventory, Ready, paid execution, signing and release remain open.
+
+MIT License
+
+Copyright (c) 2025 Mario Zechner
+Copyright (c) 2025-2026 Can Bölük
+Copyright (c) 2026 Stencil Labs, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+diff --git a/packages/coding-agent/src/cli/args.ts b/packages/coding-agent/src/cli/args.ts
+--- a/packages/coding-agent/src/cli/args.ts
++++ b/packages/coding-agent/src/cli/args.ts
+@@ -88,6 +88,7 @@
+ 	startupNoMarketplace?: boolean;
+ 	startupNoLogging?: boolean;
+ 	startupPluginRoots?: boolean;
++	startupExtension?: boolean;
+ 	noLsp?: boolean;
+ 	noPty?: boolean;
+ 	hooks?: string[];
+@@ -372,6 +373,8 @@
+ 			result.noSession = true;
+ 		} else if (arg === "--no-tools") {
+ 			result.noTools = true;
++		} else if (arg === "--startup-extension") {
++			result.startupExtension = true;
+ 		} else if (arg === "--startup-plugin-roots") {
+ 			result.startupPluginRoots = true;
+ 		} else if (arg === "--startup-no-logging") {
+diff --git a/packages/coding-agent/src/cli/flag-tables.ts b/packages/coding-agent/src/cli/flag-tables.ts
+--- a/packages/coding-agent/src/cli/flag-tables.ts
++++ b/packages/coding-agent/src/cli/flag-tables.ts
+@@ -361,6 +361,7 @@
+ 	"--startup-no-marketplace",
+ 	"--startup-no-logging",
+ 	"--startup-plugin-roots",
++	"--startup-extension",
+ 	"--no-lsp",
+ 	"--no-pty",
+ 	"--hide-thinking",
+diff --git a/packages/coding-agent/src/extensibility/extensions/runner.ts b/packages/coding-agent/src/extensibility/extensions/runner.ts
+--- a/packages/coding-agent/src/extensibility/extensions/runner.ts
++++ b/packages/coding-agent/src/extensibility/extensions/runner.ts
+@@ -182,6 +182,93 @@
+ 	return eventType === "session_shutdown" ? sessionShutdownHandlerTimeoutMs : extensionHandlerTimeoutMs;
+ }
+ 
++export interface StartupExtensionOwner {
++	readonly kind: "startup-extension";
++}
++let unownedSessionStarts = 0;
++let startupExtension:
++	| {
++			handle: StartupExtensionOwner;
++			runner?: WeakRef<ExtensionRunner>;
++			phase: "open" | "dispatching" | "closed" | "failed";
++			ready: boolean;
++			failed: boolean;
++			pending: Set<Promise<void>>;
++			handlers: number;
++			receipt?: object;
++			consumed: boolean;
++	  }
++	| undefined;
++export function ownStartupExtension(): StartupExtensionOwner {
++	if (startupExtension || unownedSessionStarts) throw new Error("Startup extension ownership is late or repeated");
++	const handle = Object.freeze({ kind: "startup-extension" as const });
++	startupExtension = {
++		handle,
++		phase: "open",
++		ready: false,
++		failed: false,
++		pending: new Set(),
++		handlers: 0,
++		consumed: false,
++	};
++	return handle;
++}
++export function isStartupExtension(handle: unknown): handle is StartupExtensionOwner {
++	return (
++		!!startupExtension &&
++		startupExtension.handle === handle &&
++		startupExtension.phase === "open" &&
++		!startupExtension.runner
++	);
++}
++export function bindStartupExtension(handle: unknown, runner: unknown): void {
++	const owner = startupExtension;
++	if (
++		!owner ||
++		owner.handle !== handle ||
++		owner.phase !== "open" ||
++		owner.runner ||
++		!(runner instanceof ExtensionRunner)
++	)
++		throw new Error("Startup extension runner identity mismatch");
++	owner.runner = new WeakRef(runner);
++}
++export function readyStartupExtension(handle: unknown, runner: unknown): void {
++	const owner = startupExtension;
++	if (
++		!owner ||
++		owner.handle !== handle ||
++		owner.runner?.deref() !== runner ||
++		owner.phase !== "dispatching" ||
++		owner.ready
++	)
++		throw new Error("Startup extension readiness mismatch");
++	owner.ready = true;
++}
++export function consumeStartupExtensionReceipt(receipt: unknown) {
++	const owner = startupExtension;
++	if (!owner || owner.phase !== "closed" || owner.receipt !== receipt || owner.consumed)
++		throw new Error("Startup extension receipt mismatch");
++	owner.consumed = true;
++	return owner.receipt;
++}
++function trackStartupHandler(owner: NonNullable<typeof startupExtension>, original: Promise<unknown>): void {
++	if (++owner.handlers > 64) {
++		owner.failed = true;
++		throw new Error("Startup extension handler limit");
++	}
++	const observer = original.then(
++		() => {
++			owner.pending.delete(observer);
++		},
++		() => {
++			owner.failed = true;
++			owner.pending.delete(observer);
++		},
++	);
++	owner.pending.add(observer);
++}
++
+ const EXTENSION_HANDLER_TIMEOUT = Symbol("extensionHandlerTimeout");
+ const EXTENSION_HANDLER_ABORTED = Symbol("extensionHandlerAborted");
+ 
+@@ -317,6 +404,7 @@
+ 	work: (handlerSignal: AbortSignal, timeoutBudget: HandlerTimeoutBudget) => Promise<T> | T,
+ 	timeoutMs: number,
+ 	signal?: AbortSignal,
++	onOriginal?: (promise: Promise<T>) => void,
+ ): Promise<T | typeof EXTENSION_HANDLER_TIMEOUT | typeof EXTENSION_HANDLER_ABORTED> {
+ 	if (signal?.aborted) return EXTENSION_HANDLER_ABORTED;
+ 
+@@ -373,6 +461,7 @@
+ 	try {
+ 		if (signal?.aborted) return EXTENSION_HANDLER_ABORTED;
+ 		const workPromise = Promise.resolve(work(handlerSignal, timeoutBudget));
++		onOriginal?.(workPromise);
+ 		const result = await Promise.race([workPromise, interruptPromise]);
+ 		if (result === EXTENSION_HANDLER_TIMEOUT) {
+ 			await Promise.race([
+@@ -1151,6 +1240,7 @@
+ 	 */
+ 	async addExtensions(added: readonly Extension[]): Promise<void> {
+ 		if (added.length === 0) return;
++		if (startupExtension?.runner?.deref() === this) throw new Error("Startup extension additions are closed");
+ 		this.extensions.push(...added);
+ 		this.#loadOrder?.push(...added);
+ 		// Presenters their factories registered before they joined.
+@@ -1880,6 +1970,8 @@
+ 		const signals = [outerSignal, sessionStopSignal].filter((s): s is AbortSignal => s !== undefined);
+ 		const signal = signals.length === 0 ? undefined : signals.length === 1 ? signals[0] : AbortSignal.any(signals);
+ 		if (signal?.aborted) return undefined;
++		const owned =
++			event.type === "session_start" && startupExtension?.runner?.deref() === this ? startupExtension : undefined;
+ 		const registrationScope: ToolRegistrationScope = { pending: new Set(), closed: false };
+ 		let handlerResult: R | typeof EXTENSION_HANDLER_TIMEOUT | typeof EXTENSION_HANDLER_ABORTED | undefined;
+ 		let handlerFailure: { error: unknown } | undefined;
+@@ -1912,6 +2004,7 @@
+ 					},
+ 					timeoutMs,
+ 					signal,
++					owned ? promise => trackStartupHandler(owned, promise) : undefined,
+ 				),
+ 			);
+ 		} catch (error) {
+@@ -1919,6 +2012,11 @@
+ 		} finally {
+ 			registrationScope.closed = true;
+ 		}
++		if (
++			owned &&
++			(handlerResult === EXTENSION_HANDLER_ABORTED || handlerResult === EXTENSION_HANDLER_TIMEOUT || handlerFailure)
++		)
++			owned.failed = true;
+ 		if (handlerResult === EXTENSION_HANDLER_ABORTED) return undefined;
+ 		if (handlerResult === EXTENSION_HANDLER_TIMEOUT) {
+ 			const error = `handler timed out after ${timeoutMs}ms`;
+@@ -1950,10 +2048,48 @@
+ 	}
+ 
+ 	async emit<TEvent extends RunnerEmitEvent>(event: TEvent): Promise<RunnerEmitResult<TEvent>> {
+-		const result = await this.#emitTo(this.extensions, event);
+-		// Recorded once the broadcast ends: an extension added mid-broadcast is
+-		// reached by the live iteration, one added later gets the replay.
++		if (event.type === "session_start" && !startupExtension)
++			unownedSessionStarts = Math.min(2, unownedSessionStarts + 1);
++		const owner = event.type === "session_start" ? startupExtension : undefined;
++		if (owner) {
++			if (owner.runner?.deref() !== this || owner.phase !== "open")
++				throw new Error("Startup extension dispatch identity or state mismatch");
++			owner.phase = "dispatching";
++		}
++		let result: RunnerEmitResult<TEvent>;
++		try {
++			result = await this.#emitTo(this.extensions, event);
++		} catch (error) {
++			if (owner) owner.phase = "failed";
++			throw error;
++		}
+ 		if (event.type === "session_start") this.#sessionStartEvent = event;
++		if (owner) {
++			while (owner.pending.size) await Promise.all(owner.pending);
++			if (owner.failed || !owner.ready || owner.handlers < 1 || owner.handlers > 64) {
++				owner.phase = "failed";
++				throw new Error("Startup extension did not settle");
++			}
++			owner.phase = "closed";
++			owner.receipt = Object.freeze({
++				handlers_joined: true as const,
++				callbacks_joined: true as const,
++				starts_closed: true as const,
++				handlers: owner.handlers,
++			});
++			const notify = (globalThis as Record<symbol, unknown>)[
++				Symbol.for("context-foundry.startup.extension-settled.v1")
++			];
++			if (typeof notify !== "function") {
++				owner.phase = "failed";
++				throw new Error("Startup extension observer unavailable");
++			}
++			notify(owner.receipt);
++			if (!owner.consumed) {
++				owner.phase = "failed";
++				throw new Error("Startup extension receipt not consumed");
++			}
++		}
+ 		return result;
+ 	}
+ 
+diff --git a/packages/coding-agent/src/main.ts b/packages/coding-agent/src/main.ts
+--- a/packages/coding-agent/src/main.ts
++++ b/packages/coding-agent/src/main.ts
+@@ -73,7 +73,7 @@
+ import { injectOmpExtensionCliRoots } from "./discovery/omp-extension-roots";
+ import { formatExtensionLoadNotifications } from "./extensibility/extensions/load-errors";
+ import { ExtensionRuntime, importExtensionModule, loadExtensions } from "./extensibility/extensions/loader";
+-import { ExtensionRunner } from "./extensibility/extensions/runner";
++import { ExtensionRunner, ownStartupExtension } from "./extensibility/extensions/runner";
+ import type { ExtensionUIContext } from "./extensibility/extensions/types";
+ import {
+ 	scheduleMarketplaceAutoUpdate,
+@@ -1851,6 +1851,8 @@
+ 	rawArgs: string[],
+ 	deps: RunRootCommandDependencies = DEFAULT_RUN_ROOT_DEPENDENCIES,
+ ): Promise<void> {
++	if (parsed.startupExtension && !parsed.restrictTools)
++		throw new Error("--startup-extension requires --restrict-tools");
+ 	if (parsed.startupPluginRoots && !parsed.restrictTools)
+ 		throw new Error("--startup-plugin-roots requires --restrict-tools");
+ 	if (parsed.startupNoLogging && !parsed.restrictTools)
+@@ -1859,6 +1861,7 @@
+ 		throw new Error("--startup-no-marketplace requires --restrict-tools");
+ 	if (parsed.startupNoTelemetry && !parsed.restrictTools)
+ 		throw new Error("--startup-no-telemetry requires --restrict-tools");
++	const startupExtensionOwner = parsed.startupExtension ? ownStartupExtension() : undefined;
+ 	const startupPluginRootsOwner = parsed.startupPluginRoots ? ownStartupPluginRoots() : undefined;
+ 	const startupLoggingOwner = parsed.startupNoLogging ? logger.ownStartupLogging() : undefined;
+ 	const startupTelemetryOwner = parsed.startupNoTelemetry ? ownStartupTelemetry() : undefined;
+@@ -2435,6 +2438,7 @@
+ 			if (startupMarketplaceOwner) options.startupMarketplaceOwner = startupMarketplaceOwner;
+ 			if (startupLoggingOwner) options.startupLoggingOwner = startupLoggingOwner;
+ 			if (startupPluginRootsOwner) options.startupPluginRootsOwner = startupPluginRootsOwner;
++			if (startupExtensionOwner) options.startupExtensionOwner = startupExtensionOwner;
+ 			options.authStorage = authStorage;
+ 			options.modelRegistry = modelRegistry;
+ 			options.hasUI = isInteractive || mode === "rpc-ui";
+diff --git a/packages/coding-agent/src/sdk.ts b/packages/coding-agent/src/sdk.ts
+--- a/packages/coding-agent/src/sdk.ts
++++ b/packages/coding-agent/src/sdk.ts
+@@ -1,4 +1,12 @@
+ import * as path from "node:path";
++import {
++	bindStartupExtension,
++	isStartupExtension,
++	readyStartupExtension,
++	consumeStartupExtensionReceipt,
++	type StartupExtensionOwner,
++} from "./extensibility/extensions/runner";
++export { consumeStartupExtensionReceipt };
+ import { isStartupPluginRoots, retireStartupPluginRoots, type StartupPluginRootsOwner } from "./discovery/helpers";
+ import {
+ 	isStartupMarketplace,
+@@ -874,6 +882,7 @@
+ 	startupMarketplaceOwner?: StartupMarketplaceOwner;
+ 	startupLoggingOwner?: logger.StartupLoggingOwner;
+ 	startupPluginRootsOwner?: StartupPluginRootsOwner;
++	startupExtensionOwner?: StartupExtensionOwner;
+ 	/**
+ 	 * Permit only caller-supplied SDK custom tools inside a restricted session.
+ 	 * They must still be named in {@link toolNames}; discovered extensions, MCP,
+@@ -1069,6 +1078,7 @@
+ 			logging?: WeakRef<logger.StartupLoggingOwner>;
+ 			loggingRetired?: true;
+ 			pluginRoots?: WeakRef<StartupPluginRootsOwner>;
++			extension?: WeakRef<StartupExtensionOwner>;
+ 			receipt: SealedRestrictedStartupReceipt;
+ 	  }
+ 	| undefined;
+@@ -1276,7 +1286,13 @@
+ 		!roots
+ 	)
+ 		throw new Error("Restricted plugin roots identity or state mismatch");
+-	return await retireStartupPluginRoots(roots);
++	const receipt = await retireStartupPluginRoots(roots);
++	if (owner.extension) {
++		const extension = owner.extension.deref();
++		if (!extension || !session.extensionRunner) throw new Error("Restricted extension owner missing");
++		readyStartupExtension(extension, session.extensionRunner);
++	}
++	return receipt;
+ }
+ 
+ /** Result from createAgentSession */
+@@ -2200,6 +2216,11 @@
+  */
+ export async function createAgentSession(options: CreateAgentSessionOptions = {}): Promise<CreateAgentSessionResult> {
+ 	if (
++		options.startupExtensionOwner !== undefined &&
++		(options.restrictToolNames !== true || !isStartupExtension(options.startupExtensionOwner))
++	)
++		throw new Error("Startup extension requires its exact restricted CLI owner");
++	if (
+ 		options.startupPluginRootsOwner !== undefined &&
+ 		(options.restrictToolNames !== true || !isStartupPluginRoots(options.startupPluginRootsOwner))
+ 	)
+@@ -2240,6 +2261,17 @@
+ 		(startWarmup, startUsage) => createAgentSessionBody(options, startWarmup, startUsage),
+ 		options.restrictToolNames === true,
+ 	);
++	if (options.startupExtensionOwner) {
++		if (
++			!result.startupRestrictions ||
++			result.startupPreparation?.credential_usage_joined !== true ||
++			!options.modelRegistry ||
++			restrictedStarts !== 1 ||
++			!result.session.extensionRunner
++		)
++			throw new Error("Restricted extension binding unavailable");
++		bindStartupExtension(options.startupExtensionOwner, result.session.extensionRunner);
++	}
+ 	if (result.startupRestrictions && result.startupPreparation?.credential_usage_joined === true) {
+ 		if (options.modelRegistry && restrictedStarts === 1)
+ 			restrictedOwner = {
+@@ -2251,6 +2283,7 @@
+ 				...(options.startupMarketplaceOwner ? { marketplace: new WeakRef(options.startupMarketplaceOwner) } : {}),
+ 				...(options.startupLoggingOwner ? { logging: new WeakRef(options.startupLoggingOwner) } : {}),
+ 				...(options.startupPluginRootsOwner ? { pluginRoots: new WeakRef(options.startupPluginRootsOwner) } : {}),
++				...(options.startupExtensionOwner ? { extension: new WeakRef(options.startupExtensionOwner) } : {}),
+ 				receipt: Object.freeze({ ...result.startupRestrictions, credential_usage_joined: true }),
+ 			};
+ 	}
+diff --git a/packages/coding-agent/test/startup-extension-owner.test.ts b/packages/coding-agent/test/startup-extension-owner.test.ts
+new file mode 100644
+--- /dev/null
++++ b/packages/coding-agent/test/startup-extension-owner.test.ts
+@@ -0,0 +1,106 @@
++import { expect, test } from "bun:test";
++import { mkdtempSync, rmSync } from "node:fs";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++const src = join(import.meta.dir, "../src");
++function run(body: string, beforeOwner = "") {
++	const dir = mkdtempSync(join(tmpdir(), "foundry-extension-test-"));
++	const init = `
++ const r=await import(${JSON.stringify(join(src, "extensibility/extensions/runner.ts"))});
++ const l=await import(${JSON.stringify(join(src, "extensibility/extensions/loader.ts"))});
++ const {EventBus}=await import(${JSON.stringify(join(src, "utils/event-bus.ts"))});
++ const {SessionManager}=await import(${JSON.stringify(join(src, "session/session-manager.ts"))});
++ const {AuthStorage}=await import(${JSON.stringify(join(src, "session/auth-storage.ts"))});
++ const {ModelRegistry}=await import(${JSON.stringify(join(src, "config/model-registry.ts"))});
++ const {Settings}=await import(${JSON.stringify(join(src, "config/settings.ts"))});
++ const {logger}=await import('@oh-my-pi/pi-utils'); logger.setTransports({file:false,console:false});
++ const dir=${JSON.stringify(dir)};const auth=await AuthStorage.create(dir+'/auth.db');const registry=new ModelRegistry(auth);
++ const runtime=new l.ExtensionRuntime();let handler=async()=>{};
++ const extension=await l.loadExtensionFromFactory(pi=>{pi.on('session_start',async()=>await handler())},dir,new EventBus(),runtime);
++ const runner=new r.ExtensionRunner([extension],runtime,dir,SessionManager.inMemory(dir),registry,undefined,Settings.isolated());
++ ${beforeOwner}
++ const owner=r.ownStartupExtension();r.bindStartupExtension(owner,runner);
++ let receipt=null,forgedRejected=false;globalThis[Symbol.for('context-foundry.startup.extension-settled.v1')]=proof=>{try{r.consumeStartupExtensionReceipt({})}catch{forgedRejected=true}receipt=r.consumeStartupExtensionReceipt(proof)};
++ `;
++	try {
++		const p = Bun.spawnSync([process.execPath, "-e", init + body], {
++			stdout: "pipe",
++			stderr: "pipe",
++			cwd: src + "/..",
++		});
++		if (p.exitCode !== 0) throw Error(p.stderr.toString());
++		return JSON.parse(p.stdout.toString());
++	} finally {
++		rmSync(dir, { recursive: true, force: true });
++	}
++}
++test("original handler and observer finish before exact receipt, and late dispatch is closed", () => {
++	const v = run(`
++  let release,entered=false,finished=false,starts=0;const held=new Promise(r=>release=r);
++  handler=async()=>{starts++;entered=true;r.readyStartupExtension(owner,runner);await held;finished=true};
++  const emission=runner.emit({type:'session_start'});for(let i=0;i<100&&!entered;i++)await new Promise(r=>setTimeout(r,1));
++  const before=receipt===null&&!finished;release();await emission;
++  let repeat=false,add=false,forged=false;try{await runner.emit({type:'session_start'})}catch{repeat=true}
++  try{await runner.addExtensions([extension])}catch{add=true}try{r.consumeStartupExtensionReceipt({})}catch{forged=true}
++  console.log(JSON.stringify({before,finished,repeat,add,forged,forgedRejected,starts,receipt}));auth.close();
++ `);
++	expect(v).toEqual({
++		before: true,
++		finished: true,
++		repeat: true,
++		add: true,
++		forged: true,
++		forgedRejected: true,
++		starts: 1,
++		receipt: { handlers_joined: true, callbacks_joined: true, starts_closed: true, handlers: 1 },
++	});
++});
++test("timeout cannot attest while original ignores abort; after release it still fails", () => {
++	const v = run(`
++  let release,entered=false,finished=false,settled=false;const held=new Promise(r=>release=r);
++  handler=async()=>{entered=true;r.readyStartupExtension(owner,runner);await held;finished=true};r.testSetExtensionHandlerTimeoutMs(20);
++  const emission=runner.emit({type:'session_start'}).then(()=>{settled=true;return 'ok'},()=>{settled=true;return 'failed'});
++  for(let i=0;i<100&&!entered;i++)await new Promise(r=>setTimeout(r,1));await new Promise(r=>setTimeout(r,80));
++  const before=!settled&&!finished&&receipt===null;release();const outcome=await emission;
++  console.log(JSON.stringify({before,finished,outcome,receipt}));auth.close();
++ `);
++	expect(v).toEqual({ before: true, finished: true, outcome: "failed", receipt: null });
++});
++test("a failed handler and an unready owner cannot attest", () => {
++	for (const body of [
++		"handler=async()=>{r.readyStartupExtension(owner,runner);throw Error('synthetic')};",
++		"handler=async()=>{};",
++	]) {
++		const v = run(
++			`${body} let rejected=false;try{await runner.emit({type:'session_start'})}catch{rejected=true}console.log(JSON.stringify({rejected,receipt}));auth.close();`,
++		);
++		expect(v).toEqual({ rejected: true, receipt: null });
++	}
++});
++test("CLI flag is valueless and forged SDK owner is rejected", async () => {
++	const { parseArgs } = await import("../src/cli/args");
++	const { VALUELESS_FLAGS } = await import("../src/cli/flag-tables");
++	const { createAgentSession } = await import("../src/sdk");
++	const args = parseArgs([
++		"--startup-extension",
++		"--model",
++		"synthetic/model",
++		"--restrict-tools",
++		"--tools",
++		"read,edit",
++	]);
++	expect(args.startupExtension).toBe(true);
++	expect(args.model).toBe("synthetic/model");
++	expect(VALUELESS_FLAGS.has("--startup-extension")).toBe(true);
++	await expect(
++		createAgentSession({ restrictToolNames: true, startupExtensionOwner: { kind: "startup-extension" } }),
++	).rejects.toThrow("exact restricted CLI owner");
++});
++
++test("ownership refuses a previous session_start dispatch", () => {
++	const result = run(
++		"",
++		`await runner.emit({type:'session_start'});let late=false;try{r.ownStartupExtension()}catch{late=true}console.log(JSON.stringify({late}));auth.close();process.exit(0);`,
++	);
++	expect(result).toEqual({ late: true });
++});

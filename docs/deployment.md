@@ -139,7 +139,7 @@ No predecessor store, service or host-global configuration was migrated or chang
 | A busy status returns an old healthy snapshot | 003 returns `busy` when its engine slot is occupied. Completed status identifies the observed store/snapshot, not current-disk or model health. Read deadlines return `deadline_exceeded`, not a partial successful read or cached health certificate | Concurrent status/index, cancellation and delayed-library cases; no successful read after expiry |
 | Oversized lexical terms, rewrite/reclaim failures and neural transport churn | 001 owns bounded byte-preserving source/recovery; redb/Tantivy own physical persistence. 009 owns exact-input cache identity, visible partial coverage, disk-cap refusal and explicit offline purge. Do not port custom WAL/slot/checkpoint machinery or predecessor cache bytes | Long unbroken source text under the admitted file bound still retrieves byte-exactly; 001 restart/repair; 009 recipe/cache/index/worker acceptance before advertising semantics |
 | Workers use the wrong store or an unavailable route | 003 per-project configuration and transcript-visible fallback; only the task's independently authorized roots. No user-global entry pinning one repository across every session; borrowed subagents use their parent's configured connection | Real host/version tool ordering and fallback; root/hash/range rejection cannot widen permissions |
-| Release or optional-resource blockers | Release only when every active spec is complete ([release](release.md); owner policy 2026-10-04 replaced this row's 2026-10-01 rule of releasing the accepted scope). 009's signed-package checks block the release ([owner, 2026-11-06](validation.md#owner-decisions--2026-11-06), "Row 4 blocks release"). 010's real-model acceptance is deferred, so the release does not wait on it and 010's code stays experimental and unadvertised ([owner, 2026-11-06](validation.md#owner-decisions--2026-11-06), "Defer 010 real-model acceptance"). 013 is frozen off (2026-10-07), so its unfinished learning checks are not release conditions. Gateway account/model/spend inputs block forwarding and the gateway's separate release, not MCP | Matching real consumer, installed package or provider evidence for each advertised feature; no scratch-probe promotion |
+| Release or optional-resource blockers | Release only when every active spec is complete ([release](release.md); owner policy 2026-10-04 replaced this row's 2026-10-01 rule of releasing the accepted scope). 009's signed-package checks block the release ([owner, 2026-11-06](validation.md#owner-decisions--2026-11-06), "Row 4 blocks release"). 010's real-model acceptance is deferred, so the release does not wait on it and 010's code stays experimental and unadvertised ([owner, 2026-11-06](validation.md#owner-decisions--2026-11-06), "Defer 010 real-model acceptance"). 010 T001 and T002 are accepted at their written, experimental and unadvertised scope, so 010 no longer blocks the release ([owner, 2026-11-19](validation.md#owner-decisions--2026-11-19), "Accept at written scope"). 013 is frozen off (2026-10-07), so its unfinished learning checks are not release conditions. Gateway account/model/spend inputs block forwarding and the gateway's separate release, not MCP | Matching real consumer, installed package or provider evidence for each advertised feature; no scratch-probe promotion |
 
 The owner selected optional shared-owner MCP and the complete 001/003 T001–T003
 implementation tranche on 2026-10-01. Default stdio remains; explicit per-root
@@ -268,8 +268,12 @@ the development profile, which works as follows:
   pressure: `_exit` within about 1 ms of an owner SIGKILL, and the process gone within
   103 ms. One earlier unacknowledged run exceeded 2 s, cause unknown (see validation).
 
-  A SIGSTOPped worker cannot exit itself; package acceptance needs an OS-level
-  guardian.
+  A SIGSTOPped worker cannot exit itself, because the watcher is one of its own
+  threads; it cannot end a worker that stays stopped after its owner dies. Owner
+  decision, 2026-11-19, "Named limitation": no OS-level guardian is built, and package
+  acceptance does not need one; the earlier wording here, under which it did, is
+  superseded. It re-enters when a stranded stopped worker is observed
+  ([record](validation.md#owner-decisions--2026-11-19)).
 
   A killed owner cannot remove its scratch run directory. The next 009 or 013
   launch under the same scratch root removes each run directory whose owner pid is
@@ -612,6 +616,8 @@ transaction, then terminates/reaps owned workers: TERM, 5-second grace, KILL of 
 verified owned process tree/VM. Wait for disappearance before reporting stopped or
 releasing a job lock. PID names alone are not ownership; no broad process-name kills.
 Orphan containment must survive supervisor death via the accepted OS/service profile.
+One case is excepted: an embedding worker stopped by SIGSTOP when its owner dies is a
+named limitation (owner, 2026-11-19, "Named limitation"; see the 009 worker above).
 Gateway shutdown stops admission, allows an active request up to 5 seconds to finish,
 then closes upstream/downstream and marks incomplete usage unknown. It has no child
 model process to reap. Only after listener closure remove this run's verified token
@@ -630,6 +636,11 @@ schema upgrade it requires the pre-upgrade backup or compatible binary, never an
 writer against a new schema. Uninstall removes only owned executables/service/config
 entries, preserving stores, caches, memories, datasets and checkpoints by default.
 Data purge is a distinct explicit action with the existing ownership checks.
+
+The first release's compatibility and data-preservation statement applies these rules
+to the current formats and names where no upgrade support exists. It is a
+[draft in the release checklist](release.md#compatibility-and-data-preservation-for-the-first-release)
+until it is checked on the signed release candidate.
 
 ## Acceptance and release ownership
 
@@ -685,8 +696,12 @@ from prior state on restart; watching alone loads no model. Pause through
 require explicit resume. Ordinary status reads a publication observation; use
 `semantic status --audit` or MCP `status {"semantic_audit":true}` for integrity/census.
 
-Semantic generation format v5 remains derived data under schema 12: existing vector-cache
-rows and partitions remain reusable. Older generation formats are refused by name;
+Semantic generation format v6 remains derived data under schema 12: existing vector-cache
+rows and partitions remain reusable. The format was v5 until
+[2026-10-22](validation.md#interned-label-map-generation-v6--2026-10-22), when v6 began
+storing each distinct source path and hash once in the label map; the current number
+is `GENERATION_VERSION` in [`src/neural/index.rs`](../src/neural/index.rs).
+Older generation formats are refused by name;
 explicit preparation or `repair-index` republishes them from cache. Small edits publish
 one bounded ANN delta and a separate bounded location overlay. Location compaction
 retains unchanged ANN files. Immutable membership is stored outside the small manifest.
@@ -706,7 +721,7 @@ identity changes, unmatched/interrupted checkpoints and explicit repair rebuild 
 lookup. File-verification receipts never survive restart.
 Warm queries check owner/profile/manifest identity; refresh rechecks file versions.
 Explicit audits always validate independently. Cold verification and compaction remain
-corpus-sized. Generation v5 remains unchanged by the knowledge feature; the latter
+corpus-sized. The knowledge feature does not change the generation format; the feature
 was introduced by schema 10 and is preserved by the schema-12 upgrade.
 
 Selective knowledge preparation uses an explicitly configured HTTP or owned local provider and source

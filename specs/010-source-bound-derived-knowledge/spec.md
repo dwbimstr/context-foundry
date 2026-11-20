@@ -7,12 +7,13 @@ CPU count changes and counter wrap/reset invalidate an interval. Ports are relea
 both successful and failed observations. Status identifies `macos_host_cpu_ticks`,
 not Linux affinity/cgroups. No CPU quota, GPU headroom, thermal or battery guarantee is
 added. Linux tests verify the arithmetic and existing pressure/lifetime behavior; the
-native sampler is neither compiled nor executed in this Linux sandbox. Run the ignored
-`native_macos_cpu_observation` test and real pressure/resume checks on macOS before
-acceptance; `scripts/native-macos-acceptance.py` runs both. Owner decision, 2026-11-06,
+native sampler was neither compiled nor executed in that Linux sandbox. The ignored
+`native_macos_cpu_observation` test and real pressure/resume checks both passed on the
+owner's Mac in the [2026-11-10 native run](../../docs/validation.md#native-macos-acceptance--2026-11-10).
+`scripts/native-macos-acceptance.py` runs both. Owner decision, 2026-11-06,
 "Once now, unsigned": that script runs once on the owner's Mac with ad-hoc signing
-(to do) and again on the signed release candidate. Owner decision, 2026-11-06, "Script
-checks only": global GPU policy, optional embedding eviction and combined-model
+(passed) and again on the signed release candidate (still required). Owner decision,
+2026-11-06, "Script checks only": global GPU policy, optional embedding eviction and combined-model
 residency are named limitations ([shared memory admission](#t002-shared-memory-admission--2026-10-10)).
 
 Binding reference inspected: libc **0.2.189**, `src/unix/bsd/apple/mod.rs` definitions
@@ -23,19 +24,27 @@ Status: Experimental T001 implemented locally; T002 now implements explicit sele
 HTTP generation, completion reuse, area lineage and opt-in continuous MCP maintenance.
 Shared client admission, derived MCP context and an experimental owned local generator
 with per-worker CPU/RAM/Metal controls and shared memory admission are implemented.
-Native CPU sampling and hardware acceptance remain selected work, limited to what
-`scripts/native-macos-acceptance.py` checks; global GPU pressure policies are a named
+Native CPU sampling and the selected development hardware checks passed, limited to
+what `scripts/native-macos-acceptance.py` checks; global GPU pressure policies are a named
 limitation (owner decision, 2026-11-06, "Script checks only"). The owner's
 large-repository direction supersedes the earlier blanket deferral. Owner decision,
 2026-11-06, "Defer 010 real-model acceptance", partly reverses the owner's 2026-10-09
 reactivation of 010:
 provider/recipe selection and real-model task acceptance are deferred, the release no
 longer waits on 010's task utility, the implemented code stays experimental and
-unadvertised, and nothing is downloaded or spent for it
+unadvertised, and nothing is downloaded or spent for that deferred task-utility work
 ([record](../../docs/validation.md#owner-decisions--2026-11-06)).
+Owner decision, 2026-11-19, "Accept at written scope": T001 and T002 are accepted at
+their written, experimental and unadvertised scope. Provider/recipe selection and
+real-model task utility stay deferred under "Defer 010 real-model acceptance" (decision
+14 of 2026-11-06). 010 therefore no longer blocks the release. The native script still
+has to run on the signed release candidate, as a [release](../../docs/release.md) step
+([record](../../docs/validation.md#owner-decisions--2026-11-19)).
 Import and lifecycle fixtures use synthetic outputs through real storage, retrieval,
-HTTP/CLI and native-worker boundaries. Real CPU initial/changed-input generation and restart/revert reuse are recorded in validation;
-it is not a selected production model or task-quality result. 013 remains frozen off.
+HTTP/CLI and native-worker boundaries. Real CPU and Metal initial/changed-input
+generation and restart/revert reuse are recorded in validation. These smoke checks
+do not choose the deferred production provider/recipe or establish task quality.
+013 remains frozen off.
 
 ## Outcome and ownership
 
@@ -149,7 +158,9 @@ edit/delete, edits during generation and final selection, CAS/replay, unknown fi
 byte/UTF-8/citation bounds, row corruption, hash verification, namespace collisions,
 user-memory preservation, restart/repair, pending replacement during drain, explicit
 schema-7 upgrade and real child-process exits before/after put and forget commits.
-See [validation](../../docs/validation.md) for executed checks and limits.
+See [validation](../../docs/validation.md) for executed checks and limits. Owner
+decision, 2026-11-19, "Accept at written scope": T001 is accepted at this written,
+experimental and unadvertised scope (Status above).
 
 ### T002 — Generate useful briefs and area knowledge within idle resources
 
@@ -157,6 +168,9 @@ Status: explicit CLI and continuous MCP generation implemented experimentally. S
 client admission and owned local per-worker limits are implemented. Aggregate hardware
 headroom is a named limitation, device acceptance is what the native script checks, and
 real-model task acceptance is deferred (owner decisions, 2026-11-06, Status above).
+Owner decision, 2026-11-19, "Accept at written scope": T002 is accepted at its written,
+experimental and unadvertised scope; the provider selection and real-provider task
+comparison below stay deferred (Status above).
 The efficiency amendment places this after
 changed-work ownership (009 T008) and input/resource identity (009 T009); see the
 [build order](../../docs/context-ecosystem-plan.md#revised-build-order).
@@ -422,9 +436,11 @@ quality; the fixed repair-selection workloads and negative results live in valid
 
 This controls one generation worker. Opt-in shared memory admission now accounts for
 combined configured embedding/generation ceilings, as described below. Global GPU use,
-thermal pressure and battery draw are named limitations; native CPU utilization and
-macOS hardware/package acceptance remain open within what the native script checks;
-verified task utility and large-repository economics are deferred (owner decisions,
+thermal pressure and battery draw are named limitations. The native script's CPU and
+macOS hardware checks passed with ad-hoc signing on 2026-11-10
+([receipt](../../docs/validation.md#native-macos-acceptance--2026-11-10)); the repeat
+on the signed release candidate and package acceptance remain open. Verified task
+utility and large-repository economics are deferred (owner decisions,
 2026-11-06, Status above). Linux synthetic native-denial and
 lifecycle tests plus the real-model smoke are separate evidence in
 [validation](../../docs/validation.md#owned-local-generation-and-resource-controls).
@@ -447,7 +463,7 @@ temporary pressure/headroom/unknown-observation waits preserve pending work and 
 within the existing pass deadline. They never enter provider-failure backoff or invent usage.
 
 Linux samples host `MemAvailable` and visible cgroup v2 ancestor high/max headroom; macOS
-conservatively samples free VM pages (hardware acceptance outstanding). Unknown observations
+conservatively samples free VM pages (selected native admission checks accepted above). Unknown observations
 defer. A low-memory latch clears only above reserve plus margin. New residency also needs
 headroom for its ceiling; samples are memoized for one second and invalidated on reservation
 changes. Status reads only observations. Source/current/cache reuse bypasses model admission;
@@ -519,7 +535,9 @@ usage; revert has zero calls/launches/verified bytes. Linux CPU execution and re
 verified. Model/recipe task utility is deferred and combined model pressure is a named
 limitation (owner decisions, 2026-11-06, Status above). The long-context embedding
 comparison was closed on 2026-11-06 ("Close it; Gemma only"), and macOS/Metal
-acceptance within the native script's checks remains open. See
+acceptance within the native script's checks passed with ad-hoc signing on 2026-11-10
+([receipt](../../docs/validation.md#native-macos-acceptance--2026-11-10)), with the
+signed release candidate run still required. See
 [validation](../../docs/validation.md#evidence-coverage-host-application-and-real-cpu-maintenance--2026-10-10).
 
 

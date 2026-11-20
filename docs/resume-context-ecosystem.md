@@ -2,9 +2,398 @@
 
 ## Current status — 2026-11-06
 
-This section owns current status; other documents link here, and dated paragraphs
-below are history.
+Updated 2026-11-20. This section owns current status; other documents link here,
+and dated paragraphs below are history.
 
+- **Startup notification owner and pilot v2 decisions, 2026-11-20.** A no-provider
+  native round closes the extension runner's deferred credential and MCP
+  notifications: a runner bound to the startup owner refuses them, the receipt binds
+  `notifications_excluded`, and ordinary RPC still delivers them
+  ([record](validation.md#deferred-startup-notifications-in-the-extension-runner--2026-11-20)).
+  The new host is pinned; the 26 reference patches now have a recorded order
+  ([order](dependencies.md#applied-order)). The owner dropped pilot v2's retrieval
+  arms, disabled the host's Apple model provider in every arm, and had the
+  variance-based sample method implemented
+  ([decisions 18-20](validation.md#owner-decisions--2026-11-19),
+  [method](validation.md#calibrated-paired-sample-size-method--2026-11-20)). The
+  remaining inventory, acknowledgment and handoff stay on HOLD.
+
+- **Startup census and pilot v2 proposals, 2026-11-20.** A read-only census lists
+  what remains before the pilot v2 startup inventory can be frozen, row by row, and
+  estimates 9 to 15 more no-provider native rounds; the next is the re-staged round
+  for deferred credential and MCP notifications
+  ([census](validation.md#startup-inventory-census--2026-11-20)). The addon's
+  startup socket pair is attributed statically to Tokio's signal driver, and the
+  2026-11-15 sandbox segfaults to a metadata-denying ad-hoc profile, by inference
+  ([attribution](validation.md#native-addon-socket-pair-static-attribution--2026-11-20),
+  [diagnosis](validation.md#sandbox-profile-segmentation-fault-diagnosis--2026-11-20)).
+  The draft contract gains four unfrozen proposals for its freeze inputs
+  ([record](validation.md#pilot-v2-freeze-input-proposals--2026-11-20)). Startup
+  admission, the acknowledgment and the runtime handoff stay on HOLD.
+
+- **Owner decisions and pending-work round, 2026-11-19.** A read-only sweep listed
+  123 pending items; the owner answered sixteen open decisions
+  ([record](validation.md#owner-decisions--2026-11-19)). Done in this round:
+  - the last F14 split, of `src/learning.rs`
+    ([record](validation.md#learning-module-split-f14--2026-11-19));
+  - a repair of the intermittent cancellation test
+    ([record](validation.md#artifact-cancellation-test-synchronization--2026-11-19));
+  - stale-status corrections, draft release notes and compatibility statement, and
+    the upstream notice on eleven reference patches
+    ([record](validation.md#documentation-status-corrections-and-patch-notices--2026-11-19));
+  - encrypted archives of the 2026-11-18 holdout, the G2 run results and the
+    2026-11-13 T005 final bundle
+    ([holdout](validation.md#t005-second-holdout-encrypted-retention--2026-11-19),
+    [batch](validation.md#second-encrypted-backup-batch--2026-11-19));
+  - archive branches for the rejected T005 experiments, and ignore rules for local
+    tool configuration.
+
+  All eight gates pass on `afa7b38`, which also carries eight of Dependabot's eleven
+  updates and fault-injection tests for the pilot's private writers
+  ([receipt](validation.md#local-gates-on-afa7b38--2026-11-20)). Spec 010 T001-T002
+  are accepted at their written scope, and new named limitations are recorded in
+  specs 003, 008 and 009 and the pilot v2 draft. The T005 loss analysis found no
+  bounded candidate with a plausible large gain
+  ([analysis](validation.md#t005-loss-analysis--2026-11-19)), and the owner closed
+  009 T005 without promotion: the baseline stays, it is a named limitation and no
+  longer a release condition, and the 2026-11-18 holdout stays sealed. Pausing
+  Dependabot version updates takes effect only after the next merge to `main`.
+
+- **Catalog refusal binding, 2026-11-19.** The fixed startup diagnostic
+  requires the shared catalog refusal before recording catalog retirement.
+  An omission control exercised the compiled host and the Rust journal.
+  Full startup inventory, durable acknowledgment and runtime handoff remain
+  on HOLD
+  ([record](validation.md#catalog-refusal-binding-in-the-startup-diagnostic--2026-11-19)).
+
+- **Restricted startup prompt and process policy, 2026-11-19.** The explicit
+  profile skips optional scheme descriptions and their executable lookups.
+  The startup launcher binds the macOS subprocess-creation denial into the
+  policy hash. Native positive controls preserved ordinary RPC. The broader
+  inventory, durable acknowledgment and runtime handoff remain on HOLD
+  ([record](validation.md#restricted-startup-scheme-descriptions-and-process-policy--2026-11-19)).
+
+- **Native addon socket creation, 2026-11-19.** The compiled host's addon
+  made one Unix stream socket-pair call. The differential Tokio fixture
+  reproduced the three-descriptor pattern when the Unix signal driver
+  was active. Internal function attribution in the compiled addon and
+  broader transport qualification remain open
+  ([record](validation.md#native-unix-socket-creation-during-addon-load--2026-11-19)).
+
+- **Startup RPC output through teardown, 2026-11-19.** The diagnostic parent
+  verifies the single startup catalog on stdout and both stream endings.
+  Late parser faults are durable failures even when the host reports
+  retirement and exits normally. Native fault cases covered malformed,
+  unexpected, repeated, Ready and unterminated frames. Full inventory,
+  durable acknowledgment and runtime dispatch remain on HOLD
+  ([record](validation.md#startup-rpc-output-through-teardown--2026-11-19)).
+
+- **Remote URL prompt lookup baseline, 2026-11-19.** The earlier pinned host
+  checked `ssh`, `gh` and `glab` availability while building optional
+  scheme descriptions in the restricted prompt
+  ([record](validation.md#remote-url-documentation-lookups-during-startup--2026-11-19)).
+
+- **Fixed startup discovery eligibility, 2026-11-19.** The registry requires
+  the Anthropic-only discovery profile and latches changes before new
+  discovery work can start. The native host preserved the shared catalog
+  refusal and stopped both launch-time and caught late changes. The private
+  catalog receipt binds the fixed provider inventory. The transitive
+  transport inventory, durable acknowledgment and runtime handoff remain
+  on HOLD
+  ([record](validation.md#fixed-discovery-provider-inventory-at-startup--2026-11-19)).
+
+- **Durable startup observation prefix, 2026-11-19.** The native observer's
+  HOLD row binds the synced prefix through RPC retirement. The journal
+  rejects a torn record, a replacement inode and an uncommitted halt.
+  The diagnostic still refuses commands. Full inventory, durable
+  acknowledgment and the Ready exchange remain prerequisites for opening
+  the runtime path
+  ([prefix record](validation.md#durable-startup-observation-prefix--2026-11-19)).
+
+- **Startup inventory and acknowledgment sequence, 2026-11-18.** Fresh-context
+  authors traced the remaining owner boundaries. Freeze effective provider
+  eligibility at the registry and qualify the remaining transitive owners and
+  transport routes before opening the private acknowledgment and Ready
+  exchange. A native control showed that the web manager can run even while
+  its public state stays idle. Startup admission and the RPC runtime handoff
+  remain on HOLD
+  ([eligibility record](validation.md#built-in-model-manager-eligibility-during-startup--2026-11-18),
+  [contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md)).
+
+- **Debugger sweep and native socket ownership, 2026-11-18.** The exact
+  startup observer stayed free of the debugger sweep through the prior tick
+  interval. Ordinary RPC scheduled it when a fixture-backed debug session
+  registered. Phased kernel snapshots attributed the three same-process Unix
+  descriptors at retirement to the pinned addon load. The broader inventory,
+  durable acknowledgment and runtime handoff remain on HOLD
+  ([debugger record](validation.md#debugger-sweep-starts-with-session-registration--2026-11-18),
+  [native socket record](validation.md#native-addon-socket-ownership-at-startup--2026-11-18)).
+
+- **Fixed runtime providers and debugger timer, 2026-11-18.** The fixed
+  startup registry refuses runtime registration and a caught refusal still
+  prevents catalog retirement. Ordinary RPC completed the synthetic discovery
+  callback. A separate native control saw the debugger idle sweep tick after
+  RPC retirement. That control supplied the baseline for the owner-level
+  repair above
+  ([registry record](validation.md#fixed-runtime-providers-during-startup-observation--2026-11-18),
+  [timer record](validation.md#debugger-sweep-after-startup-rpc-retirement--2026-11-18)).
+
+- **Restricted prompt inputs and launch binding, 2026-11-18.** Startup
+  observation excludes implicit prompt and file-command discovery and fails
+  closed at the prompt preparation deadline. Its journal now binds the exact
+  launch inputs. A synthetic extension from that round demonstrated the
+  runtime registration issue repaired above
+  ([prompt record](validation.md#restricted-prompt-inputs-and-startup-launch-binding--2026-11-18),
+  [provider record](validation.md#runtime-provider-eligibility-during-startup--2026-11-18)).
+
+- **Advisor exclusion and prompt inputs, 2026-11-18.** The qualified startup
+  observer excludes watchdog and advisor discovery, tools, cost restore and
+  late activation. Its Rust journal still halts on the partial inventory.
+  Implicit CLI prompt files, templates and a Markdown command were read in
+  separate controls. A held personality read outlived the RPC retirement
+  receipt. Freeze the profile and qualify each reachable owner and transport
+  before the durable acknowledgment and RPC handoff
+  ([advisor record](validation.md#advisor-exclusion-during-startup-observation--2026-11-18),
+  [prompt record](validation.md#implicit-prompt-inputs-during-startup-observation--2026-11-18)).
+
+- **Advisor startup inventory, 2026-11-18.** The native observer awaited a
+  `WATCHDOG.yml` import, started and settled advisor cost restore, and built a
+  separate advisor tool pool. The fresh-context proposals selected owner-level
+  exclusion and require the complete launch inventory before the private
+  acknowledgment and Ready exchange
+  ([record](validation.md#advisor-discovery-within-restricted-startup--2026-11-18),
+  [contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md)).
+
+- **RPC runtime callbacks excluded, 2026-11-18.** Startup observation leaves
+  runtime subscriptions and goal reconciliation inactive. The late notice
+  reached the real emission path, and ordinary RPC still delivered it. The
+  diagnostic still reports session writer failure at teardown. Full inventory,
+  durable acknowledgment and runtime handoff remain open
+  ([record](validation.md#rpc-runtime-callbacks-excluded-during-startup-observation--2026-11-18)).
+
+- **RPC session callback after retirement, 2026-11-18.** A synthetic notice
+  released after private RPC retirement reached the original session callback.
+  Its stdout writer had already closed. This was the baseline for the change above
+  ([record](validation.md#rpc-session-callback-after-startup-retirement--2026-11-18)).
+
+- **Catalog refusal and Spotlight exclusion, 2026-11-18.** The explicit
+  startup profile now classifies the shared catalog GET through the existing
+  refusal channel before transport. Holding its reply held catalog retirement.
+  Spotlight stays outside that profile and ordinary opt-in still worked in the
+  network-denied control. Complete startup inventory and acknowledgment stay
+  open ([record](validation.md#catalog-refusal-and-spotlight-startup-exclusion--2026-11-18)).
+
+- **Startup catalog and Spotlight routes, 2026-11-18.** Both native host pins
+  attempted the shared catalog GET without a destination receipt. In a synthetic
+  Spotlight opt-in, both reported extension and RPC retirement while its fetch
+  was held. These were the baselines for the route repairs above
+  ([record](validation.md#startup-catalog-and-opt-in-spotlight-route-controls--2026-11-18)).
+
+- **Direct SDK import for startup observation, 2026-11-18.** The compiled host
+  now resolves the first-party observer's owner functions through an explicit
+  SDK export. The native controls covered the new import, legacy root import,
+  extension waits and failures, and ordinary RPC. Complete owner inventory and
+  the durable acknowledgment stay open
+  ([record](validation.md#direct-sdk-import-for-startup-observation--2026-11-18)).
+
+- **First-party startup extension loader, 2026-11-18.** The pinned native host
+  waited for the exact observer's source read. The original factory loader also
+  waited for an injected barrier. Both failure controls reaped the host without
+  extension or RPC retirement. Enabled transitive work, the admitting transport
+  and subscription handoff, and the durable acknowledgment remain open
+  ([record](validation.md#first-party-startup-extension-loader-controls--2026-11-18)).
+
+- **Restricted startup RPC retirement, 2026-11-18.** The native source-built host
+  waits for its initial command catalog and stdout completion, excludes the live
+  metadata subscription and command dispatch, and journals a source-bound receipt
+  after extension retirement. Catalog and output holds passed in native controls.
+  Complete inventory, the durable acknowledgment and Ready echo remain open
+  ([record](validation.md#restricted-startup-rpc-retirement--2026-11-18)).
+
+- **T005 lexical placement disposition, 2026-11-18.** A fixed placement variant
+  tested four lexical slots after eight dense offers. The fresh G2 baseline
+  matched all 388 retained responses, and the candidate failed both promotion
+  gates. It gained 15 and lost 10 located cases, and verbatim bodies fell by one.
+  The active baseline and the unconsumed holdout remain available. T005 stays
+  open. The record includes the build and worker setup failures, valid comparison
+  and cleanup ([record](validation.md#t005-bounded-lexical-placement-fails-development-gates--2026-11-18)).
+
+- **T005 blind holdout sealed, 2026-11-18.** Four fresh-context authors delivered
+  400 questions, 200 per corpus. Separate source checks and the unchanged full
+  verifier passed. The custodian retains the set; implementation verified only
+  the metadata receipt. The set remains unconsumed after the development rejection.
+  T005 remains open
+  ([record](validation.md#t005-new-blind-holdout-sealed--2026-11-18)). Its encrypted
+  archive was built on 2026-11-19
+  ([record](validation.md#t005-second-holdout-encrypted-retention--2026-11-19)).
+
+- **Startup RPC command boundary, 2026-11-18.** The startup observation parent
+  has no RPC command writer. A separate native control placed raw Ready before
+  extension retirement and publication of the first command catalog afterward.
+  This was the baseline for the restricted RPC retirement change above
+  ([record](validation.md#startup-rpc-command-boundary--2026-11-18)).
+
+- **Restricted startup held watchdog read, 2026-11-18.** In a network-denied
+  native control, the restricted host withheld its extension-retirement receipt
+  while a synthetic watchdog marker read was held before the OS call; the read
+  completed after release and retirement followed
+  ([record](validation.md#restricted-startup-held-watchdog-read--2026-11-18)).
+  This is one observed path, not complete inventory or admission.
+
+- **Restricted startup watchdog discovery, 2026-11-18.** A network-denied native
+  control observed an isolated synthetic `WATCHDOG.md` read before the restricted
+  extension receipt, even with `--no-context-files`. It sent no prompt; the result
+  does not establish model input, a policy violation or detached work
+  ([record](validation.md#restricted-startup-watchdog-discovery--2026-11-18)).
+  This discovery path belongs in the still-open startup owner inventory.
+
+- **Restricted startup raw timer counterexample, 2026-11-18.** On the retained
+  source-built restricted host, a synthetic extension's raw timer callback fired
+  after the extension-retirement receipt, despite managed-timer exclusion
+  ([record](validation.md#restricted-startup-raw-timer-counterexample--2026-11-18)).
+  The network-denied control sent no prompt. Full owner inventory, startup
+  acknowledgment and admission remain open; paid runs and signing stay gated.
+
+- **T005 successful-control dense retention census, corrected 2026-11-18.**
+  Including shortened packing decisions, all 169 retained development successes
+  had a target-name-covering dense range among their first 16 kept dense units;
+  153 had one among the first eight. The earlier selected-only census omitted
+  the shortened ranges for 15 successes. This describes original trace ranges,
+  not whether a changed cut preserves responses
+  ([record](validation.md#t005-dense-retention-census-correction--2026-11-18)).
+  No candidate was selected, the consumed holdout was not accessed, and T005
+  remains unaccepted.
+- **Complete T005 development lexical-depth diagnostic, 2026-11-18.** The
+  fixed raw-depth probe now covers all 388 development cases with original
+  256-document trace parity. Of 95 no-cover misses, 30 have a target-name-covering
+  lexical document below rank 256 and within 4,096; all 30 already filled the
+  32-unit placement with dense evidence. This does not select a displacement rule
+  or prove delivered-body gains ([record](validation.md#t005-complete-development-lexical-depth-diagnostic--2026-11-18)).
+  The consumed holdout was not accessed and T005 remains unaccepted.
+- **Pilot v2 task-block sensitivity, 2026-11-18.** The optional power tool now
+  accepts explicit within-task paired-outcome distributions in addition to the
+  perfect-correlation assumption ([record](validation.md#pilot-v2-explicit-task-block-sensitivity--2026-11-18)).
+  The distributions are hypothetical inputs, not measured rates or a frozen
+  analysis. Task independence, contrasts, costs, rights and host readiness remain
+  open; paid runs and signing stay gated.
+- **Pilot v2 stratified power sensitivity, 2026-11-18.** The optional tool now
+  handles fixed task strata with distinct outcome assumptions and reports pooled
+  and per-stratum sensitivity ([record](validation.md#pilot-v2-stratified-power-sensitivity--2026-11-18)).
+  It has not selected or frozen a pilot; actual rates, task independence, contrasts,
+  costs, rights and host readiness remain open. Paid runs and signing stay gated.
+- **Pilot v2 power sensitivity tool, 2026-11-18.** An optional deterministic
+  calculator now reports conservative paired-task sensitivity for explicitly
+  supplied binary-outcome scenarios, with repetitions counted as task clusters
+  ([record](validation.md#pilot-v2-paired-task-power-sensitivity-tool--2026-11-18)).
+  This is not a frozen analysis or selected sample; strata, tasks, rates, cost,
+  rights and actual host readiness remain open. Paid runs and signing stay gated.
+- **T005 deep lexical placement census, 2026-11-18.** The existing dense-first
+  cut filled all 32 units before lexical placement in all eight file-absent cases
+  with deeper target-covering documents, and in 164 of 169 successful controls.
+  Raising lexical depth alone cannot place those eight target units; the observation
+  does not select a displacement rule or establish quality
+  ([record](validation.md#t005-deep-lexical-placement-census--2026-11-18)).
+  T005 remains unaccepted, and the consumed holdout was not accessed.
+- **T005 lexical depth diagnostic, 2026-11-18.** A label-free deeper lexical
+  probe reproduced all 202 selected baseline trace prefixes. Eight of 33
+  file-absent misses had a target-name-covering document at raw ranks 513–4,096;
+  25 had none in that window. This is candidate coverage, not delivered-body or
+  quality improvement, and no candidate was selected
+  ([record](validation.md#t005-lexical-depth-diagnostic--2026-11-18)). The
+  consumed holdout was not accessed; T005 remains unaccepted.
+- **T005 lexical clause census, 2026-11-18.** The first 20 eligible tier-2
+  documents per retained success/no-cover case show no stopword-only documents
+  in the 95 no-cover misses. This bounded tokenizer reconstruction is not a
+  ranking replay and does not select a candidate
+  ([record](validation.md#t005-lexical-clause-census--2026-11-18)). T005 remains
+  unaccepted; the consumed holdout was not accessed.
+- **T005 source overlap census, 2026-11-18.** A read-only census of retained
+  development cases found that literal question terms often occur somewhere in
+  the target file but seldom cover half the question terms near the target name
+  in no-cover misses. This is not a tokenizer or ranking test and selects no new
+  candidate ([record](validation.md#t005-literal-source-overlap-census--2026-11-18)).
+  T005 remains unaccepted; the consumed final set was not accessed.
+- **Restricted workspace-scan exclusion, 2026-11-18.** The source-built
+  diagnostic refuses this scan when its restricted startup extension owner is
+  active; ordinary scanning remains available. The SDK regression, native
+  controls, capture-journal path and selected gates pass
+  ([record](validation.md#restricted-workspace-scan-exclusion--2026-11-18)).
+  The qualified slice was pushed and cache-free replay passed.
+  This does not complete the owner inventory or enable startup admission; paid
+  runs and signing remain gated.
+- **Startup workspace scan census, 2026-11-18.** Retained qualified host
+  source shows a conditional workspace scan can outlive its startup deadline;
+  the setting defaults off. A network-denied addon control confirmed that its
+  timeout promise can settle while an instrumented native directory call is held
+  before the OS call. The source-built restricted-host diagnostic likewise emitted
+  selected retirement receipts while a matching operation was held. This is not
+  a stalled-kernel or capture-journal admission observation; the selected scan is
+  now excluded as recorded above, while full boundary qualification remains necessary
+  ([record](validation.md#startup-workspace-scan-census--2026-11-18)).
+  Complete startup admission, paid runs and signing remain gated.
+- **Ordered startup refusal receipts, 2026-11-18.** The child now rejects
+  out-of-order attempts, stale journal sequences and previously seen prefix digests;
+  native controls and the no-provider qualification passed
+  ([receipt](validation.md#ordered-startup-refusal-receipts--2026-11-18)). These
+  checks do not independently prove the parent wrote the journal. The qualified
+  changes were pushed and cache-free replay passed. Full startup
+  owner inventory and its durable acknowledgment/Ready echo remain open; startup
+  admission, paid runs, signing and release stay gated.
+- **Restricted managed timer exclusion, 2026-11-18.** The prior native host let
+  a synthetic managed timeout fire after the extension receipt. The restricted
+  profile now rejects managed timeout and interval admission before construction,
+  with source, real-CLI, persistence and compatibility checks passing without
+  provider calls ([receipt](validation.md#restricted-startup-managed-timer-exclusion--2026-11-18)).
+  The qualified code and records were pushed, and cache-free replay passed.
+  Raw timers and arbitrary extension work, complete inventory and durable
+  acknowledgment remain open; startup admission, paid runs, signing and release
+  remain gated.
+- **Startup extension dispatch ownership, 2026-11-18.** The restricted profile
+  now tracks the exact original `session_start` handler and observer, refuses
+  failure, timeout and late starts, and journals a one-use receipt after the
+  handler broadcast. Source, real-CLI held/timeout, persistence and compatibility
+  checks passed without provider calls
+  ([receipt](validation.md#source-owned-startup-extension-dispatch--2026-11-18)).
+  The qualified code and records were pushed, and cache-free replay passed.
+  Arbitrary extension-spawned work, other events and timers, complete inventory
+  and durable acknowledgment remain open; startup admission stays on HOLD.
+- **Native extension timeout, 2026-11-18.** On the pinned CLI, a synthetic held
+  `session_start` handler outlived its reported timeout while RPC answered a state
+  request; the original completed only after release. Raw RPC Ready also precedes
+  extension initialization. The current diagnostic still holds admission
+  ([receipt](validation.md#native-startup-extension-timeout-boundary--2026-11-18)).
+  Original-handler and callback settlement, complete inventory and durable prefix
+  acknowledgment remain open; paid runs, signing and release stay gated.
+- **Startup plugin-root ownership, 2026-11-18.** The restricted diagnostic now
+  drains the original cache reads, preloads, re-warms and synchronous clears before
+  closing their entry points. Source, held real-CLI, startup persistence and
+  compatibility checks passed without provider calls
+  ([receipt](validation.md#source-owned-startup-plugin-roots--2026-11-18)). The
+  qualified code and records were pushed, and cache-free replay passed. Other
+  discovery and extension work, complete inventory and durable acknowledgment
+  remain open; startup admission, paid runs, signing and release remain gated.
+- **Startup logger ownership, 2026-11-18.** The explicit restricted profile now
+  closes its native local logger, blocks reconfiguration and joins the original
+  retention callbacks. Source and native CLI controls, startup persistence and
+  compatibility gates passed without provider calls
+  ([receipt](validation.md#source-owned-startup-logger--2026-11-18)). This is not
+  physical descriptor-release proof or complete startup admission. The qualified
+  code and records were pushed, and cache-free replay passed; trusted-extension
+  and other owners and the prefix acknowledgment remain open.
+- **Startup owner census, 2026-11-18.** Source inspection found that the awaited
+  initial plugin-root preload has a detached cache-clear re-warm path, and that
+  the current startup-observation profile does not select the older logging helper.
+  Trusted-extension and RPC callback lifetimes also remain open. These are source
+  findings, not runtime reproductions or a complete inventory
+  ([census](validation.md#startup-owner-source-census--2026-11-18)).
+- **Startup marketplace exclusion, 2026-11-18.** The restricted diagnostic now
+  owns and retires the original synchronous off scheduler; source, actual CLI,
+  startup persistence and compatibility checks passed without provider calls
+  ([receipt](validation.md#source-owned-marketplace-exclusion--2026-11-18)). Other
+  update routes, logging, trusted-extension ownership, complete before-I/O
+  inventory and durable acknowledgment with matching Ready echo remain open.
+  The qualified code and records were pushed, and cache-free replay passed.
+  Full startup admission, paid runs, signing and release remain gated.
 - **Measurement.** G2 (388 questions over rust-lang/rust and oh-my-pi, run with
   [`scripts/g2.sh`](../scripts/g2.sh) on the owner's Mac) is now development evidence.
   G1 runs on every candidate. The eight Foundry questions are a smoke check only.
@@ -29,9 +418,80 @@ below are history.
   is an unmerged experiment that would need its own pre-registration. Its serving
   owner peaks at 4.91 GB on rust, against 3.34 GB for hierarchy and 1.97 GB for cards
   measured the same way ([validation](validation.md#f4-and-the-hierarchy-default--2026-10-22)).
-- **Losses now.** Ranking loses 79 answers to the caps and 44 to the packer; recall
-  loses 80 never retrieved. Hierarchy's 17 newly lost G1 tasks are mostly tier-1
+- **Historical loss attribution.** The 79 cap losses, 44 packing losses and 80
+  never-retrieved answers belong to the unmerged one-score fusion experiment,
+  not the accepted hierarchy arm ([dated receipt](review/g1-fusion-2026-10-22.json)).
+  That receipt records hierarchy's own losses separately. Neither histogram is a
+  current-baseline measurement; T005 requires fresh identity and trace checks.
+  The historical review of hierarchy's 17 newly lost G1 tasks found mostly tier-1
   lexical hits placed behind every dense unit.
+- **T005 baseline readiness, 2026-11-11.** The original singleton masters retain
+  obsolete units6 semantic recipes. New retained copies now pass complete units7
+  preparation and audits using cached vectors, with zero embedding calls and
+  unchanged-original readbacks
+  ([preparation receipt](validation.md#t005-units7-baseline-preparation--2026-11-11)).
+  Fresh admitted-source captures match both frozen corpus manifests, and the
+  diagnostic helper passes its synthetic checks
+  ([receipt](validation.md#t005-corpus-identity-and-diagnostic-helper-checks--2026-11-11)).
+  The fresh G2 off/on pair now passes complete accounting and exact response-byte
+  parity, with all 388 traced decisions dense at the pinned revisions
+  ([baseline receipt](validation.md#t005-current-g2-baseline-and-trace-parity--2026-11-11)).
+  The current semantic G1 comparison also passes all frozen aggregate guards;
+  individual losses against the retained current no-profile arm remain explicit
+  ([G1 receipt](validation.md#t005-current-semantic-g1-comparison--2026-11-11)).
+  All newly lost G1 cases are reviewed, and offline G2 refinement now distinguishes
+  exact source ranges, outlines and overlapping loss paths
+  ([diagnostic review](validation.md#t005-complete-loss-review-and-refined-trace-attribution--2026-11-11)).
+  One packing-allocation candidate family was selected. The fresh 400-question
+  holdout is now source-checked, sealed and retained with complete opaque-copy
+  readback; the original verifier and its self-tests pass. The initial receipt
+  wrapper's count error and both mechanical attempts remain recorded
+  ([seal and guards](validation.md#t005-fresh-holdout-seal-and-evaluation-guards--2026-11-11)).
+  The one-eighth compact preference passed all eight local gates but failed the
+  unchanged G2 body-preservation gate: five more located definitions came with
+  42 fewer verbatim bodies. G1 has no gained or lost cases, and the native CLI/MCP
+  parity check passes. The candidate is rejected and removed from active code;
+  its commit, binary and private evidence remain reproducible
+  ([no-promotion receipt](validation.md#t005-compact-candidate-no-promotion--2026-11-11)).
+  This first one-variant evaluation is closed. At that checkpoint the fresh holdout
+  was not queried or exposed; its local encrypted backup remains verified. No quality
+  promotion or broader anchorless improvement is established; T005 remains unaccepted.
+  Another repair would need a new bounded selection, not adaptive reuse of this run.
+  A later read-only cap-decision census distinguishes per-file refusals before
+  global saturation from later bookkeeping flags and corrects one discarded-document
+  attribution. It finds no eligible target-covering tier-1 document in the retained
+  baseline, so no tier-1-priority candidate is selected
+  ([diagnostic receipt](validation.md#t005-retained-cap-decision-census--2026-11-13)).
+  The actual same-file occupant inspection now separates structural-fragment
+  pressure from broad body/parent/file ordering, with successful controls and exact
+  occurrence joins. It supports investigating fragment ordering, without selecting
+  a candidate or predicting a gain
+  ([inspection](validation.md#t005-actual-same-file-admission-pressure--2026-11-13)).
+  A subsequent fixed K = 1 fragment-order candidate passes its focused checks,
+  eight local gates, G1 guards and native CLI/MCP parity, but fails the unchanged
+  G2 significance rule. It is rejected and remains outside active source; this
+  experiment is closed without tuning or querying the fresh holdout
+  ([no-promotion receipt](validation.md#t005-fragment-order-candidate-no-promotion--2026-11-13)).
+  A retained coverage census now separates dense same-file misses from lexical-only
+  discovery and rules out observed provenance truncation. Source proximity is
+  insufficient to select a neighbor policy; exact rendered-input/header provenance
+  needs checking before another coverage proposal
+  ([diagnostic](validation.md#t005-retained-candidate-coverage-census--2026-11-13)).
+  Exact no-inference input reconstruction now matches the retained body keys/spans
+  and verifies contextual-header evidence outside some cited body spans, including
+  successful controls. A concrete delivery rule that preserves independent body
+  evidence was subsequently selected as the fixed third/final kept-body declaration-
+  prefix variant. It passes development G2 at K = 3, local gates, G1 aggregate guards
+  with both newly lost cases reviewed, and native CLI/MCP parity
+  ([development receipt](validation.md#t005-kept-body-prefix-development-qualification--2026-11-13)).
+  Its sole final trace-off 400-case pair fails the original confidence, paired significance
+  and Bun latency guards. The RSS audit using complete native summaries passes the original
+  RSS guards and preserves the initially incorrect sparse-log verdict. The experiment
+  is closed without promotion: active source retains the baseline, T005 remains
+  unaccepted, and the 400-case set is consumed once but still unexposed to implementation.
+  No fourth variant, tuning on this set or second final pair is selected. Further
+  work needs a new bounded selection and unexposed acceptance evidence
+  ([final no-promotion receipt](validation.md#t005-sealed-final-pair-no-promotion--2026-11-13)).
 - **Scale.** Publication streams cached vectors (no 2 GiB vector bound) and
   generation v6 interns label-map paths and hashes (rust map 191 → 69 MB). At rust's
   density the next bounds are the mapping-view estimate near 120k files, then the label
@@ -41,12 +501,17 @@ below are history.
   dependency updates ([validation](validation.md#architecture-refactor-and-dependency-updates--2026-10-25)).
   usearch 2.26.5 builds a different ANN graph than 2.26.4 from the same cache, so the
   next republish can move G2 as the v6 rebuild did; G2 was not rerun.
-  The held Scala, PowerShell and pulldown-cmark updates now go in one schema bump
-  gated on a unit diff (owner, 2026-11-06).
+  The Scala, PowerShell and pulldown-cmark bundle is implemented and qualified
+  through the complete unit comparison and local gates
+  ([receipt](validation.md#parser-bundle-and-complete-unit-comparison--2026-11-11)).
+  That qualification does not establish a current prepared Gemma store or a new
+  semantic-quality measurement.
 - **Open.** Local gates are the receipt; pushes from this line start no CI. Since
   2026-10-12, hosted runs came only from Dependabot and from the 2026-10-25 fix
-  branches and their pushes to main. The 6,000-file watcher test was intermittent on
-  the owner's earlier M3 Pro (F18) and has not been rerun on the M5 Max. After a reboot, repeat G2 runs differ in 36 of 388
+  branches and their pushes to main. The 6,000-file watcher test missed its deadline on
+  the M5 Max when disk syncs were slow; `65fd799` batches the watcher's commits
+  and it passes in about 35 s ([receipt](validation.md#watcher-test-repair-f18--2026-11-10)).
+  The reread symptom seen on the earlier M3 Pro (F18) has not recurred. After a reboot, repeat G2 runs differ in 36 of 388
   rows with equal totals; compare arms within one session.
 - **Evidence/profile repairs, 2026-10-25.** Brief enrichment preserves retrieved
   spans/order and the 32-source cap; delivered containing bodies/excerpts can support
@@ -133,22 +598,543 @@ below are history.
   its result.
   - **Release path:** the signed-package checks (row 4) block release; 010's
     real-model acceptance and the Z.ai gateway leave the release; 005 T005 is
-    accepted at its written scope once a gates receipt exists; 009 scale is to be
-    accepted through the Mac rust-lang/rust preparation once a short replay and
-    changed-input check passes; device acceptance is what the native script
-    checks; 001 T011 needs a native Mac watch run on rust after F18 is fixed;
-    001 T010's flag is decided by its own local gates and becomes lexical-only
-    once its code change lands. All of these are to do.
-  - **T006:** pilot v2 is to be drafted, unfunded (not drafted yet), and the
+    accepted at its written scope using the `65fd799` gates receipt
+    ([acceptance](validation.md#boundary-scope-acceptance-005-t005--2026-11-10)); 009 scale is
+    accepted through the Mac Rust preparation and completed replay/change checks
+    ([receipt](validation.md#semantic-scale-replay-and-changed-input-acceptance--2026-11-10)); the ad-hoc-signed native script run passed,
+    accepting the selected device checks for 009 T008/T009 and 010 T002
+    ([receipt](validation.md#native-macos-acceptance--2026-11-10)); it must repeat on
+    the signed release candidate. 001 T011 is accepted by the native Mac watch run on pinned rust
+    ([receipt](validation.md#native-mac-watcher-acceptance-001-t011--2026-11-10));
+    001 T010 is accepted at its written lexical retrieval scope: behavioral selection
+    now defaults on with `--experimental-behavior-context=false` opt-out. Supplied
+    dense windows and semantic model admission retain their ordinary behavior
+    ([receipt](validation.md#t010-singleton-qualification--2026-11-11)). The first
+    failed default attempt and the test-only gate continuation remain recorded;
+    no semantic-quality or real-agent benefit is claimed. The retained cleanup and
+    bounded store-lock repair pass the local gates
+    ([receipt](validation.md#derived-writer-contention-after-fork--2026-11-11)).
+    The remaining release-path items are to do.
+  - **T006:** the [unfunded pilot v2 draft](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md)
+    now records the arms, capture requirements and v1 gap repairs. It is not frozen:
+    concrete held-out tasks, power/sample analysis, arm readiness, launch pins and a
+    costed schedule remain. The
     task-context tasks (003 T007–T009, 008 T003–T005) are to be measured in it. Nothing is spent until the
     owner authorizes a key, rights and a budget.
+    Credential-after-claim refusal journaling passes its selected local no-provider
+    checks on an owned copy of the exact frozen OMP artifact
+    ([record](validation.md#pilot-credential-refusal-durability--2026-11-11)). This
+    does not qualify the current installed host or accept pilot v2/T006; other
+    apparatus gaps and freeze requirements remain.
+    Workspace restoration failures halt at the selected local fixture boundary;
+    healthy journal finalization retains unstarted rows, and a failed halt
+    append prevents a later success receipt
+    ([record](validation.md#pilot-workspace-restoration-and-halt-persistence--2026-11-11)).
+    This does not qualify live admission, the current installed host or pilot
+    v2/T006; the other apparatus and freeze requirements remain.
+    Authority/run-path binding passes its selected local no-provider checks
+    ([record](validation.md#pilot-authority-and-run-path-binding--2026-11-11)).
+    New launch metadata binds the canonical capture root and chains the
+    validated authority digest; historical v1 evidence remains immutable.
+    Pilot v2/T006 and the remaining freeze requirements stay open.
+    Checker completion and artifact binding pass the selected consumer checks and
+    real checker run ([record](validation.md#pilot-checker-completion-and-artifact-binding--2026-11-11)).
+    This does not accept the full private pipeline or pilot v2/T006; other gaps remain.
+    Checker provenance and retained diagnostics pass the selected local checks
+    ([record](validation.md#pilot-checker-provenance-and-retained-diagnostics--2026-11-11)).
+    Owned-output permissions and truthful seal/report publication pass their
+    selected local no-provider checks on `c399c1e`
+    ([record](validation.md#pilot-private-output-permissions-and-terminal-publication--2026-11-11)).
+    The receipt separates the originally unqualified stage from its completed
+    gate-only continuation, and distinguishes current lexical stores, pinned-host
+    fixtures and actual checker outputs. A later native check now qualifies closed
+    semantic output trees through the real bounded launcher, current release CLI
+    and local Gemma
+    ([receipt](validation.md#pilot-semantic-producer-permissions--2026-11-13)).
+    The frozen-host private no-provider pipeline regression now also passes,
+    including actual checker controls, after an explicit closed-preview archival
+    repair ([receipt](validation.md#private-full-pipeline-and-preview-archival--2026-11-13)).
+    Its exact frozen executable was recovered from Cargo artifacts and copied to
+    stable private storage, resolving the earlier supplied-path mismatch for this
+    run without relaxing a pin. The original failure and inputs are preserved.
+    The shared worker pre-exec setup now enforces owner-only default creation
+    without changing the caller mask. Direct fake-worker writes and the pinned
+    native write probe plus normal model calls pass under permissive caller masks
+    ([receipt](validation.md#worker-scratch-creation-defaults--2026-11-13)).
+    The exact seven-commit snapshot through `69ce9f8` is now published and verified
+    by full fresh-clone readback; both older private bundles are finalized locally
+    ([publication receipt](validation.md#approved-experimental-publication-and-evidence-closure--2026-11-13)).
+    The owner subsequently approved the final fifteen-commit snapshot through
+    `966cdf7`; it is published with full fresh-clone readback
+    ([receipt](validation.md#approved-final-wrap-up-publication--2026-11-13)).
+    The owner selected explicit structured assertions for 008 T004 under the current
+    no-model rule on 2026-11-13. The existing spec owns that comparison contract;
+    local implementation passes the real-store/CLI/MCP focused checks and all eight
+    gates on `ea33a2e`. The pilot v2 draft now maps each of the six task-context
+    capabilities to its required contrast; this selects no sample, budget or
+    execution. Real-host intervention/outcome acceptance stays open
+    ([record](validation.md#structured-task-assertions-008-t004--2026-11-13)).
+    The owner-approved four-commit T004 snapshot through `876a3a1` is published with
+    full fresh-clone readback
+    ([receipt](validation.md#t004-publication-and-current-host-inventory--2026-11-14)).
+    Real-host no-provider qualification resumed on 2026-11-14. The installed copy
+    identifies as OMP 18.18.1; its sandboxed version check passed. Before bridge or
+    integration tests started, the owner prioritized remote publication and storage
+    cleanup of `target`, `runs` and Foundry datasets. Cleanup and protected-input
+    readback now pass; current models, prepared masters, private outcome evidence,
+    task/oracle originals and selected binaries remain available. Older unique
+    source/fact stores are compact offline snapshots; retired working caches make
+    previous complete-bundle manifests historical. The private retention index is
+    `runs/storage-cleanup-2026-11-14/retention-index.json`
+    ([cleanup receipt](validation.md#storage-cleanup--2026-11-14)). The selected
+    no-provider native continuation has now run: the complete nonignored frozen-host
+    suite passes. The first current-host attempt reached the bridge/settings
+    boundary but its actual request was refused for an unadmitted beta token.
+    The stateless-delegate repair is now qualified at the selected request boundary:
+    the same explicit current-host regression passes unchanged admission, the
+    frozen-host suite passes and all eight local gates pass on `98157db`
+    ([repair receipt](validation.md#stateless-native-request-repair--2026-11-15)).
+    The fix and qualification records through `7eda5ed` are published with full
+    fresh-clone readback. This stage's build/MSRV intermediates are removed after
+    exact binary/evidence readback; runnable diagnostics remain available.
+    The original failed wrapper's fake-worker classification is retained and
+    qualified by separate gate readback. Complete current-host acceptance remains
+    **HOLD**; the frozen live pin and validator are unchanged
+    ([qualification](validation.md#real-host-no-provider-qualification--2026-11-14)).
+    A test-only continuation now qualifies the same artifact's actual two-generation
+    tool conversation through owned numeric-loopback TLS fixtures: full request/
+    projection identity, completed-tool history binding, synthetic SSE consumption
+    and native prompt completion pass, as do all eight gates on `bb17708`
+    ([continuation receipt](validation.md#current-host-tool-continuation--2026-11-15)).
+    These are scripted responses and counters; actual-provider economics remain
+    unestablished. Subsequent native readback on `40b75c6` now joins both assistant
+    entries to their wire response IDs and reconciles all four scripted counters
+    plus checked totals. All 29 mutation controls reject, absent reasoning stays
+    absent, and both current-host tests and all eight gates pass
+    ([native usage receipt](validation.md#native-four-category-fixture-usage--2026-11-15)).
+    This is fixture reconciliation, not real-provider economics or complete category
+    evidence. Application inputs remain equal to `98157db`; current-host Live
+    admission and v2 acceptance stay HOLD.
+    Native usage tests/records through `22fa8fb` are published with full fresh-clone
+    readback. Their new build/MSRV intermediates are pruned to one standalone
+    diagnostic after exact evidence/binary checks; prior application diagnostics
+    remain retained. Paid runs and signing remain gated.
+    The continuation test/records through `215abcd` are published and verified by
+    full fresh-clone readback. Its build/MSRV cache is pruned, with exact evidence
+    and runnable-binary retention recorded in the continuation receipt.
+    New build intermediates were removed after retaining runnable artifacts.
+    Paid runs and signing remain gated.
+    Complete coverage of transient library file modes, current installed-host compatibility and
+    v2's declared task/arm/host qualification remain open. The installed host now
+    differs from the archived pin used by the regression. Pilot v2/T006 remain open.
+    Startup-network observation remains open: matching-release source exposes
+    partial diagnostics but no established complete early observation/barrier
+    ([source finding](validation.md#pilot-startup-network-source-feasibility--2026-11-11)).
+    The same boundary has now been inspected at the installed 18.18.1 release's
+    associated source revision: constructor fetch injection and refresh settlement
+    do not establish an early, complete CLI observation/acknowledgment seam
+    ([current-source finding](validation.md#current-host-startup-source-feasibility--2026-11-14)).
+    A subsequent owned-artifact probe demonstrates a pre-main `BUN_OPTIONS`
+    preload and records/refuses 15 actual RPC-startup fetch invocations locally
+    ([preload finding](validation.md#current-host-startup-preload-feasibility--2026-11-15)).
+    Its original syntax and destination-specific assertion failures are retained;
+    separate readback verifies only the observed calls and normal cleanup.
+    This supplies a candidate earlier hook without establishing complete owners,
+    non-fetch bypass coverage, drain or parent-journal acknowledgment. Existing
+    launcher admission is unchanged; evaluate this seam before requiring a rebuilt
+    upstream host. Complete startup qualification remains open.
+    Canonical-launcher-permission controls now show native RPC readiness and a
+    successful state readback while an actual discovery invocation remains pending,
+    then observes abort and a later local refusal. The canonical baseline and delayed
+    case exit normally; all ad-hoc-profile crashes and collector failures are retained
+    without a claimed runtime root cause
+    ([settlement counterexample](validation.md#startup-settlement-counterexample--2026-11-15)).
+    The v2 draft now owns the proposed explicit settlement/durable-prefix exchange;
+    its owner inventory, drain control and actual parent admission remain unimplemented.
+    A subsequent owned-profile control qualifies the existing `disabledProviders`
+    setting as a way to reduce built-in discovery while preserving the fixed native
+    model selection. Re-enabling Ollama supplies a positive control; the shared
+    catalog fetch remains, and extension runtime managers/full generation behavior
+    are outside this proof
+    ([profile receipt](validation.md#restricted-startup-provider-profile--2026-11-15)).
+    The v2 draft can reuse this existing configuration instead of adding a discovery
+    subsystem; complete early observation, owner drain and acknowledgment are still
+    required. Production configuration and v1 remain unchanged.
+    The profile finding through `ed58509` is published with full fresh-clone
+    readback. Its three redundant native-library extractions are removed after
+    byte/open-file checks, preserving all other evidence and the retained library.
+    The canonical fixed-catalog qualifier is now implemented and locally qualified
+    on `0b19098`: an explicit artifact-bound profile preserves native identity and
+    returns one owned bundled definition. Actual cache red/green, current and frozen
+    host consumers, and all eight gates pass
+    ([qualification receipt](validation.md#owned-canonical-host-catalog-qualification--2026-11-15)).
+    The actual registry waiter is also shown to return before a controlled fetch
+    settles; joining observed work qualifies only that subset. Complete owner
+    inventory, non-fetch coverage, settlement and durable parent acknowledgment
+    remain open. V2 execution, paid runs and owner signing remain gated.
+    The qualifier and records through `008b5a3` are published with full fresh-clone
+    readback. Its build/MSRV cache and eight duplicate native-library extractions
+    are pruned after exact evidence/binary checks; runnable red/green diagnostics,
+    all probe findings and required inputs remain retained in the receipt above.
+    Native HTTPS controls now establish an alternate SDK warm-up route outside
+    global fetch in the trusted-observer profile. The default-export patch misses
+    the namespace call, and an end-hook refusal still allows a loopback connection.
+    Existing per-provider proxy routing exposes that known warm-up, while a direct
+    HTTPS bypass remains
+    ([transport findings](validation.md#native-https-startup-boundaries--2026-11-15)).
+    Those hooks are rejected as admission gates. Complete before-IO coverage at
+    the actual bridge/profile boundary, owner settlement and durable parent
+    acknowledgment remain open; no production proxy or protocol is enabled.
+    The findings through `0cd6514` are published with full fresh-clone readback.
+    Seven redundant native-library copies are removed after byte/open-file checks;
+    all other evidence and the retained library remain exact. No Rust cache is built.
+    The existing owned qualifier now installs a hash-bound startup diagnostic through
+    the actual launcher/capture bridge, with relative preloading and workspace
+    restoration for a host root containing spaces. The actual pre-prompt trace
+    contains the classified HTTPS HEAD; strict conversation/native-usage checks,
+    six malformed-trace controls, frozen compatibility and all eight gates pass
+    on `1357756`
+    ([actual-bridge receipt](validation.md#actual-bridge-startup-diagnostic--2026-11-15)).
+    This qualifies observation and an exact pre-prompt prefix, not before-IO
+    enforcement or settlement. The diagnostic file is not the product journal;
+    the shared-channel durable startup acknowledgment still remains to implement.
+    The qualifier and records through `54b5b8e` are published with full fresh-clone
+    readback. Its new build/MSRV cache and two preflight SDK-library copies are
+    pruned after exact evidence/binary checks; runnable red/green diagnostics and
+    all other evidence remain retained in the actual-bridge receipt above.
+    A tested early custom-API model configuration is rejected and removed: the
+    native bridge reports `model_selection` before its first captured request and
+    still observes the HEAD. The retained diagnostic now checks the complete
+    native model digest and configuration bytes and preserves closed fault codes.
+    Its current/frozen native consumers and all eight gates pass on `5d9aa0e`
+    ([rejection and diagnostic receipt](validation.md#early-capture-api-rejection-and-native-model-identity--2026-11-15)).
+    This does not repair warm-up or complete startup admission; the shared-channel
+    owner settlement and durable acknowledgment work remains open.
+    Diagnostic/rejection records through `786e96d` are published with a complete
+    fresh-clone readback. Its new build/MSRV cache is pruned after evidence/binary
+    checks, and the retained executable passes the actual native tool conversation
+    directly after cleanup without Cargo. The dated receipt above owns deletion,
+    retention and resource details. Paid runs, signing and release remain gated.
+    The owned qualifier now refuses the known SDK/custom-Agent HTTPS route at
+    Agent.addRequest. A committed independent TCP control changes from `[1, 1, 1]`
+    red to `[1, 0, 1]` stock/guard/raw, preserving native model metadata; the raw
+    socket remains an explicit uncovered route. All four current diagnostics,
+    frozen compatibility and eight gates pass on `7f54889`
+    ([Agent-route receipt](validation.md#native-agent-startup-refusal--2026-11-15)).
+    This is a known-route refusal, not general startup admission. The source census
+    distinguishes active tool selection from restricted startup and leaves MCP,
+    memory, telemetry, settings watching and callback/timer ownership to qualify,
+    alongside the shared-channel durable acknowledgment. V2 remains unfunded.
+    Guard and records through `1918830` are published with full fresh-clone readback
+    of 403 tracked paths. The new build/MSRV cache and three duplicate SDK libraries
+    are pruned after exact checks; all four native diagnostics pass directly from
+    the retained executable after cleanup without Cargo. The Agent-route receipt
+    owns the resource, deletion and retention details; the wrap-up remains active.
+    The static canonical-registration alternative is rejected: it retains the warm-up
+    and changes model metadata. The owned qualifier now quiesces the existing native
+    Settings owner before bridge Ready, preserving the model while ignoring later
+    disk edits; ordinary capture still applies them. The permanent native red/green,
+    all five current consumers, frozen compatibility and eight gates pass on `6a9bb15`
+    ([settings receipt](validation.md#owned-native-settings-quiescence--2026-11-15)).
+    This closes the selected settings-stability repair only. Full startup owner and
+    transport coverage, callback/timer settlement and durable parent acknowledgment
+    remain open; v2 remains unfunded/unfrozen and paid runs/signing stay gated.
+    Settings repair/records through `e3c9540` are published with full
+    fresh-clone readback. New build/MSRV and eleven duplicate SDK-library caches
+    are pruned after exact checks, retaining runnable red/green diagnostics and
+    all other evidence. All five current native diagnostics pass directly after
+    cleanup without Cargo; the settings receipt owns counts and retention details.
+    A subsequent native deadline check exposes the synchronous Agent guard's stale
+    abort callback: the host reaches Ready, then crashes. The repaired guard retires
+    the request and queues its refusal through the SDK's error handler; native
+    controls observe listener removal and the actual capture bridge survives the
+    deadline before its full tool conversation. All five current consumers, frozen
+    compatibility and eight gates pass on `61a286f`
+    ([lifetime receipt](validation.md#native-warm-up-refusal-lifetime-repair--2026-11-15)).
+    The immediate-destruction candidate is rejected. Complete startup owner/transport
+    coverage, native-timer settlement and durable parent acknowledgment remain open;
+    v2 remains unfunded/unfrozen and paid runs/signing stay gated.
+    Lifetime repair/records through `a3538fc` are published with full
+    fresh-clone readback. New build/MSRV and six duplicate SDK-library caches
+    are pruned after exact checks, retaining runnable red/green diagnostics and
+    all other evidence. All five current native diagnostics pass directly after
+    cleanup without Cargo; the lifetime receipt owns counts and retention details.
+    The fixed read/edit qualifier now disables project MCP discovery before SDK
+    construction, excluding unadmitted project commands. An actual-launcher marker
+    control changes from both profiles executing to ordinary-only execution;
+    existing disk-edit/model checks, all five current consumers, frozen compatibility
+    and eight gates pass on `ecdf962`
+    ([MCP exclusion receipt](validation.md#fixed-qualifier-project-mcp-exclusion--2026-11-15)).
+    Future admitted MCP/task-context integration remains required. General MCP drain,
+    other startup owners and durable acknowledgment are still open; v2 remains
+    unfunded/unfrozen and paid runs/signing stay gated.
+    Project MCP repair/records through `a55c497` are published with full
+    fresh-clone readback. New build/MSRV and three duplicate SDK-library caches
+    are pruned after exact checks, retaining runnable red/green diagnostics and
+    all other evidence. All five current native diagnostics pass directly after
+    cleanup without Cargo; the project MCP receipt owns counts and retention details.
+    The owned bridge now observes the original credential-prefetch call from its
+    trusted factory, requires its non-OAuth completion on the actual namespace before
+    Ready and halts a later restart. Actual bridge red/green, eight native fault/
+    success controls, all five current diagnostics, frozen compatibility and eight
+    gates pass on `5ed922b`
+    ([original-prefetch receipt](validation.md#original-credential-prefetch-owner-qualification--2026-11-15)).
+    Credential refresh/polling and OAuth integration remain unqualified; complete
+    startup admission and durable acknowledgment stay open. No paid run or signing
+    is authorized.
+    Original-prefetch repair/records through `6367ca5` are published with full
+    fresh-clone readback. New build/MSRV and four duplicate SDK libraries are pruned
+    after exact/open-file checks; runnable red/green diagnostics and all other
+    evidence remain. All five current native diagnostics pass directly after cleanup
+    without Cargo; the original-prefetch receipt owns counts and retention details.
+    The fixed qualifier installs its off-memory observer before SDK construction,
+    then requires the original start's completion on the same Settings/registry
+    before Ready. Active-backend/auto-learn settings, missing/foreign/unfinished work
+    and restarts refuse. Actual bridge red/green, nine native memory controls, all
+    five current diagnostics, frozen compatibility and eight gates pass on `48822e9`
+    ([off-memory receipt](validation.md#fixed-off-memory-startup-owner-qualification--2026-11-15)).
+    This qualifies only the fixed off profile. Credential refresh/polling, telemetry,
+    other backends, native-timer/transport coverage and durable acknowledgment stay
+    open. Paid runs, signing and release remain gated.
+    Off-memory repair/records through `6761cdb` are published with full
+    fresh-clone readback. New build/MSRV and two duplicate SDK libraries are pruned
+    after exact/open-file checks; runnable red/green diagnostics and all other
+    evidence remain. All five current native diagnostics pass directly after cleanup
+    without Cargo; the off-memory receipt owns counts and retention details.
+    The owned qualifier now disables telemetry export in its initial configuration
+    and checks the actual false setting before Ready. Native trace/log/metric
+    markers reach an owned collector only in the enabled control; the launcher
+    regression changes from exporting to excluding all three in the owned case.
+    All five current diagnostics, frozen compatibility and eight gates pass on
+    `2bc27c0` ([telemetry receipt](validation.md#fixed-profile-telemetry-exporter-exclusion--2026-11-15)).
+    This excludes exporters in the fixed profile; active-graph drain remains
+    unqualified. Credential lifetimes, remaining owners, native timers/transport
+    coverage and durable acknowledgment stay open. Paid runs/signing remain gated.
+    Telemetry repair/records through `3224b6b` are published with full
+    fresh-clone readback. New build/MSRV and fourteen duplicate SDK libraries are
+    pruned after exact/open-file checks; runnable red/green diagnostics and all other
+    evidence remain. All five current native diagnostics pass directly after cleanup
+    without Cargo; the telemetry receipt owns counts and retention details.
+    The fixed qualifier now awaits the exact known native warm-up timeout before
+    capture Ready and verifies observer removal; it preserves the original timer.
+    The actual capture-Ready red precedes every prompt, and five new SDK controls,
+    all current/frozen consumers and eight gates pass on `13811cf`
+    ([native-deadline receipt](validation.md#known-native-warm-up-deadline-before-capture-ready--2026-11-15)).
+    The discarded prewarm promise, other native timers/owners, full transport
+    coverage and durable acknowledgment remain open; paid runs/signing stay gated.
+    Native-deadline repair/records through `1dc6f14` are published with full
+    fresh-clone readback. New build/MSRV and three duplicate native libraries are
+    pruned after exact/open-file checks; runnable red/green and all other evidence
+    remain. All five current diagnostics pass directly after cleanup without Cargo;
+    the native-deadline receipt owns counts and retention details.
+    The fixed qualifier now retires native buffered logging and joins its queued
+    retention callback before capture Ready, through the existing native setter
+    and one immediate turn. Actual-bridge red/green, independent timer/callback/
+    marker controls, all current/frozen consumers and eight gates pass on `a989a1f`
+    ([logging receipt](validation.md#fixed-profile-native-logging-quiescence--2026-11-15)).
+    Native sinks still receive the original warm-up terminal event; original promise
+    identity/join remains unproved. Credential lifetimes, other owners, complete
+    transport/timer coverage and durable acknowledgment stay open. Paid runs and
+    signing remain gated.
+    Native marketplace controls now confirm that initial off excludes the task,
+    while the prior owned configuration and even a late off override run it.
+    The proper native regression fails exclusion on `7dab0cd`. Initial owned
+    configuration and final readback are repaired and locally qualified
+    ([marketplace receipt](validation.md#fixed-profile-marketplace-update-exclusion--2026-11-15)).
+    All current/frozen consumers and eight gates pass on `7863a44`;
+    the marketplace receipt owns the green and resource-recovery evidence.
+    The actual startup watchdog handle is observed pending early and cancelled
+    at handler entry, with real normal/delayed/cancellation-suppressed controls.
+    Qualification passes on `b9c7104`; application source is unchanged
+    ([watchdog receipt](validation.md#native-startup-watchdog-and-promise-hook-limits--2026-11-15)).
+    Three affected gate checks are fresh after the entry refinement; five unchanged
+    checks and the unchanged conversation/frozen runtime receipts are reused.
+    The watchdog receipt owns that evidence and temporary-library cleanup.
+    Watchdog tests/records through `b963af3` are published with
+    full fresh-clone readback. The new build/MSRV cache is pruned after verified
+    checks, preserving the executable/evidence; the full owner test passes directly
+    without Cargo after cleanup. The watchdog receipt owns retention and reuse scope.
+    Native promise hooks cannot observe even the synthetic control on this artifact;
+    the V8 hook throws NotImplementedError. Those hooks establish no original-promise join.
+    The original initial credential-resolver source and catch-return promises are
+    now identified and joined by the native consumer on `4682e9e`. Pending and
+    rejected synthetic controls, the materialized no-await mutation and the whole
+    owner regression pass, with three fresh affected checks and five unchanged
+    gates explicitly reused ([resolver receipt](validation.md#original-native-credential-resolver-join--2026-11-16)).
+    Resolver tests/records through `2ba7b1c` are published with full
+    fresh-clone readback. New build/MSRV and duplicate extraction caches are pruned;
+    the complete owner consumer passes directly from its retained executable.
+    The resolver receipt owns retention, exact evidence checks and reuse scope.
+    The original listener's reserve-policy branch is now joined on `3ac1e4a`.
+    Baseline/serial/coalesced controls, exact chain identity and actual setter
+    completion pass, including a no-await mutation that fails completion proof.
+    The whole native owner consumer and three fresh affected checks pass; five
+    unchanged gates and other consumer receipts are explicitly reused
+    ([settings-policy receipt](validation.md#original-native-settings-policy-chain--2026-11-16)).
+    Settings-policy tests/records through `df6471d` are published with
+    full fresh-clone readback. New build/MSRV and duplicate extraction caches are
+    pruned, preserving evidence; the entire owner consumer passes directly from
+    its retained executable. The settings-policy receipt owns retention and reuse.
+    The fixed owned qualifier now retires the original native auth listener and
+    joins its initial/queued promises before capture Ready, then requires the
+    original SQLite wrapper to close synchronously. Actual-bridge red/green,
+    active/retired/queued controls, all current native consumers and frozen33/0/7
+    pass on `3f972c9` ([retirement receipt](validation.md#fixed-profile-original-auth-retirement--2026-11-16)).
+    Retirement repair/tests/records through `34c574c` are published with
+    full fresh-clone readback. Generated build/MSRV and five duplicate libraries
+    are pruned; all five current native consumers pass directly from the retained
+    executable. The retirement receipt owns cache/evidence and reuse scope.
+    Four affected checks are fresh, with four unchanged default-feature gates reused
+    on exact inputs. This excludes unused native credential reconfiguration only
+    for this fixed profile; physical FD release and general OAuth drain are not
+    claimed. Original warm-up promise identity, full transport/timer coverage and
+    durable acknowledgment remain open; paid runs and release signing stay gated.
+    A fresh [gate/cache readback](validation.md#wrap-up-gate-and-cache-readback--2026-11-16)
+    confirms the stateless repair and qualified fixes are already published, with
+    unchanged acceptance inputs and retained evidence. Unused target libraries are
+    now pruned; the one still mapped by the IDE is preserved. The earlier rejected
+    static-registration candidate is not selected again. Complete startup admission
+    remains HOLD and the wrap-up remains active.
+    The [source-built caller comparison](validation.md#source-built-warm-up-caller-feasibility--2026-11-16)
+    led to the [bounded SDK caller owner](validation.md#source-built-bounded-startup-caller-owner--2026-11-16),
+    checked across all five generic warm-up sites and normal/error exits. Its
+    proposed upstream patch/tests remain reference data; Foundry does not apply it.
+    The [separately pinned source capture profile](validation.md#source-built-capture-profile-qualification--2026-11-16)
+    now passes its actual no-provider consumers and affected Rust gates. Its native
+    auth owner replaces frame-based capture only in this explicit diagnostic;
+    current/frozen host pins remain unchanged. Complete transport/timer coverage
+    and durable startup acknowledgment remain open, so full startup admission
+    stays HOLD. Paid runs, release signing and v2/T006 execution stay gated.
+    The linked source-profile receipt owns exact source/build identity, fresh
+    versus reused checks, the pre-launch disk stop, publication and cache replay.
+    The [journal attestation repair and transport census](validation.md#journal-attestation-readback-and-transport-census--2026-11-16)
+    now qualify committed-history readback at the existing seal/finish boundary.
+    The generic API fence is rejected after a named DNS route bypasses its hooks;
+    source-bound transport ownership and the closed shared-channel startup
+    acknowledgment remain required. Full admission stays HOLD. The linked receipt
+    distinguishes fresh checks, exact-input reuse and preload-only diagnostics.
+    The repair/records are published with full fresh-clone readback. Temporary
+    build/dependency trees are pruned while bundled source/notices and runnable
+    evidence remain. Direct readback-owner, native probe and source-conversation
+    replay pass after cleanup; ABI replay confirms the named DNS bypass again.
+    The [shared early capture channel](validation.md#shared-early-capture-channel-qualification--2026-11-16)
+    now qualifies one FIFO/sequence owner across the early source preload and later
+    extension, with fresh current/frozen/source consumers and explicit gate reuse.
+    This is the first exchange implementation slice. The subsequent
+    [source-owned durable refusal](validation.md#source-owned-durable-startup-refusal--2026-11-16)
+    now journals the known SDK warm-up before transport construction, with real
+    CLI append-failure and independent named-DNS controls. This startup-only
+    revision cannot deliver capture Ready. The subsequent
+    [restricted startup ownership](validation.md#restricted-startup-ownership--2026-11-16)
+    qualifies explicit CLI-to-SDK restrictions, the actual one-use session binding,
+    MCP/memory exclusion and original credential-usage preparation join. Native
+    unrestricted/restricted controls, persistence failures and fresh affected gates
+    pass; the receipt separates exact-input default-gate reuse and the disk-guard stop.
+    The [source-owned discovery retirement](validation.md#source-owned-startup-discovery-retirement--2026-11-16)
+    now qualifies concrete original-operation ownership through timeout/body races
+    and detached catalog subscribers in the fixed profile. Native held/error
+    controls and the Rust catalog-journal append-failure boundary pass. The linked
+    receipt separates fresh/reused gates, initially refused launches and lossless
+    cold storage; current continuation pins remain hot and older code can be restored.
+    The [source-owned settings retirement](validation.md#source-owned-settings-retirement--2026-11-16)
+    now joins original reload/rescope/save work and the original CLI auth/settings
+    link before the startup HOLD record. Native held/error/late-start controls and
+    all five persistence cases pass; the receipt separates fresh gates and exact reuse.
+    The settings fix/records are published with full fresh-clone readback. New
+    build/MSRV/SDK caches are pruned; retained units, channel/startup cases and
+    both legacy-source consumers pass directly afterward. Restoration inputs remain.
+    The [fixed empty-auth lifecycle](validation.md#fixed-empty-auth-startup-retirement--2026-11-16)
+    now enforces the selected credential exclusion from construction and retires
+    the original admitted calls/store, with native held/error/refusal controls and
+    six persistence cases. General OAuth and physical FD release are not accepted
+    by this empty profile. Complete inventory, telemetry/update/logging, trusted-
+    extension and daemon-presence ownership plus prefix acknowledgment/Ready echo
+    remain open; full admission stays HOLD.
+    The [source-owned telemetry exclusion](validation.md#source-owned-telemetry-exclusion--2026-11-18)
+    now joins the original disabled initialization and rejects exporter activation
+    in the explicit restricted diagnostic. Direct OTLP imports, general exporter
+    drain and complete startup admission remain open.
+    The telemetry fix/records are pushed with full clone readback; new caches
+    are pruned and retained executables pass direct replay.
+    The [daemon-presence handle fix](validation.md#daemon-presence-immutable-handle-qualification--2026-11-18)
+    is qualified at the fixed startup boundary; removing its handle freeze makes
+    the behavioral cleanup-substitution test fail. Full inventory, telemetry/update/
+    logging, trusted-extension ownership and prefix acknowledgment/Ready echo
+    remain open; full admission stays HOLD. The fix is pushed with full clone
+    readback; new caches are pruned and retained executables pass direct replay.
+    Six historical stores remain in
+    lossless local cold storage with restore recipes.
+    The empty-auth fix/records are published with full fresh-clone readback.
+    New build/MSRV/SDK caches and duplicate native libraries are pruned; retained
+    units, channel/startup controls and both legacy-source consumers pass directly
+    afterward. Exact restoration inputs and continuation pins remain.
+    Discovery retirement code/records are published with full fresh-clone readback.
+    New build/MSRV caches are pruned; units, channel, four startup persistence cases
+    and both legacy-source consumers pass directly afterward. Exact source inputs
+    and current continuation pins remain; older code is losslessly cold-stored.
+    The restricted-owner fix/records are published with full fresh-clone readback.
+    New build/MSRV trees and duplicate native libraries are pruned; units, channel,
+    startup persistence controls and both legacy-source consumers pass directly
+    from retained binaries afterward. Exact source restoration inputs remain.
+    Complete inventory/lifecycle evidence
+    and the full prefix acknowledgment/Ready echo remain open; admission stays HOLD.
+    Refusal integration/records are published with full fresh-clone readback after
+    an SSH-clone timeout and HTTPS retry. New Rust and duplicate SDK/dependency
+    caches are pruned; units, channel controls, startup failure cases and the prior
+    source conversation pass from retained executables. Exact source restoration
+    inputs remain; the linked receipt separates pre-cleanup DNS proof from replay.
+    Shared-channel code/records are published with full fresh-clone readback.
+    Both new build trees are pruned; pilot units, native channel controls and the
+    source conversation pass directly from retained binaries afterward. The linked
+    receipt owns allocation, retention, reuse and remaining exchange boundaries.
+    Source-profile code/records are published with full fresh-clone readback.
+    New build/MSRV caches are pruned; both source consumers pass directly from
+    the retained executable after cleanup. The source-profile receipt owns exact
+    retention and replay scope. Earlier caller-owner publication and cleanup
+    remain recorded in their receipt.
+    Marketplace repair/records through `467bd45` are published
+    with full fresh-clone readback. New build/MSRV cache is pruned after exact and
+    open-file checks; runnable red/green and other evidence remain. All five current
+    diagnostics pass directly after cleanup without Cargo; the marketplace receipt
+    owns cache counts, lossless cold retention and restore/readback details.
+    Logging repair/records through `fe46c66` are published with full
+    fresh-clone readback. New build/MSRV and five duplicate native libraries are
+    pruned after exact/open-file checks; runnable red/green and all other evidence
+    remain. All five current diagnostics pass directly after cleanup without Cargo;
+    the logging receipt owns counts and retention details.
+    The settlement finding/design through `2238253` is published with full fresh-clone
+    readback; ten redundant native-library copies are removed after byte/open-file
+    checks, preserving all other evidence and the prior retained library.
+    The preload finding through `9684a58` is published with full fresh-clone
+    readback. Its three redundant native-library extractions are removed after
+    byte/open-file checks; all other evidence and the generated catalog are retained.
+    The selected request repair is finished; unfunded v2 contract preparation
+    remains authorized without changing frozen v1 policy or enabling execution.
+    A new retrieval experiment still needs a bounded selection and unexposed
+    acceptance evidence; the consumed T005 final set cannot be reused. Concrete v2 tasks, margins,
+    powered sample, arms, launch pins and rights remain freeze inputs. Paid launch,
+    signing/release and owner-held backup restoration remain gated separately.
   - **Hosts and evidence:** the owner's Mac is the work host. The 2026-10-11
     sandbox and its archive are declared lost; F2, F6, F8, F10 and F11 retire.
-    Encrypted backups are to be built in `~/VSC_DEV/backups` (not built yet). The
-    pilot key file is deleted; the owner revokes the key.
-  - **Dependencies:** rustls 0.23.46, then one PR to main (to do); zip alerts
-    dismissed as not used and Dart 0.3 declined (done); Tantivy 0.27 only if neutral
-    (to do).
+    Five encrypted backups are built and checksum-verified in
+    `~/VSC_DEV/backups/foundry-20261111-retry1`
+    ([receipt](validation.md#encrypted-evidence-backups--2026-11-11)). The 2026-11-11
+    T005 holdout, consumed on 2026-11-13, has a verified encrypted archive in
+    `~/VSC_DEV/backups/foundry-t005-heldout-20261111`
+    ([receipt](validation.md#t005-sealed-holdout-encrypted-retention--2026-11-11)). The owner
+    retains the recovery private key and handles off-machine copying and authenticated
+    restoration; neither is claimed done. The pilot key file is deleted; the owner
+    revokes the key.
+  - **Dependencies:** rustls 0.23.46 merged to main as `d94b013` (done); zip alerts
+    dismissed as not used and Dart 0.3 declined (done); Tantivy 0.27 is accepted
+    on experimental after store compatibility, exact G1 neutrality and all eight
+    local gates ([receipt](validation.md#tantivy-027-store-compatibility-and-g1-neutrality--2026-11-11)).
+    The combined parser update is accepted on `68ed776`: complete corpus/fixture
+    snapshots are identical, focused migration checks and all eight local gates
+    pass, and the conditional G2 run is not triggered
+    ([receipt](validation.md#parser-bundle-and-complete-unit-comparison--2026-11-11)).
+    Existing indexes require explicit repair for search9/units7; old semantic
+    state remains history until explicit preparation.
   - **Closed or kept:** rows 5 and 6 and the historical CI re-run retire; the
     Nemotron comparison closes (its files are kept); `overview-v1` stays; query-time
     parse cost is a named limitation.
@@ -301,10 +1287,10 @@ role metadata uses `kinds2`; overview/address recipes retain `kinds1`.
 | --- | --- | --- |
 | Retrieval | Complete real hierarchy: 274 admitted sources, 13,822 vectors, 14,453 locations. Complete original, role-only and owner-scope arms deliver 1/8; coverage-independent interleaving restores 2/8. Historical experimental lexical was 2/8; the 2026-10-16 budget repair reached 3/8, and callable passage preservation now reaches 4/8 at the same 2,048 tokens. The separate real-model overview comparison also reaches 4/8. Default lexical remains 1/8. | Effective general repair and independent acceptance. All eight stay in the denominator; one historical source is excluded by unchanged private-key policy, so admitted ceiling is 7/8. Do not bypass admission or relabel outlines as body evidence. |
 | Host tasks | Historical Qwen3-4B pair fails both unchanged external oracles. The managed-runtime public seeded repair passes in both arms; provider usage is unavailable. | Representative correct completions and complete provider accounting, now owned by 003 T006 and pilot v2. The private stronger-model protocol (F2) was retired on 2026-11-06, and F3 moved to T006. |
-| Representative scale | Exact overview fitting covers 67,663 admitted Rust/Go sources; 60,735–65,959 distinct inputs / 14.65–15.86 million tokens. | Owner decision, 2026-11-06 ("Accept the Mac rust run"): scale is accepted through the complete hierarchy-v1 preparation of rust-lang/rust (62,035 files) on the owner's Mac plus a short replay and changed-input check there (to do). No complete 67,663-source model run exists; that corpus and Linux x86 scale are a named limitation. |
+| Representative scale | Exact overview fitting covers 67,663 admitted Rust/Go sources; 60,735–65,959 distinct inputs / 14.65–15.86 million tokens. | Owner decision, 2026-11-06 ("Accept the Mac rust run"): scale is accepted through the complete hierarchy-v1 Rust preparation and the [completed Mac replay/change check](validation.md#semantic-scale-replay-and-changed-input-acceptance--2026-11-10). No complete 67,663-source model run exists; that corpus and Linux x86 scale are a named limitation. |
 | Economics | Identical-source CLI delivery improves by 25% fewer calls and 6.48% fewer delivered tokens at 512 tokens. Provider/task benefit remains unproved. Failed attempts and unknown usage are retained. Selected history totals 71 requests, including the latest 13; 66 complete and five unknown. | Demonstrated completion benefit with bootstrap, acquisition, retrieval, maintenance and failed attempts included. Smaller failed prompts are not a benefit. |
-| Evidence | Bounded source call postings, conservative Python aliases, router dependency proofs and revision-bound execution snapshots; eight real framework/execution checks pass. | 005 T005 is accepted at its written scope once a gates receipt exists (owner, 2026-11-06); broader collectors, frameworks and cross-language resolution are named limitations, and realistic task outcomes belong to pilot v2. Unsupported/dynamic cases remain explicitly incomplete. |
-| Mac/GPU | Real Metal embeddings, 8,192-token input, owned generation, cleanup and CPU/Metal parity pass. Actual 128-file calibration and zero-call replay pass. With Spotlight stopped on the runner, native CPU-pressure acceptance passes twice at unchanged thresholds (runs 38207948408, 38209502529). | One ad-hoc-signed native run on the owner's Mac (to do) and signed installed-package acceptance (row 4, which blocks release). Global GPU pressure, combined residency, thermal/battery and eviction are named limitations (owner, 2026-11-06, "Script checks only"). |
+| Evidence | Bounded source call postings, conservative Python aliases, router dependency proofs and revision-bound execution snapshots; eight real framework/execution checks pass. | 005 T005 is accepted at its written scope ([receipt](validation.md#boundary-scope-acceptance-005-t005--2026-11-10)); broader collectors, frameworks and cross-language resolution are named limitations, and realistic task outcomes belong to pilot v2. Unsupported/dynamic cases remain explicitly incomplete. |
+| Mac/GPU | Earlier runner evidence includes CPU/Metal parity and native CPU pressure (runs 38207948408, 38209502529). The owner's physical Mac now passes the selected ad-hoc-signed native CPU, embedding, generation, calibration/replay and cleanup checks ([2026-11-10 receipt](validation.md#native-macos-acceptance--2026-11-10)); Spotlight was unchanged. | Repeat on the signed release candidate; signed installed-package acceptance (row 4) still blocks release. Global GPU pressure, combined residency, thermal/battery and eviction remain named limitations (owner, 2026-11-06, "Script checks only"). |
 
 The complete small-repository preparation accounts for 3,608,991 tokens and
 2,710,537 ms of preparation (2,413,715 ms provider time). Unchanged replay takes

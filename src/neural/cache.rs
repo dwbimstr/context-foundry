@@ -783,15 +783,6 @@ impl MappingPage {
         cache_servable(&self.cache, key, function_digest, dims)
     }
 
-    /// Point-read size guard for selected query mappings, before JSON allocation.
-    #[cfg(feature = "semantic")]
-    pub(crate) fn partition_bytes(&self, path: &str) -> FResult<usize> {
-        Ok(self
-            .partitions
-            .get(path)?
-            .map_or(0, |raw| raw.value().len()))
-    }
-
     #[cfg(feature = "semantic")]
     pub(crate) fn partition(
         &self,

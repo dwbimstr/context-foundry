@@ -1,0 +1,95 @@
+# Proposed source-host qualification patch; unapplied by Foundry.
+# oh-my-pi 24439066040e006eb08da7b204f0ac41c79d2de9, MIT.
+# Upstream license: https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/LICENSE
+# MIT License
+# 
+# Copyright (c) 2025 Mario Zechner
+# Copyright (c) 2025-2026 Can Bölük
+# Copyright (c) 2026 Stencil Labs, Inc.
+# 
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+# 
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+# 
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+diff --git a/packages/coding-agent/src/modes/rpc/rpc-mode.ts b/packages/coding-agent/src/modes/rpc/rpc-mode.ts
+--- a/packages/coding-agent/src/modes/rpc/rpc-mode.ts
++++ b/packages/coding-agent/src/modes/rpc/rpc-mode.ts
+@@ -1387,6 +1387,7 @@
+ type StartupRpcReceipt = Readonly<{
+ 	initial_catalog_joined: true;
+ 	metadata_subscription_excluded: true;
++	runtime_callbacks_excluded: true;
+ 	output_drained: true;
+ 	dispatch_closed: true;
+ }>;
+@@ -1408,6 +1409,7 @@
+ 	const receipt: StartupRpcReceipt = Object.freeze({
+ 		initial_catalog_joined: true,
+ 		metadata_subscription_excluded: true,
++		runtime_callbacks_excluded: true,
+ 		output_drained: true,
+ 		dispatch_closed: true,
+ 	});
+@@ -1546,7 +1548,8 @@
+ 			sessionChangesInProgress--;
+ 		}
+ 	};
+-	const subagentRegistry = subagentEventBus ? new RpcSubagentRegistry(subagentEventBus, output) : undefined;
++	const subagentRegistry =
++		!startupObservation && subagentEventBus ? new RpcSubagentRegistry(subagentEventBus, output) : undefined;
+ 
+ 	// Shutdown request flag (wrapped in object to allow mutation with const)
+ 	const shutdownState = { requested: false };
+@@ -1843,17 +1846,19 @@
+ 		uiContext: headless ? undefined : rpcUiContext,
+ 	});
+ 
+-	// Output all agent events as JSON; prompt results follow the frame that settled them.
+-	session.subscribe(event => {
+-		sessionEvents.forward(event);
+-		// Before the prompt-result and settle reports: a goal continuation decided at this
+-		// agent_end is scheduled (and reported as pending) before either reads settlement.
+-		goalController.observe(event);
+-		promptResults.observe(event);
+-		settleWatcher.observe(event);
+-	});
+-	await goalController.reconcile();
+-	await goalController.settled();
++	if (!startupObservation) {
++		// Output all agent events as JSON; prompt results follow the frame that settled them.
++		session.subscribe(event => {
++			sessionEvents.forward(event);
++			// Before the prompt-result and settle reports: a goal continuation decided at this
++			// agent_end is scheduled (and reported as pending) before either reads settlement.
++			goalController.observe(event);
++			promptResults.observe(event);
++			settleWatcher.observe(event);
++		});
++		await goalController.reconcile();
++		await goalController.settled();
++	}
+ 
+ 	// Discriminates a store failure from any other dispose rejection below.
+ 	let persistenceFailure: Error | undefined;
+@@ -3005,6 +3010,7 @@
+ 			await inputRead;
+ 			throw new Error("RPC input closed before startup retirement");
+ 		}
++		if (subagentRegistry) throw new Error("RPC startup subagent subscription active");
+ 		reportStartupRpcRetired();
+ 	} else {
+ 		const held = heldFrames;

@@ -10,10 +10,12 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::Read;
-use std::os::unix::fs::MetadataExt;
+use std::os::fd::AsRawFd;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, ExitStatus, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -21,9 +23,11 @@ use serde_json::Value;
 
 use super::protocol::FaultClass;
 use super::{
-    CaptureFault, CheckStep, IndependentCheckReceipt, LaunchManifest, ManifestSlot, ManifestView,
-    PinEntry, PreparedSlot, PreviewAdmission, RenderCommitments, create_private_dir, policy,
-    render_binding, sha256_hex, write_private_new,
+    CHECK_RECEIPT_KIND, CHECK_STDERR_MAX_BYTES, CaptureFault, CheckStep, IndependentCheckReceipt,
+    LaunchManifest, ManifestSlot, ManifestView, PinEntry, PreparedSlot, PreviewAdmission,
+    PrivateArtifact, PrivateTreeBudget, RenderCommitments, collect_private_tree,
+    create_private_dir, open_private_file, policy, private_child, render_binding,
+    require_private_directory, sha256_hex, verify_private_tree, write_private_new,
 };
 
 /// Frozen input pins (contract §2) beyond those in [`policy`].
@@ -294,8 +298,19 @@ const ROOT_DIRS: [&str; 9] = [
 impl PilotRoot {
     /// Claim a fresh pilot root exclusively.
     pub fn create(path: &Path) -> Result<Self, CaptureFault> {
-        create_private_dir(path)?;
-        let root = fs::canonicalize(path)
+        // Only a fresh leaf is claimed. Resolve its admitted existing parent,
+        // never an existing input leaf, so ordinary /tmp aliases remain usable.
+        let parent = fs::canonicalize(
+            path.parent()
+                .ok_or(fault(FaultClass::Persistence, "pilot_root_unresolvable"))?,
+        )
+        .map_err(|_| fault(FaultClass::Persistence, "pilot_root_unresolvable"))?;
+        let target = parent.join(
+            path.file_name()
+                .ok_or(fault(FaultClass::Persistence, "pilot_root_unresolvable"))?,
+        );
+        create_private_dir(&target)?;
+        let root = fs::canonicalize(&target)
             .map_err(|_| fault(FaultClass::Persistence, "pilot_root_unresolvable"))?;
         for d in ROOT_DIRS {
             create_private_dir(&root.join(d))?;
@@ -307,13 +322,46 @@ impl PilotRoot {
     pub fn open(path: &Path) -> Result<Self, CaptureFault> {
         let root = fs::canonicalize(path)
             .map_err(|_| fault(FaultClass::Authority, "pilot_root_missing"))?;
-        for d in std::iter::once(".").chain(ROOT_DIRS) {
-            let meta = fs::symlink_metadata(root.join(d))
+        require_private_directory(path)
+            .map_err(|_| fault(FaultClass::Authority, "pilot_root_not_private"))?;
+        let mut budget = PrivateTreeBudget::new(None);
+        for d in ROOT_DIRS {
+            let child = root.join(d);
+            fs::symlink_metadata(&child)
                 .map_err(|_| fault(FaultClass::Authority, "pilot_root_incomplete"))?;
-            // SAFETY: getuid has no failure mode.
-            let uid = unsafe { libc::getuid() };
-            if !meta.is_dir() || meta.mode() & 0o077 != 0 || meta.uid() != uid {
-                return Err(fault(FaultClass::Authority, "pilot_root_not_private"));
+            require_private_directory(&child)
+                .map_err(|_| fault(FaultClass::Authority, "pilot_root_not_private"))?;
+            if d == "checks" {
+                // Derive only the fixed checks/<one-root>/out/check exception;
+                // both inventory and validation consume this same pass budget.
+                let files = collect_private_tree(&child, false, &[], &mut budget)?;
+                let executables: Vec<&Path> = files
+                    .iter()
+                    .filter(|p| {
+                        let parts: Vec<_> = p.components().collect();
+                        parts.len() == 3
+                            && parts[1].as_os_str() == "out"
+                            && parts[2].as_os_str() == "check"
+                    })
+                    .map(PathBuf::as_path)
+                    .collect();
+                verify_private_tree(&child, &executables, &mut budget)?;
+            } else if d == "runs" {
+                // Fixed PilotRoot layout only: runs/<one-run>/hosts/<one-host>
+                // followed by the host-owned exact native-module suffix.
+                let files = collect_private_tree(&child, false, &[], &mut budget)?;
+                let executables: Vec<&Path> = files
+                    .iter()
+                    .filter(|p| {
+                        let mut parts = p.components();
+                        matches!(parts.next(), Some(std::path::Component::Normal(_)))
+                            && super::host::is_run_native_module(parts.as_path())
+                    })
+                    .map(PathBuf::as_path)
+                    .collect();
+                verify_private_tree(&child, &executables, &mut budget)?;
+            } else {
+                verify_private_tree(&child, &[], &mut budget)?;
             }
         }
         Ok(Self { root })
@@ -347,7 +395,11 @@ pub fn install_seed(root: &PilotRoot, verified: &Verified) -> Result<(), Capture
     let seed = root.seed();
     create_private_dir(&seed.join("src"))?;
     for (rel, src) in &verified.seed {
-        let bytes = fs::read(src).map_err(|_| pin_fault("seed_unreadable"))?;
+        let mut input = super::open_nofollow(src, false)?;
+        let mut bytes = Vec::new();
+        input
+            .read_to_end(&mut bytes)
+            .map_err(|_| pin_fault("seed_unreadable"))?;
         write_private_new(&seed.join(rel), &bytes)?;
     }
     check_seed_tree(&seed)
@@ -369,48 +421,52 @@ fn check_seed_tree(dir: &Path) -> Result<(), CaptureFault> {
 }
 
 fn list_files(dir: &Path) -> Result<Vec<String>, CaptureFault> {
-    let mut out = Vec::new();
-    let mut stack = vec![dir.to_path_buf()];
-    while let Some(d) = stack.pop() {
-        for e in fs::read_dir(&d).map_err(|_| fault(FaultClass::Containment, "tree_unreadable"))? {
-            let p = e
-                .map_err(|_| fault(FaultClass::Containment, "tree_unreadable"))?
-                .path();
-            let meta = fs::symlink_metadata(&p)
-                .map_err(|_| fault(FaultClass::Containment, "tree_unreadable"))?;
-            if meta.is_dir() {
-                stack.push(p);
-            } else {
-                let rel = p
-                    .strip_prefix(dir)
-                    .map_err(|_| fault(FaultClass::Containment, "tree_unreadable"))?
-                    .to_string_lossy()
-                    .into_owned();
-                out.push(rel);
-            }
-        }
-    }
-    out.sort();
-    Ok(out)
+    collect_private_tree(dir, false, &[], &mut PrivateTreeBudget::new(None))?
+        .into_iter()
+        .map(|p| {
+            p.into_os_string()
+                .into_string()
+                .map_err(|_| fault(FaultClass::Containment, "tree_unreadable"))
+        })
+        .collect()
 }
 
 fn copy_tree(from: &Path, to: &Path) -> Result<(), CaptureFault> {
+    let files = collect_private_tree(from, false, &[], &mut PrivateTreeBudget::new(None))?;
     create_private_dir(to)?;
-    for rel in list_files(from)? {
+    for rel in files {
         let dest = to.join(&rel);
-        if let Some(parent) = dest.parent()
-            && !parent.exists()
-        {
-            fs::create_dir_all(parent)
-                .map_err(|_| fault(FaultClass::Persistence, "copy_failed"))?;
-            fs::set_permissions(parent, std::os::unix::fs::PermissionsExt::from_mode(0o700))
-                .map_err(|_| fault(FaultClass::Persistence, "copy_failed"))?;
+        let mut parent = to.to_path_buf();
+        if let Some(relative_parent) = rel.parent() {
+            for component in relative_parent.components() {
+                let std::path::Component::Normal(name) = component else {
+                    return Err(fault(FaultClass::Persistence, "copy_failed"));
+                };
+                parent.push(name);
+                match fs::symlink_metadata(&parent) {
+                    Ok(_) => require_private_directory(&parent)?,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                        create_private_dir(&parent)?
+                    }
+                    Err(_) => return Err(fault(FaultClass::Persistence, "copy_failed")),
+                }
+            }
         }
-        let bytes =
-            fs::read(from.join(&rel)).map_err(|_| fault(FaultClass::Persistence, "copy_failed"))?;
+        let mut input = super::open_nofollow(&from.join(&rel), false)?;
+        if !input
+            .metadata()
+            .map_err(|_| fault(FaultClass::Persistence, "copy_failed"))?
+            .is_file()
+        {
+            return Err(fault(FaultClass::Containment, "tree_unreadable"));
+        }
+        let mut bytes = Vec::new();
+        input
+            .read_to_end(&mut bytes)
+            .map_err(|_| fault(FaultClass::Persistence, "copy_failed"))?;
         write_private_new(&dest, &bytes)?;
     }
-    Ok(())
+    verify_private_tree(to, &[], &mut PrivateTreeBudget::new(None))
 }
 
 /// Restore the canonical workspace `name` from the seed. An existing arm's
@@ -421,8 +477,11 @@ pub fn restore_workspace(
     name: &str,
     archive_as: Option<&str>,
 ) -> Result<(PathBuf, Vec<(String, String)>), CaptureFault> {
-    check_seed_tree(&root.seed())?;
     let ws = root.workspace(name);
+    if ws.symlink_metadata().is_ok() {
+        verify_private_tree(&ws, &[], &mut PrivateTreeBudget::new(None))?;
+    }
+    check_seed_tree(&root.seed())?;
     if ws.symlink_metadata().is_ok() {
         if let Some(label) = archive_as {
             copy_tree(&ws, &root.root.join("archive").join(label))?;
@@ -497,6 +556,7 @@ fn run_bounded(
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .process_group(0);
+    private_child(&mut cmd);
     let mut child = cmd
         .spawn()
         .map_err(|_| fault(FaultClass::Bootstrap, "apparatus_spawn_failed"))?;
@@ -607,6 +667,11 @@ pub fn materialize_views(
             &env,
             remaining("pair_preparation_wall")?,
         )?;
+        verify_private_tree(
+            &store,
+            &[],
+            &mut PrivateTreeBudget::new(Some(pair_started + pair_limit)),
+        )?;
         let report: Value =
             serde_json::from_slice(&index.stdout).map_err(|_| pin_fault("index_report_invalid"))?;
         if index.status != Some(0)
@@ -637,6 +702,11 @@ pub fn materialize_views(
             &root.root,
             &env,
             remaining("pair_preparation_wall")?,
+        )?;
+        verify_private_tree(
+            &store,
+            &[],
+            &mut PrivateTreeBudget::new(Some(pair_started + pair_limit)),
         )?;
         let prep: Value = serde_json::from_slice(&prepare.stdout)
             .map_err(|_| pin_fault("prepare_report_invalid"))?;
@@ -675,6 +745,11 @@ pub fn materialize_views(
             &root.root,
             &env,
             remaining("pair_preparation_wall")?,
+        )?;
+        verify_private_tree(
+            &store,
+            &[],
+            &mut PrivateTreeBudget::new(Some(pair_started + pair_limit)),
         )?;
         let view = String::from_utf8(context.stdout).map_err(|_| pin_fault("view_not_utf8"))?;
         let header = view.lines().next().unwrap_or_default().to_string();
@@ -735,13 +810,18 @@ pub fn materialize_views(
 
 /// Read back a frozen view and verify it against its record.
 pub fn load_view(root: &PilotRoot, pair: u8) -> Result<(String, ViewRecord), CaptureFault> {
-    let record: ViewRecord = serde_json::from_slice(
-        &fs::read(root.view_record(pair))
-            .map_err(|_| fault(FaultClass::Authority, "view_record_missing"))?,
-    )
+    let record: ViewRecord = serde_json::from_slice(&super::read_private_evidence(
+        &root.view_record(pair),
+        "view_record_missing",
+        1 << 20,
+    )?)
     .map_err(|_| fault(FaultClass::Authority, "view_record_invalid"))?;
-    let view = fs::read_to_string(root.view(pair))
-        .map_err(|_| fault(FaultClass::Authority, "view_missing"))?;
+    let view = String::from_utf8(super::read_private_evidence(
+        &root.view(pair),
+        "view_missing",
+        8 << 20,
+    )?)
+    .map_err(|_| fault(FaultClass::Authority, "view_missing"))?;
     if record.pair != pair || sha256_hex(view.as_bytes()) != record.view_sha256 {
         return Err(fault(FaultClass::Pins, "view_changed"));
     }
@@ -801,7 +881,9 @@ type SlotInputs = (PathBuf, String, Vec<(String, String)>);
 pub fn build_manifests(
     root: &PilotRoot,
     verified: &Verified,
+    run_dir: &Path,
 ) -> Result<(LaunchManifest, LaunchManifest), CaptureFault> {
+    let run_dir = super::resolved_run_dir(run_dir)?;
     let mut views = Vec::new();
     let mut prompts: BTreeMap<String, SlotInputs> = BTreeMap::new();
     for pair in pins::PAIRS {
@@ -874,7 +956,8 @@ pub fn build_manifests(
         &probe_sources,
     )?;
     let manifest = |slots: Vec<ManifestSlot>| LaunchManifest {
-        kind: "bounded-pilot-v1-launch".into(),
+        kind: super::LAUNCH_MANIFEST_KIND.into(),
+        run_dir: run_dir.clone(),
         contract_sha256: policy::CONTRACT_SHA256.into(),
         omp_sha256: policy::OMP_SHA256.into(),
         slots,
@@ -921,15 +1004,6 @@ pub fn build_manifests(
 // The contained independent checker (contract §9).
 // ---------------------------------------------------------------------------
 
-const CHECK_ENV_NAMES: [&str; 6] = [
-    "HOME",
-    "LANG",
-    "PATH",
-    "TMPDIR",
-    "XDG_CONFIG_HOME",
-    "XDG_DATA_HOME",
-];
-
 fn sbpl(path: &Path) -> Result<String, CaptureFault> {
     let text = path.to_str().ok_or(fault(
         FaultClass::CheckerProvenance,
@@ -948,9 +1022,9 @@ fn sbpl(path: &Path) -> Result<String, CaptureFault> {
     Ok(text.to_string())
 }
 
-/// The checker's sandbox: no network, the owner's home unreadable and
-/// unwritable except the private checker root, no writes outside it.
-fn check_policy(root: &Path, real_home: &Path) -> Result<String, CaptureFault> {
+/// The existing checker sandbox bytes, also validated by the receipt owner.
+/// This binds the profile actually supplied; it is not an OS-jail attestation.
+pub(super) fn check_policy(root: &Path, real_home: &Path) -> Result<String, CaptureFault> {
     let (root, home) = (sbpl(root)?, sbpl(real_home)?);
     Ok(format!(
         "(version 1)(allow default)(deny network*)\
@@ -960,12 +1034,296 @@ fn check_policy(root: &Path, real_home: &Path) -> Result<String, CaptureFault> {
     ))
 }
 
+/// The complete sanitized environment supplied to each fixed checker step.
+pub(super) fn check_environment(root: &Path) -> Result<BTreeMap<String, String>, CaptureFault> {
+    let root = sbpl(root)?;
+    Ok([
+        ("HOME".into(), format!("{root}/home")),
+        ("LANG".into(), "C".into()),
+        ("PATH".into(), "/usr/bin:/bin".into()),
+        ("TMPDIR".into(), format!("{root}/tmp/")),
+        ("XDG_CONFIG_HOME".into(), format!("{root}/home/.config")),
+        ("XDG_DATA_HOME".into(), format!("{root}/home/.local/share")),
+    ]
+    .into_iter()
+    .collect())
+}
+
+/// Hash only a completely observed checker stream. A read failure must
+/// never turn its observed prefix into an apparently complete output hash.
+fn check_output_sha256(mut pipe: impl Read) -> Result<String, CaptureFault> {
+    let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
+    let mut buf = [0u8; 16 * 1024];
+    loop {
+        let n = pipe
+            .read(&mut buf)
+            .map_err(|_| fault(FaultClass::CheckerProvenance, "check_output_unbound"))?;
+        if n == 0 {
+            break;
+        }
+        sha2::Digest::update(&mut hasher, &buf[..n]);
+    }
+    Ok(sha2::Digest::finalize(hasher)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect())
+}
+
+/// Retain at most the selected cap; an error carries only its observed prefix.
+fn check_stderr_bytes(mut pipe: impl Read) -> Result<Vec<u8>, (CaptureFault, Vec<u8>)> {
+    let mut bytes = Vec::new();
+    let mut buf = [0u8; 16 * 1024];
+    loop {
+        let n = match pipe.read(&mut buf) {
+            Ok(n) => n,
+            Err(_) => {
+                return Err((
+                    fault(FaultClass::CheckerProvenance, "check_stderr_read_failed"),
+                    bytes,
+                ));
+            }
+        };
+        if n == 0 {
+            return Ok(bytes);
+        }
+        let remaining = CHECK_STDERR_MAX_BYTES - bytes.len();
+        bytes.extend_from_slice(&buf[..n.min(remaining)]);
+        if n > remaining {
+            return Err((
+                fault(FaultClass::CheckerProvenance, "check_stderr_overflow"),
+                bytes,
+            ));
+        }
+    }
+}
+
+/// Poll only these owned pipe descriptors, so cancellation also bounds reads
+/// after the leader exits while an owned descendant still holds a pipe open.
+struct CheckPipe<R> {
+    pipe: R,
+    cancelled: Arc<AtomicBool>,
+}
+
+impl<R: Read + AsRawFd> Read for CheckPipe<R> {
+    fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+        if bytes.is_empty() {
+            return Ok(0);
+        }
+        loop {
+            if self.cancelled.load(Ordering::Acquire) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Interrupted,
+                    "checker capture cancelled",
+                ));
+            }
+            let mut fd = libc::pollfd {
+                fd: self.pipe.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            // SAFETY: fd points to one initialized pollfd for this live owned
+            // descriptor; poll neither takes ownership nor changes the fd.
+            let ready = unsafe { libc::poll(&mut fd, 1, 10) };
+            if ready < 0 {
+                let error = std::io::Error::last_os_error();
+                if error.kind() == std::io::ErrorKind::Interrupted {
+                    continue;
+                }
+                return Err(error);
+            }
+            if ready == 0 {
+                continue;
+            }
+            if fd.revents & (libc::POLLIN | libc::POLLHUP) != 0 {
+                // This thread is the sole reader of this pipe. Read only after
+                // readiness/HUP; HUP can still have buffered bytes before EOF.
+                return self.pipe.read(bytes);
+            }
+            return Err(std::io::Error::other("checker pipe unavailable"));
+        }
+    }
+}
+
+#[derive(Debug)]
+struct CheckProcessOutput {
+    status: ExitStatus,
+    stdout_sha256: String,
+    stderr_sha256: String,
+    stderr_path: String,
+    stderr_bytes: u64,
+}
+
+fn retain_check_stderr(
+    root: &Path,
+    name: &str,
+    bytes: &[u8],
+    partial: bool,
+) -> Result<String, CaptureFault> {
+    let suffix = if partial {
+        ".partial.stderr"
+    } else {
+        ".stderr"
+    };
+    let relative = format!("diagnostics/{name}{suffix}");
+    write_private_new(&root.join(&relative), bytes)?;
+    if partial {
+        write_private_new(
+            &root.join(format!("{relative}.sha256")),
+            format!("{}\n", sha256_hex(bytes)).as_bytes(),
+        )?;
+    }
+    super::fsync_dir(&root.join("diagnostics"))?;
+    Ok(relative)
+}
+
+/// Execute one actual fixed checker step. The caller supplies the same absolute
+/// deadline to all four steps; it covers the leader and both pipe readers.
+fn run_check_step(
+    cmd: &mut Command,
+    root: &Path,
+    name: &str,
+    deadline: Instant,
+) -> Result<CheckProcessOutput, CaptureFault> {
+    let prov = |code| fault(FaultClass::CheckerProvenance, code);
+    if !policy::CHECK_RECIPE.iter().any(|(step, _)| *step == name) {
+        return Err(prov("check_recipe_mismatch"));
+    }
+    super::validate_check_directory(root)?;
+    super::validate_check_directory(&root.join("diagnostics"))?;
+    if Instant::now() >= deadline {
+        return Err(prov("post_check_wall_exceeded"));
+    }
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .process_group(0);
+    private_child(cmd);
+    let mut child = cmd.spawn().map_err(|_| prov("check_spawn_failed"))?;
+    let pgid = child.id() as i32;
+    let stop_group = || {
+        // SAFETY: only the process group created above for this owned child is
+        // signalled. Keep this group cleanup even after its leader has exited.
+        unsafe {
+            libc::kill(-pgid, libc::SIGKILL);
+        }
+    };
+    let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
+        stop_group();
+        let _ = child.wait();
+        return Err(prov("check_spawn_failed"));
+    };
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let (send_fault, faults) = std::sync::mpsc::channel();
+    let out_cancelled = cancelled.clone();
+    let out_fault = send_fault.clone();
+    let out_t = std::thread::spawn(move || {
+        let output = check_output_sha256(CheckPipe {
+            pipe: stdout,
+            cancelled: out_cancelled,
+        });
+        if let Err(error) = output.as_ref() {
+            let _ = out_fault.send(*error);
+        }
+        output
+    });
+    let err_cancelled = cancelled.clone();
+    let err_t = std::thread::spawn(move || {
+        let output = check_stderr_bytes(CheckPipe {
+            pipe: stderr,
+            cancelled: err_cancelled,
+        });
+        if let Err((error, _)) = output.as_ref() {
+            let _ = send_fault.send(*error);
+        }
+        output
+    });
+    let mut status = None;
+    let mut first_fault = None;
+    let mut stopped = false;
+    loop {
+        if first_fault.is_none() {
+            first_fault = faults.try_recv().ok();
+        }
+        if first_fault.is_none() && status.is_none() {
+            match child.try_wait() {
+                Ok(observed) => status = observed,
+                Err(_) => first_fault = Some(prov("check_wait_failed")),
+            }
+        }
+        if first_fault.is_none() && Instant::now() >= deadline {
+            first_fault = Some(prov("post_check_wall_exceeded"));
+        }
+        if first_fault.is_some() {
+            cancelled.store(true, Ordering::Release);
+            stop_group();
+            let _ = child.wait();
+            stopped = true;
+            break;
+        }
+        if status.is_some() && out_t.is_finished() && err_t.is_finished() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    // Both readers use cancellable polling; always join both before returning,
+    // including on timeout or an earlier reader failure.
+    let stdout = out_t.join();
+    let stderr = err_t.join();
+    if first_fault.is_none() {
+        first_fault = faults.try_recv().ok();
+    }
+    let (stderr_bytes, partial) = match stderr {
+        // Killing the group can produce EOF before a reader observes cancellation.
+        // Stopped capture is conservatively partial, never certified by cleanup EOF.
+        Ok(Ok(bytes)) => (bytes, stopped),
+        Ok(Err((error, bytes))) => {
+            first_fault.get_or_insert(error);
+            (bytes, true)
+        }
+        Err(_) => {
+            if !stopped {
+                stop_group();
+                let _ = child.wait();
+            }
+            return Err(first_fault.unwrap_or(prov("check_output_unbound")));
+        }
+    };
+    let stdout = match stdout {
+        Ok(result) => result,
+        Err(_) => Err(prov("check_output_unbound")),
+    };
+    if let Err(error) = stdout.as_ref() {
+        first_fault.get_or_insert(*error);
+    }
+    if first_fault.is_some() && !stopped {
+        stop_group();
+        let _ = child.wait();
+    }
+    // Retain the complete bytes or explicitly labelled partial prefix even if
+    // another capture fault prevents a normal receipt. Persistence failure is
+    // itself an error; never claim an artifact was retained when it was not.
+    let stderr_path = retain_check_stderr(root, name, &stderr_bytes, partial)?;
+    if let Some(error) = first_fault {
+        return Err(error);
+    }
+    let stdout_sha256 = stdout?;
+    Ok(CheckProcessOutput {
+        status: status.ok_or(prov("check_wait_failed"))?,
+        stdout_sha256,
+        stderr_sha256: sha256_hex(&stderr_bytes),
+        stderr_path,
+        stderr_bytes: stderr_bytes.len() as u64,
+    })
+}
+
 /// Copy the stopped host's candidate and the private oracle into a new
 /// checker root outside agent access, then run the accepted four-step recipe
 /// under containment with a minimal no-credential environment and the 60 s
 /// post-check ceiling. Untrusted candidate code only ever runs inside the
 /// sandbox. The result binds slot, candidate, oracle, compiler, argv,
-/// environment names, exits and output/artifact digests.
+/// exact environment/profile, exits and retained output/artifact digests.
+/// Capture failures retain bounded partial stderr and return Err; only complete
+/// output can be represented by a normal receipt.
 pub fn run_independent_check(
     slot_id: &str,
     workspace: &Path,
@@ -982,7 +1340,7 @@ pub fn run_independent_check(
     }
     create_private_dir(checker_root)?;
     let root = fs::canonicalize(checker_root).map_err(|_| prov("check_root_unresolvable"))?;
-    for d in ["src", "out", "home", "tmp"] {
+    for d in ["src", "out", "home", "tmp", "diagnostics"] {
         create_private_dir(&root.join(d))?;
     }
     let mut candidate = Vec::new();
@@ -992,32 +1350,33 @@ pub fn run_independent_check(
         if !meta.is_file() {
             return Err(prov("check_candidate_not_regular"));
         }
-        let bytes = fs::read(&src).map_err(|_| prov("check_candidate_missing"))?;
+        let mut input = open_private_file(&src, PrivateArtifact::File)?;
+        let mut bytes = Vec::new();
+        input
+            .read_to_end(&mut bytes)
+            .map_err(|_| prov("check_candidate_missing"))?;
         write_private_new(&root.join(rel), &bytes)?;
         candidate.push((rel.clone(), sha256_hex(&bytes)));
     }
-    let oracle_bytes = fs::read(oracle).map_err(|_| prov("check_oracle_changed"))?;
+    let mut oracle_input = super::open_nofollow(oracle, false)?;
+    let mut oracle_bytes = Vec::new();
+    oracle_input
+        .read_to_end(&mut oracle_bytes)
+        .map_err(|_| prov("check_oracle_changed"))?;
+    let oracle_sha256 = sha256_hex(&oracle_bytes);
+    if oracle_sha256 != policy::ORACLE_SHA256 {
+        return Err(prov("check_oracle_changed"));
+    }
     write_private_new(&root.join("check.rs"), &oracle_bytes)?;
-    let home = fs::canonicalize(std::env::var("HOME").unwrap_or_else(|_| "/".into()))
-        .unwrap_or_else(|_| PathBuf::from("/"));
-    let real_home = super::real_home_for_checks().unwrap_or(home);
+    let real_home = super::real_home_for_checks()?;
     let sandbox = check_policy(&root, &real_home)?;
-    let env: Vec<(&str, String)> = vec![
-        ("HOME", root.join("home").to_string_lossy().into_owned()),
-        ("LANG", "C".into()),
-        ("PATH", "/usr/bin:/bin".into()),
-        ("TMPDIR", format!("{}/", root.join("tmp").display())),
-        (
-            "XDG_CONFIG_HOME",
-            root.join("home/.config").to_string_lossy().into_owned(),
-        ),
-        (
-            "XDG_DATA_HOME",
-            root.join("home/.local/share")
-                .to_string_lossy()
-                .into_owned(),
-        ),
-    ];
+    let environment = check_environment(&root)?;
+    // This is the observed header value, not a copied policy constant. The
+    // compiler is freshly observed again immediately before each compile step.
+    let compiler_sha256 = file_sha256(Path::new(policy::RUSTC))?;
+    if compiler_sha256 != policy::RUSTC_SHA256 {
+        return Err(prov("check_compiler_changed"));
+    }
     let version = Command::new(policy::RUSTC)
         .arg("--version")
         .env_clear()
@@ -1025,7 +1384,7 @@ pub fn run_independent_check(
         .output()
         .map_err(|_| prov("check_compiler_unavailable"))?;
     let compiler_version = String::from_utf8_lossy(&version.stdout).trim().to_string();
-    if !compiler_version.starts_with(policy::RUSTC_VERSION_PREFIX) {
+    if !version.status.success() || !compiler_version.starts_with(policy::RUSTC_VERSION_PREFIX) {
         return Err(prov("check_compiler_changed"));
     }
     let root_text = root
@@ -1039,81 +1398,63 @@ pub fn run_independent_check(
             .iter()
             .map(|a| a.replace("<ROOT>", &root_text))
             .collect();
-        let left = deadline.saturating_duration_since(Instant::now());
         let started = Instant::now();
+        if name == "oracle_compile"
+            && file_sha256(&root.join("check.rs")).map_err(|_| prov("check_oracle_changed"))?
+                != oracle_sha256
+        {
+            return Err(prov("check_oracle_changed"));
+        }
+        // Fresh pathname observations are not an atomic hash-and-exec binding.
+        let executable_sha256 = if name == "oracle_run" {
+            open_private_file(&root.join("out/check"), PrivateArtifact::Executable)?;
+            file_sha256(&root.join("out/check")).map_err(|_| prov("check_artifact_unbound"))?
+        } else {
+            let observed = file_sha256(Path::new(policy::RUSTC))?;
+            if observed != compiler_sha256 {
+                return Err(prov("check_compiler_changed"));
+            }
+            observed
+        };
         let mut cmd = Command::new("/usr/bin/sandbox-exec");
         cmd.arg("-p")
             .arg(&sandbox)
             .args(&argv)
             .current_dir(&root)
             .env_clear()
-            .envs(env.iter().map(|(k, v)| (*k, v.as_str())))
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .process_group(0);
-        let mut child = cmd.spawn().map_err(|_| prov("check_spawn_failed"))?;
-        let capture = |mut pipe: Box<dyn Read + Send>| {
-            std::thread::spawn(move || {
-                let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
-                let mut buf = [0u8; 16 * 1024];
-                while let Ok(n) = pipe.read(&mut buf) {
-                    if n == 0 {
-                        break;
-                    }
-                    sha2::Digest::update(&mut hasher, &buf[..n]);
-                }
-                sha2::Digest::finalize(hasher)
-                    .iter()
-                    .map(|b| format!("{b:02x}"))
-                    .collect::<String>()
-            })
-        };
-        let out_t = capture(Box::new(
-            child.stdout.take().ok_or(prov("check_spawn_failed"))?,
-        ));
-        let err_t = capture(Box::new(
-            child.stderr.take().ok_or(prov("check_spawn_failed"))?,
-        ));
-        let pgid = child.id() as i32;
-        let mut timed_out = false;
-        let status = loop {
-            if let Ok(Some(s)) = child.try_wait() {
-                break s;
+            .envs(&environment);
+        let output = run_check_step(&mut cmd, &root, name, deadline)?;
+        verify_private_tree(
+            &root,
+            &[Path::new("out/check")],
+            &mut PrivateTreeBudget::new(Some(deadline)),
+        )?;
+        let ok = output.status.success();
+        let artifact = |rel: &str| -> Result<Vec<(String, String)>, CaptureFault> {
+            match fs::read(root.join(rel)) {
+                Ok(bytes) => Ok(vec![(rel.to_string(), sha256_hex(&bytes))]),
+                Err(_) if ok => Err(prov("check_artifact_unbound")),
+                Err(_) => Ok(Vec::new()),
             }
-            if started.elapsed() >= left {
-                timed_out = true;
-                // SAFETY: signalling our own child's process group.
-                unsafe {
-                    libc::kill(-pgid, libc::SIGKILL);
-                }
-                break child.wait().map_err(|_| prov("check_wait_failed"))?;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        };
-        let stdout_sha256 = out_t.join().map_err(|_| prov("check_output_unbound"))?;
-        let stderr_sha256 = err_t.join().map_err(|_| prov("check_output_unbound"))?;
-        let artifact = |rel: &str| -> Vec<(String, String)> {
-            fs::read(root.join(rel))
-                .ok()
-                .map(|b| vec![(rel.to_string(), sha256_hex(&b))])
-                .unwrap_or_default()
         };
         let artifacts = match name {
-            "noalloc_compile" => artifact("out/librecords-noalloc.rlib"),
-            "alloc_compile" => artifact("out/librecords-alloc.rlib"),
-            "oracle_compile" => artifact("out/check"),
+            "noalloc_compile" => artifact("out/librecords-noalloc.rlib")?,
+            "alloc_compile" => artifact("out/librecords-alloc.rlib")?,
+            "oracle_compile" => artifact("out/check")?,
+            "oracle_run" => vec![("out/check".into(), executable_sha256.clone())],
             _ => Vec::new(),
         };
-        let ok = status.code() == Some(0) && status.signal().is_none() && !timed_out;
         steps.push(CheckStep {
             step: name.to_string(),
             argv,
-            exit: status.code(),
-            signal: status.signal(),
-            timed_out,
-            stdout_sha256,
-            stderr_sha256,
+            executable_sha256,
+            exit: output.status.code(),
+            signal: output.status.signal(),
+            timed_out: false,
+            stdout_sha256: output.stdout_sha256,
+            stderr_sha256: output.stderr_sha256,
+            stderr_path: output.stderr_path,
+            stderr_bytes: output.stderr_bytes,
             artifacts,
             wall_ms: started.elapsed().as_millis() as u64,
         });
@@ -1122,14 +1463,16 @@ pub fn run_independent_check(
         }
     }
     Ok(IndependentCheckReceipt {
+        kind: CHECK_RECEIPT_KIND.into(),
         slot_id: slot_id.to_string(),
         checker_root: root,
         candidate,
-        oracle_sha256: policy::ORACLE_SHA256.into(),
+        oracle_sha256,
         compiler: PathBuf::from(policy::RUSTC),
-        compiler_sha256: policy::RUSTC_SHA256.into(),
+        compiler_sha256,
         compiler_version,
-        env_names: CHECK_ENV_NAMES.iter().map(|s| s.to_string()).collect(),
+        environment,
+        sandbox_profile: sandbox,
         steps,
         fixture: false,
     })
@@ -1375,7 +1718,13 @@ pub fn run_probe(
     session: &mut super::CaptureSession,
     root: &PilotRoot,
 ) -> Result<(super::SlotCapture, Result<super::ProbeSeal, CaptureFault>), CaptureFault> {
-    let (workspace, sources) = restore_workspace(root, "probe", Some("probe-before-run"))?;
+    let (workspace, sources) = match restore_workspace(root, "probe", Some("probe-before-run")) {
+        Ok(restored) => restored,
+        Err(fault) => {
+            session.halt(fault);
+            return Err(fault);
+        }
+    };
     let capture = session.run_slot(PreparedSlot {
         slot_id: policy::PROBE_SLOT.into(),
         workspace,
@@ -1384,6 +1733,34 @@ pub fn run_probe(
     })?;
     let seal = session.seal_probe(&capture);
     Ok((capture, seal))
+}
+
+/// Retain the independent result and apply it to the captured slot. Any
+/// capture, receipt-write or sealing error uses the session's existing halt.
+fn finish_candidate_check(
+    session: &mut super::CaptureSession,
+    root: &PilotRoot,
+    capture: &super::SlotCapture,
+    checked: Result<IndependentCheckReceipt, CaptureFault>,
+) -> Result<super::SealedSlot, CaptureFault> {
+    checked
+        .and_then(|receipt| {
+            verify_private_tree(
+                &receipt.checker_root,
+                &[Path::new("out/check")],
+                &mut PrivateTreeBudget::new(None),
+            )?;
+            write_private_new(
+                &root.root.join("checks").join(format!(
+                    "{}-{}.receipt.json",
+                    capture.slot_id, capture.host_id
+                )),
+                &serde_json::to_vec_pretty(&receipt)
+                    .map_err(|_| fault(FaultClass::Persistence, "receipt_encode_failed"))?,
+            )?;
+            session.seal_slot(capture, &receipt)
+        })
+        .inspect_err(|fault| session.halt(*fault))
 }
 
 /// Run the eight frozen coding slots in order: restore each pair's canonical
@@ -1407,8 +1784,22 @@ pub fn run_coding(
         }
         let archive = previous.get(&pair).map(|prev| format!("after-{prev}"));
         let (workspace, sources) =
-            restore_workspace(root, &format!("pair-{pair}"), archive.as_deref())?;
-        let (view, _) = load_view(root, pair)?;
+            match restore_workspace(root, &format!("pair-{pair}"), archive.as_deref()) {
+                Ok(restored) => restored,
+                Err(fault) => {
+                    session.halt(fault);
+                    rows.push(slot_row(slot_id, None, None));
+                    continue;
+                }
+            };
+        let (view, _) = match load_view(root, pair) {
+            Ok(value) => value,
+            Err(fault) => {
+                session.halt(fault);
+                rows.push(slot_row(slot_id, None, None));
+                continue;
+            }
+        };
         let prompt = arm_prompt(verified, arm, &view);
         let capture = match session.run_slot(PreparedSlot {
             slot_id: slot_id.to_string(),
@@ -1422,13 +1813,17 @@ pub fn run_coding(
                 continue;
             }
         };
+        if session.halted().is_some() {
+            rows.push(slot_row(slot_id, Some(&capture), None));
+            continue;
+        }
         previous.insert(pair, slot_id.to_string());
         let order: Vec<String> = capture
             .candidate_inventory
             .iter()
             .map(|(r, _)| r.clone())
             .collect();
-        let sealed = run_independent_check(
+        let checked = run_independent_check(
             slot_id,
             &workspace,
             &order,
@@ -1437,18 +1832,8 @@ pub fn run_coding(
                 .root
                 .join("checks")
                 .join(format!("{slot_id}-{}", capture.host_id)),
-        )
-        .and_then(|receipt| {
-            write_private_new(
-                &root
-                    .root
-                    .join("checks")
-                    .join(format!("{slot_id}-{}.receipt.json", capture.host_id)),
-                &serde_json::to_vec_pretty(&receipt)
-                    .map_err(|_| fault(FaultClass::Persistence, "receipt_encode_failed"))?,
-            )?;
-            session.seal_slot(&capture, &receipt)
-        });
+        );
+        let sealed = finish_candidate_check(&mut session, root, &capture, checked);
         rows.push(slot_row(slot_id, Some(&capture), Some(&sealed)));
     }
     let receipt = session.finish()?;
@@ -1457,7 +1842,180 @@ pub fn run_coding(
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::fs::MetadataExt;
+
+    // Compatibility setup for NEW owned synthetic fixtures only. Existing
+    // entries keep their modes, so deliberate negative mutations stay negative.
+    // These helpers do not participate in product permission qualification.
+    fn fixture_private_tempdir() -> std::io::Result<tempfile::TempDir> {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::Builder::new()
+            .prefix("cf-owned-pilot-fixture-")
+            .tempdir_in("/private/tmp")?;
+        std::fs::set_permissions(temp.path(), std::fs::Permissions::from_mode(0o700))?;
+        Ok(temp)
+    }
+
     use super::*;
+
+    /// Real local semantic producers through the production child launcher.
+    /// Explicit test-only inputs avoid replacing the frozen v1 executable pin.
+    #[test]
+    #[ignore = "needs CF_PILOT_SEMANTIC_FOUNDRY, CF_PILOT_SEMANTIC_FOUNDRY_SHA256, CF_PILOT_SEMANTIC_PROFILE and CF_PILOT_SEMANTIC_EVIDENCE_ROOT; actual local Gemma, no provider"]
+    fn privacy_real_semantic_outputs_from_the_bounded_launcher() {
+        let path = |key| PathBuf::from(std::env::var_os(key).expect(key));
+        let foundry = path("CF_PILOT_SEMANTIC_FOUNDRY");
+        let profile = path("CF_PILOT_SEMANTIC_PROFILE");
+        let evidence = path("CF_PILOT_SEMANTIC_EVIDENCE_ROOT");
+        let expected_foundry = std::env::var("CF_PILOT_SEMANTIC_FOUNDRY_SHA256").unwrap();
+        assert_eq!(file_sha256(&foundry).unwrap(), expected_foundry);
+        assert_eq!(file_sha256(&profile).unwrap(), pins::PROFILE_SHA256);
+        require_private_directory(&evidence).unwrap();
+        let root = PilotRoot::create(&evidence.join("producer")).unwrap();
+        eprintln!(
+            "retained semantic permission evidence: {}",
+            root.root.display()
+        );
+        // The outer test process must start with umask 0022. Public marker
+        // bytes outside the producer root witness the unchanged parent mask.
+        let before = evidence.join("ambient-before");
+        fs::write(&before, b"public test marker").unwrap();
+        assert_eq!(fs::metadata(&before).unwrap().mode() & 0o7777, 0o644);
+        let workspace = root.workspace("semantic-fixture");
+        create_private_dir(&workspace).unwrap();
+        create_private_dir(&workspace.join("src")).unwrap();
+        write_private_new(
+            &workspace.join("src/lib.rs"),
+            b"/// Preserve every input byte while decoding escaped sequences.\n\
+              pub fn preserve_bytes(input: &[u8]) -> Vec<u8> { input.to_vec() }\n\
+              /// Keep incomplete escape sequences unchanged.\n\
+              pub fn incomplete_escape(input: &[u8]) -> &[u8] { input }\n",
+        )
+        .unwrap();
+        write_private_new(
+            &workspace.join("README.md"),
+            b"# Byte preservation\nEscaped input must retain malformed and incomplete sequences.\n",
+        )
+        .unwrap();
+        let source_files = list_files(&workspace).unwrap();
+        let source_hashes = || {
+            source_files
+                .iter()
+                .map(|relative| file_sha256(&workspace.join(relative)).unwrap())
+                .collect::<Vec<_>>()
+        };
+        let source_before = source_hashes();
+        let store = root.store(1);
+        let environment = foundry_env(&root);
+        let deadline = Instant::now() + Duration::from_secs(600);
+        let execute = |name: &str, args: Vec<std::ffi::OsString>, limit: u64| {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(!remaining.is_zero());
+            let argv: Vec<_> = args.iter().map(|value| value.as_os_str()).collect();
+            let result = run_bounded(
+                &foundry,
+                &argv,
+                &root.root,
+                &environment,
+                Duration::from_secs(limit).min(remaining),
+            )
+            .unwrap();
+            write_private_new(
+                &root.root.join("renders").join(format!("{name}.stdout")),
+                &result.stdout,
+            )
+            .unwrap();
+            assert_eq!(result.status, Some(0), "semantic producer {name}");
+            assert!(!result.timed_out, "semantic producer {name} timed out");
+            PilotRoot::open(&root.root)
+                .unwrap_or_else(|fault| panic!("semantic producer {name} mode check: {fault:?}"));
+            result.stdout
+        };
+        let index: Value = serde_json::from_slice(&execute(
+            "index",
+            vec![
+                "index".into(),
+                "--store".into(),
+                store.clone().into(),
+                workspace.clone().into(),
+            ],
+            60,
+        ))
+        .unwrap();
+        assert_eq!(index["scan_complete"], true);
+        assert_eq!(index["failures"], 0);
+        let preparation: Value = serde_json::from_slice(&execute(
+            "prepare",
+            vec![
+                "semantic".into(),
+                "prepare".into(),
+                "--store".into(),
+                store.clone().into(),
+                "--profile".into(),
+                profile.clone().into(),
+                "--budget-seconds".into(),
+                "180".into(),
+                "--development-isolation".into(),
+            ],
+            180,
+        ))
+        .unwrap();
+        assert_eq!(preparation["partial"], false);
+        assert_eq!(preparation["provider_state"], "ready");
+        let eligible = preparation["coverage"]["eligible_units"].as_u64().unwrap();
+        assert!(eligible > 0);
+        assert_eq!(
+            preparation["coverage"]["searchable_current_units"],
+            eligible
+        );
+        assert!(preparation["embedded_units"].as_u64().unwrap() > 0);
+        let context = execute(
+            "context",
+            vec![
+                "context".into(),
+                "--store".into(),
+                store.into(),
+                "--tokens".into(),
+                "512".into(),
+                "--semantic-profile".into(),
+                profile.clone().into(),
+                "--development-isolation".into(),
+                "preserve escaped byte sequences without dropping input".into(),
+            ],
+            90,
+        );
+        let text = std::str::from_utf8(&context).unwrap();
+        assert!(
+            text.lines()
+                .next()
+                .unwrap()
+                .split(" · ")
+                .any(|s| s == "semantic:ready")
+        );
+        assert!(crate::response::count_tokens(text) <= 512);
+        assert_eq!(list_files(&workspace).unwrap(), source_files);
+        assert_eq!(source_hashes(), source_before);
+        assert_eq!(file_sha256(&foundry).unwrap(), expected_foundry);
+        assert_eq!(file_sha256(&profile).unwrap(), pins::PROFILE_SHA256);
+        let after = evidence.join("ambient-after");
+        fs::write(&after, b"public test marker").unwrap();
+        assert_eq!(fs::metadata(after).unwrap().mode() & 0o7777, 0o644);
+        write_private_new(
+            &root.root.join("renders/semantic-producer.json"),
+            &serde_json::to_vec_pretty(&serde_json::json!({
+                "status": "passed", "eligible_units": eligible,
+                "embedded_units": preparation["embedded_units"],
+                "foundry_sha256": expected_foundry, "profile_sha256": pins::PROFILE_SHA256,
+                "checked_after": ["index", "prepare", "context"],
+                "parent_mask_before_after": "0022", "paid_provider_calls": 0,
+                "backend": "local_gemma_worker",
+                "source_unchanged": true,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        PilotRoot::open(&root.root).unwrap();
+    }
 
     #[test]
     fn slot_ids_map_to_pairs_and_arms() {
@@ -1505,5 +2063,913 @@ mod tests {
         );
         assert!(!p.contains("network-outbound"));
         assert!(check_policy(Path::new("rel"), Path::new("/Users/u")).is_err());
+    }
+
+    // These exercise the actual private helpers, not a new fake-checker API.
+    struct OraclePrefixThenError {
+        prefix: std::io::Cursor<Vec<u8>>,
+    }
+
+    impl std::io::Read for OraclePrefixThenError {
+        fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+            if out.is_empty() {
+                return Ok(0);
+            }
+            let n = std::io::Read::read(&mut self.prefix, out)?;
+            if n != 0 {
+                Ok(n)
+            } else {
+                Err(std::io::Error::other(
+                    "owned synthetic pipe read failure after prefix",
+                ))
+            }
+        }
+    }
+
+    #[test]
+    fn oracle_pipe_prefix_then_read_error_is_not_successful_eof() {
+        // Public, owned bytes only; this is not the private oracle's success line.
+        let prefix = b"owned completion-looking prefix\n";
+        let error = check_output_sha256(OraclePrefixThenError {
+            prefix: std::io::Cursor::new(prefix.to_vec()),
+        })
+        .unwrap_err();
+        assert_eq!(error.class, FaultClass::CheckerProvenance);
+        assert_eq!(error.code, "check_output_unbound");
+        assert_eq!(
+            check_output_sha256(std::io::Cursor::new(prefix)).unwrap(),
+            sha256_hex(prefix)
+        );
+        assert_eq!(
+            check_output_sha256(std::io::Cursor::new(b"")).unwrap(),
+            sha256_hex(b"")
+        );
+    }
+
+    #[test]
+    fn oracle_checker_chain_error_halts_before_any_later_slot() {
+        use crate::pilot_capture::{
+            CaptureSession, Counters, Disposition, Inner, Journal, Mode, Scope, SlotCapture,
+            planned_slots, runtime,
+        };
+        for failure in [
+            "stdout-read",
+            "stderr-read",
+            "stderr-overflow",
+            "stderr-persist",
+            "receipt-persist",
+            "stderr-halt-persist",
+            "refusal-persist",
+        ] {
+            eprintln!("owned checker chain case: {failure}");
+            let producer_failure = !matches!(failure, "receipt-persist" | "refusal-persist");
+            let temp = fixture_private_tempdir().unwrap();
+            let root = PilotRoot::create(&temp.path().join("pilot")).unwrap();
+            let run_dir = root.root.join("runs/owned-check-chain");
+            create_private_dir(&run_dir).unwrap();
+            let hosts_dir = run_dir.join("hosts");
+            create_private_dir(&hosts_dir).unwrap();
+            let journal_path = run_dir.join("journal.jsonl");
+            let mut journal = Journal::create(
+                &journal_path,
+                matches!(failure, "stderr-halt-persist" | "refusal-persist").then_some(1),
+            )
+            .unwrap();
+            journal
+                .append(
+                    "admitted",
+                    serde_json::json!({"synthetic_owner_fixture":true}),
+                )
+                .unwrap();
+            // No transport, credential or runnable host. This isolates the same
+            // checker-result -> terminal-halt -> remaining-slot guard used by run_coding.
+            let mut session = CaptureSession {
+                rt: runtime().unwrap(),
+                inner: Inner {
+                    mode: Mode::Verification,
+                    scope: Scope::Coding,
+                    run_dir: run_dir.clone(),
+                    hosts_dir: hosts_dir.clone(),
+                    omp: root.root.join("unused-omp"),
+                    real_home: root.root.clone(),
+                    deny_literals: Vec::new(),
+                    journal,
+                    transport: None,
+                    manifest: None,
+                    session_id: "owned-check-chain".into(),
+                    host_seq: 0,
+                    attempt_seq: 0,
+                    counters: Counters::default(),
+                    paid_started_ns: None,
+                    paid_deadline_ns: None,
+                    boot_identity: String::new(),
+                    halt: None,
+                    halt_record_error: None,
+                    slot_index: 0,
+                    awaiting_seal: None,
+                    summaries: planned_slots(Scope::Coding),
+                    probe_sealed: false,
+                },
+            };
+            let capture = SlotCapture {
+                slot_id: "1B".into(),
+                host_id: "owned-capture".into(),
+                disposition: Disposition::Completed {
+                    terminal_status: "synthetic-only".into(),
+                },
+                render: None,
+                generations: Vec::new(),
+                tools: Vec::new(),
+                candidate_inventory: Vec::new(),
+                native: None,
+                host_exit: None,
+                host_wall_ms: 0,
+                prompt_status: None,
+            };
+            if failure == "refusal-persist" {
+                session.inner.awaiting_seal = Some(capture.clone());
+            }
+            let receipt_path = root.root.join("checks/1B-owned-capture.receipt.json");
+            let (input, expected_class, expected_code) = if producer_failure {
+                let error = match failure {
+                    "stdout-read" => check_output_sha256(OraclePrefixThenError {
+                        prefix: std::io::Cursor::new(b"owned prefix before error".to_vec()),
+                    })
+                    .unwrap_err(),
+                    "stderr-read" | "stderr-halt-persist" | "stderr-overflow" => {
+                        let (error, bytes) = if failure == "stderr-overflow" {
+                            check_stderr_bytes(std::io::Cursor::new(vec![b'x'; 1_048_577]))
+                                .unwrap_err()
+                        } else {
+                            check_stderr_bytes(OraclePrefixThenError {
+                                prefix: std::io::Cursor::new(
+                                    b"owned stderr prefix before error".to_vec(),
+                                ),
+                            })
+                            .unwrap_err()
+                        };
+                        let diagnostics = root.root.join("checks/owned-stderr");
+                        create_private_dir(&diagnostics).unwrap();
+                        create_private_dir(&diagnostics.join("diagnostics")).unwrap();
+                        let relative =
+                            retain_check_stderr(&diagnostics, "noalloc_compile", &bytes, true)
+                                .unwrap();
+                        checker_assert_retained(&diagnostics, &relative, &bytes);
+                        checker_assert_retained(
+                            &diagnostics,
+                            &format!("{relative}.sha256"),
+                            format!("{}\n", sha256_hex(&bytes)).as_bytes(),
+                        );
+                        error
+                    }
+                    "stderr-persist" => {
+                        let diagnostics = root.root.join("checks/owned-stderr");
+                        create_private_dir(&diagnostics).unwrap();
+                        create_private_dir(&diagnostics.join("diagnostics")).unwrap();
+                        let path = diagnostics.join("diagnostics/noalloc_compile.stderr");
+                        write_private_new(&path, b"owned sentinel").unwrap();
+                        let error = retain_check_stderr(
+                            &diagnostics,
+                            "noalloc_compile",
+                            b"new stderr",
+                            false,
+                        )
+                        .unwrap_err();
+                        assert_eq!(fs::read(path).unwrap(), b"owned sentinel");
+                        error
+                    }
+                    _ => unreachable!(),
+                };
+                let expected = match failure {
+                    "stdout-read" => (FaultClass::CheckerProvenance, "check_output_unbound"),
+                    "stderr-read" | "stderr-halt-persist" => {
+                        (FaultClass::CheckerProvenance, "check_stderr_read_failed")
+                    }
+                    "stderr-overflow" => (FaultClass::CheckerProvenance, "check_stderr_overflow"),
+                    "stderr-persist" => (FaultClass::Persistence, "private_file_create_failed"),
+                    _ => unreachable!(),
+                };
+                (Err(error), expected.0, expected.1)
+            } else {
+                // Exclusive receipt creation must fail without replacing this
+                // owned sentinel. The real helper must halt on this path too.
+                if failure == "receipt-persist" {
+                    create_private_dir(&receipt_path).unwrap();
+                }
+                // This fixture must now pass the new whole-checker privacy
+                // gate before reaching its existing persistence assertion.
+                create_private_dir(&root.root.join("checks/unused-checker")).unwrap();
+                (
+                    Ok(IndependentCheckReceipt {
+                        kind: "bounded-pilot-v1-check-v2".into(),
+                        slot_id: capture.slot_id.clone(),
+                        checker_root: root.root.join("checks/unused-checker"),
+                        candidate: Vec::new(),
+                        oracle_sha256: policy::ORACLE_SHA256.into(),
+                        compiler: PathBuf::from(policy::RUSTC),
+                        compiler_sha256: policy::RUSTC_SHA256.into(),
+                        compiler_version: "rustc 1.97.1 (owned fixture; not executed)".into(),
+                        environment: std::collections::BTreeMap::new(),
+                        sandbox_profile: String::new(),
+                        steps: Vec::new(),
+                        fixture: true,
+                    }),
+                    FaultClass::Persistence,
+                    if failure == "refusal-persist" {
+                        "journal_append_failed"
+                    } else {
+                        "private_file_create_failed"
+                    },
+                )
+            };
+            let fault = finish_candidate_check(&mut session, &root, &capture, input).unwrap_err();
+            assert_eq!((fault.class, fault.code), (expected_class, expected_code));
+            assert_eq!(session.halted(), Some(fault));
+            if producer_failure {
+                assert!(!receipt_path.exists());
+            } else if failure == "refusal-persist" {
+                assert!(receipt_path.is_file());
+                let persisted: IndependentCheckReceipt =
+                    serde_json::from_slice(&fs::read(&receipt_path).unwrap()).unwrap();
+                assert!(
+                    persisted.candidate.is_empty(),
+                    "owned invalid candidate reaches the real refusal append"
+                );
+            } else {
+                assert!(receipt_path.is_dir());
+                assert_eq!(fs::read_dir(&receipt_path).unwrap().count(), 0);
+            }
+            let verified = Verified {
+                inputs: EvidenceInputs {
+                    paired_root: root.root.join("unused-paired"),
+                    freeze_root: root.root.join("unused-freeze"),
+                    foundry: root.root.join("unused-foundry"),
+                    profile: root.root.join("unused-profile"),
+                    omp: root.root.join("unused-omp"),
+                },
+                pins: Vec::new(),
+                task: String::new(),
+                arm_a_prompt: String::new(),
+                oracle: root.root.join("unused-oracle"),
+                seed: Vec::new(),
+            };
+            // A missing seed/host would fail if run_coding tried even one slot.
+            // Its halted branch must leave all workspace/host paths untouched.
+            if matches!(failure, "stderr-halt-persist" | "refusal-persist") {
+                let before = fs::read(&journal_path).unwrap();
+                session.inner.journal.fail_after = None;
+                let error = run_coding(session, &root, &verified).err().unwrap();
+                assert_eq!(
+                    (error.class, error.code),
+                    (FaultClass::Persistence, "journal_append_failed")
+                );
+                assert_eq!(fs::read(&journal_path).unwrap(), before);
+                assert_eq!(fs::read_dir(&hosts_dir).unwrap().count(), 0);
+                for pair in pins::PAIRS {
+                    assert!(!root.workspace(&format!("pair-{pair}")).exists());
+                }
+                continue;
+            }
+            let report = run_coding(session, &root, &verified).unwrap();
+            assert_eq!(
+                report.receipt.halt,
+                Some((expected_class.as_str().into(), expected_code.into()))
+            );
+            assert_eq!(report.receipt.counters, Counters::default());
+            assert_eq!(report.slots.len(), policy::SLOT_ORDER.len());
+            assert!(report.slots.iter().all(|slot| slot.state == "not_started"));
+            assert!(
+                report
+                    .receipt
+                    .slots
+                    .iter()
+                    .all(|slot| slot.state == "not_started")
+            );
+            assert!(
+                report
+                    .arms
+                    .iter()
+                    .all(|arm| arm.checked == 0 && arm.passed == 0)
+            );
+            assert_eq!(fs::read_dir(&hosts_dir).unwrap().count(), 0);
+            for pair in pins::PAIRS {
+                assert!(!root.workspace(&format!("pair-{pair}")).exists());
+            }
+            let rows: Vec<Value> = fs::read_to_string(&journal_path)
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+            assert_eq!(
+                rows.iter()
+                    .map(|row| row["kind"].as_str().unwrap())
+                    .collect::<Vec<_>>(),
+                ["admitted", "halt", "finished"]
+            );
+            assert_eq!(rows[1]["class"], expected_class.as_str());
+            assert_eq!(rows[1]["code"], expected_code);
+            assert_eq!(
+                report.receipt.journal_sha256,
+                sha256_hex(&fs::read(&journal_path).unwrap())
+            );
+        }
+    }
+    fn checker_owned_diagnostics_root(label: &str) -> PathBuf {
+        let temp = tempfile::Builder::new()
+            .prefix("cf-checker-pipes-")
+            .tempdir()
+            .unwrap();
+        let base = fs::canonicalize(temp.path()).unwrap();
+        std::mem::forget(temp);
+        let root = base.join(label);
+        create_private_dir(&root).unwrap();
+        create_private_dir(&root.join("diagnostics")).unwrap();
+        eprintln!("owned checker pipe evidence: {}", root.display());
+        root
+    }
+
+    fn checker_assert_retained(root: &Path, relative: &str, expected: &[u8]) {
+        use std::os::unix::fs::MetadataExt;
+        let path = root.join(relative);
+        let meta = fs::symlink_metadata(&path).unwrap();
+        assert!(meta.is_file() && !meta.file_type().is_symlink());
+        assert_eq!(meta.mode() & 0o7777, 0o600);
+        assert_eq!(meta.uid(), unsafe { libc::getuid() });
+        assert_eq!(meta.len(), expected.len() as u64);
+        assert_eq!(fs::read(path).unwrap(), expected);
+    }
+
+    #[test]
+    fn checker_stderr_reader_requires_eof_and_caps_retained_prefix() {
+        assert_eq!(CHECK_STDERR_MAX_BYTES, 1_048_576);
+        for bytes in [
+            Vec::new(),
+            b"owned\xff\0diagnostic\n".to_vec(),
+            vec![b'x'; 1_048_576],
+        ] {
+            assert_eq!(
+                check_stderr_bytes(std::io::Cursor::new(&bytes)).unwrap(),
+                bytes
+            );
+        }
+        let oversized = vec![b'x'; 1_048_577];
+        let overflow = check_stderr_bytes(std::io::Cursor::new(oversized));
+        assert!(
+            overflow.is_err(),
+            "stderr beyond the cap must be a capture error"
+        );
+        let (fault, prefix) = overflow.unwrap_err();
+        assert_eq!(
+            (fault.class, fault.code),
+            (FaultClass::CheckerProvenance, "check_stderr_overflow")
+        );
+        assert_eq!(prefix, vec![b'x'; 1_048_576]);
+        let original = b"owned diagnostic before read error\xff".to_vec();
+        let (fault, prefix) = check_stderr_bytes(OraclePrefixThenError {
+            prefix: std::io::Cursor::new(original.clone()),
+        })
+        .unwrap_err();
+        assert_eq!(
+            (fault.class, fault.code),
+            (FaultClass::CheckerProvenance, "check_stderr_read_failed")
+        );
+        assert_eq!(prefix, original);
+    }
+
+    #[test]
+    fn checker_stderr_retention_is_private_exact_and_exclusive() {
+        let root = checker_owned_diagnostics_root("retention");
+        let bytes = b"owned diagnostic\xff\0\n";
+        let complete = retain_check_stderr(&root, "noalloc_compile", bytes, false).unwrap();
+        assert_eq!(complete, "diagnostics/noalloc_compile.stderr");
+        checker_assert_retained(&root, &complete, bytes);
+        let partial = retain_check_stderr(&root, "alloc_compile", bytes, true).unwrap();
+        assert_eq!(partial, "diagnostics/alloc_compile.partial.stderr");
+        checker_assert_retained(&root, &partial, bytes);
+        checker_assert_retained(
+            &root,
+            &format!("{partial}.sha256"),
+            format!("{}\n", sha256_hex(bytes)).as_bytes(),
+        );
+        for (name, partial, relative) in [
+            ("noalloc_compile", false, complete),
+            ("alloc_compile", true, partial),
+        ] {
+            let fault =
+                retain_check_stderr(&root, name, b"replacement must not overwrite", partial)
+                    .unwrap_err();
+            assert_eq!(
+                (fault.class, fault.code),
+                (FaultClass::Persistence, "private_file_create_failed")
+            );
+            checker_assert_retained(&root, &relative, bytes);
+        }
+        // Failure after prefix creation cannot be called successfully retained.
+        let digest = root.join("diagnostics/oracle_compile.partial.stderr.sha256");
+        write_private_new(&digest, b"owned sentinel digest").unwrap();
+        let fault = retain_check_stderr(&root, "oracle_compile", bytes, true).unwrap_err();
+        assert_eq!(fault.code, "private_file_create_failed");
+        checker_assert_retained(&root, "diagnostics/oracle_compile.partial.stderr", bytes);
+        assert_eq!(fs::read(digest).unwrap(), b"owned sentinel digest");
+    }
+
+    // Defensive cleanup on a failed assertion. This guard can signal only the
+    // fresh group whose leader wrote its PID into this test's private root.
+    struct CheckerOwnedGroupGuard(PathBuf);
+    impl Drop for CheckerOwnedGroupGuard {
+        fn drop(&mut self) {
+            if let Ok(text) = fs::read_to_string(self.0.join("leader.pid"))
+                && let Ok(pid) = text.trim().parse::<i32>()
+                && pid > 1
+            {
+                unsafe {
+                    libc::kill(-pid, libc::SIGKILL);
+                }
+            }
+        }
+    }
+
+    fn checker_assert_group_gone(root: &Path) {
+        let pid: i32 = fs::read_to_string(root.join("leader.pid"))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        let until = Instant::now() + Duration::from_secs(2);
+        loop {
+            let result = unsafe { libc::kill(-pid, 0) };
+            if result == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+                break;
+            }
+            assert!(
+                Instant::now() < until,
+                "owned checker group {pid} survived cleanup"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn checker_owned_shell(root: &Path, script: &str) -> Command {
+        let mut cmd = Command::new("/bin/sh");
+        cmd.arg("-c")
+            .arg(script)
+            .current_dir(root)
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin");
+        cmd
+    }
+
+    #[test]
+    fn checker_real_step_preserves_complete_stderr_and_ordinary_nonzero() {
+        for exit in [0, 9] {
+            let root = checker_owned_diagnostics_root(&format!("complete-{exit}"));
+            let _guard = CheckerOwnedGroupGuard(root.clone());
+            let mut cmd = checker_owned_shell(
+                &root,
+                &format!(
+                    "echo $$ > leader.pid; printf 'owned stdout'; printf '\\377\\000owned diagnostic\\n' >&2; exit {exit}"
+                ),
+            );
+            let output = run_check_step(
+                &mut cmd,
+                &root,
+                "noalloc_compile",
+                Instant::now() + Duration::from_secs(3),
+            )
+            .unwrap();
+            assert_eq!(output.status.code(), Some(exit));
+            assert_eq!(output.stdout_sha256, sha256_hex(b"owned stdout"));
+            assert_eq!(output.stderr_path, "diagnostics/noalloc_compile.stderr");
+            assert_eq!(
+                output.stderr_bytes,
+                b"\xff\0owned diagnostic\n".len() as u64
+            );
+            assert_eq!(
+                output.stderr_sha256,
+                sha256_hex(b"\xff\0owned diagnostic\n")
+            );
+            checker_assert_retained(&root, &output.stderr_path, b"\xff\0owned diagnostic\n");
+            checker_assert_group_gone(&root);
+        }
+    }
+
+    #[test]
+    fn checker_real_step_overflow_is_not_a_nonzero_result_and_cleans_owned_group() {
+        let root = checker_owned_diagnostics_root("overflow");
+        let _guard = CheckerOwnedGroupGuard(root.clone());
+        let mut cmd = checker_owned_shell(
+            &root,
+            "echo $$ > leader.pid; /usr/bin/yes owned-diagnostic >&2",
+        );
+        let started = Instant::now();
+        let fault = run_check_step(
+            &mut cmd,
+            &root,
+            "noalloc_compile",
+            started + Duration::from_secs(3),
+        )
+        .err()
+        .unwrap();
+        assert_eq!(
+            (fault.class, fault.code),
+            (FaultClass::CheckerProvenance, "check_stderr_overflow")
+        );
+        assert!(started.elapsed() < Duration::from_secs(3));
+        checker_assert_group_gone(&root);
+        let relative = "diagnostics/noalloc_compile.partial.stderr";
+        let bytes = fs::read(root.join(relative)).unwrap();
+        assert_eq!(bytes.len(), 1_048_576);
+        checker_assert_retained(&root, relative, &bytes);
+        checker_assert_retained(
+            &root,
+            &format!("{relative}.sha256"),
+            format!("{}\n", sha256_hex(&bytes)).as_bytes(),
+        );
+        assert!(!root.join("diagnostics/noalloc_compile.stderr").exists());
+    }
+
+    #[test]
+    fn checker_real_step_deadline_covers_descendant_held_pipe_after_leader_exit() {
+        let root = checker_owned_diagnostics_root("held-pipe");
+        let _guard = CheckerOwnedGroupGuard(root.clone());
+        // The leader exits zero immediately, while its owned same-group child
+        // retains both pipes for five seconds unless the production owner kills it.
+        let mut cmd = checker_owned_shell(
+            &root,
+            "echo $$ > leader.pid; /bin/sleep 5 & echo $! > descendant.pid; printf 'owned held pipe' >&2; exit 0",
+        );
+        let started = Instant::now();
+        let fault = run_check_step(
+            &mut cmd,
+            &root,
+            "noalloc_compile",
+            started + Duration::from_millis(500),
+        )
+        .err()
+        .unwrap();
+        assert_eq!(
+            (fault.class, fault.code),
+            (FaultClass::CheckerProvenance, "post_check_wall_exceeded")
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "leader-only deadline left reader joins unbounded"
+        );
+        checker_assert_group_gone(&root);
+        let descendant: i32 = fs::read_to_string(root.join("descendant.pid"))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        assert_eq!(
+            unsafe { libc::kill(descendant, 0) },
+            -1,
+            "owned descendant survived"
+        );
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
+        let relative = "diagnostics/noalloc_compile.partial.stderr";
+        checker_assert_retained(&root, relative, b"owned held pipe");
+        checker_assert_retained(
+            &root,
+            &format!("{relative}.sha256"),
+            format!("{}\n", sha256_hex(b"owned held pipe")).as_bytes(),
+        );
+        assert!(!root.join("diagnostics/noalloc_compile.stderr").exists());
+    }
+
+    #[test]
+    fn checker_real_step_diagnostic_persistence_failure_returns_error_without_overwrite() {
+        let root = checker_owned_diagnostics_root("persistence");
+        let _guard = CheckerOwnedGroupGuard(root.clone());
+        let path = root.join("diagnostics/noalloc_compile.stderr");
+        write_private_new(&path, b"owned sentinel").unwrap();
+        let mut cmd = checker_owned_shell(
+            &root,
+            "echo $$ > leader.pid; printf 'new diagnostic' >&2; exit 0",
+        );
+        let fault = run_check_step(
+            &mut cmd,
+            &root,
+            "noalloc_compile",
+            Instant::now() + Duration::from_secs(3),
+        )
+        .err()
+        .unwrap();
+        assert_eq!(
+            (fault.class, fault.code),
+            (FaultClass::Persistence, "private_file_create_failed")
+        );
+        assert_eq!(fs::read(path).unwrap(), b"owned sentinel");
+        checker_assert_group_gone(&root);
+    }
+    #[test]
+    fn privacy_copy_creates_private_descendants_without_changing_source_bytes_or_modes() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let temp = fixture_private_tempdir().unwrap();
+        let base = fs::canonicalize(temp.path()).unwrap();
+        let source = base.join("source");
+        fs::create_dir_all(source.join("a/b/c")).unwrap();
+        let file = source.join("a/b/c/input.rs");
+        fs::write(&file, b"pub fn owned_copy() {}\n").unwrap();
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::set_permissions(source.join("a"), fs::Permissions::from_mode(0o750)).unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o444)).unwrap();
+        let originals: Vec<_> = [
+            source.clone(),
+            source.join("a"),
+            source.join("a/b"),
+            source.join("a/b/c"),
+            file.clone(),
+        ]
+        .into_iter()
+        .map(|path| {
+            let mode = fs::metadata(&path).unwrap().mode();
+            (path, mode)
+        })
+        .collect();
+        let destination = base.join("copy");
+        copy_tree(&source, &destination).unwrap();
+        verify_private_tree(&destination, &[], &mut PrivateTreeBudget::new(None)).unwrap();
+        assert_eq!(
+            fs::read(destination.join("a/b/c/input.rs")).unwrap(),
+            b"pub fn owned_copy() {}\n"
+        );
+        assert_eq!(fs::read(&file).unwrap(), b"pub fn owned_copy() {}\n");
+        for (path, mode) in originals {
+            assert_eq!(fs::metadata(path).unwrap().mode(), mode);
+        }
+    }
+
+    #[test]
+    fn privacy_copy_refuses_links_without_reading_or_changing_the_owned_outside_target() {
+        use std::os::unix::fs::{MetadataExt, symlink};
+        let temp = fixture_private_tempdir().unwrap();
+        let base = fs::canonicalize(temp.path()).unwrap();
+        let source = base.join("source");
+        create_private_dir(&source).unwrap();
+        let outside = base.join("outside");
+        write_private_new(&outside, b"owned outside sentinel").unwrap();
+        let mode = fs::metadata(&outside).unwrap().mode();
+        symlink(&outside, source.join("link")).unwrap();
+        let destination = base.join("copy");
+        assert!(copy_tree(&source, &destination).is_err());
+        assert_eq!(fs::read(&outside).unwrap(), b"owned outside sentinel");
+        assert_eq!(fs::metadata(outside).unwrap().mode(), mode);
+        assert!(
+            fs::symlink_metadata(source.join("link"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert!(!destination.join("link").exists());
+    }
+
+    #[test]
+    fn privacy_restore_refuses_old_workspace_before_archive_or_seed_replacement() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = fixture_private_tempdir().unwrap();
+        let root = PilotRoot::create(&temp.path().join("pilot")).unwrap();
+        let workspace = root.workspace("owned-old");
+        create_private_dir(&workspace).unwrap();
+        let file = workspace.join("retained");
+        write_private_new(&file, b"owned old-workspace evidence").unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o640)).unwrap();
+        let fault = restore_workspace(&root, "owned-old", Some("must-not-be-created")).unwrap_err();
+        assert_eq!(
+            (fault.class, fault.code),
+            (FaultClass::Privacy, "private_artifact_not_private")
+        );
+        assert_eq!(fs::read(&file).unwrap(), b"owned old-workspace evidence");
+        assert_eq!(fs::metadata(file).unwrap().mode() & 0o7777, 0o640);
+        assert!(!root.root.join("archive/must-not-be-created").exists());
+        assert!(workspace.is_dir());
+        // The seed is deliberately empty. This proves the new earlier privacy
+        // gate, not successful restoration of the private frozen seed.
+    }
+
+    #[test]
+    fn privacy_pilot_root_applies_the_executable_exception_only_to_checker_children() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = fixture_private_tempdir().unwrap();
+        let root = PilotRoot::create(&temp.path().join("pilot")).unwrap();
+        let checker = root.root.join("checks/owned-checker");
+        create_private_dir(&checker).unwrap();
+        create_private_dir(&checker.join("out")).unwrap();
+        write_private_new(&checker.join("out/check"), b"owned inert checker image").unwrap();
+        fs::set_permissions(checker.join("out/check"), fs::Permissions::from_mode(0o700)).unwrap();
+        PilotRoot::open(&root.root).unwrap();
+        let store = root.store(1);
+        create_private_dir(&store).unwrap();
+        create_private_dir(&store.join("out")).unwrap();
+        write_private_new(&store.join("out/check"), b"owned inert store file").unwrap();
+        fs::set_permissions(store.join("out/check"), fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(
+            PilotRoot::open(&root.root).is_err(),
+            "same basename in a store is not a checker executable"
+        );
+    }
+
+    #[test]
+    fn privacy_actual_launchers_set_child_only_masks_under_a_permissive_parent() {
+        use std::os::unix::process::CommandExt;
+        const CHILD: &str = "CF_PRIVATE_LAUNCHER_TEST_CHILD";
+        if let Some(path) = std::env::var_os(CHILD) {
+            let base = PathBuf::from(path);
+            std::fs::write(base.join("ambient-before"), []).unwrap();
+            let ambient_mode = std::fs::metadata(base.join("ambient-before"))
+                .unwrap()
+                .mode()
+                & 0o7777;
+            let source_root = base.join("bounded");
+            create_private_dir(&source_root).unwrap();
+            let script =
+                std::ffi::OsStr::new("umask; mkdir made-directory; printf owned > made-file");
+            let result = run_bounded(
+                Path::new("/bin/sh"),
+                &[std::ffi::OsStr::new("-c"), script],
+                &source_root,
+                &[("PATH", "/usr/bin:/bin".into())],
+                Duration::from_secs(3),
+            )
+            .unwrap();
+            assert_eq!(result.status, Some(0));
+            assert!(!result.timed_out);
+            assert_eq!(
+                u32::from_str_radix(std::str::from_utf8(&result.stdout).unwrap().trim(), 8)
+                    .unwrap(),
+                0o77
+            );
+            verify_private_tree(&source_root, &[], &mut PrivateTreeBudget::new(None)).unwrap();
+            let checker = base.join("checker");
+            create_private_dir(&checker).unwrap();
+            create_private_dir(&checker.join("diagnostics")).unwrap();
+            let mut cmd = Command::new("/bin/sh");
+            cmd.args([
+                "-c",
+                "umask; mkdir made-directory; printf owned > made-file",
+            ])
+            .current_dir(&checker)
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin");
+            let result = run_check_step(
+                &mut cmd,
+                &checker,
+                "noalloc_compile",
+                Instant::now() + Duration::from_secs(3),
+            )
+            .unwrap();
+            assert!(result.status.success());
+            // Shell umask output formatting is platform-specific; the first
+            // launcher observed numeric0077, and these actual artifacts bind
+            // the second launcher's effect independently of its stdout hash.
+            verify_private_tree(&checker, &[], &mut PrivateTreeBudget::new(None)).unwrap();
+            assert_eq!(
+                fs::metadata(checker.join("made-file")).unwrap().mode() & 0o7777,
+                0o600
+            );
+            assert_eq!(
+                fs::metadata(checker.join("made-directory")).unwrap().mode() & 0o7777,
+                0o700
+            );
+            std::fs::write(base.join("ambient-after"), []).unwrap();
+            assert_eq!(
+                std::fs::metadata(base.join("ambient-after"))
+                    .unwrap()
+                    .mode()
+                    & 0o7777,
+                ambient_mode,
+                "product operation changed its caller mask"
+            );
+            return;
+        }
+        let temp = fixture_private_tempdir().unwrap();
+        let base = fs::canonicalize(temp.path()).unwrap();
+        std::fs::write(base.join("parent-before"), b"owned parent mask witness").unwrap();
+        let before = fs::metadata(base.join("parent-before")).unwrap().mode() & 0o7777;
+        let mut child = Command::new(std::env::current_exe().unwrap());
+        child.args(["--exact","pilot_capture::apparatus::tests::privacy_actual_launchers_set_child_only_masks_under_a_permissive_parent","--nocapture"]).env(CHILD,&base);
+        unsafe {
+            child.pre_exec(|| {
+                libc::umask(0);
+                Ok(())
+            });
+        }
+        assert!(child.status().unwrap().success());
+        std::fs::write(base.join("parent-after"), b"owned parent mask witness").unwrap();
+        assert_eq!(
+            fs::metadata(base.join("parent-after")).unwrap().mode() & 0o7777,
+            before
+        );
+    }
+
+    #[test]
+    fn privacy_actual_checker_steps_create_private_rlib_and_executable() {
+        let root = checker_owned_diagnostics_root("actual-rust-modes");
+        for d in ["out", "home", "tmp"] {
+            create_private_dir(&root.join(d)).unwrap();
+        }
+        assert_eq!(
+            file_sha256(Path::new(policy::RUSTC)).unwrap(),
+            policy::RUSTC_SHA256
+        );
+        let library = root.join("owned-lib.rs");
+        write_private_new(&library, b"pub fn owned_value() -> u8 { 7 }\n").unwrap();
+        let binary = root.join("owned-main.rs");
+        write_private_new(
+            &binary,
+            b"fn main() { println!(\"owned private checker\"); }\n",
+        )
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        for (name, input, kind, output) in [
+            (
+                "noalloc_compile",
+                &library,
+                "lib",
+                root.join("out/owned.rlib"),
+            ),
+            ("oracle_compile", &binary, "bin", root.join("out/check")),
+        ] {
+            let mut cmd = Command::new(policy::RUSTC);
+            cmd.arg(input)
+                .args([
+                    "--edition=2021",
+                    "--crate-name",
+                    "owned_private_fixture",
+                    "--crate-type",
+                    kind,
+                    "-o",
+                ])
+                .arg(output)
+                .current_dir(&root)
+                .env_clear()
+                .envs(check_environment(&root).unwrap());
+            let result = run_check_step(&mut cmd, &root, name, deadline).unwrap();
+            assert!(result.status.success());
+            verify_private_tree(
+                &root,
+                &[Path::new("out/check")],
+                &mut PrivateTreeBudget::new(Some(deadline)),
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            fs::metadata(root.join("out/owned.rlib")).unwrap().mode() & 0o7777,
+            0o600
+        );
+        assert_eq!(
+            fs::metadata(root.join("out/check")).unwrap().mode() & 0o7777,
+            0o700
+        );
+        // This is the actual per-step runner and compiler, with public owned
+        // source. The existing ignored producer test covers the frozen oracle.
+    }
+    #[test]
+    fn privacy_pilot_root_native_exception_is_limited_to_exact_run_host_locations() {
+        use std::os::unix::fs::PermissionsExt;
+        const NATIVE: &str = "home/.omp/natives/18.13.2/pi_natives.darwin-arm64.node";
+        for case in [
+            "bound",
+            "wrong-version",
+            "nested-location",
+            "store",
+            "workspace",
+            "archive",
+        ] {
+            eprintln!("owned native PilotRoot metadata case: {case}");
+            let temp = fixture_private_tempdir().unwrap();
+            let root = PilotRoot::create(&temp.path().join("pilot")).unwrap();
+            let relative = match case {
+                "bound" => format!("runs/run1/hosts/h1/{NATIVE}"),
+                "wrong-version" => format!(
+                    "runs/run1/hosts/h1/{}",
+                    NATIVE.replace("18.13.2", "18.13.3")
+                ),
+                "nested-location" => format!("runs/run1/nested/hosts/h1/{NATIVE}"),
+                "store" => format!("stores/pair-1/hosts/h1/{NATIVE}"),
+                "workspace" => format!("workspaces/pair-1/hosts/h1/{NATIVE}"),
+                "archive" => format!("archive/run1/hosts/h1/{NATIVE}"),
+                _ => unreachable!(),
+            };
+            let mut parent = root.root.clone();
+            for component in Path::new(&relative).parent().unwrap().components() {
+                parent.push(component);
+                if !parent.exists() {
+                    create_private_dir(&parent).unwrap();
+                }
+            }
+            let path = root.root.join(relative);
+            write_private_new(&path, b"owned synthetic native metadata fixture").unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+            let result = PilotRoot::open(&root.root);
+            if case == "bound" {
+                result.unwrap();
+            } else {
+                assert_eq!(result.unwrap_err().code, "private_artifact_not_private");
+            }
+        }
     }
 }

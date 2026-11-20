@@ -105,7 +105,16 @@ does not establish full-model scale acceptance.
 These are **not all macOS blockers**. Late chunking remains a conditional backend
 candidate; native macOS CPU acceptance, global GPU headroom and useful generated-knowledge/
 memory outcomes also remain open. 013 stays frozen off. Nothing is released or
-promoted to a new default.
+promoted to a new default. (Since this 2026-10-11 paragraph was written, the native
+macOS CPU, Metal embedding and owned-generation checks passed in the ad-hoc-signed run
+of 2026-11-10 ([receipt](validation.md#native-macos-acceptance--2026-11-10)), global
+GPU headroom became a named limitation on 2026-11-06, and two defaults changed. A
+semantic profile without `representation` has selected complete `hierarchy-v1` since
+2026-10-22 ([record](validation.md#f4-and-the-hierarchy-default--2026-10-22));
+semantic retrieval itself stays off by default. Lexical behavioral selection has been
+on by default on the experimental line since 2026-11-11
+([record](validation.md#t010-singleton-qualification--2026-11-11)). Current status is
+in the [resumable handoff](resume-context-ecosystem.md).)
 
 [Current validation](validation.md#initial-file-coverage-and-task-evidence--2026-10-11)
 records raw artifact locations, frozen identities, failures and checks. Current files
@@ -198,9 +207,12 @@ development host*. The raw results, logs and frozen identities are outside Git:
   owner's Mac; Linux is checked only when a cloud fallback session runs
   `bash scripts/cloud/gates.sh`. `foundry-embed` (feature `embed-worker`)
   supports explicitly admitted Linux CPU and macOS Metal workers. Linux isolation
-  and normal-worker numerical checks pass; the revised Metal worker still needs its
-  native run (F7: one ad-hoc-signed run on the owner's Mac, to do). The signed package target remains macOS arm64 (`tests/install.rs`
-  builds only there); Linux is not a substitute for those installed-artifact checks.
+  and normal-worker numerical checks pass; the revised Metal worker passed its native
+  run (F7: one ad-hoc-signed run on the owner's Mac) on 2026-11-10
+  ([receipt](validation.md#native-macos-acceptance--2026-11-10)), and the same script
+  must run again on the signed release candidate. The signed package target remains
+  macOS arm64 (`tests/install.rs` builds only there); Linux is not a substitute for
+  those installed-artifact checks.
 - **Toolchains.** Rust stable plus the 1.90 toolchain (the MSRV gate). The worker build
   also needs `cmake` and a llama.cpp git checkout at commit `b9acf138` (`LLAMA_CPP_DIR`).
 - **Network for dependencies.** Three tree-sitter grammars resolve from owner-approved
@@ -210,10 +222,11 @@ development host*. The raw results, logs and frozen identities are outside Git:
 - **Private inputs.** The corpora, frozen datasets, baseline stores and models are
   listed with their identities in the [measurement handoff](measurement-handoff.md).
   They are not in Git; the owner transfers them. The frozen sets and the pilot's private
-  evidence are also to go into encrypted, checksummed archives (not built yet) in
-  `~/VSC_DEV/backups` that
-  the owner copies off the Mac (owner, 2026-11-06;
-  [encrypted backups](resume.md#encrypted-backups)).
+  evidence are also in five encrypted, checksummed archives under `~/VSC_DEV/backups`,
+  built and checksum-verified on 2026-11-11
+  ([receipt](validation.md#encrypted-evidence-backups--2026-11-11)). The owner copies
+  them off the Mac and performs the authenticated restoration; neither is recorded as
+  done (owner, 2026-11-06; [encrypted backups](resume.md#encrypted-backups)).
 - **Memory.** The original sessions used a local Prakarana memory store; it is not part
   of the repository. The specs, [validation](validation.md) and Git history carry
   everything decided.

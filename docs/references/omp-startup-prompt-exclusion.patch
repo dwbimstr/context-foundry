@@ -1,0 +1,230 @@
+# Proposed source-host qualification patch; unapplied by Foundry.
+# oh-my-pi 24439066040e006eb08da7b204f0ac41c79d2de9, MIT.
+# Upstream license: https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/LICENSE
+# MIT License
+# 
+# Copyright (c) 2025 Mario Zechner
+# Copyright (c) 2025-2026 Can Bölük
+# Copyright (c) 2026 Stencil Labs, Inc.
+# 
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+# 
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+# 
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+diff --git a/packages/coding-agent/src/main.ts b/packages/coding-agent/src/main.ts
+index b1577b3..0838531 100644
+--- a/packages/coding-agent/src/main.ts
++++ b/packages/coding-agent/src/main.ts
+@@ -1463,21 +1463,32 @@ export async function buildSessionOptions(
+ 		options.deadline = Date.now() + parsed.maxTime * 1000;
+ 	}
+ 
++	const restrictedStartup = parsed.startupExtension === true;
++	if (
++		restrictedStartup &&
++		(parsed.systemPrompt !== undefined ||
++			parsed.systemPromptTemplate !== undefined ||
++			parsed.appendSystemPrompt !== undefined)
++	) {
++		throw new Error("Explicit prompt overrides are unsupported in restricted startup");
++	}
+ 	// Explicit prompt inputs win over discovered SYSTEM_TEMPLATE.md/SYSTEM.md.
+ 	if (parsed.systemPrompt !== undefined && parsed.systemPromptTemplate !== undefined) {
+ 		throw new Error("--system-prompt and --system-prompt-template cannot be combined");
+ 	}
+ 	const cwd = options.cwd;
+ 	const discoveredOverride =
+-		parsed.systemPrompt === undefined && parsed.systemPromptTemplate === undefined
++		!restrictedStartup && parsed.systemPrompt === undefined && parsed.systemPromptTemplate === undefined
+ 			? await discoverSystemPromptOverride(cwd)
+ 			: undefined;
+ 	const systemPromptSource =
+ 		parsed.systemPrompt ?? (discoveredOverride?.kind === "text" ? discoveredOverride.path : undefined);
+ 	const templatePath =
+ 		parsed.systemPromptTemplate ?? (discoveredOverride?.kind === "template" ? discoveredOverride.path : undefined);
+-	const appendPromptSource = parsed.appendSystemPrompt ?? discoverAppendSystemPromptFile();
+-	const titleSystemPromptSource = discoverTitleSystemPromptFile(cwd);
++	const appendPromptSource = restrictedStartup
++		? undefined
++		: (parsed.appendSystemPrompt ?? discoverAppendSystemPromptFile());
++	const titleSystemPromptSource = restrictedStartup ? undefined : discoverTitleSystemPromptFile(cwd);
+ 	const [resolvedSystemPrompt, resolvedAppendPrompt, titleSystemPrompt, resolvedSystemPromptTemplate] =
+ 		await Promise.all([
+ 			discoveredOverride?.kind === "text"
+diff --git a/packages/coding-agent/src/modes/rpc/rpc-mode.ts b/packages/coding-agent/src/modes/rpc/rpc-mode.ts
+index 70a7b6c..1522c41 100644
+--- a/packages/coding-agent/src/modes/rpc/rpc-mode.ts
++++ b/packages/coding-agent/src/modes/rpc/rpc-mode.ts
+@@ -1922,7 +1922,8 @@ export async function runRpcMode(session: AgentSession, options: RpcModeOptions
+ 		process.exit(0);
+ 	};
+ 
+-	const getAvailableCommands = async () => buildAvailableSlashCommands(session);
++	const getAvailableCommands = async () =>
++		buildAvailableSlashCommands(session, startupObservation ? async () => [] : undefined);
+ 	const reloadPluginState = async () => {
+ 		const cwd = session.sessionManager.getCwd();
+ 		const projectPath = await resolveActiveProjectRegistryPath(cwd);
+diff --git a/packages/coding-agent/src/sdk.ts b/packages/coding-agent/src/sdk.ts
+index 68afbe8..977b4d5 100644
+--- a/packages/coding-agent/src/sdk.ts
++++ b/packages/coding-agent/src/sdk.ts
+@@ -2436,7 +2436,9 @@ async function createAgentSessionBody(
+ 		? Promise.resolve(pinnedContextFiles)
+ 		: logger.time("discoverContextFiles", discoverContextFiles, cwd, agentDir).then(contextFileFilter);
+ 	contextFilesPromise.catch(() => {});
++	const restrictedStartupProfile = options.startupExtensionOwner !== undefined;
+ 	const resolveRepoContext = async (repoCwd: string) => {
++		if (restrictedStartupProfile) return null;
+ 		try {
+ 			return await resolveActiveRepoContext(repoCwd);
+ 		} catch (err) {
+@@ -2446,22 +2448,23 @@ async function createAgentSessionBody(
+ 	};
+ 	const activeRepoContextPromise = logger.time("resolveActiveRepoContext", resolveRepoContext, cwd);
+ 	activeRepoContextPromise.catch(() => {});
+-	const advisorStartupDisabled = options.startupExtensionOwner !== undefined;
+-	const watchdogFilesPromise = advisorStartupDisabled
++	const watchdogFilesPromise = restrictedStartupProfile
+ 		? Promise.resolve([])
+ 		: logger.time("discoverWatchdogFiles", () => discoverWatchdogFiles(cwd, agentDir));
+ 	watchdogFilesPromise.catch(() => {});
+-	const advisorConfigsPromise: Promise<DiscoveredAdvisors> = advisorStartupDisabled
++	const advisorConfigsPromise: Promise<DiscoveredAdvisors> = restrictedStartupProfile
+ 		? Promise.resolve({ advisors: [], sharedInstructions: undefined, warnings: [] })
+ 		: logger.time("discoverAdvisorConfigs", () => discoverAdvisorConfigs(cwd, agentDir));
+ 	advisorConfigsPromise.catch(() => {});
+-	const promptTemplatesPromise = options.promptTemplates
+-		? Promise.resolve(options.promptTemplates)
+-		: logger.time("discoverPromptTemplates", discoverPromptTemplates, cwd, agentDir);
++	const promptTemplatesPromise =
++		options.promptTemplates || restrictedStartupProfile
++			? Promise.resolve(options.promptTemplates ?? [])
++			: logger.time("discoverPromptTemplates", discoverPromptTemplates, cwd, agentDir);
+ 	promptTemplatesPromise.catch(() => {});
+-	const slashCommandsPromise = options.slashCommands
+-		? Promise.resolve(options.slashCommands)
+-		: logger.time("discoverSlashCommands", discoverSlashCommands, cwd);
++	const slashCommandsPromise =
++		options.slashCommands || restrictedStartupProfile
++			? Promise.resolve(options.slashCommands ?? [])
++			: logger.time("discoverSlashCommands", discoverSlashCommands, cwd);
+ 	slashCommandsPromise.catch(() => {});
+ 	const customCommandsPromise =
+ 		options.disableExtensionDiscovery || options.restrictToolNames === true
+@@ -4751,6 +4754,7 @@ async function createAgentSessionBody(
+ 				cwd: promptCwd,
+ 				additionalWorkspaceRoots: sessionManager.getAdditionalDirectories(),
+ 				noContextFiles: options.noContextFiles,
++				restrictedStartup: restrictedStartupProfile,
+ 				excludeAgentsMd,
+ 				xdevTools: toolSession.xdev ? xdevEntries(toolSession.xdev) : [],
+ 				xdevDocs: xdevPromptDocs ? renderXdevPromptDocs(xdevPromptDocs, routedCatalogNames) : "",
+@@ -5413,7 +5417,7 @@ async function createAgentSessionBody(
+ 			isToolActive: name => toolSession.isToolActive?.(name) === true,
+ 		};
+ 		const advisorToolBuilds: Array<Tool | null | Promise<Tool | null>> = [];
+-		if (!advisorStartupDisabled) {
++		if (!restrictedStartupProfile) {
+ 			for (const name in BUILTIN_TOOLS) {
+ 				advisorToolBuilds.push(BUILTIN_TOOLS[name as keyof typeof BUILTIN_TOOLS](advisorToolSession));
+ 			}
+@@ -5567,17 +5571,17 @@ async function createAgentSessionBody(
+ 			providerSessionId: options.providerSessionId,
+ 			accountPoolScope,
+ 			providerPromptCacheKeySource,
+-			advisorStartupDisabled,
++			advisorStartupDisabled: restrictedStartupProfile,
+ 			advisorTools,
+ 			// Same per-call `grep` seam the primary bridge gets, built against the
+ 			// advisor's own tool session so a `pi_grep` frame's context width and
+ 			// match cap are honored there too.
+-			advisorCreateGrepTool: advisorStartupDisabled
++			advisorCreateGrepTool: restrictedStartupProfile
+ 				? undefined
+ 				: createBridgeGrepFactory(advisorToolSession, extensionRunner, advisorAgent),
+ 			// Same `replace`-mode requirement as the primary bridge; the advisor
+ 			// path gates it on the advisor's own `edit` grant.
+-			advisorCreateEditTool: advisorStartupDisabled
++			advisorCreateEditTool: restrictedStartupProfile
+ 				? undefined
+ 				: () => createBridgeEditTool(advisorToolSession, extensionRunner, advisorAgent),
+ 			// The advisor's bridge tools are wrapped for approval, but the wrapper
+@@ -5661,7 +5665,7 @@ async function createAgentSessionBody(
+ 		// Backfill the resumed advisor spend without blocking startup: the scan
+ 		// runs after the session is live, so `--resume` no longer scales with the
+ 		// advisor transcript size (issue #9553).
+-		if (!advisorStartupDisabled) session.beginInitialAdvisorCostRestore();
++		if (!restrictedStartupProfile) session.beginInitialAdvisorCostRestore();
+ 		// Lines already seen follow the live context on their own (`getContextMessages`); a new session file starts over.
+ 		if (spotlightExperiment) session.registerSessionChangeCallback(() => spotlightExperiment.onSessionChange());
+ 		// Extension factories normally register tools before session construction,
+diff --git a/packages/coding-agent/src/system-prompt.ts b/packages/coding-agent/src/system-prompt.ts
+index 4bada8e..82a05d6 100644
+--- a/packages/coding-agent/src/system-prompt.ts
++++ b/packages/coding-agent/src/system-prompt.ts
+@@ -508,6 +508,8 @@ export function projectSystemPromptToolMetadata(
+ export interface BuildSystemPromptOptions {
+ 	/** Custom system prompt (replaces default). */
+ 	customPrompt?: string;
++	/** Restrict implicit prompt inputs and fail closed on preparation timeout. */
++	restrictedStartup?: boolean;
+ 	/** Already-loaded custom system prompt text; bypasses path resolution. */
+ 	resolvedCustomPrompt?: string;
+ 	/** Raw Handlebars template rendered with the default prompt's live context. */
+@@ -718,7 +720,7 @@ export async function buildSystemPrompt(options: BuildSystemPromptOptions = {}):
+ 	if (resolvedSystemPromptTemplate !== undefined && hasExplicitCustomPrompt) {
+ 		throw new Error("systemPromptTemplate cannot be combined with a literal custom system prompt");
+ 	}
+-	if (resolvedSystemPromptTemplate === undefined && !hasExplicitCustomPrompt) {
++	if (!options.restrictedStartup && resolvedSystemPromptTemplate === undefined && !hasExplicitCustomPrompt) {
+ 		const override = await discoverSystemPromptOverride(resolvedCwd);
+ 		if (override?.kind === "template" && override.content !== undefined) {
+ 			resolvedSystemPromptTemplate = override.content;
+@@ -768,6 +770,7 @@ export async function buildSystemPrompt(options: BuildSystemPromptOptions = {}):
+ 			.catch(error => ({ kind: "err" as const, error }));
+ 		const result = await Promise.race([tagged, deadline]);
+ 		if (result === "__timeout__") {
++			if (options.restrictedStartup) throw new Error(`Restricted startup prompt preparation timed out: ${name}`);
+ 			timedOut.push(name);
+ 			// Let the work continue in the background so its caches still warm; just log on completion.
+ 			void tagged.then(r => {
+@@ -790,9 +793,10 @@ export async function buildSystemPrompt(options: BuildSystemPromptOptions = {}):
+ 	// capability-path SYSTEM.md walk-up must not silently augment either.
+ 	const callerControlsCustomPrompt =
+ 		hasExplicitCustomPrompt || resolvedSystemPromptTemplate !== undefined || resolvedCustomPromptInput !== undefined;
+-	const systemPromptCustomizationPromise: Promise<string | null> = callerControlsCustomPrompt
+-		? Promise.resolve(null)
+-		: logger.time("loadSystemPromptFiles", loadSystemPromptFiles, { cwd: resolvedCwd });
++	const systemPromptCustomizationPromise: Promise<string | null> =
++		options.restrictedStartup || callerControlsCustomPrompt
++			? Promise.resolve(null)
++			: logger.time("loadSystemPromptFiles", loadSystemPromptFiles, { cwd: resolvedCwd });
+ 	const contextFilesPromise = (async () => {
+ 		const primary = providedContextFiles
+ 			? providedContextFiles
+@@ -843,8 +847,8 @@ export async function buildSystemPrompt(options: BuildSystemPromptOptions = {}):
+ 	// "none" (explicit off — and every subagent) omits the block and skips the file lookup.
+ 	const bundledPersonality = personality === "none" ? "" : PERSONALITY_SPECS[personality].trim();
+ 	const personalityPromise: Promise<string> =
+-		personality === "none"
+-			? Promise.resolve("")
++		personality === "none" || options.restrictedStartup
++			? Promise.resolve(bundledPersonality)
+ 			: logger
+ 					.time("loadPersonalityOverride", loadPersonalityOverride)
+ 					.then(override => override ?? bundledPersonality);

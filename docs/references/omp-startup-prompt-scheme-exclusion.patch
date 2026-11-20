@@ -1,0 +1,83 @@
+# Proposed source-host qualification patch; unapplied by Foundry.
+# oh-my-pi 24439066040e006eb08da7b204f0ac41c79d2de9, MIT.
+# Upstream license: https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/LICENSE
+# MIT License
+# 
+# Copyright (c) 2025 Mario Zechner
+# Copyright (c) 2025-2026 Can Bölük
+# Copyright (c) 2026 Stencil Labs, Inc.
+# 
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+# 
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+# 
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+diff --git a/packages/coding-agent/src/system-prompt.ts b/packages/coding-agent/src/system-prompt.ts
+--- a/packages/coding-agent/src/system-prompt.ts
++++ b/packages/coding-agent/src/system-prompt.ts
+@@ -1015,7 +1015,7 @@
+ 		agentsMdSearch: { files: agentsMdFiles },
+ 		workspaceTree,
+ 		hasSkillUriAccess,
+-		internalUrls: InternalUrlRouter.instance().describe(schemeHost),
++		internalUrls: options.restrictedStartup ? [] : InternalUrlRouter.instance().describe(schemeHost),
+ 		skills: filteredSkills,
+ 		rules: rules ?? [],
+ 		alwaysApplyRules: injectedAlwaysApplyRules,
+diff --git a/packages/coding-agent/test/system-prompt-model.test.ts b/packages/coding-agent/test/system-prompt-model.test.ts
+--- a/packages/coding-agent/test/system-prompt-model.test.ts
++++ b/packages/coding-agent/test/system-prompt-model.test.ts
+@@ -1,4 +1,4 @@
+-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
++import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+ import * as fs from "node:fs";
+ import * as os from "node:os";
+ import * as path from "node:path";
+@@ -7,6 +7,7 @@
+ import { resolveDelegationBias } from "@oh-my-pi/pi-catalog/compat/delegation";
+ import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
+ import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
++import { InternalUrlRouter } from "@oh-my-pi/pi-coding-agent/internal-urls";
+ import { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
+ import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
+ import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
+@@ -115,6 +116,26 @@
+ 		});
+ 	});
+ 
++	it("leaves scheme descriptions out of restricted startup before calling their owners", async () => {
++		const describeSchemes = spyOn(InternalUrlRouter.prototype, "describe");
++		const input = {
++			cwd: tempDir,
++			contextFiles: [],
++			skills: [],
++			rules: [],
++			toolNames: ["read", "edit"],
++			workspaceTree: { ...EMPTY_TREE, rootPath: tempDir },
++		};
++		try {
++			await buildSystemPrompt({ ...input, restrictedStartup: true });
++			expect(describeSchemes).not.toHaveBeenCalled();
++			await buildSystemPrompt(input);
++			expect(describeSchemes).toHaveBeenCalledTimes(1);
++		} finally {
++			describeSchemes.mockRestore();
++		}
++	});
++
+ 	it("omits the model line when no model is provided", async () => {
+ 		const { systemPrompt } = await buildSystemPrompt({
+ 			cwd: tempDir,

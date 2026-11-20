@@ -52,6 +52,8 @@ pub enum Command {
         expected_revision: u64,
         paths: Vec<String>,
         finishing: bool,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        assertions: Vec<Assertion>,
         max_bytes: usize,
     },
     Promote {
@@ -124,6 +126,22 @@ impl Kind {
     }
 }
 
+/// An exact, single-valued caller fact or constraint. Keys include any scope or
+/// environment identity the caller needs; prose is never interpreted as a rule.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Assertion {
+    pub key: String,
+    pub relation: Relation,
+    pub value: String,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Relation {
+    Equals,
+    NotEquals,
+}
+
 /// Caller assertions with attribution; neither an observation nor a decision is
 /// automatically certified true. Supersession is explicit and preserves history.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -139,6 +157,8 @@ pub struct Entry {
     pub supersedes: Option<String>,
     #[serde(default)]
     pub action_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub assertions: Vec<Assertion>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -161,7 +181,18 @@ impl Default for View {
 struct StoredEntry {
     entry: Entry,
     sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    assertions_sha256: Option<String>,
     view: View,
+}
+impl StoredEntry {
+    fn with_assertions(&self, mut value: Value) -> Value {
+        if let Some(digest) = &self.assertions_sha256 {
+            value["assertions"] = json!(self.entry.assertions);
+            value["assertions_sha256"] = json!(digest);
+        }
+        value
+    }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -203,8 +234,58 @@ fn text(value: &str, max: usize) -> FResult<()> {
     }
     Ok(())
 }
+fn assertions_valid(assertions: &[Assertion], allow_not_equals: bool) -> FResult<()> {
+    if assertions.len() > 16 {
+        return Err(invalid("at most sixteen structured assertions"));
+    }
+    let mut seen = BTreeSet::new();
+    for assertion in assertions {
+        let key = assertion.key.as_bytes();
+        if key.is_empty()
+            || key.len() > 128
+            || !key[0].is_ascii_alphanumeric()
+            || !key
+                .iter()
+                .all(|b| b.is_ascii_alphanumeric() || b"_.:/-".contains(b))
+            || !seen.insert(&assertion.key)
+        {
+            return Err(invalid(
+                "assertion keys must be distinct bounded scope identifiers",
+            ));
+        }
+        text(&assertion.value, 512)?;
+        if !allow_not_equals && assertion.relation != Relation::Equals {
+            return Err(invalid(
+                "only requirements and constraints may assert not_equals",
+            ));
+        }
+    }
+    Ok(())
+}
+fn assertions_digest(assertions: &[Assertion]) -> FResult<Option<String>> {
+    if assertions.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(crate::digest(&serde_json::to_vec(assertions)?)))
+    }
+}
 fn entry_valid(entry: &Entry) -> FResult<()> {
     id(&entry.id)?;
+    if !entry.assertions.is_empty()
+        && !matches!(
+            entry.kind,
+            Kind::Requirement
+                | Kind::Constraint
+                | Kind::Observation
+                | Kind::Hypothesis
+                | Kind::Decision
+        )
+    {
+        return Err(invalid(
+            "this entry kind cannot carry structured assertions",
+        ));
+    }
+    assertions_valid(&entry.assertions, entry.kind.protected())?;
     if let Some(key) = &entry.action_key {
         text(key, 256)?;
         if entry.kind != Kind::RejectedAttempt {
@@ -268,7 +349,10 @@ impl Task {
                     return Err(invalid("task source link names another workspace"));
                 }
             }
-            if seen.contains_key(e.id.as_str()) || item.sha256 != crate::digest(e.text.as_bytes()) {
+            if seen.contains_key(e.id.as_str())
+                || item.sha256 != crate::digest(e.text.as_bytes())
+                || item.assertions_sha256 != assertions_digest(&e.assertions)?
+            {
                 return Err(invalid("duplicate entry or damaged payload"));
             }
             if let Some(parent) = &e.supersedes
@@ -339,6 +423,7 @@ impl Task {
                 self.entries.push(StoredEntry {
                     entry: entry.clone(),
                     sha256: crate::digest(entry.text.as_bytes()),
+                    assertions_sha256: assertions_digest(&entry.assertions)?,
                     view: View {
                         pinned: entry.kind.protected(),
                         ..View::default()
@@ -456,7 +541,7 @@ fn source_links(tx: &redb::ReadTransaction, entry: &Entry) -> FResult<Vec<Value>
 }
 fn render_view(tx: &redb::ReadTransaction, task: &Task) -> FResult<Value> {
     let entries = task.entries.iter().filter(|e| e.view.selected && !task.superseded(&e.entry.id)).map(|e| -> FResult<Value> {
-        Ok(json!({"id":e.entry.id,"kind":e.entry.kind,"author":e.entry.author,"provenance":e.entry.provenance,"sha256":e.sha256,"representation":if e.view.summary.is_some() { "caller_summary" } else { "original" },"text":e.view.summary.as_ref().unwrap_or(&e.entry.text),"source_links":source_links(tx,&e.entry)?}))
+        Ok(e.with_assertions(json!({"id":e.entry.id,"kind":e.entry.kind,"author":e.entry.author,"provenance":e.entry.provenance,"sha256":e.sha256,"representation":if e.view.summary.is_some() { "caller_summary" } else { "original" },"text":e.view.summary.as_ref().unwrap_or(&e.entry.text),"source_links":source_links(tx,&e.entry)?})))
     }).collect::<FResult<Vec<_>>>()?;
     Ok(
         json!({"workspace_id":task.workspace_id,"task_id":task.task_id,"revision":task.revision,"boundary":"foundry_task_context","host_application":"unknown","title":task.title,"entries":entries}),
@@ -602,7 +687,7 @@ impl Engine {
                             while !body.is_char_boundary(end) {
                                 end -= 1;
                             }
-                            let hit = json!({"entry_id":item.entry.id,"kind":item.entry.kind,"sha256":item.sha256,"author":item.entry.author,"provenance":item.entry.provenance,"historical":task.superseded(&item.entry.id),"source_links":links(&item.entry)?,"offset":start,"end":end,"match_start":at,"match_end":at+query.len(),"excerpt":&body[start..end]});
+                            let hit = item.with_assertions(json!({"entry_id":item.entry.id,"kind":item.entry.kind,"sha256":item.sha256,"author":item.entry.author,"provenance":item.entry.provenance,"historical":task.superseded(&item.entry.id),"source_links":links(&item.entry)?,"offset":start,"end":end,"match_start":at,"match_end":at+query.len(),"excerpt":&body[start..end]}));
                             let mut candidate = result.clone();
                             candidate["hits"]
                                 .as_array_mut()
@@ -631,6 +716,7 @@ impl Engine {
                         expected_revision,
                         paths,
                         finishing,
+                        assertions,
                         max_bytes,
                     } => {
                         if task.revision != *expected_revision {
@@ -646,6 +732,7 @@ impl Engine {
                         for path in paths {
                             store::validate_path(path)?;
                         }
+                        assertions_valid(assertions, false)?;
                         result["silence"] = json!(true);
                         result["advice"] = json!([]);
                         result["omitted"] = json!(0);
@@ -665,13 +752,37 @@ impl Engine {
                             let relevant = item.entry.source_links.iter().any(|h| {
                                 store::HandleRef::parse(h).is_ok_and(|h| paths.contains(&h.path))
                             });
-                            let trigger = match item.entry.kind {
-                                Kind::Constraint if relevant || *finishing => "constraint_check",
-                                Kind::RejectedAttempt if relevant => "related_failed_attempt",
-                                Kind::Work if *finishing => "open_work",
-                                Kind::Question if *finishing => "open_question",
-                                Kind::Requirement if *finishing => "requirement_check",
-                                _ => continue,
+                            let conflicts: Vec<_> = item
+                                .entry
+                                .assertions
+                                .iter()
+                                .filter_map(|stored| {
+                                    let proposed =
+                                        assertions.iter().find(|p| p.key == stored.key)?;
+                                    let violated = match stored.relation {
+                                        Relation::Equals => stored.value != proposed.value,
+                                        Relation::NotEquals => stored.value == proposed.value,
+                                    };
+                                    violated.then(|| json!({"stored":stored,"proposed":proposed}))
+                                })
+                                .collect();
+                            let trigger = if !conflicts.is_empty() {
+                                if item.entry.kind.protected() {
+                                    "constraint_violation"
+                                } else {
+                                    "assertion_conflict"
+                                }
+                            } else {
+                                match item.entry.kind {
+                                    Kind::Constraint if relevant || *finishing => {
+                                        "constraint_check"
+                                    }
+                                    Kind::RejectedAttempt if relevant => "related_failed_attempt",
+                                    Kind::Work if *finishing => "open_work",
+                                    Kind::Question if *finishing => "open_question",
+                                    Kind::Requirement if *finishing => "requirement_check",
+                                    _ => continue,
+                                }
                             };
                             let source_links = links(&item.entry)?;
                             if source_links.iter().any(|link| link["status"] != "fresh") {
@@ -680,7 +791,11 @@ impl Engine {
                             }
                             let mut candidate = result.clone();
                             candidate["silence"] = json!(false);
-                            candidate["advice"].as_array_mut().unwrap().push(json!({"trigger":trigger,"entry_id":item.entry.id,"sha256":item.sha256,"text":item.entry.text,"author":item.entry.author,"provenance":item.entry.provenance,"source_links":source_links}));
+                            let mut advice = item.with_assertions(json!({"trigger":trigger,"entry_id":item.entry.id,"sha256":item.sha256,"text":item.entry.text,"author":item.entry.author,"provenance":item.entry.provenance,"source_links":source_links}));
+                            if !conflicts.is_empty() {
+                                advice["conflicts"] = json!(conflicts);
+                            }
+                            candidate["advice"].as_array_mut().unwrap().push(advice);
                             // Reserve enough bytes for final counts; never truncate originals.
                             if candidate["advice"].as_array().unwrap().len() > 8
                                 || crate::json_len(&candidate)? + 32 > *max_bytes
@@ -734,7 +849,7 @@ impl Engine {
                         result["promotions"] = json!(task.promotions);
                         result["title"] = json!(task.title);
                         result["checkpoints"] = json!(task.checkpoints.keys().collect::<Vec<_>>());
-                        result["entries"] = Value::Array(task.entries.iter().map(|e| -> FResult<Value> { Ok(json!({"id":e.entry.id,"kind":e.entry.kind,"author":e.entry.author,"provenance":e.entry.provenance,"bytes":e.entry.text.len(),"sha256":e.sha256,"source_links":links(&e.entry)?,"supersedes":e.entry.supersedes,"action_key":e.entry.action_key,"historical":task.superseded(&e.entry.id),"view":e.view})) }).collect::<FResult<_>>()?);
+                        result["entries"] = Value::Array(task.entries.iter().map(|e| -> FResult<Value> { Ok(e.with_assertions(json!({"id":e.entry.id,"kind":e.entry.kind,"author":e.entry.author,"provenance":e.entry.provenance,"bytes":e.entry.text.len(),"sha256":e.sha256,"source_links":links(&e.entry)?,"supersedes":e.entry.supersedes,"action_key":e.entry.action_key,"historical":task.superseded(&e.entry.id),"view":e.view}))) }).collect::<FResult<_>>()?);
                     }
                     Command::Peek {
                         entry_id,
@@ -770,6 +885,7 @@ impl Engine {
                         result["text"] = json!(&body[*offset..end]);
                         result["source_links"] = json!(links(&item.entry)?);
                         result["historical"] = json!(task.superseded(entry_id));
+                        result = item.with_assertions(result);
                     }
                     Command::Render { max_bytes } => {
                         if !(256..=MAX_REQUEST_BYTES).contains(max_bytes) {
@@ -942,13 +1058,18 @@ impl Engine {
                 if item.entry.kind != Kind::Decision {
                     return Err(invalid("only an explicit decision can be promoted"));
                 }
+                let assertion_attribution = item
+                    .assertions_sha256
+                    .as_ref()
+                    .map(|digest| format!("; assertions:{digest}"))
+                    .unwrap_or_default();
                 let fields = crate::memory::RecordFields {
                     id: memory_id.clone(),
                     text: item.entry.text.clone(),
                     author: author.clone(),
                     provenance: format!(
-                        "task:{}/entry:{}@{}; {}",
-                        task.task_id, entry_id, item.sha256, provenance
+                        "task:{}/entry:{}@{}{}; {}",
+                        task.task_id, entry_id, item.sha256, assertion_attribution, provenance
                     ),
                     source_links: item.entry.source_links.clone(),
                 };

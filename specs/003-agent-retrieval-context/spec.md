@@ -721,7 +721,7 @@ not hidden work inside packing; T005 carries the owner's 2026-10-03 economics pr
 
 **Next: pilot v2, unfunded.** Owner decision, 2026-11-06, "Draft pilot v2,
 unfunded": because v1 cannot accept T006, the next step is a new frozen contract,
-pilot v2 (to draft; [v1](contracts/bounded-pilot-v1.md) stays frozen). It needs
+pilot v2 ([unfunded draft](contracts/bounded-pilot-v2.md); [v1](contracts/bounded-pilot-v1.md) stays frozen). It needs
 several harder held-out tasks, a powered sample size and fixes for v1's
 [disclosed gaps](../../docs/validation.md#containment-and-disclosed-gaps), and it
 reuses the qualified `pilot-capture` apparatus (below). Nothing is spent until the
@@ -730,6 +730,8 @@ v1's local key file was deleted on 2026-11-06. The same day the owner moved the
 economics gate (FOLLOWUP F3) to T006 and pilot v2, retired the local 30B comparison
 (F2) with no spend, and added task-context outcomes to this suite (Experiment below).
 See the [decision record](../../docs/validation.md#owner-decisions--2026-11-06).
+Owner decision, 2026-11-20, "Drop retrieval arms": pilot v2 tests task context only,
+and T006's acceptance below is amended so that v2 carries no retrieval contrast.
 
 **Bounded pilot v1 run, 2026-11-06:** gates 2, 3 and 5 were met with the owner's
 credential, workspace identity, rights approval and scoped probe and coding
@@ -822,7 +824,11 @@ an error may leave the prior payload in use. Upstream `docs/extensions.md` says
 (`devin-agent` does not), and an ephemeral turn's `maxContextBytes` check precedes
 payload replacement. Consequently this inspection proves neither end-to-end budget
 enforcement nor applied-view acknowledgment. The later installed-host check below
-verifies the gateway boundary against a scripted upstream. No third-party code is vendored.
+verifies the gateway boundary against a scripted upstream. No third-party code is vendored
+as a Cargo or build dependency. The repository does track 25 reference patch files
+against upstream oh-my-pi, which reproduce some upstream source text; nothing in
+Foundry builds, reads or applies them
+([inventory](../../docs/dependencies.md#oh-my-pi-reference-patches)).
 
 **Run procedure when measurement inputs are available:**
 
@@ -833,8 +839,12 @@ verifies the gateway boundary against a scripted upstream. No third-party code i
    plumbing only, not general task-quality improvement.
 2. Control: launch the existing Foundry MCP command without the experimental flag.
    Candidate: use the identical command plus `--experimental-behavior-context`.
+   (Since 2026-11-11 the flag defaults on, so a control for it must pass
+   `--experimental-behavior-context=false`; this gate no longer decides the flag, as
+   Acceptance below records.)
    The current anchorless repair is unselected, so do not invent its ablation result
-   or claim the combined milestone has passed.
+   or claim the combined milestone has passed. Owner decision 18 of 2026-11-20 removed
+   this control/candidate pair from pilot v2 (Acceptance below).
 3. For attribution runs, append `--retrieval-trace-dir <new-private-directory>` to
    each owner launch; use a distinct new directory per process, and capture stderr.
    Match request IDs/session IDs and context-query hashes to the harness's frozen
@@ -847,8 +857,10 @@ verifies the gateway boundary against a scripted upstream. No third-party code i
    inconclusive, keep the default unchanged and repair the identified cause.
 
 - **Depends:** 001 T010 and 009 T005 supply the candidate retrieval changes; T003/T005
-  supply the existing host integration and economics boundary. Baseline collection,
-  public fixture design and host capability inspection can start before the repairs.
+  supply the existing host integration and economics boundary. Since owner decision
+  18 of 2026-11-20 neither supplies a pilot v2 arm: T010 is on in every arm, and T005
+  closed without promotion. Baseline collection, public fixture design and host
+  capability inspection can start before the repairs.
 - **Scope:** existing CLI/MCP/host adapters and the T005 real-host runbook. Use a
   dedicated explicitly configured host profile. Planning assumption: inspect OMP
   first because it has a measured integration; selecting it does not establish
@@ -860,32 +872,54 @@ verifies the gateway boundary against a scripted upstream. No third-party code i
     Separate pilot/development tasks from held-out evaluation tasks. Preserve failed
     and invalid runs and include their paid attempts in cost totals.
   - Compare current Foundry, mixed-intent repair alone, anchorless repair alone and
-    both repairs. Repeated paired runs account for model variability. Before final
+    both repairs. Owner decision, 2026-11-20, "Drop retrieval arms": pilot v2 no
+    longer makes this comparison. Every v2 arm runs the same current Foundry retrieval
+    configuration (the [draft](contracts/bounded-pilot-v2.md)'s item 3), and its arms
+    are the task-context arms of the draft's item 4. The four intents above stay
+    as task strata. Repeated paired runs account for model variability. Before final
     runs, freeze sample-size rationale, total spend/time ceiling, stop rules,
     task-success noninferiority margin, required improvement and cost/latency limits.
     Do not choose those limits after reading candidate outcomes. This is one shared
     task suite to extend in later milestones, not a new benchmark for every feature.
     Owner decision, 2026-11-06, "Measure them in pilot v2": the outcome tasks of
     T007–T009 and 008 T003–T005 join this suite and pilot v2 with their acceptance
-    bar unchanged, and 008 T004's semantic triggers are still to be built. All six
-    stay open until an authorized run passes.
+    bar unchanged. 008 T004's triggers were built on 2026-11-13 as the owner-selected
+    explicit structured assertions under the no-model rule
+    ([record](../../docs/validation.md#structured-task-assertions-008-t004--2026-11-13)).
+    All six stay open until an authorized run passes.
   - Record first useful evidence, complete supporting evidence, exploratory calls,
     steps to a verified patch, constraint violations, retries, task success, turns,
     latency and complete available provider usage under the economics contract.
     Separate Foundry delivery from evidence actually included in a model request.
     Unknown consumption/usage remains unknown, not a zero or a savings claim.
-- **Acceptance:** the selected retrieval change preserves verified task success
-  within the preregistered margin and improves the declared evidence/discovery
-  outcome within the declared total-cost/latency bounds. Report paired uncertainty,
-  per-intent regressions and absolute success. An underpowered or incomplete run
-  cannot promote the default or establish dollar savings. Retain the baseline if
-  the outcome gate fails, even if G2 improved. Owner decision, 2026-11-06,
+- **Acceptance:** Owner decision, 2026-11-20, "Drop retrieval arms"
+  ([record](../../docs/validation.md#owner-decisions--2026-11-19)): pilot v2 carries
+  no retrieval contrast. This replaces the earlier requirement that "the selected
+  retrieval change" pass this gate. No retrieval change is selected: 001 T010 is
+  decided by its own gates (below), and 009 T005 closed without promotion (decision
+  17, 2026-11-19). T006 keeps its name and anchor, but through v2 it accepts,
+  promotes or rejects no retrieval change. What T006 now has to show: pilot v2
+  frozen, owner-authorized and run with complete capture and a valid oracle verdict
+  on every scheduled row; every arm on the same current Foundry retrieval
+  configuration, pinned by digest; and every confirmatory task-context contrast that
+  the freeze declares preserves verified task success within the preregistered
+  margin and improves the declared evidence/discovery outcome within the declared
+  total-cost/latency bounds. A v2 with no confirmatory contrast is descriptive and
+  leaves T006 open. Report paired uncertainty, per-intent regressions, including the
+  four intent strata of the Experiment, and absolute success. An underpowered or
+  incomplete run cannot accept T006, promote a default or establish dollar savings.
+  Retain the baseline if the outcome gate fails, even if G2 improved. A v2 contrast
+  accepts one of T007–T009 or 008 T003–T005 only under that task's own unchanged bar
+  (Experiment above). No real-agent benefit of any retrieval change is measured; a
+  retrieval contrast would need a new owner decision. Owner decision, 2026-11-06,
   "Lexical-only, drop T006 gate": this gate no longer decides
   `--experimental-behavior-context`. 001 T010's own local gates and the
   [2026-10-19 G2 rule](../../docs/validation.md#g2-rule-without-the-token-clause--2026-10-19)
-  decide it. Its semantic-store effects are to be removed, and once those gates pass
-  it defaults on only where lexical results are served. No real-agent benefit is
-  claimed for the flag.
+  decide it. Its semantic-store effects were removed and those gates passed on
+  2026-11-11, so it now defaults on, with an explicit opt-out, and changes only lexical
+  delivery
+  ([receipt](../../docs/validation.md#t010-singleton-qualification--2026-11-11)). No
+  real-agent benefit is claimed for the flag.
 - **Next-milestone capability artifact:** inspect the pinned real host for tool
   interception, pre-send context mutation, protected message/tool pairing, restart
   persistence and application acknowledgments. Classify each as supported with
@@ -971,7 +1005,14 @@ runs compare verified completions, incorrect changes, complete provider usage,
 auxiliary generation and amortized preparation cost. Smaller tool replies alone are
 not success. This acceptance evidence does not block experimental implementation.
 Owner decision, 2026-11-06: these paired runs belong to the T006 suite and pilot v2,
-and T009 stays unaccepted until an authorized run passes.
+and T009 stays unaccepted until an authorized run passes. Owner decision, 2026-11-19:
+six coverage gaps are named limitations, with no work planned: dynamic dispatch,
+indirect wrappers, unsupported languages, broader framework behavior, requirement
+satisfaction and semantic constraint conflicts. Reports already state `complete:false`,
+mark constraint conflicts `not_evaluated` and never claim a satisfied requirement. The
+gaps re-enter when an authorized real-task run, such as pilot v2, fails because
+composed evidence missed a fact behind one of them
+([record](../../docs/validation.md#owner-decisions--2026-11-19)).
 
 
 #### T009 implementation — 2026-10-10
@@ -1031,8 +1072,9 @@ catalog fixture exposes a provider returning `items` while consumer/test require
 `products`; the delivered spans support a one-line provider repair, with billing and
 the route unchanged. A deterministic in-process Python transport executes the selected
 provider, consumer and test before/after the repair. This verifies the sandbox contract,
-not a deployed HTTP service or autonomous model patch quality. Real-host paired tasks,
-provider economics and broader language/framework coverage remain follow-ups. [Usage](../../docs/experimental-context.md#boundary-relationships-and-task-evidence)
+not a deployed HTTP service or autonomous model patch quality. Real-host paired tasks
+and provider economics remain follow-ups; broader language/framework coverage is a
+named limitation (owner, 2026-11-19, T009 status above). [Usage](../../docs/experimental-context.md#boundary-relationships-and-task-evidence)
 and [validation](../../docs/validation.md#boundary-relationships-and-task-evidence--2026-10-10)
 retain the practical limits.
 
@@ -1085,7 +1127,8 @@ inside ordinary source files. Parsing is size/time bounded and cached per source
 the final read snapshot. Relationships remain compiler **references**: `runtime_call`
 is `unverified` and `test_execution` is `not_observed`. Attributes do not establish
 execution or requirement coverage; existing test-path classification remains heuristic. Definition, reference and additional syntax bodies must all fit before the
-relationship is emitted. Dynamic dispatch and semantic constraint conflicts remain open.
+relationship is emitted. Dynamic dispatch and semantic constraint conflicts are named
+limitations (owner, 2026-11-19, T009 status above).
 
 T009 source discovery continuation (2026-10-11): composition no longer requires a
 compiler artifact to discover useful caller/test candidates. Up to four resolved
@@ -1151,8 +1194,9 @@ window: even an unlimited result is not an absence or completeness proof. Final
 delivered facets still depend on exact bodies that fit the budget. Compiler
 relationships and imported execution observations keep separate provenance.
 Dynamic dispatch, indirect wrappers, unsupported languages, broader framework behavior
-and requirement satisfaction remain open. Task-word test selection still searches
-only selected files; it is discovery, not observed coverage. Search schema 8
+and requirement satisfaction are named limitations (owner, 2026-11-19, T009 status
+above). Task-word test selection still searches only selected files; it is
+discovery, not observed coverage. Search schema 8
 (2026-10-26) requires explicit derived-index repair, including from schema 7,
 whose field-compatible postings predate the pulldown-cmark 0.13.5 Markdown
 grammar, and from schema 6, whose identical fields lack canonical import-alias

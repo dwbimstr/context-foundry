@@ -569,17 +569,29 @@ holds per index state.
 
 #### Experimental anchorless prose selection — 009 T005, 2026-10-10
 
-With `experimental_behavior` enabled for search-context requests, an anchorless
-plain-language query uses tier 2 without promoting incidental exact-definition runs
-to tier 1. Eligibility requires at least three whitespace-separated words, each
+With `experimental_behavior` enabled for lexical search-context requests, an anchorless
+plain-language query uses prose selection with conservative singleton exact-definition
+priority (accepted for the lexical default on 2026-11-11). It reuses
+at most 32 lowercase, distinct tier-1 runs, excluding existing prose stopwords and
+runs corresponding to suppressed incidental group-3 anchors. A run precedes tier 2
+only when its restricted `def_name` query's complete Count is exactly one indexed
+definition document; a truncated TopDocs sample or freshness-filtered survivor count
+cannot establish this. The restriction excludes memory/brief documents and applies
+any path subtree, without new role, case, language, qualifier or freshness filters.
+Uniqueness is per serving index, not compiler identity or global root identity.
+Existing run ordering, 64/256 candidate bounds, final-read identity and the 32-unit
+context cap remain. Non-prose exact-run selection is unchanged. Eligibility requires at least three whitespace-separated words, each
 alphabetic (including hyphen-separated alphabetic compounds) after trimming trailing
 `?`, `.`, `,` or `:`. A capitalized group-3 candidate inside an unmarked compound
 does not alone turn prose into a symbol request; marked and shaped names still do.
 Queries starting with
 `where`, `find`, `locate`, `show` or `who` retain the baseline. Explicit code/path
 syntax, admitted anchors (including global multi-root anchors), graph strategy and
-policy-routed auto strategy retain their existing selection. Default context and the
-ordinary `search` operation are unchanged.
+policy-routed auto strategy retain their existing selection. The ordinary `search`
+operation is unchanged. This lexical default and its explicit opt-out are owned by
+[T010](../spec.md#t010--retrieve-behavioral-evidence-for-a-named-symbol); the
+[dated evidence](../../../docs/validation.md#t010-singleton-qualification--2026-11-11)
+records qualification.
 
 Cause: many definitions named ordinary words such as `read` can occupy all 32 context
 slots ahead of a body matching the complete behavioral query. The candidate removes
@@ -590,7 +602,12 @@ bring forward the next disjoint matching document of its same long callable
 (`fn`/`method`, over 1,536 bytes) from that bounded window. The association requires
 the same path, hash, owner start/head/end and kind; names alone never join owners.
 Every candidate remains present once, and final selection still admits at most two
-documents per owner. This prevents a discovered function's later matching passage
+disjoint documents per owner. Cross-tier exclusion and final selection use the same
+clipped document identity for every long prose candidate, including a promoted
+definition. The existing `selection_unit(prose)` helper therefore applies its long
+prose rule to both tiers; non-prose still uses the whole delivery-unit identity.
+This preserves later matching body passages when the definition document is
+promoted, with the existing overlap check and no additional candidate window. This prevents a discovered function's later matching passage
 from being cut independently below unrelated owners. The ranked lanes then
 alternate, code first. Each
 window uses distinct non-stopword subtoken coverage (at most 64 terms). Adjacent
@@ -620,27 +637,15 @@ body coverage; partial overlaps remain. Derived brief support requires delivered
 body coverage of the cited source. Every admission counts the current selected set
 with its final omitted count, avoiding a late header expansion that drops the only
 covering body.
-Experimental anchorless prose with hierarchy/body representations alternates dense
-and lexical candidates at both partial and complete coverage, before ordinary
-first-placement deduplication, per-file caps and candidate limits. Dense goes first
-only when a refined Body survives the final source check; otherwise lexical goes
-first. Coverage describes availability and freshness, not relevance. The existing
-partial/address and file-overview rules still alternate lexical first; complete
-address-card coverage retains dense precedence. Explicit anchors and ordinary/default
-search keep their existing behavior. All independently scored body ranges remain
-unchanged. Bounded `placement_policy` traces name `body_prose_interleave_v1` for
-hierarchy/body and report coverage separately; `lexical_intent` remains available.
-This reserves no extra candidates or output tokens, and does not guarantee delivery
-of every lexical hit. After semantic interleaving, repeat the same exact-owner
-grouping for lexical documents before placement caps and the global cut; dense
-locations keep their relative order and are never joined as lexical companions.
-This prevents interleaving from separating the two matching parts of a callable
-again before packing. No expected-answer labels enter selection. It changes no source
-index, vector recipe or cache identity. Development regressions and public repository
-comparisons do not establish held-out G2 acceptance. Owner decision, 2026-11-06: this
-dense/lexical interleaving and the flag's other semantic-store effects are to be
-removed ([§ Experimental behavioral support](#experimental-behavioral-support--001-t010-2026-10-09));
-until then they apply as written.
+Owner decision, 2026-11-06, implemented and accepted at lexical scope 2026-11-11: the flag's
+semantic effects are removed. Any supplied dense window, including partial or
+empty-hit windows, uses ordinary semantic ordering and source spans; it gets no
+prose refinement, local focusing, interleaving or owned-method support. Model
+admission uses the ordinary anchor rule independently of this flag. Off and named
+fallback plans serve lexical evidence and may use the lexical algorithm above.
+This replaces the former semantic prose/interleaving paragraphs; source identity,
+vector recipes, freshness checks, bounded provenance and ordinary semantic placement
+are unchanged. See [T010](#experimental-behavioral-support--001-t010-2026-10-09).
 
 ### Hit materialization
 
@@ -654,8 +659,10 @@ draws its units from this same materialized ranking.
 
 ### Index version gate
 
-The current value is `"8"` (2026-10-26, [§ Unit-grammar repair](#unit-grammar-repair--2026-10-26):
-Markdown re-indexed under pulldown-cmark 0.13.5). As history: `"7"` (2026-10-11)
+The current value is `"9"` (2026-11-11, [§ Parser bundle](#parser-bundle--2026-11-11):
+Scala, PowerShell and Markdown parser versions move together with source-unit schema 7).
+As history: `"8"` (2026-10-26, [§ Unit-grammar repair](#unit-grammar-repair--2026-10-26))
+re-indexed Markdown under pulldown-cmark 0.13.5; `"7"` (2026-10-11)
 enriched call-name postings with import aliases, `"6"` introduced them, `"5"` was
 the value since 001 T008 (units, addresses and import keys of 15 more languages),
 `"4"` since 001 T007 (§ City map: one definition document per unit and the
@@ -829,6 +836,17 @@ contract, only deterministic routing is specified for implementation here. 001 a
 do not wait for 013 to ship. All model work shares the read deadline; none occurs in
 the final read transaction.
 
+### Experimental compact preference — 009 T005
+
+Historical rejected variant, 2026-11-11. Commit `0de75ff` implemented a default-off
+one-eighth compact-form preference for ordinary anchorless semantic context. It
+kept existing forms/order and whole-response bounds, with ordinary-ladder fallback
+and an explicit `allocation` trace reason. It passed local correctness gates but
+failed G2 verbatim-body preservation, so its flag and runtime path were removed.
+The original richest-first ladder below remains authoritative. The retained commit,
+binary and [no-promotion receipt](../../../docs/validation.md#t005-compact-candidate-no-promotion--2026-11-11)
+preserve the experiment without adding an operator option to current delivery.
+
 ### Ladder packing
 
 For each candidate in order, include the first form whose complete rendering — the
@@ -966,7 +984,7 @@ own invalidation rules. The bounded consumer and final identity/AST checks are i
 
 ### Unit-grammar repair — 2026-10-26
 
-The current derived search schema is `"8"` and `SOURCE_UNIT_SCHEMA` is `"6"`:
+The 2026-10-26 repair set derived search schema `"8"` and `SOURCE_UNIT_SCHEMA` `"6"`:
 pulldown-cmark 0.13.5 fixes the Markdown list/indentation grammar (the 0.13.4
 default CLI exits 101 on the 13-byte `- [o]:u`, four spaces, tab input), which
 can change Markdown units, so the search postings and the semantic partition
@@ -984,6 +1002,41 @@ admission recognizes only the `cards-v1`/`body-v1`/`hierarchy-v1`/`overview-v1`
 families with exactly one current unit marker in the header before the
 parameter colon. Search-only posting changes still do not change model inputs
 on their own.
+
+### Parser bundle — 2026-11-11
+
+Owner decision 21 selects tree-sitter-scala 0.26.4, tree-sitter-powershell 0.26.6
+and pulldown-cmark 0.13.6 together. Derived search schema is `"9"` and
+`SOURCE_UNIT_SCHEMA` is `"7"`; authoritative store schema 12 and semantic generation
+6 are unchanged. A schema-8 or older search index requires explicit `repair-index`.
+Repair rebuilds derived documents from retained authoritative sources without
+changing their hashes/revisions or discarding memories and tasks. Old semantic
+partitions, state and generation metadata remain history and cannot be served as
+current. Explicit `semantic prepare` refits every source under units7, including
+previously zero-unit sources, and reuses only exact cached model inputs. Ordinary
+open/status must not repair, republish or label old grammar current.
+
+The bundle must pass the parser fixtures, existing migration/consumer checks and
+local gates. Before acceptance, compare full ordered syntax forests, effective
+delivery units, documents, imports/calls, coverage and stopped-parse fallback on
+all production-admitted sources of both pinned G2 corpora and the frozen fixtures.
+Both builds consume the same captured bytes with the same compiler and helper.
+A raw or effective unit change in either G2 corpus requires a fresh all-388 G2
+comparison on the owner's Mac; a neutral corpus diff does not claim retrieval
+improvement or coding-task benefit. No original measurement store is migrated.
+
+Upstream references: Scala 0.26.4 (`8c0b6d44bfd66bf7bc9a1fc15084ef17cef2f97e`),
+`grammar.js::_function_declaration`/`_function_constructor` and scanner `scan_impl`;
+PowerShell 0.26.6 (`65ea6919e816a7ac142acec7ee72757f89db8439`),
+`grammar.js::command_parameter`/`_command_argument` and `scanner.c::scan_bare_dashes`.
+Both packaged `bindings/rust/lib.rs::test_can_load_grammar` tests were inspected,
+not rerun. cmark 0.13.6 (`014b61d38d235f382935bb676bab872b7680afa2`) changes
+`parse.rs::handle_wikilink`, with `tests/suite/wikilinks.rs::wikilinks_test_15`;
+that test was inspected, not rerun. Foundry uses `Parser::new` with wikilinks off,
+extracts its own bounded units/import hints, and does not inherit editor queries
+or treat parser nodes as compiler proof. Exact crate checksums, source inspection
+and executed results belong to the dated validation receipt; source inspection
+alone does not satisfy the corpus-diff gate.
 
 ### Roles
 
@@ -1142,23 +1195,28 @@ keeps today's ordering and packing rules, with two changes: its tier 1 sees one
 document per definition (§ Definitions and addresses), and when it requests doors it
 gets `doors:none` and search packing instead of graph expansion (§ Doors). When 009
 T004 is accepted and a semantic profile is enabled, its placement (dense candidates
-first, then lexical) overrides these rules for anchor-less queries only, except for
-experimental prose admission described above. `search` orders anchored locator lines
+first, then lexical) overrides these rules for anchor-less queries only. Any
+supplied dense window bypasses experimental prose admission, as specified above.
+`search` orders anchored locator lines
 by the resolver; `retrieve` is unchanged.
 
 #### Experimental behavioral support — 001 T010, 2026-10-09
 
-The owner authorized this candidate for implementation; it is **off by default**
-until T010 passes its own local gates and the 2026-10-19 G2 enable rule
-([AGENTS.md](../../../AGENTS.md)). Owner amendment, 2026-11-06 ("Lexical-only, drop
-T006 gate"): the 003 T006 agent-task gate no longer applies to this flag, and no
-real-agent benefit is claimed. The flag is to lose its effects on semantic stores,
-including the dense/lexical interleaving of
-[§ Experimental anchorless prose selection](#experimental-anchorless-prose-selection--009-t005-2026-10-10),
-and once those gates pass it is to default on only where lexical results are served.
-That code change is still to do; until it lands, the flag behaves as written here.
-Enable it explicitly with
-`context --experimental-behavior-context` or the same flag at MCP owner startup.
+Lexical behavioral selection is **on by default**, accepted 2026-11-11 after
+T010's local gates and the 2026-10-19 G2 enable rule
+([evidence](../../../docs/validation.md#t010-singleton-qualification--2026-11-11)).
+Owner amendment, 2026-11-06 ("Lexical-only, drop T006 gate"): the 003 T006 agent-task
+gate does not apply to this flag, and no real-agent benefit is claimed. The flag's
+semantic effects are removed, including the former dense/lexical interleaving of
+[§ Experimental anchorless prose selection](#experimental-anchorless-prose-selection--009-t005-2026-10-10).
+A supplied dense window still bypasses it, and model admission retains the ordinary
+anchor rule. The first default attempt's failed frozen economics guard remains in
+its [historical receipt](../../../docs/validation.md#t010-lexical-default--2026-11-11).
+The accepted singleton candidate adds the prose priority and passage preservation
+above. Its actual default was present in the library, CLI and MCP before the frozen
+comparison against parser baseline `68ed776` with K = 2; no ranking/default change
+followed measurement. Bare `--experimental-behavior-context` remains compatible,
+and `--experimental-behavior-context=false` selects the ordinary lexical path.
 The MCP tool schema and ordinary response wire do not change.
 
 The first candidate repairs packing only. It does not expand candidate windows,
@@ -1189,9 +1247,9 @@ allowed only if the global anchor remains uniquely resolved to that same workspa
 and source identity. No unit of another root may attach to it merely by name.
 
 This candidate does not solve missing methods, prior cap losses, cross-file behavior,
-unrecognized intent, or the 249 anchorless G2 misses. Its default stays off until
-those explicitly scoped retrieval gates are evaluated; task outcomes no longer gate
-it (owner, 2026-11-06).
+unrecognized intent, or the 249 anchorless G2 misses. Acceptance is limited to the
+explicitly scoped retrieval gates; task outcomes do not gate it (owner, 2026-11-06)
+and remain a separate requirement of 003 T006.
 
 ### Doors
 
@@ -1305,11 +1363,11 @@ unless noted):
 | PHP | `.php .phtml` | `tree-sitter-php` 0.25.1 | MIT |
 | Perl | `.pl .pm .t .psgi` | `tree-sitter-perl` 1.1.2 (requires `tree-sitter` 0.26) | MIT |
 | shell | `.sh .bash .zsh` | `tree-sitter-bash` 0.25.1 | MIT |
-| PowerShell | `.ps1 .psm1 .psd1` | `tree-sitter-powershell` 0.26.4 | MIT |
+| PowerShell | `.ps1 .psm1 .psd1` | `tree-sitter-powershell` 0.26.6 | MIT |
 | Ruby | `.rb .rake`, `Rakefile`, `Gemfile` | `tree-sitter-ruby` 0.23.1 | MIT |
 | Kotlin | `.kt .kts` | `tree-sitter-kotlin-ng` 1.1.0 | MIT |
 | Swift | `.swift` | `tree-sitter-swift` 0.7.4 | MIT |
-| Scala | `.scala .sc` | `tree-sitter-scala` 0.26.2 | MIT |
+| Scala | `.scala .sc` | `tree-sitter-scala` 0.26.4 | MIT |
 | Lua | `.lua` | `tree-sitter-lua` 0.5.0 | MIT |
 | Dart | `.dart` | `tree-sitter-dart` 0.2.0 | MIT |
 | Elixir | `.ex .exs` | `tree-sitter-elixir` 0.3.5 | Apache-2.0 |

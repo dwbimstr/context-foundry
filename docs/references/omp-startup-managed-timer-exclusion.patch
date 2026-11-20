@@ -1,0 +1,150 @@
+Experimental startup managed timer exclusion; not automatically applied by Context Foundry.
+Target: can1357/oh-my-pi @ 24439066040e006eb08da7b204f0ac41c79d2de9
+Owner: 003 T006 bounded-pilot-v2 startup observation and admission.
+Requires prior caller/auth/refusal/restricted/catalog/settings/empty-auth/presence/telemetry/marketplace/logging/plugin-roots/extension patches.
+Modules: extensions/managed-timers::{setTimeout,setInterval,excludeStartupManagedTimers}; extensions/runner::ownStartupExtension.
+Tests: startup-extension-owner.test.ts and existing extensions-runner, SDK and CLI suites.
+Difference: the restricted startup extension owner refuses installation after any
+managed timer start and rejects managed timeout/interval before handle construction.
+Ordinary managed timers remain available without the owner. Raw timers, arbitrary
+extension work, complete inventory, Ready, paid execution, signing and release remain open.
+
+MIT License
+
+Copyright (c) 2025 Mario Zechner
+Copyright (c) 2025-2026 Can Bölük
+Copyright (c) 2026 Stencil Labs, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+diff --git a/packages/coding-agent/src/extensibility/extensions/managed-timers.ts b/packages/coding-agent/src/extensibility/extensions/managed-timers.ts
+--- a/packages/coding-agent/src/extensibility/extensions/managed-timers.ts
++++ b/packages/coding-agent/src/extensibility/extensions/managed-timers.ts
+@@ -16,6 +16,19 @@
+  */
+ import { logger } from "@oh-my-pi/pi-utils";
+ 
++let managedTimerStarts = 0;
++let startupManagedTimersExcluded = false;
++/** Fail closed if any managed timer was scheduled before restricted startup ownership. */
++export function excludeStartupManagedTimers(): void {
++	if (startupManagedTimersExcluded || managedTimerStarts)
++		throw new Error("Startup managed timer exclusion is late or repeated");
++	startupManagedTimersExcluded = true;
++}
++function admitManagedTimer(): void {
++	if (startupManagedTimersExcluded) throw new Error("Startup managed timers are excluded");
++	managedTimerStarts = Math.min(2, managedTimerStarts + 1);
++}
++
+ /** Callback invoked when a managed timer's callback throws or rejects. */
+ export type ManagedTimerErrorHandler = (event: string, error: string, stack?: string) => void;
+ 
+@@ -26,6 +39,7 @@
+ 
+ 	/** Schedule a repeating callback whose throws are contained. */
+ 	setInterval(callback: (...args: unknown[]) => void, ms?: number, ...args: unknown[]): Timer {
++		admitManagedTimer();
+ 		const timer = setInterval(() => this.#run("interval", callback, args), ms, ...args);
+ 		timer.unref?.();
+ 		this.#timers.add(timer);
+@@ -34,6 +48,7 @@
+ 
+ 	/** Schedule a one-shot callback whose throws are contained. Deregisters after it fires. */
+ 	setTimeout(callback: (...args: unknown[]) => void, ms?: number, ...args: unknown[]): Timer {
++		admitManagedTimer();
+ 		const timer = setTimeout(
+ 			() => {
+ 				this.#timers.delete(timer);
+diff --git a/packages/coding-agent/src/extensibility/extensions/runner.ts b/packages/coding-agent/src/extensibility/extensions/runner.ts
+--- a/packages/coding-agent/src/extensibility/extensions/runner.ts
++++ b/packages/coding-agent/src/extensibility/extensions/runner.ts
+@@ -42,7 +42,7 @@
+ import { addFileDeleteFallback, addFileWriteFallback } from "../../tools/file-write-fallback";
+ import type { BranchHandler, NavigateTreeHandler, NewSessionHandler } from "../session-handler-types";
+ import { accumulateToolCallResult, buildAggregatedToolCallResult } from "../shared-events";
+-import { ManagedTimers } from "./managed-timers";
++import { excludeStartupManagedTimers, ManagedTimers } from "./managed-timers";
+ import { createExtensionModelQuery } from "./model-api";
+ import { trackUserWaits, type UserWaitTracker } from "./user-wait";
+ import type { ComposerShapeDefinition } from "@oh-my-pi/pi-tui/overlays/composer-shape-registry";
+@@ -201,6 +201,7 @@
+ 	| undefined;
+ export function ownStartupExtension(): StartupExtensionOwner {
+ 	if (startupExtension || unownedSessionStarts) throw new Error("Startup extension ownership is late or repeated");
++	excludeStartupManagedTimers();
+ 	const handle = Object.freeze({ kind: "startup-extension" as const });
+ 	startupExtension = {
+ 		handle,
+@@ -2075,6 +2076,7 @@
+ 				handlers_joined: true as const,
+ 				callbacks_joined: true as const,
+ 				starts_closed: true as const,
++				managed_timers_excluded: true as const,
+ 				handlers: owner.handlers,
+ 			});
+ 			const notify = (globalThis as Record<symbol, unknown>)[
+diff --git a/packages/coding-agent/test/startup-extension-owner.test.ts b/packages/coding-agent/test/startup-extension-owner.test.ts
+--- a/packages/coding-agent/test/startup-extension-owner.test.ts
++++ b/packages/coding-agent/test/startup-extension-owner.test.ts
+@@ -52,7 +52,13 @@
+ 		forged: true,
+ 		forgedRejected: true,
+ 		starts: 1,
+-		receipt: { handlers_joined: true, callbacks_joined: true, starts_closed: true, handlers: 1 },
++		receipt: {
++			handlers_joined: true,
++			callbacks_joined: true,
++			starts_closed: true,
++			managed_timers_excluded: true,
++			handlers: 1,
++		},
+ 	});
+ });
+ test("timeout cannot attest while original ignores abort; after release it still fails", () => {
+@@ -104,3 +110,29 @@
+ 	);
+ 	expect(result).toEqual({ late: true });
+ });
++
++test("restricted ownership excludes managed timeout and interval before native construction", () => {
++	const timerPath = join(src, "extensibility/extensions/managed-timers.ts");
++	const v = run(
++		`
++  let ticks=0,timeoutRejected=false,intervalRejected=false;
++  try{const h=cachedTimeout(()=>ticks++,5);m.clear(h)}catch{timeoutRejected=true}
++  try{const h=cachedInterval(()=>ticks++,5);m.clear(h)}catch{intervalRejected=true}
++  handler=async()=>{r.readyStartupExtension(owner,runner)};await runner.emit({type:'session_start'});
++  await new Promise(r=>setTimeout(r,30));console.log(JSON.stringify({timeoutRejected,intervalRejected,ticks,receipt}));auth.close();
++ `,
++		`const {ManagedTimers}=await import(${JSON.stringify(timerPath)});const m=new ManagedTimers(()=>{});const cachedTimeout=m.setTimeout.bind(m),cachedInterval=m.setInterval.bind(m);`,
++	);
++	expect(v.timeoutRejected).toBe(true);
++	expect(v.intervalRejected).toBe(true);
++	expect(v.ticks).toBe(0);
++	expect(v.receipt.managed_timers_excluded).toBe(true);
++});
++test("ownership refuses a previously scheduled managed timer even after clearing", () => {
++	const timerPath = join(src, "extensibility/extensions/managed-timers.ts");
++	const v = run(
++		"",
++		`const {ManagedTimers}=await import(${JSON.stringify(timerPath)});const m=new ManagedTimers(()=>{});const h=m.setTimeout(()=>{},10);m.clear(h);let late=false;try{r.ownStartupExtension()}catch{late=true}console.log(JSON.stringify({late}));auth.close();process.exit(0);`,
++	);
++	expect(v).toEqual({ late: true });
++});

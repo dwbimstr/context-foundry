@@ -1,5 +1,9409 @@
 # Validation
 
+## Local gates on `455fa03` — 2026-11-20
+
+All eight gates exit 0 on `455fa03`, the head proposed for the merge to `main` (owner
+decision 21), on a clean tree on the owner's Mac (13:41–13:53 UTC), with Rust 1.97.1 and
+1.90.0 and the macOS 26.5 SDK. Since the [`afa7b38` receipt](#local-gates-on-afa7b38--2026-11-20)
+it adds the deferred startup notification round, the calibrated sample method and
+records. Default suite: **1,321 passed, 0 failed, 35 ignored**. Pilot-capture unit
+tests: **132 passed, 1 ignored**. Log SHA-256 prefixes: Clippy `e0e0b31e`, test
+`d3377713`, pilot Clippy `eebe3995`, pilot tests `b495357f`, MSRV check `53088c2b`,
+MSRV Clippy `4e46dc4c`, MSRV pilot check `07531acb`. Logs are private, under
+`datasets/context-foundry-gates/455fa03-2026-11-20/`. The pilot v2 power tool's 25
+Python tests also pass on this head.
+
+Not run: CI (Actions unavailable), the signed-package checks and the native script on a
+signed candidate, and live MCP hosts against rmcp 3.10.0.
+
+## Calibrated paired sample-size method — 2026-11-20
+
+Owner decision 20 of 2026-11-20 ("Implement and test it") adds the variance-based
+paired method of the pilot v2 sample proposal to `scripts/pilot-v2-power.py`, behind
+the input field `"method": "calibrated_paired"`. The conservative bound stays the
+default. All 15 inputs saved with the proposal give byte-identical output before and
+after, and the 17 existing tests are unchanged.
+
+- **Success safeguard:** Tango's score test for a paired difference of proportions,
+  with its critical value raised until its worst size over a 61-point grid of
+  discordance at the margin boundary is within the tail.
+- **Improvement:** the exact one-sided sign test, in exact integer and fraction
+  arithmetic.
+- **Power:** exact enumeration of every outcome; nothing is sampled. A `search` finds
+  the smallest balanced task count at which both endpoints reach the target.
+
+`python3 scripts/test_pilot_v2_power.py` runs 25 tests, all passing: the 17 existing
+ones and 8 new ones (grid size control, small hand-computed cases, power that rises
+with tasks, the proposal's figures, and refused inputs). Every result keeps
+`sensitivity_only_not_frozen`, `execution_authorized: false` and zero provider calls;
+refused inputs print only an error and exit 2.
+
+The implementation reproduces the proposal script's statistics to within 2.3e-12. Its
+size search differs where the proposal compared against the uncalibrated critical
+value: Design A at margin 0.20 needs 90 tasks rather than 96, Design C 110 rather than
+112 and 330 rather than 328 at margin 0.10, and some margin 0.10 cells of the
+smallest-count table rise by 4 to 8 tasks. The contract now notes these sizes.
+
+Not established: size control off the grid. A 3,001-point check over 84
+configurations found one case 3.2e-5 above the tail in relative terms (75 tasks,
+margin 0.15, tail 0.025), so the calibration is a grid check, not a proof. A very
+large search can also be refused partway on the tool's operation limit rather than
+returning "not found". An agent wrote the change and a second in-session agent
+reviewed it. Nothing is frozen; the design stays the owner's choice.
+
+## Deferred startup notifications in the extension runner — 2026-11-20
+
+This round covers one owner from the
+[startup inventory census](#startup-inventory-census--2026-11-20), rows 2 and 5. Before
+`session_start`, `runner.initialize` queues the extension runner's buffered
+`credential_disabled` and `mcp_notification` events as microtask flushes. Those flushes
+ran outside the startup-extension owner's receipt.
+
+The round staged on 2026-11-19 was not run. This round cloned its restored source and
+package cache and left the staged directory unchanged: its ten scripts and all 10,339
+source files still match their hashes. The base commit is `db6c0e4`. The round's work
+landed as `06a9714`, which carries the review fix-up's tests in the patch. An agent ran
+the round in its own worktree, and a second in-session agent reviewed it; the fix-up
+answered that review.
+
+### Native fixtures
+
+Each native case ran one of three bridges:
+
+- **Unmodified production bridge:** the normal and withhold-catalog cases.
+- **Spliced fixture:** the restricted credential and MCP cases. A test fixture was spliced
+  into the production bridge just before its `startupOwner!.bind(` call. The fixture
+  wraps `ExtensionRunner.prototype.initialize`, so the first `initialize` call emits one
+  synthetic event through `emitCredentialDisabled` or `emitMcpNotification`. The provider
+  or server name is made up. `initialize` runs after the runner is bound to the startup
+  owner, so the event is emitted after the bind and before `initialize`'s own body.
+- **Standalone fixture extension:** the ordinary-RPC cases loaded the same fixture as a
+  separate extension, not the bridge.
+
+No credential existed or was read. The Python driver played the startup parent: it
+durably refused both classified attempts, waited for `rpc_retired`, and closed the
+channel with `halted`, which is the parent's HOLD.
+
+| Cases | Red runs, host `a25ee967…ca25` | Green runs, host `28c61eff…5406` |
+| --- | --- | --- |
+| normal, withhold-catalog (unmodified bridge) | `be71a6535c9f4f156b888076fc2595582ffc56f4bc2f22cb14b1cad0b07f0896` | `ce9a7181c3082607d8f932293849a3246be7c0b87131d164bfadccacd03e44c7` |
+| credential, mcp (spliced fixture) | `bc754e66d4f8d09af26bfe071b45f73c2ddb776c6ce0d931cfe96f24f876e8ea` | `4b917db650e6b4e3865582d39f6f4158f066a1eae77c11177f8f6aa7218030be` |
+| ordinary-credential, ordinary-mcp (standalone fixture) | `ec2f65cbf6bc8b377aa6f51c3a868e8a2beef163c72c92b5a0ad98a33d5a8390` | `ec2f65cbf6bc8b377aa6f51c3a868e8a2beef163c72c92b5a0ad98a33d5a8390` |
+
+These are the per-case `bridge_sha256` values in `red-control-readback.json`,
+`red-final-readback.json`, `green-controls-readback.json`, `green-final-readback.json`
+and `cache-free-native-readback.json`. withhold-catalog ran only in the two final runs.
+
+### Red
+
+Red ran on the pinned startup host `a25ee967…ca25`.
+
+In both restricted cases (credential and MCP), the injected event reached a registered
+handler. The handler entered before, and settled after, the release file written at
+`rpc_retired`. Because `initialize` runs before `session_start`, the handler was
+therefore still pending when `extension_retired` attested `callbacks_joined`. That last
+step is inferred: the fixture trace and the channel share no clock or sequence. The
+channel still reached the usual 14-message sequence and HOLD. The receipt had five fields
+and none for these events.
+
+Ordinary RPC delivered both events and answered `get_state`.
+
+In the upstream regression `startup-extension-owner.test.ts`, the round's version failed
+2 of 9 tests on the pinned runner `ca3308af…da17`. The flush dispatched
+`credential_disabled` and `mcp_notification`, and the receipt had no exclusion fact.
+
+The review fix-up added two tests that buffer both events before the runner is bound:
+
+- One binds, initializes and runs `session_start`.
+- The other runs `session_start` without `initialize`.
+
+On `ca3308af…da17`, 4 of 11 tests failed: the round's two and the two new ones.
+
+- In the first new test, both buffered events reached the handler.
+- In the second, `session_start` attested a receipt while both buffers were still full.
+
+The Rust receipt test also failed first, with 131 passed and 1 failed, before
+`notifications_excluded` existed.
+
+### Fix
+
+The fix is the 26th reference patch, in the
+[order recorded in dependencies](dependencies.md#applied-order):
+[omp-startup-extension-notifications.patch](references/omp-startup-extension-notifications.patch),
+SHA-256 `0f25b99202ef77cb7a9413dc96da91bc848f9110eed53421cf032d7f6f2c9d4b`. It keeps the
+full MIT header. The round's first version was `da6f1f05…d323`. The fix-up changed only
+the test file's diff; the `runner.ts` hunks are byte-identical.
+
+When a runner is bound to the startup owner:
+
+- `emitCredentialDisabled` and `emitMcpNotification` return without buffering.
+- `initialize` drops whatever was buffered before the bind, without dispatching it.
+- `session_start` fails closed unless both buffers are empty.
+- The receipt adds `notifications_excluded: true`.
+
+The guard is `startupExtension?.runner?.deref() === this`, which stays true for the bound
+runner's whole life. So the refusal also covers notifications after `rpc_retired`, not
+only those before `extension_retired`. The admitting profile must either keep that, or
+end the guard at startup retirement under its own receipt.
+
+The refusal sits in the runner, so it holds whether authentication is empty or not.
+Excluding the SDK credential listener instead would have been safe only while
+authentication stays empty, and it would not cover the runner's own buffers. The bridge
+and `ChildMessage::ExtensionRetired` now require the fact, and the native startup test
+checks it in the journal.
+
+### What the tests show
+
+- **Emit after the bind is refused.** The native green restricted cases show it, and so
+  does the round's upstream test, which emits after the bind.
+- **Buffered events are dropped at `initialize`.** Only the new upstream drain test shows
+  it. With the `initialize` early return removed, only that test fails (10 pass, 1 fail).
+- **`session_start` fails closed while events remain buffered.** Only the new upstream
+  fail-closed test shows it. With the buffer check removed, only that test fails
+  (10 pass, 1 fail).
+- **No native run covers events buffered before the bind.** In the native fixture, the
+  emit lands after the bind.
+
+On the fixed runner `e04736ec…cfde`, 126 tests passed and 0 failed across the three files
+the round ran: `startup-extension-owner`, `extensions-runner` and
+`sdk-credential-disabled-bridge`. `oxfmt --check` and `oxlint` are clean on `runner.ts` and
+the test file. All upstream checks ran under network denial with the pinned Bun 1.4.4,
+after an offline frozen-lockfile install from the cloned package cache.
+
+### Host
+
+The host was rebuilt offline under network denial from the 10,339-file manifest. Two
+files changed, with Bun 1.4.4 (`0a2237cd…65cc`) and addon `ee0bf26f…900b` pinned. Its
+SHA-256 is `28c61efffbcc0806f6a7cab0721ea55c826b37decd39825aa5dfa7b1e2605406`, and
+`STARTUP_OBSERVATION_OMP_SHA256` now pins it. The bridge SHA-256 is
+`ce9a7181c3082607d8f932293849a3246be7c0b87131d164bfadccacd03e44c7`.
+
+The fix-up changed only the test file, so the host was not rebuilt or re-pinned. The
+host contains none of the test names, and its hash is unchanged.
+
+### Green
+
+In the restricted credential and MCP cases, the injection ran but no handler did. The
+same 14 messages reached HOLD, with `notifications_excluded` true. Ordinary RPC still
+delivered each event and answered `get_state`.
+
+The normal case and a withhold-catalog regression were unchanged; holding the catalog
+refusal still held retirement. The withhold-catalog case was added after the protocol was
+written. The command catalog matched the red normal run byte for byte (16,174 bytes).
+
+The five readbacks list 27 native process groups, and all were reaped with exit 0:
+
+| Readback | Groups |
+| --- | --- |
+| `red-control` | 5 |
+| `green-controls` | 5 |
+| `red-final` | 6 |
+| `green-final` | 6 |
+| `cache-free-native` (replay) | 5 |
+
+All ran under network denial, and the restricted ones also under `deny process-fork`.
+The native startup journal and the RPC input check ran as Cargo tests and are not in
+that count.
+
+### Gates
+
+The round's gates, all with the new host:
+
+- `cargo fmt --check`, pilot Clippy with `-D warnings` (rustc 1.97.1) and the Rust 1.90.0
+  pilot check.
+- 132 pilot unit tests passed, 0 failed and 1 ignored.
+- The 14-case native startup journal, whose normal run is the 18-row HOLD with a
+  16-record attested prefix.
+- The native RPC input check.
+
+The fix-up reran the affected gates, offline, at the commit that landed as `06a9714`,
+with `CARGO_TARGET_DIR=target/round`:
+
+- `cargo fmt --check`: passed.
+- `cargo clippy --locked --features pilot-capture --all-targets -- -D warnings`
+  (rustc 1.97.1): passed.
+- `cargo test --locked --features pilot-capture --lib pilot_capture`: 132 passed, 0 failed
+  and 1 ignored.
+- Rust 1.90.0 `cargo check --all-targets --locked --features pilot-capture`: passed.
+
+No Rust, bridge or host input changed in the fix-up, so it did not rerun the native cases.
+No default-feature code changed, so the default-feature gates were neither run nor reused.
+
+### Cleanup and size
+
+The round's cleanup removed its cloned source, the package cache and the two Cargo
+targets, which reduced allocation by 5,084,950,528 bytes (`cleanup-result.json`). Then:
+
+- The startup journal, the RPC input check and the five green cases passed again from the
+  retained binaries (`cache-free-replay.json`).
+- 27 extracted addon copies were removed after matching the pinned hash. That took the
+  round from 3,471,712,256 to 471,683,072 allocated bytes (`addon-cleanup.json`).
+- The round's last readback gave 471,830,528 bytes in 925 files. It is kept as
+  `file-readback-before-fixup.json`.
+
+The fix-up removed only its own caches, `fixup/scratch` and `target/round`, after
+hash-checking the host, the patch, the retained files and the round's receipts
+(`fixup/cleanup-result.json`). The refreshed `file-readback.json` gives 474,767,360
+allocated bytes in 1,006 files besides itself, inside a 0700 round directory.
+
+The round took about 19 minutes of its 150-minute deadline. It made zero provider calls
+and spent nothing. Private receipts are under
+`runs/pilot-startup-extension-notifications-2026-11-20/`, and the fix-up's are under its
+`fixup/` directory.
+
+### Not established
+
+- The injection used a test-only prototype hook. No native run exercised the real
+  sources: the `AuthStorage` disabled listener, or the MCP manager listener, which the
+  restricted profile does not construct.
+- No native run covers events buffered before the bind; only the upstream tests do.
+- Whether a credential can be disabled at all under empty authentication.
+- The SDK's credential notice (`emitNotice`) is unchanged and would still be RPC output
+  that the parent rejects.
+- Refused events are dropped without a count, for the bound runner's whole life. The
+  admission handoff must decide whether that is acceptable, and whether to keep the guard
+  or end it at startup retirement.
+- The 2026-11-19 omission control was not rerun, because its retained fixture binary
+  embeds the old host pin. The upstream type check was not run.
+- This was an in-session self-review, not an independent one.
+- The full inventory, durable acknowledgment and admission handoff remain on HOLD.
+
+## Startup inventory census — 2026-11-20
+
+A read-only, in-session census of what remains before the pilot v2 startup inventory
+can be frozen. It read the draft contract's ten-row inventory table, the 2026-11-18
+and 2026-11-19 records, `src/pilot_capture/startup.rs` and the patched upstream source
+retained for the last staged round. That copy matches all 10,339 files of the last
+qualified source manifest. Nothing was run.
+
+| Row | Remaining before freeze | Native rounds |
+| --- | --- | ---: |
+| Connection preparation | A list of every transport the admitted code can reach, each excluded before construction or refused before I/O through the journal; unclassified transports fail closed. A raw `Bun.connect` bypass is known. | 1-2 |
+| Tools, MCP, memory and credentials | The deferred credential and MCP notifications that the extension runner flushes before the owned `session_start` join; the final task tools and any MCP binding, which wait on owner inputs. | 1, then 1 after the inputs |
+| Catalog, settings and authentication | Late starts after the acknowledgment: runtime model discovery and settings callbacks in the admitting profile. | 0-1 |
+| Presence, telemetry, marketplace and logging | Notice output paths after the handoff; version checks start only interactively, by source. | 0-1 |
+| Plugin roots and first-party extension | The deferred flush above, the command-metadata listener and plugin-root reload after dispatch opens, and work started by the bridge's transitive loads. | 1-2 |
+| Advisors | Bind the existing exclusion into the admitting profile's receipt. | 0 |
+| Prompt and command inputs | Bind the existing exclusions; depends on the final task prompt. | 0-1 |
+| Debugger and process timers | A native census of timer creation and teardown; about 300 `setTimeout` and 80 `setInterval` text matches, reachability unknown. | 1 |
+| Native addon and process resources | The addon's own transport list beyond the attributed socket pair, and any process capability the final runtime needs. | 1 |
+| RPC initialization and parent admission | The new protocol revision (`startup_settled`, `startup_ack`, Ready echo), the await-acknowledgment handoff and its crash and write-failure controls. | 2-3 |
+
+Then the inventory freeze binds the host identity of owner decision 12. No document
+records a canonical order for the 25 reference patches; the census inferred it from
+the last round's restore script, so the freeze should record it explicitly.
+
+The round staged on 2026-11-19 for the deferred credential and MCP notifications is
+still the right next round, but it cannot run as staged: its deadline has passed, its
+base commit is stale, six of its reused gate inputs changed with the F14 split and the
+dependency updates, and it has no candidate patch or native driver yet. The census
+estimates 9 to 15 more native rounds, from the 2026-11-18/19 cadence of about one
+90-minute no-provider round per owner. Unknowns it lists include whether the
+credential notice can fire with empty authentication at all, and which of the matched
+timer and network sites are reachable.
+
+## Native addon socket-pair static attribution — 2026-11-20
+
+The [2026-11-19 record](#native-unix-socket-creation-during-addon-load--2026-11-19)
+bound one Unix socket-pair call at addon load to the native image and left the
+calling function open. A read-only static analysis of the same stripped addon
+(SHA-256 `ee0bf26f…900b`) with `otool` and `objdump`, against the pinned crate
+sources, attributes it with high confidence:
+
+- The call at `0xdc21ac` is Mio's macOS `UnixStream` pair helper, by its exact
+  `socketpair` arguments and its four `fcntl` calls.
+- Tokio 1.53.1's signal globals initializer calls it, by the embedded panic location
+  `tokio-1.53.1/src/signal/unix.rs:71:53` ("failed to create UnixStream").
+- That initializer runs while napi's `create_runtime` builds the multi-thread runtime
+  (`tokio_runtime.rs:1294:21`), forced from `napi_register_module_v1`.
+- Every one of the 13 sampled return addresses sits directly after a call to the next
+  frame's function.
+- The three Unix descriptors are Tokio's receiver and sender endpoints plus a
+  `try_clone` duplicate of the receiver (`F_DUPFD_CLOEXEC` at `0x32c1974`). This
+  matches the 2026-11-18 kernel snapshots and the component fixture.
+
+This is static inference on a stripped binary; no addon or host was run. A native
+confirmation would extend the existing witness to `fcntl`, `kqueue` and `kevent` and
+check the predicted sequence. A second `socketpair` site and other socket, pipe and
+`sigaction` call sites exist in the addon outside the load path. Their reachability
+is part of the open transport inventory.
+
+## Sandbox profile segmentation fault diagnosis — 2026-11-20
+
+The [2026-11-15 settlement record](#startup-settlement-counterexample--2026-11-15)
+kept five segmentation faults and one addon-load failure from ad-hoc sandbox profiles
+with their cause unestablished. A read-only diagnosis read the five macOS crash
+reports, which were not in the evidence directory. They are now copied, owner-only,
+into `runs/pilot-startup-settlement-2026-11-15/crash-reports/`.
+
+- Observed: all five crashes have the same stack. On a Bun worker thread, the host's
+  check for Apple's on-device model reaches, through the native addon's extracted
+  helper library and Apple's frameworks, `NSUserDefaults` suite initialisation. It
+  then calls `CFBundleGetIdentifier` on a null bundle and reads address `0x8`.
+- Inferred, not confirmed: the ad-hoc profile denied every file read under the home
+  directory, metadata included, so the process's main bundle could not be resolved
+  from the executable's directory. The production policy, `Host::sandbox_policy`,
+  denies only `file-read-data` under the home directory. The canonical-shaped runs
+  reached and finished the same check without a crash.
+- The startup-observation and owned profiles disable the implicit `apple` provider,
+  and none of their retained runs extracted the helper library. Ordinary capture
+  still runs the check on macOS.
+- The one addon-load failure (`Cannot find module` on an extracted, hash-verified
+  addon) stays unexplained by the retained evidence.
+
+No native control was run. The next steps the diagnosis proposes are a check of the
+retained system log for sandbox denials, one control under the same profile with the
+`apple` provider disabled, and an owner choice: whether every pilot v2 arm disables
+the `apple` provider or binds its availability result as a pinned startup input.
+
+## Pilot v2 freeze-input proposals — 2026-11-20
+
+Four proposals for inputs that must exist before pilot v2 can be frozen are now
+subsections of the [draft contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md).
+Each is headed "Proposed, 2026-11-20, not frozen". None chooses the task-data rights,
+budget, key, final sample or confirmatory contrasts, which stay the owner's.
+
+- **Arm and interface bindings.** It binds each arm and contrast to flags and tools
+  that exist today. The apparatus admits only the host's `read` and `edit` tools, so
+  no Foundry MCP server can be admitted yet; it lists the work that would need.
+- **Task manifest, authoring and allocation.** The fields, checks and sealing protocol
+  for each held-out task, modelled on the T005 holdout, and a seeded, balanced
+  allocation procedure with no seed drawn.
+- **Sample and statistical design.** Three candidate designs from
+  `scripts/pilot-v2-power.py`, with tables. The tool's bound needs about 330 tasks
+  for two contrasts at a 0.20 margin. A variance-based paired method from an
+  uncommitted script, kept privately in `runs/pilot-v2-proposals-2026-11-20/`, needs
+  about 96. The closure of 009 T005 leaves the anchorless arm with no repair to bind,
+  so the arm list needs an owner choice.
+- **Startup and run limits.** Proposed wall-clock, attempt and metadata limits for the
+  admitting protocol revision, from 43 retained startup journals, and a table of the
+  per-run bounds still to choose.
+
+Four in-session agents drafted them, one integrated them as additions only, and a
+reviewer checked every number, flag and reference and fixed eleven problems. The
+proposals disagree in three places, which are disclosed in the text for an owner or
+freeze decision.
+
+## Local gates on `afa7b38` — 2026-11-20
+
+All eight gates exit 0 on `afa7b38`, on a clean tree on the owner's Mac
+(05:34–05:47 UTC), with Rust 1.97.1 and 1.90.0 and the macOS 26.5 SDK. The commit
+adds the eight dependency updates of decision 1 and the private-writer fault tests
+of decision 14 to `f2cf6f3`. Default suite: **1,321 passed, 0 failed, 35 ignored**,
+including the repaired cancellation test and the 6,000-file watcher test.
+Pilot-capture unit tests: **132 passed, 1 ignored**, seven more than on `f2cf6f3`.
+Log SHA-256 prefixes: Clippy `b2c9ccf3`, test `b78aa70f`, pilot Clippy `4618eeba`,
+pilot tests `f66cf9e7`, MSRV check `e4bb536a`, MSRV Clippy `2d7261c6`, MSRV pilot
+check `34c71af1`. Logs are private, under
+`datasets/context-foundry-gates/afa7b38-2026-11-20/`.
+
+Not run: CI (Actions unavailable), native macOS acceptance, live MCP hosts against
+rmcp 3.10.0 (the MCP tests use the real SDK client), and G2 or G1, which none of the
+eight updates touches.
+
+## Private writer fault-injection tests — 2026-11-20
+
+Owner decision 14 of 2026-11-19 asks for tests of forced permission-call and
+sync-call failures in the pilot's private-output writers (`src/pilot_capture.rs`).
+Commit `232a7ad` adds a test-only seam: seven named calls (file mode, file sync, the
+file's parent sync, directory mode, directory sync, the directory's parent sync and
+`fsync_dir`) can be made to fail on the test's own thread, and the real call is then
+skipped. Outside tests the seam is an inline function that always succeeds, so
+production calls, error codes and order are unchanged. Arming returns a guard that
+disarms on drop, even if an assertion panics.
+
+Seven tests, one per call, check that each writer returns the exact fault class and
+code it maps that failure to. They also check that a second exclusive write or create
+at the same path is refused rather than replacing the leftover, that the leftover is
+no wider than owner-only, and that the writer succeeds again on a new path. Making
+the seam a no-op fails all seven. An agent wrote the change in its own worktree and a
+second read-only agent reviewed it; both are in-session. The review's two fixes, the
+drop guard and two missing fault-class checks, are in the same commit.
+
+Not covered: real kernel `EIO` or `EPERM`, failures of `openat`, `mkdirat`, `fstatat`
+or `write_all`, power-loss durability and a racing process of the same user; the last
+two are the named limitations of decision 14.
+
+## T005 loss analysis — 2026-11-19
+
+Owner decision 5 above selected an analysis of the recorded development losses before
+any further spec 009 T005 candidate. This is an in-session self-review: one agent,
+read-only, on the retained development G2 traces, the T005 records, the retrieval
+code and the archive branches. Neither holdout, nor any directory named for one, was
+opened, listed or hashed. No build, model, store or retrieval job ran; the new
+numbers come from two offline Python replays of the retained baseline traces, kept
+privately in `runs/t005-loss-analysis-2026-11-19/`.
+
+**Result: no bounded candidate with a plausible large gain was found.**
+
+- The four rejected candidates moved located definitions on G2's 388 questions by
+  +5/−0, +3/−0, +16/−1 and +15/−10 against the baseline of 169. The one that passed
+  development (kept-body declaration prefixes) shrank to +6/−2 on its sealed final
+  pair.
+- The 219 development misses split into three pools. In 95, no candidate covers
+  the target at all. In 85, a covering candidate is offered but cut at placement.
+  In 39, it is kept but dropped by the token budget at packing. In 207 of the 219,
+  all 32 kept units were dense, so the lexical lane placed nothing.
+- The final gate on the sealed 2026-11-18 holdout needs about 6 percentage points
+  net with at most one loss per corpus, roughly +24 of 400. The best development
+  effect so far, about +3.9 points, would not clear it even if it replicated
+  exactly.
+- The largest pool, candidate generation, is out of reach of any bounded ordering,
+  placement or packing change. The other two trade against kept bodies and current
+  successes under the fixed 2,048-token budget.
+- The best single change found is role-ordered placement: sort each lane by the
+  existing source, test and other path roles before the unchanged cuts. An exact
+  replay and a rough packing simulation estimate about +9/−1 on development G2,
+  with an error of about ±10 cases; the same simulator mispredicted the last
+  candidate. The analysis judges its chance of passing the final gate under 10%.
+
+Not established: any measured effect of role-ordered placement, which is a replay
+estimate only. Per decision 5 the next move went back to the owner, who closed T005
+without promotion (decision 17 above).
+
+## Second encrypted backup batch — 2026-11-19
+
+Owner decision 16 above adds two private datasets to the encrypted backups. The batch
+is in `~/VSC_DEV/backups/foundry-20261119/`, encrypted to the owner's selected
+`~/.ssh/id_ed25519.pub` (fingerprint
+`SHA256:nsuaEpeRmr4BvJH1gfJkqkPuoiAz9uaQFmkLlL0rzsQ`).
+
+| Archive | Source | Files | Source bytes | Ciphertext bytes | SHA-256 prefix |
+| --- | --- | ---: | ---: | ---: | --- |
+| `01` | `datasets/context-foundry-g2-runs` | 211 | 8,508,573,465 | 7,615,236,263 | `df905c9c` |
+| `02` | `datasets/context-foundry-t005-final-2026-11-13-rsyq4_c4.noindex` | 44 | 8,091,302 | 2,882,057 | `31cb9e94` |
+| `03` | `runs/t005-heldout-final-2026-11-13` | 174 | 3,198,918 | 260,093 | `b3136101` |
+
+The job is the 2026-11-11 five-source backup script with its source list and the
+archive count in its README text changed; every pinned tool and both recovery files
+match their recorded digests. All three pipelines exit zero. The source manifests
+match before and after, the staging copy is removed, and every entry passes a fresh
+`shasum -a 256 -c` readback. It took 37 seconds and made no network, model or
+provider call.
+
+Archives 02 and 03 are the two roots of the
+[2026-11-13 T005 final bundle](#t005-sealed-final-pair-no-promotion--2026-11-13). That
+bundle held 7,112,164,903 bytes when it was sealed. The owner-selected
+[cleanup of 2026-11-14](#storage-cleanup--2026-11-14) had since removed its derived
+search stores, so the batch holds the 11 MB that remain, including the consumed
+holdout's private files, handled as opaque bytes. The G2 run results are 7.9 GiB on
+disk today, not the 15 GB [reported on 2026-11-06](resume.md#encrypted-backups):
+the owner-selected cleanups of 2026-11-14 and
+[2026-11-16](#original-daemon-presence-candidate--2026-11-16) removed or compressed
+parts of it.
+
+Not established: authenticated decryption and restoration, and any copy off the
+Mac. Both remain owner tasks. Private receipts are in `runs/backups-2026-11-19/`.
+
+## Learning module split (F14) — 2026-11-19
+
+The last planned split of follow-up F14 ran on the owner's Mac as seven commits,
+`04bcd18` to `a66a056`. `src/learning.rs` fell from 3,182 to 972 lines. The new
+children are `state` (with the module's seven tests), `run_policy`, `feedback`,
+`strict`, `io` and `prep`, which also holds the dataset read-back as the plan says.
+
+- Every move is verbatim apart from inserted `pub(super)`. One bumped signature is
+  wrapped by rustfmt. A whole-series check finds all 3,019 non-blank original lines
+  in the final files.
+- The plan allowed 9 `pub(super)` insertions; the split made 7, all in `prep`.
+  `check_floors` moved with the read-back, where it needs none. `OpenedDataset`
+  stays in the parent, because moving it would need two bumps beyond the plan.
+- The test functions, `#[ignore]` count and assertion count are unchanged. The eight
+  existing children are byte-identical.
+- Public API: rustdoc built into empty directories before and after has the same
+  17,604 documented members. The only page changes are 21 added redirect stubs for
+  re-exported items' new private paths; no page was removed.
+- An agent did the split and a second read-only agent reviewed every commit with its
+  own scripts; both are in-session.
+
+## Artifact cancellation test synchronization — 2026-11-19
+
+`artifact_verification_obeys_caller_cancellation` (`tests/neural.rs`) failed once in
+the [2026-11-06 gates run](#owner-decisions--2026-11-06) on `854cf88` with
+`Cancelled(None)` and passed alone. Its cancel flag was set by a fixed 400 ms timer
+started before the run. Under a loaded full suite the flag could flip before the run
+reached the weights hash, at a bare checkpoint that returns the cancel as an error
+instead of the named stop.
+
+- Reproduced: a 600 ms delay injected before partition compute makes the old test
+  fail every time with the recorded message.
+- Repair, `b4fcf6d`: the flag is set only after the artifact-hash fault point reports
+  `model.gguf` in flight, and the test asserts the run reached the hash. Its other
+  assertions and bounds are unchanged.
+- Checked: the new test passes under the same injected delay, and in three plain
+  runs. The same commit marks `ChangeReader::fetch`'s fault-only parameter, so the
+  default-features build is warning-free again; `65fd799` had introduced that
+  warning.
+
+Not changed: the same bare checkpoints make a real `semantic prepare` cancellation
+report differently depending on timing (exit 130 with no report, or exit 1 with a
+`cancelled` report). That is a product behaviour, not the test, and is not changed.
+
+## Documentation status corrections and patch notices — 2026-11-19
+
+Commit `f2cf6f3` corrects about 30 sentences across 18 files that still called work
+to do or not run after its dated record. It also fixes wrong schema instructions
+(`upgrade-store --to 12`, search schema 9, unit schema 7) and says that lexical
+behavioral selection is default-on on the experimental line and that watching is
+opt-in. It drafts the release notes' known limitations, the first release's
+compatibility statement and the [inventory of the oh-my-pi reference
+patches](dependencies.md#oh-my-pi-reference-patches). Each change was checked against
+the code or its dated record by a second in-session agent. Eleven of the 25 patches
+lacked the upstream MIT notice; they now carry it, with their hunks unchanged.
+
+## Local gates on `f2cf6f3` — 2026-11-19
+
+All eight gates exit 0 on `f2cf6f3`, the head of the split, the test repair and the
+documentation pass, on a clean tree on the owner's Mac (05:01–05:17 UTC). Rust 1.97.1
+and Rust 1.90.0 with the macOS 26.5 SDK. Default suite: **1,321 passed, 0 failed, 35
+ignored**; it includes the repaired cancellation test and the 6,000-file watcher test.
+Pilot-capture unit tests: 125 passed, 1 ignored. Log SHA-256 prefixes: Clippy
+`33444cd2`, test `d7a0af6f`, pilot Clippy `a35fdd7a`, pilot tests `f854d34c`, MSRV
+check `987d14bf`, MSRV Clippy `eda82401`, MSRV pilot check `dd5632d7`. Logs are
+private, under `datasets/context-foundry-gates/f2cf6f3-2026-11-19/`. This is the first
+fresh eight-gate run since `3bd30be`; the rounds between them reran the four
+pilot-capture gates and reused the default-feature receipts.
+
+## Owner decisions — 2026-11-19
+
+A read-only sweep on 2026-11-19 listed 123 pending items at `85a63c3`. The owner
+answered sixteen open decisions, then a seventeenth after the T005 analysis and four
+more on 2026-11-20 (rows 18-21), choosing the recommended option each time. Each row
+quotes the owner's choice; the last column is the result or where it is recorded.
+
+| # | Item | Owner's choice | Result |
+|---|---|---|---|
+| 1 | Dependabot PR #55, eleven Cargo minor and patch updates | "Apply 8, hold 3" | Done: ignore, ureq, rmcp, uuid, notify, toml, tokio-rustls and rustls-pki-types applied by hand in `afa7b38` at the PR's versions, with a full gates run ([receipt](#local-gates-on-afa7b38--2026-11-20)); tree-sitter-scala (parse output and schema), usearch (ANN graph and G2) and redb (store database) are held until each is measured; the PR is closed. |
+| 2 | Weekly hosted workflow runs on Dependabot branches | "Pause version updates" | `.github/dependabot.yml` sets `open-pull-requests-limit: 0` for both ecosystems. Dependabot reads its configuration from the default branch, `main`, so the pause takes effect only after the next owner-approved merge to `main`. Alerts and security updates are unaffected. |
+| 3 | Local-only branches of the rejected T005 experiments | "Push as archive branches" | Done: `archive/t005-fragment-order-20261113` (`ac81777`), `archive/t005-kept-body-headers-20261113` (`74b0b26`) and `archive/t005-headers-red-mutant-20261113` (`74b1be9`) are on GitHub. They never merge; they keep the commits the T005 receipts cite. Two of the tip commits lack `[skip ci]`, so the push started two hosted `Rust` workflow runs at 05:06 UTC on 2026-11-20 (about 9 and 31 minutes; one failed, one passed). That spend was not intended; no workflow file was changed, and the branches will not be pushed again. |
+| 4 | Untracked `.mcp.json`, `.omp/mcp.json`, `.omp/tools/` | "Ignore them" | Done: ignored as machine-local in `.gitignore`. |
+| 5 | Next move for 009 T005 | "Analyze, then one more" | Study the recorded development losses without touching the sealed 2026-11-18 holdout; select one more bounded candidate only if the analysis shows a plausible large gain, otherwise return to the owner. The analysis found none ([record](#t005-loss-analysis--2026-11-19)); see row 17. |
+| 6 | Spec 010 T001-T002 for the release | "Accept at written scope" | Accepted at their written, experimental and unadvertised scope; real-model task utility stays deferred (decision 14 of 2026-11-06). |
+| 7 | 009 T007 device tuning and real throughput | "Named limitation" | Covered by decision 12 of 2026-11-06, "Script checks only". |
+| 8 | Version of the first release | "0.2.0" | `Cargo.toml` moves to 0.2.0 in the release commit, not before: the installer refuses to upgrade to an installed version, and development builds carry the Cargo version. |
+| 9 | Host memory in pilot v2 | "Off in every arm" | Host memory and auto-learn stay off in every v2 arm; other backends are out of scope. |
+| 10 | `PI_PROXY_ANTHROPIC` in pilot v2 | "Not used in v2" | Any later use needs full request, tool and headroom qualification. |
+| 11 | The 25 oh-my-pi reference patches | "Keep as reference" | Status quo: published reference data, host built privately and pinned by SHA-256. |
+| 12 | Identity of the source-built host | "Digest plus pinned inputs" | Executable SHA-256 plus the ordered patches, dependency lock, Bun runtime and native-addon digests; no byte-for-byte rebuild required. |
+| 13 | A SIGSTOP-stopped embedding worker whose owner dies | "Named limitation" | Re-entry trigger: an observed stranded stopped worker. |
+| 14 | Pilot private-output hardening | "Accept a and c, test b" | A same-user racing process and power-loss durability are named limitations, recorded in the [pilot v2 draft](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md); forced permission-call and sync-call failures have fault-injection tests in `232a7ad` ([record](#private-writer-fault-injection-tests--2026-11-20)). |
+| 15 | Open items with no owner | All four selected | Named limitations: 003 T009 coverage gaps; 009 T009 late chunking and selective body preparation; 008 task-view host extensions; upstream presence-file cleanup and daemon shutdown on ordinary host exit. Recorded in specs 003, 008 and 009 and the pilot v2 draft. |
+| 16 | Backups beyond the 2026-11-11 batch | "Add those two" | Done: one more encrypted batch for the G2 run results and the 2026-11-13 T005 final bundle ([record](#second-encrypted-backup-batch--2026-11-19)). |
+| 17 | 009 T005 after the [loss analysis](#t005-loss-analysis--2026-11-19) | "Close, no promotion" | T005 closes without promotion: the measured candidates are its outcome, the current baseline stays, anchorless retrieval quality beyond it is a named limitation, and T005 is no longer a release condition. The 2026-11-18 holdout stays sealed for future work. |
+| 18 | Pilot v2 retrieval arms after 009 T005 closed (2026-11-20) | "Drop retrieval arms" | Pilot v2 tests task context only; the arms item and 003 T006's acceptance are amended so retrieval is no longer a v2 contrast. |
+| 19 | The host's implicit Apple on-device model provider in pilot v2 (2026-11-20) | "Disable in every arm" | Every v2 launch disables the `apple` provider; see the [crash diagnosis](#sandbox-profile-segmentation-fault-diagnosis--2026-11-20). |
+| 20 | Pilot v2 sample-size method (2026-11-20) | "Implement and test it" | The calibrated variance-based paired method is added to `scripts/pilot-v2-power.py` with tests and proposed for the freeze; nothing is frozen until the owner chooses the design. |
+| 21 | Merge of the experimental line to `main` (2026-11-20) | "Open the PR now" | A pull request from `experimental/context-ecosystem` to `main` is opened after the current startup round lands with a gates receipt; the owner merges it with a merge commit. |
+
+The owner chose named limitations in rows 7, 13, 14 and 15 without wording their
+re-entry triggers. The triggers written into the specs and the pilot v2 draft are
+the implementer's proposals, each an observed failure or a changed input: for example
+an observed stranded stopped worker (row 13), a pilot private output changed by a
+process the pilot does not own, or a synced record found truncated after power loss
+(row 14). The owner may replace any of them.
+
+## T005 second holdout encrypted retention — 2026-11-19
+
+The 400-question blind holdout
+[sealed on 2026-11-18](#t005-new-blind-holdout-sealed--2026-11-18) is the only
+unconsumed acceptance set for spec 009 task T005, and until today it existed in
+one place, `runs/t005-holdout-fresh-2026-11-18/`. It now has a local encrypted
+archive in `~/VSC_DEV/backups/foundry-t005-holdout-20261118/`, encrypted to the
+owner's selected `~/.ssh/id_ed25519.pub` (fingerprint
+`SHA256:nsuaEpeRmr4BvJH1gfJkqkPuoiAz9uaQFmkLlL0rzsQ`). This follows the
+[2026-11-11 precedent](#t005-sealed-holdout-encrypted-retention--2026-11-11) for the
+first holdout, not a new owner decision.
+
+- The job is the 2026-11-11 holdout backup script with two lines changed, the
+  source base directory and the source name; every pinned tool and both recovery
+  files still match their recorded SHA-256 digests.
+- All three tar, zstd and age pipeline exits are zero. The byte-and-mode manifests
+  of the source and of its clone match before and after, the private staging copy
+  is removed, and all five checksum entries pass a fresh `shasum -a 256 -c` readback.
+- The source folder is archived as it is today: 49 files, 58,122,472 bytes. The seal
+  record counts 47 files and 58,108,244 bytes; the difference is two files written
+  at sealing time. Archive size: 11,611,548 bytes; SHA-256:
+  `3c30c3bc7b6654ec4bdf32ce540acfc6d5d4466ccb88431bc12106ce5bcf010f`.
+- The job was bounded at 300 seconds with a 20 GiB free-space floor, ran in under one
+  second of supervised time, and made no network, model or provider call. It read
+  only the selected public key. The set was handled as opaque bytes: no question,
+  label, file name or manifest row was opened by the implementation side.
+
+Not established: authenticated decryption and restoration, and any copy off the Mac.
+Both remain owner tasks, as for the [2026-11-11 archives](#encrypted-evidence-backups--2026-11-11).
+Private receipts are in `runs/t005-holdout-backup-2026-11-19/`.
+
+## Kept Nemotron files identity check — 2026-11-19
+
+Owner decision 31 of 2026-11-06 keeps Foundry's Nemotron model file and stores as
+historical evidence. They still exist, in a different form than on that date:
+
+- The model file and tokenizer are in place under
+  `datasets/context-foundry-g2-runs/artifacts/models/nemotron`. Their SHA-256
+  digests begin `e0cd7ff3` and `797410df`, the values recorded in the
+  [measurement handoff](measurement-handoff.md#inputs).
+- The two Nemotron stores are the compressed archives made by the
+  [2026-11-16 cold-storage cleanup](#original-daemon-presence-candidate--2026-11-16),
+  `store-bun-nemotron.tar.zst` and `store-rust-nemotron.tar.zst`. Both digests are
+  in that cleanup's private manifest, and both archives pass `zstd -t`
+  (4,932,249,600 bytes decompressed in total).
+
+Not run: a restoration of either store to disk. The old store paths are small
+placeholder files, so a tool that expects a directory there fails until the
+recorded restore script runs. These files have no encrypted backup and no copy off
+the Mac.
+
+## Catalog refusal binding in the startup diagnostic — 2026-11-19
+
+The fixed startup diagnostic uses a fresh, private host and enables only
+Anthropic discovery. In the pinned OMP source at
+`24439066040e006eb08da7b204f0ac41c79d2de9` with the recorded patches,
+`anthropicModelManagerOptions` enables the shared catalog fetch without an
+API key. The CLI's `observeStartupCatalogFetch` supplies a new, locally
+refusing fetch function for each diagnostic launch.
+The Rust observer now requires a classified catalog attempt before accepting
+catalog retirement. The observation loop appends and syncs the refusal before
+processing the retirement frame
+([observer implementation](../src/pilot_capture/startup.rs)).
+
+A native omission control used the exact pinned CLI and a test-only bridge
+that returned before sending the catalog attempt. The CLI still refused
+locally under network and process-fork denial. Before the repair, the
+observer recorded catalog retirement and attested a 15-record prefix with
+only the warm-up refusal. The process group was reaped.
+
+After the repair, the same control records `startup_catalog_refusal_missing`
+before catalog retirement and reaps the process group. The seven-record
+journal ends with the protocol halt and host-exit receipt. The production
+bridge passes the native 14-case startup test. The normal run keeps both
+classified refusals, its 16-record prefix and its 18-record HOLD journal.
+The native RPC input control also passes.
+
+Formatting, capture Clippy, the Rust 1.90 capture check and the capture
+unit suite pass. The unit suite has 125 passed, zero failed and one ignored.
+The four default-feature gate receipts are reused after verifying all 258
+effective inputs against their retained hashes.
+
+Removing the generated source copy and three build caches reduced the
+round's allocation by 5,895,245,824 bytes. All three native checks passed
+again from the retained executables after cleanup.
+
+The control uses host SHA-256
+`a25ee9675c56e02363876abcc9e4d87179f6a44089eadc0e4ee62cdea017ca25`.
+Private transcripts and command receipts are under
+`runs/pilot-startup-catalog-refusal-binding-2026-11-19/`.
+Full inventory, durable acknowledgment and runtime handoff remain on HOLD.
+
+## Restricted startup scheme descriptions and process policy — 2026-11-19
+
+The [source patch](references/omp-startup-prompt-scheme-exclusion.patch)
+skips optional scheme descriptions in the existing restricted
+`buildSystemPrompt` path. The new source regression observed a call to
+`InternalUrlRouter.describe` on the previous code. All 33 focused SDK
+tests passed with the guard.
+
+The rebuilt CLI SHA-256 is
+`a25ee9675c56e02363876abcc9e4d87179f6a44089eadc0e4ee62cdea017ca25`.
+Both restricted runs used the exact bridge and observed zero lookups for
+`ssh`, `gh` and `glab`. Holding the catalog refusal held retirement.
+The 16,174-byte command catalog matched the baseline. Ordinary RPC used the
+same agent settings, performed all three lookups, and answered a state query.
+
+The startup-only Rust launcher binds a macOS `deny process-fork` rule into
+the launch policy hash. The compiled host reached diagnostic retirement under
+the rule. A synthetic `/usr/bin/true` fixture received `EPERM` from
+`Bun.spawn`, `Bun.spawnSync` and Node's `spawnSync` with the rule in force.
+All three calls succeeded under the ordinary policy. All six native control
+groups were reaped. These are no-provider controls under network denial.
+Private evidence is under `runs/pilot-startup-prompt-scheme-exclusion-2026-11-19/`
+and `runs/pilot-startup-kernel-fork-exclusion-2026-11-19/`.
+
+The Rust launch-policy regression failed before the rule was bound. Six
+fresh checks passed for the final change, including the 14-case startup
+journal, RPC input, 125 feature tests, Clippy, Rust 1.90 and formatting.
+The frozen, current and source compatibility host pins match their
+preceding receipts. Cleanup reduced the four staged run directories from
+9,074,438,144 to 525,672,448 allocated bytes before replay. Both native
+startup checks passed again from the retained production binaries.
+
+## Native Unix socket creation during addon load — 2026-11-19
+
+A test-only syscall witness observed one successful `AF_UNIX` stream
+`socketpair` call from the pinned native addon image during startup of
+the rebuilt CLI. The exact bridge reached RPC retirement and the process
+group was reaped under network and process-fork denial. The same witness
+observed a call while loading the addon under bare pinned Bun. Its
+bare-runtime control observed zero calls.
+
+The pinned source calls `start_async_runtime` from the N-API module
+registration path. On macOS that path uses Tokio
+`Builder::new_multi_thread().enable_all()`. A separate native fixture built
+with the source lock's Tokio 1.53.1 and Mio 1.2.3 reproduced the measured
+descriptor pattern. The full runtime held three Unix descriptors across
+two same-process endpoints. Dropping it left the two shared endpoints.
+The no-signal and time-only controls held zero Unix descriptors. This
+identifies the Unix signal driver in the component fixture and accounts
+for the matching pattern in the addon as an inference. The compiled
+addon's sampled frames identify the image and offsets. They leave its
+internal function identity and the remaining transport inventory open.
+(A [static attribution of 2026-11-20](#native-addon-socket-pair-static-attribution--2026-11-20)
+since names the function, as an inference; the transport inventory stays open.)
+
+macOS denied the debugger attachment. The first test-only syscall witness
+crashed during addon loading. The successful witness calls the original
+symbol from its own image and records only the transport class and frames.
+Private evidence is under `runs/pilot-startup-tokio-signal-owner-2026-11-19/`
+and `runs/pilot-startup-addon-socketpair-2026-11-19/`. These controls used
+zero provider calls and zero spend.
+
+## Startup RPC output through teardown — 2026-11-19
+
+The startup-only [stdout reader](../src/pilot_capture/host.rs) accepts a single
+LF-terminated command catalog envelope. The [observation parent](../src/pilot_capture/startup.rs)
+requires EOF on both pipes and a normal process-group exit before returning a
+clean HOLD receipt. A parser fault during teardown is journaled under
+`startup_cleanup` and returned as a protocol error.
+
+A test-only bridge on the same pinned compiled host wrote synthetic output at
+normal exit after private RPC retirement and after the parent closed stdin.
+The preceding parent returned the usual 18-row HOLD receipt despite malformed
+stdout. The fixed parent refused five forms of late output on that boundary:
+malformed JSON, an unknown typed message, a duplicate catalog, raw Ready,
+and an unterminated catalog. The 19-row fault journals preserve the synced
+16-row prefix, the HOLD and the normal process exit. The final row names the
+static parser fault. All five subprocess groups were reaped. The injected
+bridge ran only in the isolated fixture checkout. Private receipts are under
+`runs/pilot-startup-rpc-output-2026-11-19/`.
+
+The initial normal-host run reused the fixture binary from a shared Cargo
+target. The acceptance run used a clean target and verified a distinct
+production binary without the fixture marker. All ten Rust gates passed,
+including the 14-case startup matrix, RPC input, 125 feature tests, 37 frozen
+host tests, five current-host tests, both source-host checks, Clippy, Rust
+1.90 and formatting. The round used zero provider calls and zero spend.
+The two run directories went from 6,369,701,888 to 285,802,496 allocated
+bytes before replay. The startup matrix and RPC input check passed from the
+retained production binaries after cleanup.
+
+## Remote URL documentation lookups during startup — 2026-11-19
+
+A narrow native preload on the same pinned host observed one
+`Bun.which` lookup each for `ssh`, `gh` and `glab` in both restricted
+startup and ordinary RPC. The call stacks place the lookups in
+`buildSystemPrompt`, `InternalUrlRouter.describe` and the handlers'
+`promptDoc` methods. The diagnostic used the exact startup bridge and
+completed both classified refusals. Ordinary RPC answered a state query.
+Both groups were reaped under network denial with zero provider calls
+and zero spend.
+
+The probe establishes local executable-availability checks for optional
+prompt descriptions. It supplied the baseline for the
+[restricted prompt repair](#restricted-startup-scheme-descriptions-and-process-policy--2026-11-19).
+Private receipts are under `runs/pilot-startup-url-doc-owners-2026-11-19/`.
+
+## Fixed discovery provider inventory at startup — 2026-11-19
+
+The [registry patch](references/omp-startup-fixed-discovery-plan.patch) extends
+the fixed startup profile at `ModelRegistry.#discoveryDisabledProviders`,
+`#loadCustomModels` and the original manager entry in
+`can1357/oh-my-pi@24439066040e006eb08da7b204f0ac41c79d2de9` after the retained
+startup patches. It requires the effective Anthropic-only eligibility set,
+rejects configured discovery and excludes implicit local discovery. The
+fixed Anthropic manager rejects a credential source before resolving a key.
+An unreadable or widened profile latches the fault. Ordinary RPC uses its
+existing eligibility rules.
+
+The compiled host SHA-256 is
+`d3735420b5a9389e66eb916e5e826a998844884f9b4ce0e797a3dae68882172d`.
+Native controls rejected enabled `web`, Ollama, OpenAI Codex and configured
+discovery before the first private attempt or manager deadline. The early
+rejection controls used the exact bridge. A trusted late-change fixture
+caught a widened-profile error and restored the settings. The first
+candidate started another manager after that error. The final candidate
+joined the already started manager and did not start another one or report
+catalog retirement. Ordinary RPC with `web` enabled ran two managers and
+answered a state query.
+
+The exact bridge preserved both classified refusals and the single built-in
+manager. Holding the catalog reply held retirement. The catalog receipt
+now requires the fixed inventory fact in the bridge and the Rust reader.
+All eight process groups were reaped under network denial and all 128
+focused upstream tests passed. There were zero provider calls and zero
+spend. Private receipts are under
+`runs/pilot-startup-fixed-discovery-plan-2026-11-19/`. Startup admission,
+the full transitive inventory and the durable acknowledgment remain open.
+
+Six fresh Rust checks passed, including the 14-case startup journal,
+RPC input, feature tests, Clippy, Rust 1.90 and formatting. The three
+new upstream tests failed against the preceding registry. The unchanged
+frozen and compatibility host pins retain their prior receipts.
+The startup journal and RPC input checks passed from the retained binaries
+after the staged build and package caches were removed. The run directory
+went from 10,899,398,656 to 528,982,016 allocated bytes before replay.
+
+## Durable startup observation prefix — 2026-11-19
+
+The Rust observer reads back the synced journal through
+`startup_rpc_retired` and records its exact count and SHA-256 on the
+`startup_inventory_unqualified` halt row. The normal native run kept 18
+rows, with the halt binding the first 16. The regression failed on the
+previous code because the count field was absent. Real journal controls
+rejected a torn record, same-byte inode replacement and halt append failure
+without issuing a prefix receipt. The host remained on the startup-only
+channel and refused RPC commands.
+
+Six fresh Rust checks passed, including the 14-case native startup matrix
+and the feature suite with 122 tests passed and one ignored. Clippy, formatting
+and the Rust 1.90 check passed. The frozen, current and source compatibility
+receipts retain their existing host pins. Removing the two build caches and
+six duplicate native extractions reclaimed 4,126,011,392 allocated bytes.
+Both native checks passed from the retained test binaries after cleanup.
+Private receipts are under
+`runs/pilot-startup-prefix-hold-2026-11-18/`. The partial inventory
+remains on HOLD, and no startup acknowledgment or Ready echo is issued.
+
+## Built-in model manager eligibility during startup — 2026-11-18
+
+The pinned debugger-fix executable completed the two known refusals with the
+exact startup bridge under OS network denial. The timer probe captured one
+15-second deadline from `#discoverWithModelManagerStartupBody`, cleared before
+catalog retirement. A trusted bridge variant read metadata for the launch's
+93 provider IDs at session start and RPC retirement. It reported no configured
+discovery providers and one state change, for Anthropic, from bundled idle
+to bundled unavailable.
+
+Removing only `web` from the disabled list added a second deadline from that
+owner. Both deadlines cleared. The web discovery state stayed bundled idle.
+Removing only `ollama` reached the private unclassified fault before catalog
+retirement and no Ready appeared. Ordinary RPC answered a state query in a
+separate control. All five groups were reaped under network denial with zero
+provider calls and zero spend. The bridge variants and timer probe are local
+fixtures. The results cover the changed settings and the named owner. The
+complete source and transport inventory remains open. Private receipts are
+under `runs/pilot-startup-model-manager-census-2026-11-18/`.
+
+## Debugger sweep starts with session registration — 2026-11-18
+
+The [source patch](references/omp-startup-dap-idle-sweep.patch) starts the existing
+debugger idle sweep when `DapSessionManager` first registers a debug session.
+The ordinary manager still keeps a single sweep. Import and construction perform
+no sweep scheduling.
+
+The rebuilt CLI SHA-256 is
+`879e0690a9542088abe6ff936ee0b4fb35132f4263612cd2b8dc6660c8327766`.
+With the exact observation bridge, both wrapped-timer snapshots were empty and
+no debugger sweep was scheduled. The controller held the host open for 31.6
+seconds after RPC retirement, longer than the prior observed tick. A separate
+ordinary RPC control used the real compiled manager with a synthetic adapter.
+It requested launch, scheduled exactly one sweep, registered the session,
+disposed the adapter and answered a state query. Both groups were reaped.
+
+All 39 debugger SDK tests passed under a loopback-only sandbox. The earlier
+deny-all run passed 36 and refused the local listeners required by three TCP
+fixtures. The compiled startup controls kept the network-denied profile. There
+were zero provider calls and zero spend. Private receipts are under
+`runs/pilot-startup-dap-idle-sweep-2026-11-18/`.
+
+Six fresh Rust gates passed, covering the 14-case startup journal, RPC input,
+feature tests, Clippy, Rust 1.90 and formatting. The only changed Rust value
+is the `StartupObservation` executable pin. Readback verified the unchanged
+frozen, current and source host pins and retained the four matching
+compatibility receipts. It also verified 10,339 source inputs and the two-file
+patch against its exact preimages. Cache cleanup reduced the main round from
+5,775,650,816 to 517,177,344 allocated bytes before replay and retained the
+runnable evidence. The RPC input and all 14 startup cases passed again from
+the retained binaries.
+
+## Native addon socket ownership at startup — 2026-11-18
+
+Kernel snapshots of the exact CLI found no Internet sockets or additional
+processes in its group at RPC retirement or immediately before teardown. A
+positive local fixture confirmed that the descriptor query could observe both
+Internet and Unix sockets. The host had three Unix descriptors across two
+endpoints, with every visible peer address matched inside the same process.
+
+A phased control sampled the actual pinned addon at `process.dlopen`. The
+first preload and the sample immediately before the call had zero Unix sockets.
+The original call returned with three descriptors. Their identities and peers
+were stable through retirement and teardown. Loading the same addon under
+bare pinned Bun reproduced three descriptors across two endpoints. The bare
+runtime, SQLite and file-watcher controls did not reproduce those descriptors.
+This attributes the observed IPC to the addon load in this profile. The full
+native owner and transport inventory remains open. Private receipts are under
+`runs/pilot-startup-kernel-handles-2026-11-18/`.
+
+## Fixed runtime providers during startup observation — 2026-11-18
+
+The [source patch](references/omp-startup-fixed-runtime-providers.patch) fixes the
+runtime provider set for the explicit restricted profile. The registry rejects
+registration before mutation and latches the existing unqualified state. The
+source SDK proves the empty runtime registration set in its catalog retirement
+receipt. The bridge and Rust require that fact.
+
+The rebuilt CLI SHA-256 is
+`34298ef0060fa728f19de74ae5d3f5b0d1c9871ab9edec57d40ae7844c1e4ba7`.
+The exact bridge completed the normal diagnostic with both classified refusals.
+Two trusted fixture variants queued registration under configured and unknown
+IDs. Both exited before any discovery callback ran or catalog retirement was
+reported. A third fixture caught the registration error during session startup.
+The latch still prevented catalog retirement and the private channel reported
+a fault. Ordinary RPC registered the same synthetic callback, ran it to
+completion and answered a state query. All five process groups were reaped.
+All 12 source registry tests passed, including the fixed-profile regression.
+
+The Rust observer records the new fact in the ordinary 18-row diagnostic
+journal and still halts on the partial inventory. All controls used isolated
+fixtures and OS network denial. They made zero provider calls and incurred zero
+spend. Private receipts are under
+`runs/pilot-startup-fixed-runtime-providers-2026-11-18/`.
+
+Ten fresh gates passed. They covered the 14-case startup journal, RPC input,
+feature tests (121 passed, one ignored), Clippy, Rust 1.90, formatting, frozen
+host (37 passed, 11 ignored), five current-host checks and both source-host
+checks. Readback verified 10,339 source inputs, the patch against its four
+preimages and the 258 inputs to the retained default-feature gates. Cache
+cleanup reduced this round's main directory from 6,116,761,600 to 521,318,400
+allocated bytes before replay and retained the runnable binaries, source
+overlays and private receipts. The RPC input and all 14 startup cases passed
+again from those binaries.
+
+## Debugger sweep after startup RPC retirement — 2026-11-18
+
+Two controls on the fixed-runtime-provider CLI held the exact startup bridge
+open after the RPC retirement receipt. A scoped preload recorded the live
+30-second interval started by the imported `DapSessionManager` singleton.
+The longer control observed an actual tick before teardown, with no debug
+session started. This was the only pending timer in the wrapped timer APIs at
+both snapshots. The process exited normally after the controller closed the
+channel. Four observed disposal timers created during teardown were cleared.
+The final postmortem deadline was still recorded at exit, and the process
+group was reaped. These witnesses leave other timer APIs and transitive startup
+work open.
+
+The proposed owner-level change starts the existing sweep on first session
+registration. The focused test failed against the constructor's eager schedule
+and passed against the draft along with the six existing session tests. The
+draft still needs compiled-host qualification. Private controls are under
+`runs/pilot-startup-post-retirement-timers-2026-11-18/`.
+
+## Startup subprocess controls — 2026-11-18
+
+The fixed-runtime-provider CLI reached RPC retirement with zero calls through the
+wrapped Bun `spawn` and `spawnSync` entry points. Separate positive controls
+observed both calls and successful exits of the local fixture commands. The same
+CLI and exact bridge also completed under a temporary sandbox with
+`deny process-fork`. Both fixture calls received permission errors under that
+policy. All four process groups were reaped. These checks cover the named APIs
+and the provisional sandbox rule. Other transports and policy compatibility
+with an admitting runtime remain open. Private receipts are under
+`runs/pilot-startup-process-owners-2026-11-18/`.
+
+## Restricted prompt inputs and startup launch binding — 2026-11-18
+
+The [source patch](references/omp-startup-prompt-exclusion.patch) closes implicit
+system, append and title overrides at CLI setup. The explicit restricted SDK
+profile skips automatic templates, Markdown commands and the active-repo
+lookup. Its prompt builder uses the bundled personality and fails at the
+preparation deadline. Initial RPC command publication omits the file-command
+loader in this profile.
+
+The rebuilt CLI SHA-256 is
+`199317b11f621e566fcbc82d4cbcb1f1dfb1d09b1429ddf35e4e60f0f1a22134`.
+The exact bridge reached retirement with the synthetic prompt files unread.
+Three explicit override flags failed before reading the supplied file or
+reporting retirement. Ordinary RPC read all seven implicit fixtures, advertised
+the Markdown command and answered a state query. In a separate pair outside an
+ancestor Git repository, the native ordinary session included the synthetic
+child repository in its prompt and the restricted session omitted it. These
+controls exercise prompt projection with an actual native host.
+
+The prompt builder's owner-level control held a supplied workspace-tree
+promise. Restricted preparation rejected after its five-second deadline and
+ordinary preparation returned a fallback. All 36 upstream prompt tests passed
+with their temporary workspaces outside this Git tree. An earlier in-tree
+setup failed the active-child fixture because its parent already belonged to
+the Foundry repository. Private receipts preserve both results.
+
+The Rust observation journal records hashes of the exact launch arguments,
+sanitized environment, policy, bridge, models and config. The environment
+digest includes the channel identity and inherited pipe identifiers supplied
+to the child. The native journal test compares the bridge, models and config
+digests with the materialized files. The inventory remains partial and the
+observer still halts before acknowledgment. All controls used OS network denial
+and incurred zero provider calls or spend. Private receipts are under
+`runs/pilot-startup-prompt-exclusion-2026-11-18/`.
+
+Ten fresh gates passed, including the 14-case startup journal, RPC input,
+feature tests (121 passed, one ignored), Clippy, Rust 1.90, formatting, frozen
+host (37 passed, 11 ignored), five current-host checks and both source-host
+checks. Readback verified 10,339 compiled inputs, the four-file patch against
+its exact preimages and the 258 inputs to the retained default-feature gates.
+Cache cleanup reduced this round's main directory from 6,115,385,344 to
+521,023,488 allocated bytes before replay. It retained the source overlays,
+private evidence and the binaries needed for the focused checks. The RPC input
+and all 14 startup cases passed again from those binaries.
+
+## Runtime provider eligibility during startup — 2026-11-18
+
+A trusted synthetic extension on the prompt-exclusion CLI registered a local
+discovery callback under the existing configured provider ID. The host ran
+two original callbacks and held catalog retirement until both returned. The
+controller refused the classified Anthropic warm-up attempt. The usual shared
+catalog GET attempt was absent from that trace. A second fixture registered an
+unknown provider ID and faulted after settings retirement, before its callback
+or RPC retirement.
+Both final controls reaped their groups. The fixtures made no network or model
+calls and used no credentials. The exact first-party bridge issues neither
+registration. Before freezing the admitting inventory, close runtime
+registrations at the registry owner for the fixed profile and prove the
+exclusion. The fixed-profile draft refuses both IDs before mutation and latches
+the failure even when the caller catches it. A source-level control failed on
+the current registry and passed on a copy of the draft. The draft still needs
+compiled-host qualification. Private controls and the draft are under
+`runs/pilot-startup-runtime-provider-2026-11-18/`.
+
+## Implicit prompt inputs during startup observation — 2026-11-18
+
+The advisor-exclusion candidate read synthetic `SYSTEM.md`,
+`SYSTEM_TEMPLATE.md`, `APPEND_SYSTEM.md`, `TITLE_SYSTEM.md`, a prompt template
+and a Markdown command with `--no-context-files` set. Holding the original
+`SYSTEM.md` read kept restricted-session, extension and RPC retirement pending
+until the read returned. A separate command-file hold saw only the classified
+warm-up attempt before release. The command was read once per run. A separate
+physical read during the RPC catalog reload remains unestablished. All runs used
+the exact bridge and exited normally. No prompt was sent.
+
+A second control held the synthetic `PERSONALITY.md` callback before its
+original file read. The host reported RPC retirement while the hold was active.
+The original read ran and returned after release. The corresponding source
+deadline in `system-prompt.ts::buildSystemPrompt` can return a fallback and
+leave the original operation and its completion callback running. The receipt
+therefore leaves this prompt owner unqualified. Both personality controls
+exited normally with no provider calls or spend.
+Private evidence is under `runs/pilot-startup-prompt-inputs-2026-11-18/`.
+
+## Advisor exclusion during startup observation — 2026-11-18
+
+The [source patch](references/omp-startup-advisor-exclusion.patch) uses the
+explicit restricted SDK profile to exclude advisor and watchdog discovery,
+the separate tool builders and initial cost restoration. It closes later
+activation and restore at the session owner. The existing one-use restricted
+session receipt binds the exclusion to the actual session, registry and
+first-party extension. The bridge and Rust require that fact.
+
+The rebuilt CLI SHA-256 is
+`7e64ff01012824f69b2b8b4cdb6f2f35d23340d874e00b5af67de91d9dff8db2`.
+The exact-bridge native run emitted the new receipt. An instrumented run with
+the same CLI observed an empty advisor pool and no watchdog, YAML or imported-file
+reads or initial cost restore. A fixture invoked activation and cost restore after
+RPC retirement and observed no advisor activation or change of the restore
+promise. Ordinary RPC read the same synthetic watchdog and YAML inputs and both
+relative imports, built the 18-entry pool, and started and settled its original
+restore. It answered a state query. All hosts exited normally and their process
+groups were gone.
+The builds and controls used OS network denial and no providers. Private
+evidence is under `runs/pilot-startup-advisor-exclusion-2026-11-18/`.
+
+All ten fresh gates passed. The 14-case Rust startup control recorded the advisor
+fact and ended its normal 18-row journal in `startup_inventory_unqualified`.
+The RPC input check, feature unit tests (121 passed, one ignored), Clippy, Rust
+1.90 all-target check, formatting, frozen host (37 passed, 11 ignored), five
+current-host checks and both source-host checks passed. Readback verified
+10,339 source inputs, the four-file patch against its exact preimages and the 258
+inputs for the reused default-feature gates. Removing temporary source and
+compiler caches and six duplicate native extractions reduced this round's
+allocated space from 6,224,998,400 to 523,313,152 bytes before replay. The host,
+focused tests, exact source overlays and private receipts were retained. Both
+focused checks passed again after cleanup.
+
+## Advisor discovery within restricted startup — 2026-11-18
+
+The native observer read a synthetic `WATCHDOG.yml` and its relative file import
+with `--no-context-files` set. Holding the imported file before the original
+read held extension and RPC retirement until release. A separate synthetic
+factory instrumented the real `AgentSession` and recorded the original advisor
+cost-restore start and completion. The advisor was inactive during the check,
+and its separate tool pool contained 18 entries, including `bash`. The fixture
+invoked none of them. No prompts, provider calls or spend occurred.
+
+Advisor inputs, tool-pool construction and startup cost restore are separate
+from primary tool selection. Their startup eligibility remains an inventory item.
+The private controls are under `runs/pilot-startup-advisor-discovery-2026-11-18/`.
+
+## RPC runtime callbacks excluded during startup observation — 2026-11-18
+
+The [source patch](references/omp-startup-rpc-runtime-exclusion.patch) keeps
+session-event subscription, subagent-event registration and initial goal
+reconciliation out of RPC startup observation. Its private, one-use retirement
+receipt now includes the callback exclusion. The observer and Rust decoder
+require the new fact. Persistence observers retain their teardown ownership.
+
+The native late-notice control reached the original `AgentSession.emitNotice`
+call after the retirement receipt. Neither the RPC subscription nor its callback
+ran, and the goal reconciliation witness stayed absent. The ordinary RPC control
+ran its initial goal reconciliation, answered a state query and delivered the
+fixture notice on stdout. A separate diagnostic control injected an `ENOSPC`
+failure after closing the actual temporary session writer. The persistence owner
+reported the failure and nondurable shutdown on stderr, and the process exited
+with status 1. The original upstream persistence tests passed 10 of 10.
+
+Separate native probes observed two original catalog deadline timers per run.
+Timers remained armed while the refusal reply was held. Both were cleared before
+catalog retirement in each run. Neither probe reached the selected Anthropic
+warm-up's native abort deadline construction. Private timing receipts are under
+`runs/pilot-startup-route-timers-2026-11-18/`.
+
+The rebuilt CLI SHA-256 is
+`e97678428a82dee6092a99814d295c8775ec8f6820c3d8055b42c1c38e2a9711`.
+The qualification uses isolated synthetic inputs and OS network denial. Private
+controls and receipts are under `runs/pilot-startup-rpc-runtime-exclusion-2026-11-18/`.
+Provider calls and spend were zero. The complete inventory and admitting runtime
+handoff after a durable acknowledgment and Ready echo remain open.
+
+Ten fresh gates passed. The 14-case startup control ended its normal 18-row
+journal with two durable refusals and an incomplete-inventory halt. The startup
+RPC input check, 121 feature unit tests (one ignored), feature Clippy, Rust 1.90
+all-target check, formatting, frozen host suite (37 passed, 11 ignored), all five
+current-host checks, and both source-host checks passed. The four prior
+default-feature gates were reused after exact readback of their 258 inputs.
+Readback verified 10,339 compiled-source inputs and the patch applied to its
+exact preimage. Cleanup removed the round's temporary caches and four duplicate
+native extractions, reducing allocated space in the round from 8,549,240,832 to
+521,273,344 bytes before replay. The runnable host and focused test binaries,
+source overlays and private evidence were retained. The RPC input and 14-case
+startup controls passed again from the retained binaries after cleanup.
+
+## RPC session callback after startup retirement — 2026-11-18
+
+A network-denied test used the catalog/Spotlight host with a synthetic extension
+handler that wrapped the real session subscription. The controller waited for
+the private `rpc_retired` receipt and then released a harmless
+`AgentSession.emitNotice` call. The original RPC callback entered and returned.
+The already-closed stdout writer emitted no notice. The exact-bridge baseline and
+the injected control both exited normally and were reaped. The injected event
+establishes that the callback was still live, independently of stdout delivery.
+In a separate ordinary RPC control, the same emission API delivered the fixture
+notice on stdout after a successful state query.
+
+Separate runtime event subscription and goal reconciliation from the observation
+boundary before accepting a runtime handoff. Preserve session persistence failure
+reporting through teardown. This follow-up and the acknowledgment stay open. The
+private controls and draft are under `runs/pilot-startup-rpc-event-owner-2026-11-18/`.
+Provider calls and spend were zero.
+
+## Catalog refusal and Spotlight startup exclusion — 2026-11-18
+
+The [source patch](references/omp-startup-catalog-spotlight.patch) binds the
+explicit startup-observation launch's registry to a refusal-only fetch. It
+classifies the exact catalog GET before the registry can call transport. The
+catalog and connection warm-up owners share the original sequence, channel and
+synced journal, with an independent retirement window for each owner. The
+restricted startup SDK also closes Spotlight eligibility before creating the
+experiment client or its credential state.
+
+The rebuilt CLI SHA-256 is
+`f8a67f4f45b701171ad88c76d5f46379a4bf18a1beae3f35728b9e966a274ba3`.
+The materialized observer SHA-256 is
+`8fb429aad6e2a502885e2977a41e8ff40b2dfedeb0d1ebc3f7aad40afb279de4`.
+Reapplying the reference patch reproduced both changed host source files.
+
+Eight network-denied native controls on the rebuilt host passed. Both target
+routes produced private refusal requests, and holding the catalog refusal reply
+kept catalog, extension and RPC retirement pending. A Spotlight opt-in left
+Spotlight inactive in explicit restricted startup. Ordinary RPC still invoked
+both fixture fetch paths and answered a state query. A malformed refusal, an
+unclassified catalog attempt, a late attempt and a missing observer stopped
+startup without RPC retirement.
+
+An additional native control kept the global fetch binding intact and observed
+Darwin `socket`, `connect`, `sendto` and `getaddrinfo`. The normal launch loaded
+the observer without reaching those interposed calls. The positive loopback
+control registered `socket` and `connect` and returned `ECONNREFUSED`. Those two
+calls have positive runtime witnesses. Coverage of other transports remains open.
+
+The initial unclassified-attempt control exposed a frame after a terminal fault.
+The extension loader had guarded `process.exit`, leaving enough time for the
+next startup task to send. Closing the observer channel and rejecting its
+pending promises before exiting made the fault the final frame in the native
+control. The original failing trace is retained.
+
+Ten fresh Rust and host checks passed, including 121 pilot units (one ignored),
+37 frozen-host tests (11 ignored), five current-host cases and both source-host
+consumers. The 14 actual startup journal cases included a write fault at the
+catalog refusal. The normal journal contains 18 records, both classified
+refusals, and the incomplete-inventory halt followed by a normal reaped exit.
+Four default-feature gates reused prior results on 258 unchanged inputs. The
+observed inventory binds this prefix to the CLI, bridge, and source manifest.
+
+After open-file and checksum checks, cleanup removed the generated source tree,
+package and Rust build caches, and twenty duplicate native libraries. The round
+fell from 10,334,167,040 to 528,359,424 allocated bytes before replay. The RPC
+input check and all 14 startup journal cases passed from the retained binaries.
+
+These checks qualify the two selected route boundaries. The complete startup
+owner inventory, runtime handoff and durable acknowledgment remain open.
+Private originals, controls and receipts are under
+`runs/pilot-startup-route-closure-2026-11-18/`. Provider calls and spend were zero.
+
+## Startup catalog and opt-in Spotlight route controls — 2026-11-18
+
+A native comparison used the previous and direct-SDK CLIs with the same
+network-denied control. In the default and Spotlight-enabled cases on both
+hosts, the original catalog code attempted `GET` to `catalog.stencil.so`.
+The control refused before transport. The private startup channel reported its
+one Anthropic warm-up attempt and finished its existing retirement sequence.
+The catalog GET had no destination receipt in that sequence. Catalog owner
+retirement and before-transport classification are separate requirements.
+
+Spotlight remained inactive with the exact default settings. A synthetic
+opt-in, fixture credential and reserved destination exercised its actual warm-up
+path. Its fetch was still held before transport when the extension and RPC
+retirement receipts arrived on both hosts. Releasing the fixture refused the
+fetch and let the hosts exit normally. These two routes behaved alike across the
+SDK import change. The fixture made no real network request, sent no prompts and
+spent nothing. Private evidence is under `runs/pilot-startup-spotlight-owner-2026-11-18/`.
+
+The default catalog route requires a classified refusal through the existing
+catalog owner. The opt-in experiment requires an explicit startup eligibility
+boundary for the admitting profile. The observed retirement sequence remains a
+partial inventory and startup admission stays closed.
+
+## Direct SDK import for startup observation — 2026-11-18
+
+The prior pinned CLI halted when the first-party observer used a direct SDK
+import. The first two probes surfaced the host's extension-settlement error.
+A bounded diagnostic at the import recorded the actual module-resolution
+failure before the host halted and was reaped.
+
+The [source patch](references/omp-startup-sdk-export.patch) adds an explicit
+`./sdk` export to the same patched `can1357/oh-my-pi@24439066040e006eb08da7b204f0ac41c79d2de9`
+tree. The existing compiled module registry now exposes the SDK module under
+that key. The startup bridge imports it directly for the owner seals and
+receipts. The compiled CLI SHA-256 is
+`f6b729039da6d73a8fb3d5aada47607d938d87f79d3db838a5984797053a3e9b`.
+The materialized bridge SHA-256 is
+`1f81f7a23eb920891d14414f45d4a7ecc0113b2c4390f94b6104718ae8ff8775`.
+
+Six network-denied controls on the new CLI passed. Both the legacy package-root
+import and the direct SDK import produced the expected receipts. The original
+bridge read and the injected factory wait again held extension and RPC
+retirement. Either injected failure exited before retirement. An ordinary RPC
+control retained its legacy root import, metadata subscription, catalog
+updates and both state reads. The reference patch applied byte for byte to its
+pinned input. The package formatter reported the same inherited differences in
+both copies. After formatting independent copies, the only difference was the
+SDK export.
+
+All ten fresh Rust and host checks passed, including 120 pilot unit tests
+(one ignored), 37 frozen-host tests (11 ignored), five current-host tests and
+two source-host consumers. The 13 real startup cases verified the journal and
+fault handling with the new bridge. The normal 17-record journal bound both new
+digests and ended with `startup_inventory_unqualified` and a reaped exit. Four
+default-feature gates reused their prior results on 258 unchanged inputs.
+
+Cleanup removed the generated source tree, package and Rust build caches, and
+seven duplicate native libraries after open-file and checksum checks. The SDK
+round fell from 8,884,797,440 to 523,522,048 allocated bytes before replay. Both
+startup checks passed again from the retained binaries. The completed route and
+workspace controls also yielded twenty matching native library copies for
+cleanup, with the remaining evidence verified by checksum.
+
+This removes the observer's direct dependency on the package-root compatibility
+shim. The complete startup owner inventory, runtime handoff and durable
+acknowledgment remain open. The private red is under
+`runs/pilot-startup-sdk-import-2026-11-18/` and the qualified inputs and controls
+are under `runs/pilot-startup-sdk-export-2026-11-18/`. Provider calls and spend
+were zero. Paid runs and signing remain gated.
+
+## First-party startup extension loader controls — 2026-11-18
+
+Five native controls used the pinned CLI from [RPC retirement](#restricted-startup-rpc-retirement--2026-11-18).
+The baseline, held read and failed read used the exact materialized first-party
+observer. Its SHA-256 matched the native capture journal. The held read paused
+the original `Bun.file(...).text()` call for that module in the legacy extension
+graph loader. The extension and RPC receipts stayed absent until release. When
+the read failed, the host exited with status 1 and issued neither receipt.
+
+Two separately identified fixtures added one awaited hook after the observer
+registered its session-start handler. The original loader waited for the held
+factory. A failed factory produced exit status 1 without either receipt.
+The positive controls' extension and RPC message bodies matched the normal Rust
+capture journal. All five hosts exited and were reaped without a forced kill.
+The native controls used a private controller and OS network denial, with zero
+prompts, provider calls or spend.
+
+This qualifies the observed module read and the loader's awaited factory edge.
+The full startup inventory still requires proof of enabled transitive work,
+transport ownership and the runtime handoff before any durable acknowledgment.
+Private scripts and receipts are under `runs/pilot-first-party-extension-2026-11-18/`.
+Ten extracted native library copies matched the retained original and were
+removed after checking for open files. All 254 retained files matched after
+cleanup.
+
+## Restricted startup RPC retirement — 2026-11-18
+
+The source-built startup observer now requires an RPC retirement receipt after
+extension retirement. The selected RPC mode awaits the original initial command
+catalog and closes the stdout writer after its queued writes finish. It excludes
+the live command-metadata subscription, raw Ready and RPC command dispatch. A
+one-use source object binds the report to the original RPC initializer. The
+Foundry observer consumes it on the existing channel, and Rust requires all
+four facts in the existing journal before closing on `startup_inventory_unqualified`.
+Ordinary RPC preserves its command catalog, subscription and dispatch.
+
+The [reference patch](references/omp-startup-rpc-observation.patch) applies to
+the retained `can1357/oh-my-pi@24439066040e006eb08da7b204f0ac41c79d2de9` source
+with the earlier startup patches. Applying it to copies of its four input files
+reproduced the built sources exactly. The source-built CLI SHA-256 is
+`7e4d547e315a29d2ab361347b3fad29ba6ae415c4aff777f595301d1804ef59e`.
+
+Six compiled CLI controls ran with networking denied. Holding the exact marker
+read before the OS call delayed the receipt until the catalog was built.
+Holding the catalog's native stdout completion callback delayed the receipt
+until the callback was released. Both holds occurred after extension retirement.
+The ordinary control retained its injected metadata callback and state queries.
+The selected mode refused unexpected input, invalid flags, a missing observer,
+and forged or replayed receipt objects. The capture-journal test passed all 13
+real-host cases. Its normal path durably records RPC retirement at row 15,
+followed by the incomplete-inventory halt and a normal reaped exit. The fault
+injection at that append leaves no successful retirement receipt. The first
+journal attempt used an old binary path and failed the pin check before launch.
+
+Ten fresh checks passed, covering the journal and RPC input controls, 120 pilot
+unit tests (one ignored), formatting, pilot all-target Clippy, Rust 1.90
+all-target checking, 37 frozen-host tests (11 ignored), five current-host tests
+and two source-host consumers. Four default-feature gates reused prior results
+after readback of 258 unchanged effective inputs. The candidate source readback
+covered all 10,339 build inputs.
+
+After checking for open files, cleanup removed the generated source tree,
+package and Rust build caches, and six duplicate native libraries. The round's
+allocated size fell from 8,772,448,256 to 522,293,248 bytes before replay.
+The retained binaries passed the RPC input check and all 13 startup journal
+cases again. The replay's normal journal contains 17 records.
+
+This qualifies RPC startup retirement for the observation profile. The first-party
+extension closure, complete inventory, runtime subscription handoff and durable
+acknowledgment/Ready exchange remain open for the admitting profile. The private
+source, native controls and receipts are under `runs/pilot-rpc-owner-2026-11-18/`.
+No provider calls or spend occurred. Paid trials and release signing remain gated.
+
+## T005 bounded lexical placement fails development gates — 2026-11-18
+
+One placement variant was frozen before implementation. In ready semantic
+context with the ordinary 32-unit cap and no resolved anchor window, it keeps
+the first eight offered dense locations. It then offers up to four existing
+tier-2 lexical units, one per path absent from that prefix and only when the unit
+has no identical dense location. The remaining dense and lexical lanes retain
+their internal order. The chosen candidate changes placement only. It uses the
+same Gemma profile, lexical and dense candidate windows, source validation, caps
+and packing. The fresh holdout seal and the existing one-candidate final guards
+were pinned before the experiment.
+
+The focused ordering test passed. The first shared Cargo target reused the
+baseline executable for the candidate, which the binary comparison caught
+before evaluation. Cleaning the package and rebuilding produced distinct
+executables. The first G2 baseline attempt under an additional outer sandbox
+fell back to lexical output on all 388 calls after the local worker exited.
+That attempt is invalid and retained. A single development CLI preflight
+confirmed dense output with the existing signed local worker and its normal
+isolation. The valid comparison used that setup with the same pinned inputs.
+
+| Frozen G2 development set | Questions | Located | Verbatim bodies |
+| --- | ---: | ---: | ---: |
+| Rust | 197 | 52 → 57 | 47 → 46 |
+| Bun | 191 | 117 → 117 | 107 → 107 |
+| Total | 388 | 169 → 174 | 154 → 153 |
+
+The fresh baseline matched all 388 retained responses byte for byte. All 776
+responses in the valid pair had ready semantic traces, verified request and
+response binding, matching placement replay and the original token and byte caps.
+The unchanged `scripts/g2.sh compare` returned **KEEP OFF**. There were 15
+located gains and 10 losses, with exact one-sided McNemar p = 0.212178 at K = 1.
+Verbatim bodies had 10 gains and 11 losses. Mean delivered tokens were 2,022.9
+and 2,025.7. Every newly located case selected or shortened a promoted range
+covering the target name. In every lost case, the target still had a covering
+range at packing input, where a budget drop removed that evidence. This shows
+where the tradeoff occurred in these measured responses.
+
+The isolated variant failed both significance and body preservation. The active
+baseline is retained. G1 and the final pair did not run, and the new sealed
+holdout remains unconsumed. Provider calls and spend were zero. The exact
+selection, source bundle, builds, traces, rejected attempt and validation are
+retained privately under `runs/t005-lexical-placement-candidate-2026-11-18/`.
+The two original archives and sentinel paths passed readback. After open-file
+checks, the stage's build cache, probe store, restored masters, duplicate binary
+and private worktrees were removed. Allocated stage size dropped from
+14,028,627,968 to 527,425,536 bytes. T005 remains open.
+
+## T005 new blind holdout sealed — 2026-11-18
+
+The owner selected fresh-context authors. The label custodian froze a new
+sampling seed, catalog of 65,526 eligible declarations and four disjoint
+whole-module partitions before launching the authors. The allocation is 100
+questions per partition and 200 per pinned corpus. The custodian applied the
+historical G2/F4 exclusions and derived exclusion-only keys from the consumed
+final set. The authors receive the pinned source and authoring rules, with the
+same three-per-file and six-per-module caps. Separate label-side quality checks
+and the unchanged full verifier are required before sealing.
+
+Preparation metadata SHA-256
+`d1e4fc99c7d6d8dbb8abf05a7875c169196d52b8363e37d7198e95c9c7bc7825` records the
+source pins, partition and eligibility digests at author launch. The preparation
+and forthcoming labels are private under `runs/t005-holdout-fresh-2026-11-18/`.
+All four authors delivered their full quota. The custodian's aggregate readback
+found zero duplicate normalized question texts and zero overlaps with the frozen
+exclusion keys. Its authoring metadata SHA-256 is
+`3ba4bc5942ebe4e157a8a858743e0799006ec826730ac779adc8a7a7a5388ff1`.
+Four separate label-side checkers passed all 400 questions after 1,582 pinned
+source inspections and 171 wording repairs that preserved answer identity. One
+append-only amendment preserves an earlier checker verdict and its correction.
+The unchanged builder and full verifier passed, including all 45 self-tests and
+six literal-unit mutations. The three-per-file and six-per-module caps held, with
+zero historical answer or wording overlap and zero duplicate normalized questions.
+
+The sealed question artifact is 139,277 bytes, with SHA-256
+`2386e58ab3d6b6df739c8cb1e687f0549e0352be2851aba3ea96dda1436f94a8`.
+The local mode-0700 stage passed readback of 47 files and 58,108,244 bytes.
+Implementation verified metadata-only receipt SHA-256
+`d08f06dd3f69d6fed1c7c2b1d23c339e40d2d940c16474726efa658f377e2791`.
+The custodian retained the questions, labels and source inspection records
+privately. All authors, checkers and the native verifier finished. External
+provider calls, retrieval calls, store opens and spend were zero. The seal
+satisfies the fresh evidence prerequisite for the next bounded candidate.
+Candidate selection, development gates and the sole final evaluation remain
+ahead. T005 remains open.
+
+## Startup RPC command boundary — 2026-11-18
+
+The startup-only profile now holds the native CLI's stdin pipe for normal
+teardown without creating an RPC command queue or writer. A caller attempting
+`Host::send_rpc` receives `rpc_on_startup_channel` before any bytes are encoded.
+The existing private channel still carries the startup attempt, refusal and
+retirement records. The actual-host regression failed on the old launcher because
+it accepted the synthetic `get_state` command. It passed after the repair and the
+owned host was reaped without a command response or forced termination.
+
+A separate control of the retained source-built host
+`c48ea3b5a2ec5376044da48de072ae8e961d91bb87e4614269b2f37297f64cbf` used a
+synthetic extension and a 27-byte project command file. The file read completed
+at trace sequence 4. Raw RPC Ready appeared at 6, the extension's retirement
+receipt at 14, and the initial catalog containing the marker command at 15.
+The host exited normally. Network access was denied, and the control sent only
+state requests. In the hash-pinned upstream source
+`can1357/oh-my-pi@24439066040e006eb08da7b204f0ac41c79d2de9`,
+`modes/rpc/rpc-mode.ts::runRpcMode` awaits `initializeExtensions`, subscribes to
+command metadata changes and awaits the initial command catalog. The later
+catalog frame orders that selected publication. The file read came earlier, and
+the test did not hold any work started by the metadata subscription.
+
+Follow-up native controls wrapped the exact session's metadata subscription. The
+natural control observed one registration and one initial catalog. The injected
+control invoked the registered callback during registration. The original
+callback returned without a promise, and stdout published two catalog updates.
+That observed extra update identifies the callback path a future owner must join
+or defer. The injection establishes behavior when invoked at that point. It does
+not establish that a normal startup fires that callback spontaneously.
+
+Two more controls placed a synthetic module in `.claude/extensions`. Its factory
+did not run with the restricted invocation's single explicit trusted path. The
+same factory ran once when its path was explicitly added to that list. Both
+hosts exited normally. The control covers this discovery route. The real
+Foundry launcher supplies only the exact materialized bridge, whose digest was
+read back from the normal observation journal. The first-party imports and the
+work they start still need lifecycle coverage.
+
+This separates the extension receipt from the overall startup boundary. The
+next owner to qualify is RPC initialization, including its command-metadata
+callback and teardown. The actual admitting exchange still requires a complete
+source-bound inventory, durable journal prefix readback and a matching Ready
+echo. The complete startup observation still ends at `startup_inventory_unqualified`.
+Fresh checks passed formatting, pilot all-target Clippy, 119 pilot unit tests
+(one ignored), Rust 1.90 all-target checking, the actual startup command test,
+the twelve startup journal cases, five current-host cases, 37 frozen-host tests
+(11 ignored), and both source-host consumers. Four default-feature gates reused
+their prior results after readback of 258 identical effective inputs. The normal
+journal contains 16 records and a normal host exit. Private inputs, red and green
+runs, and CLI snapshots are retained under
+`runs/pilot-startup-rpc-input-2026-11-18/`. Provider calls and spend were zero.
+
+The qualified change was pushed as `b962c90`. A fresh clone matched all 443
+tracked files, including types and executable modes. Open-file and checksum
+checks preceded removal of this round's Rust build caches and five redundant
+native library copies. Stage allocation fell from 4,303,962,112 bytes to
+290,320,384 bytes. The focused actual-host test passed again using the retained
+executable and the existing startup host. The cleanup receipt and replay log
+remain in the same private stage.
+
+## Restricted startup held watchdog read — 2026-11-18
+
+A second network-denied native control used the same restricted source-built host
+and isolated `WATCHDOG.md` marker as the preceding discovery control. An
+instrumented `Bun.file(...).text()` held that exact marker operation **before**
+the original file read. The controller observed the held operation, waited 500 ms
+and verified that no extension-retirement receipt appeared, then released it.
+The original read completed at trace sequence 5 and the extension-retirement
+receipt followed at 14; the held event was sequence 4. The host exited normally
+and its process group was gone. No prompt or provider call occurred.
+
+This qualifies the observed ordering for one synthetic read on this host with a
+pre-read interposer. It does not establish cancellation behavior, a stalled kernel
+read, all watchdog/advisor discovery or complete startup settlement. The actual
+capture-journal acknowledgment path was not exercised. The private protocol,
+control and trace are retained in `runs/pilot-startup-watchdog-held-2026-11-18/`.
+The full inventory and admission remain on HOLD; spend was zero.
+
+## Restricted startup watchdog discovery — 2026-11-18
+
+A network-denied native CLI control on the retained restricted source-built host
+(SHA-256 `c48ea3b5a2ec5376044da48de072ae8e961d91bb87e4614269b2f37297f64cbf`)
+placed a synthetic 28-byte `WATCHDOG.md` in its isolated workspace. A preload
+observed that exact file's `Bun.file(...).text()` resolve and returned its contents
+unchanged; the marker read occurred at trace sequence 4 and the extension-retirement
+receipt at 13. The normal host invocation included `--no-context-files`,
+`--no-rules`, `--no-extensions` and the restricted startup profile. The host exited
+normally with its process group gone. The first assertion mistakenly expected 27
+bytes; its failing receipt is retained, and the corrected 28-byte control passed.
+
+The retained source's `sdk.ts` starts `discoverWatchdogFiles` and
+`discoverAdvisorConfigs` separately from the `noContextFiles` branch, then awaits
+both in its startup `Promise.all`. The retained upstream
+`advisor/watchdog.ts::collectConfigCandidates` searches user and project ancestor
+paths; that source file's SHA-256 is
+`be117a4eb610f29c6c4cf7df11a4b448d48ecddc93400ed414b6788a0430025b`.
+This control establishes one synthetic file read, not an exhaustive path inventory,
+a model input, a policy violation, or a detached operation. No prompt or provider
+call occurred, and spend was zero. The private protocol, initial failed assertion,
+corrected readback and native trace are in
+`runs/pilot-startup-watchdog-discovery-2026-11-18/`. Account for this separate
+owner in startup qualification; complete inventory and admission remain on HOLD.
+
+## Restricted startup raw timer counterexample — 2026-11-18
+
+A network-denied native CLI control on the retained source-built restricted
+host (SHA-256 `c48ea3b5a2ec5376044da48de072ae8e961d91bb87e4614269b2f37297f64cbf`)
+used a synthetic trusted extension that scheduled a raw `setTimeout`. Its trace
+recorded scheduling at sequence 11, the existing extension-retirement receipt at
+13, and the raw callback at 14. The process exited normally and its process group
+was gone. This demonstrates that the managed-timer exclusion and the selected
+handler receipt do not settle arbitrary raw timer work. It does not show a
+provider call, capture-journal admission or an actual unsafe generation: no
+prompt was sent, network access was denied and spend was zero. Full startup
+inventory and admission remain on HOLD.
+
+The first harness invocation failed before launching a host because its scratch
+directory was absent. A second failed closed on a malformed sandbox policy; the
+corrected control produced the result above. Both failures and the native trace
+are retained in `runs/pilot-startup-raw-timer-2026-11-18/`. This is a
+counterexample to settlement, not a general timer-fencing design or repair.
+
+## T005 dense retention census correction — 2026-11-18
+
+The preceding census omitted packing decisions marked `shortened`, even though
+those can deliver the target name. Replaying the same pinned development traces
+and mapping a shortened range through its recorded parent corrects the result:
+all 169 located successes had a selected or shortened dense range covering the
+target-name bytes among their first 16 kept dense units; 153 had one among the
+first eight. In the earlier selected-only census, the 15 cases without a mapped
+selected range all had a shortened target-name-covering range. The earlier result
+is retained below as the selected-only observation, but its suggestion that those
+15 successes were unexplained by this mapping is superseded.
+
+This remains a range-level description, not a counterfactual response or a proof
+that any change preserves definitions or bodies. Placement and packing may
+change when the cut changes. No candidate was selected; no retrieval, model,
+provider or consumed final holdout was run or accessed. T005 remains unaccepted.
+The corrected private protocol, analyzer and results are under
+`runs/t005-dense-retention-correction-2026-11-18/`; the earlier artifacts remain.
+
+## T005 successful-control dense retention census — 2026-11-18
+
+An offline census rechecked the 169 located successes in the retained G2
+*development* run, including source identity and bytes, response and trace hashes,
+and replay of the original placement caps. It mapped selected packing ranges
+back to original materialization and placement. In 154 cases, a selected dense
+range covering the target-name bytes came from one of the first 16 kept dense
+units; 141 of those had such a range among the first eight. The other 15 had no
+selected packing range covering the name under this selected-only mapping; the
+correction above identifies their shortened ranges. All 169 original responses were
+located successes, and 154 were verified body successes; these counts are not
+asserted to be the same cases.
+
+This describes selected source ranges, not necessarily the text rendered by each
+packing form. It does not establish that removing later dense units preserves a
+response: a changed cut can alter placement, packing and materialization, and the
+selected-only mapping omitted shortened ranges, as corrected above. No displacement rule was
+selected or evaluated, and no retrieval or model was run. The consumed final
+holdout was not accessed; T005 still needs a separately bounded selection and
+fresh unexposed acceptance evidence. The zero-spend private protocol, analyzer and
+case-level results are in `runs/t005-dense-retention-census-2026-11-18/`.
+
+## T005 complete development lexical-depth diagnostic — 2026-11-18
+
+The preceding fixed 4,096-document, raw tier-2 lexical probe was extended to the
+remaining 186 retained G2 development misses, without rerunning its earlier 202
+cases. The query helper received only IDs, corpora and questions; target ranges
+were joined afterward. Both checksum-verified cold archives were used to restore
+private search-only copies. Their 154 index files matched the retained manifests.
+The original 256-document trace sequence matched in all 186 additional cases;
+together with the earlier 202, the comparison covers all 388 development cases.
+The existing cap checker replayed the additional placement traces, and target
+source hashes were checked before and after. This is a raw lexical diagnostic,
+not an evaluation of a new response or retrieval policy.
+
+| Retained G2 development group | Cases | Covering lexical document at raw ranks 257–4,096 | No covering lexical document in first 4,096 |
+| --- | ---: | ---: | ---: |
+| Misses with no eligible target-covering candidate | 95 | 30 | 65 |
+
+In all 30 deep-cover cases, the original dense-first placement had already kept
+32 dense units. Across all 219 misses, this occurred in 207; it also occurred in
+164 of 169 successful controls. Every raw probe filled its 4,096-document window,
+so absence within it does not prove index absence. A covering document witnesses
+only the target name, not a delivered definition body. The result identifies a
+coverage/placement interaction worth studying, but does not select a rule, prove
+a recovery, measure a final-response gain or establish that sacrificing dense
+units is safe. Any candidate still needs a separately bounded selection and
+unexposed acceptance evidence; the consumed 400-case final set was not accessed.
+T005 remains unaccepted.
+
+Both new lexical query processes exited naturally under native supervision. No
+model worker or provider call was observed, and spend was zero. After open-file
+checks, the temporary search copies and duplicate helper were removed; the stage
+fell from 437,309,440 to 176,091,136 allocated bytes. Original cold archives,
+retained helper and private outputs remain. Evidence is under
+`runs/t005-lexical-depth-rest-2026-11-18/`; the prior 202-case evidence remains
+under `runs/t005-lexical-depth-2026-11-18/`.
+
+## Pilot v2 explicit task-block sensitivity — 2026-11-18
+
+The optional [pilot-v2 power tool](../scripts/pilot-v2-power.py) now accepts an
+explicit per-task probability distribution for each endpoint's sum of paired run
+differences. This permits sensitivity calculations under within-task dependence
+other than the existing perfect-correlation assumption, while keeping tasks as
+the independent units and retaining fixed stratum weights. It does not estimate
+that distribution or joint dependence between endpoints. The original input forms
+continue to work. Explicit distributions are bounded by repetitions, common-grid
+and operation limits and must contain unique feasible sums with probabilities
+adding exactly to one. The [contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#optional-paired-task-sensitivity-tool)
+records the method, a synthetic example and its limits.
+
+Seventeen standard-library tests pass, including exhaustive fractional block-mean
+enumeration, equivalence to the original perfect-correlation model, mixed-form
+CLI use, malformed/oversized distributions, and the earlier null and stratum
+checks. This does not select a sample, establish task independence or actual
+rates/correlation, freeze the analysis, qualify the host, or authorize execution.
+No model, provider, credential or paid run was used; paid execution and signing
+remain gated.
+
+## Pilot v2 stratified power sensitivity — 2026-11-18
+
+The optional [pilot-v2 power tool](../scripts/pilot-v2-power.py) now also accepts
+fixed, disjoint task strata with distinct hypothetical paired binary-outcome
+rates and repetition counts. It computes the pooled task-count-weighted sensitivity
+and separate sensitivity for each stratum under independent task blocks and perfect
+within-task repetition correlation. These are floating-point sums of finite
+per-task distributions; the endpoint-dependence-free joint result remains a
+union-bound lower bound. Per-stratum claims require inclusion in the input's
+confirmatory contrast count. A pooled result cannot establish a stratum guard.
+
+Twelve standard-library tests pass, including exhaustive heterogeneous task-block
+enumeration, equivalence to the existing model when strata have identical rates,
+a heterogeneous noninferiority-boundary check, fixed task weighting, repetition
+accounting and invalid input. The earlier unstratified input remains supported.
+This is still a sensitivity aid, not a frozen or powered pilot: actual task
+independence, rates, contrast and stratum selection, cost, rights and host
+readiness remain unestablished. No model, provider, credential or paid run was
+used; paid execution and signing remain gated.
+
+## Pilot v2 paired-task power sensitivity tool — 2026-11-18
+
+The unfunded v2 draft now has an optional deterministic sensitivity calculator
+for binary paired success and discovery outcomes. It sums finite per-task difference
+distributions to floating-point precision under user-supplied independent,
+identically distributed task assumptions and perfect within-task repetition correlation;
+it uses conservative bounded-difference lower confidence bounds and a union-bound
+lower bound on joint power. It explicitly takes the number of confirmatory
+contrasts and applies a Bonferroni allocation across both endpoint bounds. The
+method, synthetic input, assumptions and substantial limits are in the
+[v2 contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#optional-paired-task-sensitivity-tool).
+
+Eight standard-library tests pass, covering independent exhaustive enumeration,
+null-boundary examples, repetition accounting, exact decimal boundaries, invalid
+and duplicate input, underflow and CLI behavior. This is a planning aid, not the
+selected or frozen analysis: task/stratum dependence, other outcomes, rates, power
+targets, task/oracle selection, cost, host readiness and rights remain unresolved.
+No model, provider, credential or paid run was used. Paid execution and signing
+remain gated.
+
+## T005 deep lexical placement census — 2026-11-18
+
+The retained 202-case depth probe was joined to its original placement traces.
+The exact dense/lexical selection and `Cut` source files match the pinned baseline
+binary commit; the existing cap-census checker replayed every selected placement
+outcome with its duplicate, per-file and 32-unit global rules. The current semantic
+path offers dense locations before lexical candidates.
+
+| Retained group | Cases | All 32 kept units dense | Mixed dense and lexical kept |
+| --- | ---: | ---: | ---: |
+| Primary file-absent misses | 33 | 32 | 1 |
+| Of those, target-covering raw lexical document at ranks 257–4,096 | 8 | 8 | 0 |
+| Located success controls | 169 | 164 | 5 |
+
+Each of the eight deeper target-covering documents also scores strictly below its
+query's raw 256th lexical document. For those cases, increasing the lexical window
+alone cannot place that target unit under the existing dense-first 32-unit cut:
+the 32 retained dense units already fill it. A changed lexical collection may
+still affect other metadata or outcomes; this observation is not a full response
+simulation or a quality claim. The one mixed file-absent case has no covering
+document in the first 4,096. Dense saturation also occurs in successful controls,
+so it does not by itself justify displacing dense evidence or select a ranking
+rule. Any future candidate needs its own bounded selection and unexposed acceptance
+evidence; T005 remains unaccepted.
+
+All selected trace hashes and their rank-output bindings were checked; no new
+retrieval, store or model query, provider call, spend or holdout access occurred.
+The method, source-identity check and aggregate are retained privately under
+`runs/t005-depth-placement-census-2026-11-18/`.
+
+## T005 lexical depth diagnostic — 2026-11-18
+
+A bounded, no-model diagnostic reopened **copies** of the retained units7
+search indexes and reproduced the semantic path's raw tier-2 lexical query. The
+copies' 154 index files matched the checksum-verified cold-store manifests. The
+query helper received only 202 development question IDs, corpora and question
+texts; target paths and ranges were joined afterward. The original 256-document
+window, after the existing tier-1 suppression and ordering, matched all 202
+retained traces exactly. The selected cases were all 33 primary file-absent
+misses and all 169 located successes.
+
+| Raw lexical tier-2 rank | File-absent misses: target file | File-absent misses: document covering target name |
+| --- | ---: | ---: |
+| 1–256 | 0 | 0 |
+| 257–512 | 2 | 0 |
+| 513–1,024 | 5 | 1 |
+| 1,025–2,048 | 7 | 5 |
+| 2,049–4,096 | 6 | 2 |
+| Not in the first 4,096 | 13 | 25 |
+
+All 202 queries filled the 4,096-document probe window, so absence within it is
+not absence from the index. Of the 169 successful controls, 107 had a covering
+lexical document within the original raw window; success can also come from dense
+retrieval. For eight of 33 file-absent misses, a current-hash lexical document
+covering the target name is below the existing cutoff. A deeper raw candidate does
+not establish that the definition body survives deduplication, per-file/global
+caps and final packing, nor that it improves held-out quality or latency. No
+candidate or new acceptance set was selected; the consumed 400-case holdout was
+not accessed.
+
+The first label-side join failed its row-count assertion because its per-query
+body was misindented; the repair reran only that join against unchanged query
+output. Target source hashes were verified before and after. Both query processes
+exited naturally under native supervision with no observed model worker or
+provider calls. The offline Cargo build was not sampled by that supervisor, so no
+build RSS peak is claimed. After open-file checks, isolated source, build and
+verified index copies were removed; the stage fell from 1,988,923,392 to
+223,834,112 allocated bytes. The original cold archives, helper, query output and
+private rank evidence remain retained under
+`runs/t005-lexical-depth-2026-11-18/`. No spend or quality promotion occurred;
+T005 remains unaccepted.
+
+## T005 lexical clause census — 2026-11-18
+
+The current semantic search calls the ordinary two-tier lexical collector with
+`prose: false`; the accepted lexical-only T010 behavior does not alter that path.
+A read-only census examined the first 20 eligible tier-2 lexical document
+occurrences in each retained success or no-cover miss, using the original traces
+and source-bound document ranges. It reconstructed the query's body subtokens
+and identifier terms and compared them with those in each source document,
+separating the current prose stopword list from all other terms. This is an
+approximation of the source tokenizer, not a Tantivy score replay; it does not
+establish why a document ranked where it did or what lies outside the sample.
+
+| Group | Cases | Documents examined | Cases with a stopword-only document | Such documents |
+| --- | ---: | ---: | ---: | ---: |
+| Located successes | 169 | 3,380 | 7 | 9 |
+| No-cover misses | 95 | 1,900 | 0 | 0 |
+| Primary file-absent misses | 33 | 660 | 0 | 0 |
+
+The last group overlaps the no-cover group. A stopword-only document here means
+that at least one selected stopword token appeared while none of the other
+reconstructed query tokens did. The 33 file-absent cases and 95 misses therefore
+do not support choosing a simple stopword-only filtering repair from these first
+20 documents. This does not rule out term weighting, phrase effects, deeper
+candidates, dense ranking, or any other mechanism. All 264 selected trace hashes
+and 2,556 source-file hashes were checked; inputs and sources were read back
+unchanged. The source-backed method and aggregate are retained under
+`runs/t005-lexical-clause-census-2026-11-18/`. No store query, model call,
+provider call, spend, consumed-holdout access, candidate selection or quality
+promotion occurred. T005 remains unaccepted.
+
+## T005 literal source overlap census — 2026-11-18
+
+A read-only development census checked the retained 388 G2 questions and the
+prior current-baseline attribution against 330 source files, freshly verifying
+source hashes and reading them back unchanged. For a descriptive comparison it
+lowercased ASCII words of at least four letters, removed an explicit stoplist,
+and compared distinct question words with the target file and with a 2,048-byte
+window on each side of the target name. This is not Foundry's tokenizer, query
+plan or ranking; overlap is not a retrieval counterfactual.
+
+| Retained group | Cases | Any literal term in target file | At least half of terms near target name |
+| --- | ---: | ---: | ---: |
+| Located successes | 169 | 167 | 34 |
+| Misses with no eligible target-covering candidate | 95 | 93 | 3 |
+| Primary target-file-absent misses | 33 | 33 | 1 |
+
+The groups are descriptive and overlap; in particular, file-absent cases are not
+an independent sample. A term somewhere in a file need not identify the relevant
+unit, and low local overlap does not prove semantic retrieval or any proposed
+change will help. The observation argues against selecting a local literal-overlap
+rule without stronger source and ranking evidence. No candidate or new acceptance
+set was selected, and the consumed 400-case final set was not accessed. No store
+query, embedding, provider call or spend occurred. The aggregate, exact method and
+input hashes are retained in `runs/t005-literal-source-census-2026-11-18/`.
+T005 remains unaccepted; further development needs a separately bounded selection
+and unexposed acceptance evidence.
+
+## Restricted workspace scan exclusion — 2026-11-18
+
+The source-built restricted diagnostic now refuses workspace-tree scanning at the
+SDK entry point when its exact startup extension owner is present, including a
+later settings-triggered scan. Ordinary profiles keep workspace scanning; a
+supplied tree need not start a scan. Foundry pins the source-built host and retains
+an [upstream reference patch](references/omp-startup-workspace-scan-exclusion.patch);
+it does not apply the patch to an installed host. This excludes the selected scan,
+not other discovery, raw timers, arbitrary extension work or all native I/O.
+
+On code `6b7bc4b3baaf1bdbc7713b55098d57e47c90b778`, the source-built host refused
+an enabled restricted scan before the third matching directory operation; the
+restricted disabled-setting and ordinary enabled-setting controls completed. A
+later settings change and prompt refresh was refused before settings retirement.
+The new SDK regression passed and failed when the guard was removed, with the
+unguarded session resolving. The patch was applied to a copy of its exact prior
+source and both resulting files matched the qualified source. Source format, lint,
+existing extension-owner and new regression tests, and types passed.
+
+All eleven selected no-provider gates passed: format, lint, units (119 passed, one
+ignored), refusal control, capture startup, channel, current host (five passed),
+frozen integration (37 passed, ten ignored), source, source-auth and minimum Rust.
+The capture startup test retained one refusal, 16 journal records and a normal,
+reaped `startup_inventory_unqualified` halt. Four prior default-feature checks were
+reused only after their 258 inputs matched. Provider calls and spend were zero.
+This qualifies the selected exclusion, not complete startup inventory, a durable
+prefix acknowledgment, the matching Ready echo or generation admission. Paid runs,
+signing and release remain gated. Local receipts and the source-built host are
+under `runs/pilot-workspace-owner-2026-11-18/`; native controls are under
+`runs/pilot-workspace-host-hold-2026-11-18/`.
+The qualified code and records were pushed to experimental and all 441 tracked
+files matched a fresh clone. The 10,339 source inputs were verified against their
+retained base, native master and 40-file overlay before removing the reconstructed
+source and build caches. The stage's allocated footprint fell from 4,911,001,600
+to 519,553,024 bytes. Seven retained-executable controls passed without rebuilding;
+source reconstruction after pruning was not rerun.
+
+## Startup workspace scan census — 2026-11-18
+
+A subsequent isolated candidate, later qualified in the preceding record, refuses the
+workspace scan at the original SDK entry point when the restricted extension
+startup owner is present. On its source-built CLI, an enabled scan failed before
+the previously observed third matching directory call; restricted startup with
+the setting off completed, and ordinary startup with it on still scanned. A
+synthetic later settings change followed by prompt refresh also hit the refusal
+before settings retirement. Format, lint, the existing extension-owner unit
+suite and type checks passed. The source-built host and its no-provider native
+controls are retained under `runs/pilot-workspace-owner-2026-11-18/` and
+`runs/pilot-workspace-host-hold-2026-11-18/`; the copied dependency cache was
+removed. The first offline installation failed on four uncached packages; a
+subsequent frozen, script-disabled public-registry install passed without provider
+calls or spend. At that point the candidate still needed a durable regression, capture-journal
+integration and the full gates; these were subsequently completed as recorded
+above. It does not establish complete inventory or admission.
+
+A source-only census of the retained qualified host's `sdk.ts` (SHA-256
+`c9b634bd2c1d36173d83fd4a45d85e06fd7c0d08b04ebdc5dc5353a14d76ad62`,
+from the patched `can1357/oh-my-pi@24439066040e006eb08da7b204f0ac41c79d2de9`)
+found a further conditional startup lifetime. When `includeWorkspaceTree` is
+true and no tree is supplied, `createAgentSessionScoped` starts the native
+workspace scan and races its promise against a five-second deadline. The
+source explicitly allows the original work to continue after that deadline.
+The setting defaults to false. Other independent discovery promises have their
+own await sites; their presence does not establish that they outlive startup.
+
+The retained SDK hash matches the qualified source-build inputs, and the retained
+host matches that build's `f2e02c42209c551dfe46fffd0ca2eb012c89adeba835deff40d1ac5c6b93a826`
+SHA-256. This is source evidence only: no late I/O, network route or active scan
+was observed. Before treating the workspace-scan owner as settled, exercise a
+held real scan with the setting enabled and establish that the restricted profile
+joins or excludes the original work, including timeout and late-completion cases.
+A subsequent network-denied native-addon control used the exact retained Bun and
+native addon. An interposer held the selected synthetic directory operation for
+two seconds **before invoking the original OS call**. With a 100 ms native timeout,
+two runs settled the timeout promise at about 103 ms while the interposed call was
+still held; event order was hold, promise, release. An ordinary scan resolved, and
+a 4,000 ms timeout waited for the hold to release before resolving. These controls
+show that promise settlement does not join a blocked native worker in this
+instrumented addon scenario. They do not reproduce an actual stalled kernel call
+or qualify the full host, its five-second race, owner settlement or admission.
+The retained implementation requests cancellation and aborts the async task on
+timeout; its own dropping test covers a yielding walk and explicitly excludes a
+syscall stalled in the device.
+
+The source-built host diagnostic was then run with workspace-tree inclusion
+explicitly enabled, the same network denial and a held synthetic directory call.
+On two runs the selected third matching directory operation remained held while
+both the session-state witness and extension-retirement receipt occurred; each
+host exited normally after the controller released it. With tree inclusion off,
+only two matching directory operations preceded those events; holding the second
+operation instead prevented the witness until release. This supports attribution
+to the enabled tree path, but the interposer does not identify the source caller
+independently. The hold was before the OS call, not an actual stuck device. The
+witness uses the real restricted host and owner-retirement APIs, but not the
+capture journal or a startup-ack/Ready admission exchange. Thus it demonstrates
+that these selected retirement receipts do not prove the operation has ended; it
+does not prove generation was possible. The existing startup-inventory HOLD stays
+in force until the original operation is joined or excluded and the full host and
+journal boundary is qualified.
+
+Complete owner inventory and startup admission remain on HOLD. No provider call
+or spend occurred; source/hash and native-addon controls remain respectively in
+`runs/pilot-startup-inventory-census-2026-11-18/source-readback.json` and
+`runs/pilot-workspace-native-hold-2026-11-18/controls.json`; the full-host
+diagnostic readback is `runs/pilot-workspace-host-hold-2026-11-18/control-readback.json`.
+
+## Ordered startup refusal receipts — 2026-11-18
+
+On the pinned native runtime, synthetic framed-channel controls exposed acceptance
+of duplicate and decreasing journal sequences, reordered attempts, and both adjacent
+and nonconsecutive repeated prefix digests. The child now resolves refusals only in
+attempt order, with strictly increasing safe journal sequences and previously unseen
+well-formed digests. Sequence gaps are allowed. The digest set is bounded by the
+existing 20-attempt limit. This is a receipt sanity check: it does not independently
+prove disk persistence. The parent already appends, syncs and reads back the journal
+before sending each refusal.
+
+On code `0c3e142f70f4d3184ce87777272264edfb7e591f`, six pinned-runtime controls
+passed, including a valid gap and five negative cases. Removing each of the three
+new guards made its corresponding controls fail. All eleven selected no-provider
+gates passed: formatting, lint, unit (119 passed, one ignored), focused receipt,
+real startup, channel, current host (five passed), frozen integration (37 passed,
+ten ignored), source, source-auth and minimum Rust. Previously qualified default
+checks were reused after verifying their 258 inputs, rather than rerun. The real
+startup test recorded one refusal and 16 journal records, then halted with
+`startup_inventory_unqualified`; it exited normally without forced cleanup. Full
+owner inventory, durable startup-prefix acknowledgment and matching Ready echo
+remain open. No provider calls or spend occurred. Private receipts remain under
+`runs/pilot-startup-refusal-order-2026-11-18/`.
+ The qualified code and records were pushed to the experimental branch and all
+440 tracked files matched a fresh clone. After deleting this round's build and
+minimum-Rust caches (3,740,979,200 to 284,274,688 allocated bytes for the stage),
+seven direct retained-executable controls passed without rebuilding, including the
+new receipt control. The prior qualified upstream host and its source reference
+remain retained; reconstruction after pruning was not rerun in this round.
+
+## Restricted startup managed timer exclusion — 2026-11-18
+
+The restricted startup diagnostic now excludes the selected extension runner's
+sanctioned managed timers before handle construction. Code
+`f30c2eea033243bf014748db16ce7af6673f5ff6` and the [upstream MIT reference
+patch](references/omp-startup-managed-timer-exclusion.patch) target
+`can1357/oh-my-pi@24439066040e006eb08da7b204f0ac41c79d2de9` after the previously
+qualified startup patches. Foundry does not automatically apply that patch.
+
+A network-denied baseline on the prior pinned host scheduled `ctx.setTimeout` in
+a synthetic extension and observed its callback after the extension-dispatch
+receipt. The restricted source owner now refuses installation if any managed
+timer was previously scheduled, even if cleared, and rejects managed timeout and
+interval calls before native timer construction. Its identity-bound receipt adds
+`managed_timers_excluded`, which the existing channel and Rust journal validate.
+Ordinary managed timers remain available without the restricted owner. This is an
+explicit profile limitation; raw timers, arbitrary extension-spawned work, other
+extension events and the complete startup inventory remain unqualified.
+
+The source matrix passed **838/0** across **71** files. Eleven counterfactuals
+cover the previous extension owner plus timer owner installation, prior starts and
+both timer entry points; each failed as intended. Cached method references captured
+before ownership also refused. Five compiled-CLI controls passed: ordinary managed
+timer, owned timer refusals, held handler, handler timeout and invalid flags. The
+ordinary timer fired; the restricted timeout and interval calls were rejected and
+no managed callback fired. The handler timeout control uses the host's test setter
+at 150 ms. No prompt or provider call was made. Fresh checks passed formatting,
+pilot all-target Clippy, **119/0** pilot units (**1** ignored), Rust **1.90**
+all-target checking, five current-host consumers, **36/0** frozen compatibility
+(**10** ignored), both legacy-source consumers and seven channel controls. Four
+default gates reuse **258** identical effective inputs. Twelve startup persistence
+cases passed; the normal journal has **16** records and ends in
+`startup_inventory_unqualified`, with no Ready echo, permit or generation. Two
+byte-verified duplicate native copies from the baseline were removed after open-file
+checks. No provider calls or spend occurred. Complete inventory and durable
+acknowledgment remain open; paid runs, signing and release remain gated.
+
+
+
+The qualified implementation and records were pushed to
+`experimental/context-ecosystem` as `7721baf7670a2beea81cc9b45156b0b1a7bb59b3`.
+A fresh HTTPS clone matched all 439 tracked file bytes, types and executable modes;
+main was unchanged and no CI run was observed. After exact input retention and
+open-file checks, this round's source, dependency, Rust and MSRV caches and ten
+duplicate native copies were pruned. Stage allocation fell from **6,685,626,368**
+to **535,842,816 bytes**; this is not a physical APFS reclamation measurement.
+The necessary CLI leaf and runnable test artifacts remain. CLI, units, channel,
+startup and both legacy-source consumers passed again without the caches. A source
+restoration recipe and all 10,338 checked inputs remain; full reconstruction after
+pruning was not rerun.
+
+## Source-owned startup extension dispatch — 2026-11-18
+
+The restricted startup diagnostic now joins the selected original `session_start`
+handler and its tracked observer before incomplete-inventory HOLD. Code
+`e41df2fbe92580b15091abb2b8aa9438db7e9368` and the [upstream MIT reference
+patch](references/omp-startup-extension-owner.patch) target
+`can1357/oh-my-pi@24439066040e006eb08da7b204f0ac41c79d2de9` after the previously
+qualified startup patches. Foundry does not automatically apply that patch.
+
+The earlier native baseline showed that the host's ordinary 30-second timeout
+can return while an abort-ignoring original handler is still running. The explicit
+`--startup-extension` profile requires restricted tools, refuses late ownership,
+binds the exact session runner and tracks the original handler promise and its
+observer. After the handler broadcast and plugin-root retirement, the source
+produces an identity-bound, one-use receipt; the existing channel verifies it and
+Rust journals it. Timeout or handler failure cannot attest success, and repeated
+`session_start` dispatch and extension additions refuse. Ordinary extension
+behavior remains available without the flag. This does not join arbitrary work
+spawned by extensions or qualify other extension events or timers.
+
+The source matrix passed **836/0** across **71** files. Seven counterfactuals
+cover original tracking, failure, receipt identity, readiness, late installation,
+late additions and repeated dispatch. Five compiled-CLI controls passed: ordinary,
+owned, held handler, timeout and invalid restriction flags. The held handler
+produced no receipt before release. The timeout control used the host's test
+setter at 150 ms; after an ignored abort and release the process exited with failure
+and no extension receipt. No prompt or provider call was made. Fresh checks passed
+formatting, pilot all-target Clippy, **119/0** pilot units (**1** ignored), Rust
+**1.90** all-target checking, five current-host consumers, **36/0** frozen
+compatibility (**10** ignored), both legacy-source consumers and seven channel
+controls. Four default gates reuse **258** identical effective inputs. Twelve
+startup persistence cases passed; the normal journal has **16** records and ends
+in `startup_inventory_unqualified`, with no Ready echo, permit or generation.
+
+An earlier candidate lacked a late-install guard. Its current-host gate was
+intentionally interrupted; forced cleanup left no owned processes, and its commit
+and receipts remain locally retained. The corrected candidate received all gates
+above. No provider calls or spend occurred. Complete owner inventory and durable
+prefix acknowledgment remain open; paid runs, signing and release remain gated.
+
+
+
+The qualified implementation and records were pushed to
+`experimental/context-ecosystem` as `480679485b56885fe2b0854e84865969d590e081`.
+A fresh HTTPS clone matched all 438 tracked file bytes, types and executable modes;
+main was unchanged and no CI run was observed. After exact input retention and
+open-file checks, this round's source, dependency, Rust and MSRV caches and ten
+duplicate native copies were pruned. Stage allocation fell from **6,686,085,120**
+to **537,432,064 bytes**; this is not a physical APFS reclamation measurement.
+The necessary CLI leaf and runnable test artifacts remain. CLI, units, channel,
+startup and both legacy-source consumers passed again without the caches. A source
+restoration recipe and all 10,338 checked inputs remain; full reconstruction after
+pruning was not rerun.
+
+## Native startup extension timeout boundary — 2026-11-18
+
+A network-denied control on the current source-built startup host
+`c4e46ad7590e75e3b8b6db76368a9aed0a8c8bb5f563fc8bb13f84ee1a412d9d`
+used one synthetic trusted extension with a held `session_start` handler. In the
+normal control the handler was released before the timeout and the host exited
+normally. In the other control the host reported the handler timeout and answered
+an RPC state request while the original handler remained held; after the parent
+released it, that original handler completed and the host exited normally. The
+parent independently observed the handler's entry and completion. Both controls
+sent no prompt, used no provider and preserved the pinned model metadata.
+
+In the pinned source, `runtime-init.ts::initializeExtensions` awaits
+`ExtensionRunner.emit`; `runner.ts::raceHandlerWithTimeout` races the original
+handler against a deadline and signals abort on timeout. That race returning does
+not prove an abort-ignoring original has finished. RPC also emits its ordinary
+protocol `ready` before extension initialization. These are native observations
+with a synthetic extension, not a claim that Foundry admitted a run or that its
+actual observer handler timed out. The current startup-only Rust path ignores the
+raw RPC Ready and stops at `startup_inventory_unqualified`; no Ready echo, permit,
+count or generation is granted. The experiment made zero provider calls and no
+spend. Full extension ownership must account for the original handler and its
+callbacks after the handler returns, including timeout and ignored-abort controls;
+complete inventory and durable prefix acknowledgment remain open. Paid runs,
+signing and release remain gated.
+
+
+## Source-owned startup plugin roots — 2026-11-18
+
+The explicit restricted startup diagnostic now owns the selected plugin-root
+cache lifetime before incomplete-inventory HOLD. Code
+`1d5a70494ee7d6dd6e7d1c95fd2bd6f23e859fa1` and the [upstream MIT reference
+patch](references/omp-startup-plugin-roots-owner.patch) target
+`can1357/oh-my-pi@24439066040e006eb08da7b204f0ac41c79d2de9` after the previously
+qualified startup patches. Foundry does not apply that patch automatically.
+
+A network-denied baseline held an actual filesystem call and showed that cache
+clearing returned while its original re-warm continued. `--startup-plugin-roots`
+requires restricted tools and establishes the source owner before CLI startup.
+It tracks the original direct reads, preloads and injected-root work, their
+observers and synchronous cache clears; bounded work drains before entry points
+close atomically. Failed originals or invalidators refuse retirement, as does
+reentrant retirement; late reads and clears refuse before cache mutation. The SDK
+binds the exact owner to the sealed session and registry after logging retirement;
+Rust validates the bounded metadata and journals it. Ordinary behavior remains
+available without the flag. This does not join arbitrary asynchronous work spawned
+by invalidators or extensions, or establish a complete discovery inventory.
+
+The source matrix passed **725/0** across **69** files. Six counterfactuals covering
+closure, drain, synchronous failure/reentry and both clear entry points failed as
+intended. Four compiled-CLI controls passed: ordinary, owned, a real held re-warm,
+and invalid restriction flags. In the held case the parent observed the filesystem
+operation held and no retirement until release. Successful controls preserved pinned
+model metadata; no prompt or provider call was made. Fresh checks passed formatting,
+pilot all-target Clippy, **118/0** pilot units (**1** ignored), Rust **1.90**
+all-target checking, five current-host consumers, **36/0** frozen compatibility
+(**10** ignored), both legacy-source consumers and seven channel controls. Four
+default gates reuse **258** identical effective inputs. Eleven startup persistence
+cases passed; the normal journal has **15** records and ends in
+`startup_inventory_unqualified`, with no Ready, permit or generation. No provider
+calls or spend occurred. Other discovery/extension work, complete inventory and
+durable acknowledgment/Ready echo remain open; paid runs, signing and release
+remain gated.
+
+
+
+The qualified implementation and records were pushed to
+`experimental/context-ecosystem` as `7e2b5250fea8d496df0697aabe6f4da4d91f2411`.
+A fresh HTTPS clone matched all 437 tracked file bytes, types and executable modes;
+main was unchanged and no CI run was observed. After exact input retention and
+open-file checks, this round's source, dependency, Rust and MSRV caches and 15
+duplicate native copies were pruned. Stage allocation fell from **7,243,726,848**
+to **538,865,664 bytes**; this is not a physical APFS reclamation measurement.
+The necessary CLI leaf and runnable test artifacts remain. CLI, units, channel,
+startup and both legacy-source consumers passed again without the caches. A source
+restoration recipe and all 10,337 checked inputs remain; full reconstruction after
+pruning was not rerun.
+
+## Source-owned startup logger — 2026-11-18
+
+The explicit restricted startup diagnostic now closes the selected native logger
+and joins its actual queued retention callbacks before incomplete-inventory HOLD.
+Code `d61c156b81dd6d91cbc7096de07370b802830675` and the [upstream MIT reference
+patch](references/omp-startup-logging-owner.patch) target
+`can1357/oh-my-pi@24439066040e006eb08da7b204f0ac41c79d2de9` after the previously
+qualified startup patches. Foundry does not apply that patch automatically.
+
+A network-denied baseline showed that the original disabled logger could be
+reconfigured and write a second synthetic marker. `--startup-no-logging` requires
+restricted tools and establishes the source owner before CLI initialization. It
+uses the original synchronous transport close, refuses later transport, sink and
+forwarder changes through cached or direct references, retains pending original
+retention callbacks, and references their native handles while joining them. The
+exact owner retires against the sealed session and registry after marketplace; Rust
+validates and journals the closed metadata. Ordinary logging remains available
+without the flag. Upstream close is best-effort, so this is logical logger retirement,
+not independent proof of physical descriptor release or every logging implementation.
+
+The SDK and logger matrix passed **696/0** across **66** files. Removing each of
+the three reconfiguration guards or the retention join made its control fail.
+The first promise-only candidate stalled waiting for an unreferenced native
+immediate; the corrected owner references that original handle during its join.
+A held original callback prevents retirement until released. Three compiled-CLI
+controls passed: ordinary, owned and invalid restriction flags. They deny network,
+send no prompt and preserve pinned model metadata in successful cases. Fresh
+checks passed formatting, pilot all-target Clippy, **117/0** pilot units (**1**
+ignored), Rust **1.90** all-target checking, five current-host consumers, **36/0**
+frozen compatibility (**10** ignored), both legacy-source consumers and seven
+channel controls. Four default gates reuse **258** identical effective inputs.
+Ten startup persistence cases passed; the normal journal has **14** records and
+ends in `startup_inventory_unqualified`, with no Ready, permit or generation.
+No provider calls or spend occurred. Plugin re-warm, trusted-extension and other
+owners, complete inventory and durable acknowledgment/Ready echo remain open;
+paid runs, signing and release remain gated.
+
+
+
+The qualified implementation and records were pushed to
+`experimental/context-ecosystem` as `439cceca83785b6169cd7d8e3b0e1654bbfaa3c5`.
+A fresh HTTPS clone matched all 436 tracked file bytes, types and executable modes;
+main was unchanged and no CI run was observed. After exact input retention and
+open-file checks, this round's source, dependency, Rust and MSRV caches and six
+duplicate native copies were pruned. Stage allocation fell from **6,238,601,216**
+to **533,254,144 bytes**; this is not a physical APFS reclamation measurement.
+The necessary CLI leaf and runnable test artifacts remain. CLI, units, channel,
+startup and both legacy-source consumers passed again without the caches. A source
+restoration recipe and all 10,336 checked inputs remain; full reconstruction after
+pruning was not rerun.
+
+## Startup owner source census — 2026-11-18
+
+A partial source review followed the qualified marketplace round; it does not
+freeze the complete owner inventory or establish runtime absence. The reviewed
+host is the source-built startup artifact `2e0bd355124880abd57b0001b1980c380558627536ccf1a852f18e4cc793ea0c`,
+reconstructed from 10,334 hash-checked inputs rooted in
+`can1357/oh-my-pi@24439066040e006eb08da7b204f0ac41c79d2de9` and the retained
+qualified patches. Foundry source was at `c1d88b8ea89a1db4d8ed628f31a40b75c36aafe8`.
+This was source inspection only: no host or workspace code, provider, model or
+prompt was run in the census.
+
+- `main.ts` awaits the original `preloadPluginRoots` before presence and session
+  creation. However, `discovery/helpers.ts::clearClaudePluginRootsCache` can start
+  a new unawaited preload. RPC's plugin-reload hook reaches that clear from
+  prompt-driven marketplace commands; source inspection does not establish that
+  this route runs during startup. The initial await alone does not establish a
+  closed owner or that later callbacks cannot start another preload.
+- The startup-observation profile is distinct from the older owned-qualification
+  profiles in [host.rs](../src/pilot_capture/host.rs): it does not select their
+  [logging helper](../src/pilot_capture/startup_logging.ts). The earlier logging
+  receipt therefore cannot by itself qualify the current startup-observation
+  logging lifetime or late reconfiguration.
+- Restricted startup imports the exact trusted extension module, then the SDK
+  awaits its prepared factory. These awaited calls do not by themselves prove
+  that work or callbacks created by the module or factory have retired. RPC also
+  registers a command-metadata listener whose update is detached; whether it fires
+  before the current HOLD was not tested.
+
+These are source-observed candidate owners and routes, not a runtime reproduction,
+a complete census, or evidence of a network bypass. Preserve the current
+`startup_inventory_unqualified` HOLD. Subsequent work must cover the original
+operation, callbacks and late-start paths at the actual selected host boundary;
+paid runs, signing and release remain gated. Private readback records exact file
+hashes, matched symbols and source coordinates.
+
+
+## Source-owned marketplace exclusion — 2026-11-18
+
+The restricted startup diagnostic now closes the selected marketplace scheduler
+and records its original synchronous off call before incomplete-inventory HOLD.
+Code `bdfd1830c38b52b27a15e7bd19e9f3341ed76062` and the [upstream MIT reference
+patch](references/omp-startup-marketplace-exclusion.patch) target
+`can1357/oh-my-pi@24439066040e006eb08da7b204f0ac41c79d2de9` after the previously
+qualified startup patches. Foundry does not apply that reference automatically.
+
+The network-denied baseline showed that an enabled call after an off call could
+start detached refresh work. The explicit `--startup-no-marketplace` profile
+requires restricted tools, refuses later or enabled scheduling and requires frozen
+own data options before invoking the original off branch, which returns synchronously.
+Its exact owner retires after telemetry against the sealed session and registry.
+Ordinary updates outside the flag remain available. This does not establish a
+blanket network fence or cover other update routes, logging or trusted-extension
+ownership; complete before-I/O inventory and durable acknowledgment with matching
+Ready echo remain open.
+
+The source SDK matrix passed **660/0** across **60** files. Removing either the
+exclusion or immutable-options guard made its corresponding control fail. Four
+compiled CLI controls passed: ordinary off, owned off, enabled-setting refusal and
+invalid flags; successful controls preserved the pinned model metadata, and no
+prompt or provider call was made. Fresh affected checks passed formatting, pilot
+all-target Clippy, **116/0** pilot units (**1** ignored), Rust **1.90** all-target
+checking, five current-host consumers, **36/0** frozen compatibility (**10**
+ignored), both legacy-source consumers and seven channel controls. Four default
+feature gates reuse **258** identical effective inputs. Nine startup persistence
+cases passed; the normal journal has **13** records and ends in
+`startup_inventory_unqualified`, with no Ready, permit or generation. The round
+made zero provider calls and incurred no spend. Paid runs, signing and release
+remain gated.
+
+
+
+The qualified code and records were pushed to `experimental/context-ecosystem`
+as `c5d4cb66ae6453069b6c834dd0affc66da02acc7`. A fresh HTTPS clone matched all
+435 tracked file bytes, types and executable modes; main was unchanged and no CI
+run was observed. After exact input retention and open-file checks, this round's
+source, dependency, Rust and MSRV caches and four duplicate native copies were
+pruned. Stage allocation fell from **6,012,067,840** to **532,799,488 bytes**;
+this is not a physical APFS reclamation measurement. The necessary CLI leaf and
+runnable test artifacts remain. CLI, units, channel, startup and both legacy-source
+consumers passed again without the caches. A source restoration recipe and all
+10,334 checked inputs remain; full reconstruction after pruning was not rerun.
+
+## Source-owned telemetry exclusion — 2026-11-18
+
+**The explicit restricted startup diagnostic now prevents telemetry exporters
+from starting and joins its original disabled initialization before HOLD. Full
+startup admission remains open.** Code `06e1a2662df3c5f33caded7300673f841da113ae` and the
+[incremental upstream MIT patch](references/omp-startup-telemetry-exclusion.patch)
+target `can1357/oh-my-pi@24439066040e006eb08da7b204f0ac41c79d2de9`, after the
+caller/auth/refusal/restricted/catalog/settings/empty-auth/presence patches.
+Foundry does not automatically apply that reference patch.
+
+A network-denied baseline probe demonstrated that a disabled initialization can
+be followed by an enabled call that registers exporters. In the opt-in fixed
+profile, `--startup-no-telemetry` requires `--restrict-tools` and establishes a
+source owner before CLI initialization. It refuses enabled, repeated or late
+initialization before exporter construction; it retains the original disabled
+call and its completion observer, closes admission and joins them before reporting
+retirement. Ordinary telemetry outside the flag remains available. The SDK binds
+the exact source owner to the sealed session/registry after presence retirement.
+Rust validates the three closed facts and journals them before incomplete-inventory
+HOLD. This excludes the selected initialization path; direct OTLP imports, general
+exporter drain and a blanket network fence are not qualified.
+
+The SDK matrix passes **654/0** across **59** files, including existing telemetry,
+main/CLI, auth and presence suites. Removing the exclusion or its observer join
+makes the corresponding controls fail. Five compiled-CLI controls pass: ordinary
+baseline, owned disabled configuration, a configured endpoint, enabled-setting
+refusal and invalid restriction flags. Native controls use an OS network denial;
+no prompt or provider call is made. Three successful controls preserve model
+metadata digest `83aac156b7678be8faab3ca2d09fbf4e9773214fc968f1c4a13839dc718317c9`.
+The initial source-transform mismatch and test type errors are retained in private
+evidence; neither constitutes acceptance.
+
+Fresh affected checks pass: formatting, pilot all-target Clippy, **115/0** pilot
+units (**1** ignored) and Rust **1.90** pilot all-target checking. Four default
+feature gates reuse **258** identical effective inputs. All five current-host
+consumers, **36/0** frozen compatibility (**10** explicit diagnostics ignored),
+both legacy-source consumers and seven channel controls pass. Eight actual startup
+persistence cases pass, including telemetry-append and terminal-HOLD failures;
+the normal journal has **12 records** and no Ready, counter, permit or generation.
+The legacy conversation retains two requests, **29** usage mutation refusals and
+**25** trace mutation refusals. No retrieval improvement or real-provider economics
+is claimed.
+
+The implementation and qualification records were pushed to
+`experimental/context-ecosystem` as `e1f3058e2c00b2bf2d296c843aeee0a441c7f249`.
+A fresh HTTPS clone matched all 434 tracked file bytes, types and executable modes;
+main was unchanged and no CI run was observed. Source, dependency, Rust and MSRV
+caches were pruned after exact retention and open-file checks, along with five
+duplicate native copies. Stage allocation fell from **6,123,950,080** to
+**531,562,496 bytes**; this is not a physical APFS reclamation measurement. The
+needed CLI leaf and runnable test artifacts remain. Units, CLI, channel, startup
+and both legacy-source consumers pass again without the caches. Exact restoration
+inputs and a recipe remain; full reconstruction after pruning has not been rerun.
+
+The source host is `520ee05bdff74f88092462cf1d0eeaad38827c502a7fbba00e8c9e1529da618c`. All **10,333**
+source/native inputs are hashed before and after compilation and retained through
+the B5/native masters and exact overlays; the public patch applies with exact
+resulting bytes. Successful guarded phases sample at least
+**551,988,264,960 bytes** free disk and at most
+**2,406,072,320 bytes** individual RSS. These are sampled,
+not global or GPU, bounds. Private receipts are in
+`runs/pilot-telemetry-owner-2026-11-18/`. Complete startup inventory, update and
+logging ownership, trusted-extension ownership and durable prefix acknowledgment/
+Ready echo remain open; paid runs, signing and v2/T006 execution stay gated.
+Review is in-session.
+
+## Daemon-presence immutable handle qualification — 2026-11-18
+
+The owned daemon-presence handle now prevents a caller from replacing its original
+cleanup method. Ordinary handles retain their prior API. Source commit
+`95cbdd2b60fd85fa10fe3b3ded560e1a13ae4a5c` corrects the mutation gap recorded in
+[the earlier checkpoint](#original-daemon-presence-candidate--2026-11-16). The
+corrected source host is `9852009f4bf50a3c1c5cc521092a34a0f6229ad473a313da3d768dc9f0deaf2a`. Its 10,332 source/native inputs are
+hash-verified before and after compilation, and the incremental reference patch
+applies to all six source files with exact resulting bytes.
+
+The final SDK matrix passes **635 tests, 0 failed**, across 57 files. Four
+counterfactual controls fail as intended. Seven compiled CLI controls pass,
+including held registration/removal, failures and flag refusal. Fresh Rust checks
+pass for formatting, pilot all-target Clippy, 114 pilot units (one ignored), seven
+startup persistence cases, channel controls, five current-host consumers, 36 frozen
+compatibility cases (10 ignored), both legacy-source consumers and Rust 1.90
+pilot all-target checking. Four default-feature gates reuse 258 identical effective
+inputs. These are no-provider diagnostics; no prompt or paid model call was made.
+
+The implementation and qualification records were pushed to
+`experimental/context-ecosystem` as `91159b872ed391f1c999b49bec596a17598d7ddf`.
+A fresh HTTPS clone matched all 433 tracked file bytes, types and executable modes;
+main was unchanged and no CI run was observed. Source, dependency, Rust and MSRV
+caches were pruned after exact retention and open-file checks, along with seven
+duplicate native copies. The needed CLI leaf and runnable test artifacts remain.
+The pilot units, CLI, channel, startup and both legacy-source consumers pass again
+without the caches. The private receipts retain allocations and the exact source
+restoration recipe; the full reconstruction has not been rerun after pruning.
+
+A separate same-source behavioral counterfactual removes the owned-handle
+freeze: the fake cleanup is invoked and the regression fails. Restoring the exact
+qualified source makes the same test pass. The original source and dependency
+caches used for this control were pruned after hash and open-file checks. The
+no-provider receipts are in `runs/pilot-presence-mutation-2026-11-18/`.
+
+The normal startup journal remains an **11-record HOLD**. Complete startup
+inventory, telemetry/update/logging, trusted-extension ownership and the durable
+prefix acknowledgment/Ready echo remain open. No general OAuth drain, daemon-server
+shutdown, physical FD release or full admission is claimed. Paid runs and release
+signing remain gated. Private evidence and the exact restoration input manifest
+are in `runs/pilot-presence-final-2026-11-18/`; reconstruction after pruning has
+not been run. Review is in-session.
+
+## Original daemon-presence candidate — 2026-11-16
+
+**Implemented locally; final acceptance and publication are HOLD.** Baseline code
+`a916a4e621104b00197161747bfa11b5f86a8f84` owns original project-presence registration,
+its completion observer and shared cleanup before startup's durable HOLD. Final
+review finds a mutable returned handle can substitute its `close` method; the
+source candidate now freezes only the owned handle before exposing it. Ordinary
+handles keep their prior API. The final candidate has **not** been compiled or run.
+The [selected contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission)
+and [incremental upstream MIT patch](references/omp-startup-presence-retirement.patch)
+retain this required correction, upstream identity, modules and tests. The patch
+reproduces all six changed/new source files exactly, but is explicitly unqualified;
+Foundry does not automatically apply it. Its target remains
+`can1357/oh-my-pi@24439066040e006eb08da7b204f0ac41c79d2de9`, after the existing
+caller/auth/refusal/restricted/catalog/settings/empty-auth patches.
+
+The actual CLI awaited registration but discarded its real returned handle. Its
+original concurrent close could return before the original removal finished.
+The candidate retains the real file/handle, uses one shared cleanup promise,
+cancels the original postmortem callback, verifies absence after native removal
+and cleans partial failed writes. The explicit `--startup-presence` flag requires
+`--restrict-tools`; a source module owner begins before any registration, guards
+captured references and prevents new work before joining originals/callbacks.
+The CLI joins its original logging/catch observer. The SDK binds the exact opaque
+presence owner to its sealed original session/registry and requires original auth
+retirement first. Rust validates five closed facts after auth and journals them
+before incomplete-inventory HOLD. No path or user data enters this metadata.
+
+**Baseline evidence, before the final handle correction:** the SDK matrix passes
+**634/0** across **57** files, including **13** focused presence tests and existing
+daemon/auth/settings/caller/main/CLI controls. Source type/lint checks pass. Four
+13-test counterfactuals fail as expected: no-registration-join **8/5**, no-admission
+**11/2**, no-close-share **10/3** and no-remove **9/4** passes/failures. The initial
+nullable-state type errors remain in the raw evidence. The separately compiled
+baseline host is
+`cca508ac51d0d6725e751324cdabf6d500e51ee20d997d617d257576d0eb73bf`;
+all **10,332** inputs were hashed before/after compilation. Seven actual CLI
+controls pass: ordinary presence, owned fast path, held original registration,
+held cleanup, registration failure, cleanup failure and invalid flags. Five
+normal-exit cases preserve full model digest
+`83aac156b7678be8faab3ca2d09fbf4e9773214fc968f1c4a13839dc718317c9`.
+Registration/flag failures exit 1 before readiness; cleanup failure returns no
+presence receipt. The fixture catches that cleanup error for readback, which
+cannot establish admission. Parent file/release observations and source traces
+qualify these baseline paths; every owned process group is reaped without forced
+cleanup. No case sends a prompt or contacts a provider.
+
+Ordinary RPC EOF leaves its original presence file after normal process exit.
+The first comparison incorrectly assumed exit removed it and failed. That raw
+run is retained; the corrected ordinary comparison verifies its actual dead owner,
+while successful owned retirement requires absence before reporting. Neither
+ordinary RPC exit cleanup nor daemon-server shutdown is claimed repaired.
+
+On the same committed Rust baseline, formatting, pilot all-target Clippy,
+**114/0** pilot units (**1** ignored) and actual Rust **1.90** pilot all-target
+checking pass fresh. Four default-feature gates reuse **258** identical effective
+inputs. All five current-host consumers, **36/0** frozen compatibility (**10**
+explicit diagnostics ignored), both legacy-source consumers and seven channel
+cases pass. All seven actual startup persistence cases pass: normal **11-record
+HOLD**, refusal/catalog/settings/auth/presence append failures and terminal-HOLD
+append failure. No Ready, counter, permit or generation is admitted. The legacy
+conversation retains two requests, **29** usage and **25** trace mutation refusals.
+These receipts do not accept the later changed source candidate.
+
+The initial current-host run stops at the unchanged disk floor; its 60-second
+SIGINT grace expires and forced cleanup is needed. The process tree is confirmed
+gone. Its orphaned fixture retains **341** exact files after two identical native
+copies are removed; the compiler cache is removed after retaining executables.
+The unchanged direct retry passes. The first cache-free frozen run then passes
+35 cases but fails the CLI-manifests case because its compile-time CLI path was
+pruned. The real CLI is rebuilt from the same commit, its compiler intermediates
+are pruned, and the full retry passes **36/0**. The required **31,802,320-byte** CLI
+leaf remains at its embedded test path; no compiler intermediates remain there.
+The accepted MSRV cache is also removed. Earlier duplicated SDK/package caches
+and eight native copies were pruned with exact source restoration inputs retained.
+
+The added handle-mutation red checkpoint passes 13 tests and fails its 14th frozen-
+handle assertion on the baseline. Source review shows why: retirement freshly
+looks up the mutable `close` property. The prepared correction freezes the owned
+returned object; its stronger behavioral regression attempts substitution, then
+requires the original real removal and no fake call. That final regression is
+prepared **but unexecuted**. When qualification was attempted, the resource guard
+refused **before launch**. Its inherited error text says 512 MiB, but the actual
+round overrides/enforces **20 GiB**. No deadline, floor or assertion is relaxed.
+After pruning the regenerated SDK/package cache, observed free space is about
+**19.7 GB**, still below the **21,474,836,480-byte** floor. The cause is unassigned.
+The same 90-minute round's clock remains unchanged; no experiment runs below the
+floor. Model acquisition, paid runs, training, release signing and v2/T006
+execution remain gated.
+
+**Authorized cleanup:** six idle historical derived stores move to lossless local
+cold storage: four G2 artifact stores and the older T005 units7 Rust/Bun baselines.
+All **893** files are fully decoded and hash/mode checked before hot removal,
+then the original manifests are rechecked. Original directory allocation is
+**14,797,099,008 bytes**; compressed archives total **9,389,938,386 bytes**. Archives stay with
+their dataset owner under 0700 directories/0600 files. Old store paths become
+explicit not-a-directory sentinels, preventing accidental empty-store creation.
+Bounded reconstruction recipes preserve bytes/modes/timestamps; full restoration
+to disk has not been rerun. No indexing, retrieval evaluation, inference or training
+runs are used for archival. Models, source corpora, holdouts, transcripts and
+encrypted backups stay untouched. Three unselected prior auth-build intermediates
+also move to fully decoded hash/size-verified cold storage; the current/frozen/B5/
+startup/runtime/native continuation pins remain hot. Restore selected historical
+paths before reuse; expired qualification wrappers must not run. Directory
+allocation is not a physical APFS reclamation measurement.
+
+Final candidate bytes and a tested patch-application readback survive the SDK cache
+prune in `retained-pending-source/` and `pending-handle-source-inputs.json`. Baseline
+artifacts/receipts and original user files remain exact. The published branch
+still ends at `ccb6659f4c422b4227567fc3a7b1fab7db0c3b0b`; main remains
+`d94b013e3c638276f6afba49f80194776e294fbb`. No candidate push or workflow is attempted.
+
+Private evidence: `runs/pilot-daemon-presence-lifecycle-2026-11-16/`, including
+`protocol.json`, `baseline-evidence-readback.json`, `handle-freeze-red-execution.json`,
+`pending-handle-retention.json`, `pending-cache-prune.json`, resource recovery,
+CLI-cache, cold manifests and their bounded restore scripts. Resume the handle
+correction's compilation/native/startup qualification only with restored resource
+headroom and valid shared time; do not substitute the already-tested mutable
+baseline. Presence acceptance, complete inventory, telemetry/update/logging and
+trusted-extension ownership plus durable prefix acknowledgment/Ready echo remain
+open. Review is in-session.
+
+## Fixed empty-auth startup retirement — 2026-11-16
+
+**The explicit startup-only profile now enforces empty auth from construction,
+joins its original admitted work and closes the original local store before
+journaling HOLD. Full startup admission remains open.** Code `a0797d4f0b1a3512105691484bf9a80804118fa4`
+follows the [selected contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission)
+under a fresh shared 90-minute no-spend deadline after the settings round's terminal
+receipt, with one heavy job, 20 GiB free disk, 8 GiB sampled individual RSS and a
+120-second cleanup reserve.
+
+The [incremental upstream MIT patch](references/omp-startup-empty-auth.patch)
+targets `can1357/oh-my-pi@24439066040e006eb08da7b204f0ac41c79d2de9`, after the
+existing caller/auth/refusal/restricted/catalog/settings patches. Its module/test
+pointers and intentional differences remain with that reference. The separate
+`--startup-empty-auth` flag requires `--restrict-tools`; only the explicit Foundry
+startup diagnostic selects it. Ambient environment cannot select this profile.
+Ordinary auth capabilities and default discovery arguments remain outside it.
+
+The profile keeps the **actual local SQLite store**, with scalar row-count checks
+that do not export credential values. Brokers are refused before config commands,
+token-file resolution or remote-store construction. Stored credentials, foreign
+backends and unsupported namespace operations refuse; a reload rejects material
+before adopting it or emitting credential events. One bounded auth-specific owner
+wraps the finite supported startup calls, preserves their exact original returned
+promises, and joins them plus completion observers before closing the original
+store. Cached references remain guarded. A fresh lookup observes a replaced method
+while earlier references retain their original function, preserving JavaScript
+lookup semantics. Ownership is bounded to **4,096** starts.
+
+Source metadata remains available after retirement. The real completion consumer
+still obtains no OAuth identity and the local store's original usage observer is a
+no-op; an unexpected observer hook refuses. These calls do not manufacture a key,
+identity or usage report. The native database rejects fresh SQL after original
+close. This is logical native-store retirement, **not physical FD release or a
+general OAuth/broker drain**. Those broader behaviors are not required or accepted
+for the selected empty pilot profile.
+
+The SDK binds the exact original auth instance through a weak reference alongside
+the original session/registry. It requires original auth/settings-link retirement
+first. Wrong manager/registry/auth identity, premature/repeated retirement and new
+work through retained namespace references refuse. The source host is pinned at
+`076d29ae16569fee44cc47e89a72569f3643eaa60005fbfc052fb1c0913055a1`. All **10,331** source/native inputs are hashed before
+and after compilation. The public patch reproduces **12** changed/new files exactly;
+every restoration input in the B5 master, exact overlays and native master is
+hash-verified. Reconstruction/reinstallation has not been rerun after pruning.
+The three capture pins remain unchanged; this artifact is startup-only.
+
+**Seven compiled-CLI controls** pass. Four successful runs cover ordinary auth,
+empty-profile retirement, a held original continuation and original failure. The
+held caller receives the exact original promise; the parent controls release, and
+its filesystem completion marker/source trace precede retirement. The ordinary
+resolver positive control writes its marker; fixed-profile late operations cannot
+invoke it. Eight late operations refuse. Model metadata remains exactly
+`83aac156b7678be8faab3ca2d09fbf4e9773214fc968f1c4a13839dc718317c9` in all four.
+The other three cases refuse a real seeded credential row, broker configuration
+and missing restriction flag before SDK readiness. Parent wait observes exit 1
+without forced cleanup and with each owned group gone. Bun's fatal-startup path
+omits its JavaScript exit callback; these three traces are exactly the installation
+record, with the independent parent exit/refusal proof. Successful cases retain
+the complete normal-exit trace. No case sends a prompt or contacts a provider.
+This does not qualify full generation/tool behavior under a future v2 profile.
+
+The final SDK matrix passes **615/0** across **54** files, including auth, original
+broker/refresh behavior, main/CLI/default compatibility, restricted SDK and the new
+owner/completion tests. Four counterfactuals fail as intended:
+
+- no-join: **8/3** passes/failures.
+- no-admission: **10/1** passes/failures.
+- no-broker: **10/1** passes/failures.
+- no-close: **7/4** passes/failures.
+
+The controls remove original joining, namespace admission, early broker refusal
+and original-store close respectively. Source type checks pass. Earlier **512/0**
+and **513/0** matrices and their manifests remain as dated checkpoints; they do not
+replace the final input matrix.
+
+Rust validates closed auth metadata after settings retirement and journals it
+before the incomplete-inventory halt. Decoder/order controls reject missing/false
+facts, invalid counts and premature/duplicate reports. All **six** actual startup
+persistence cases pass: normal **ten-record HOLD**, refusal/catalog/settings/auth
+append failures and terminal-HOLD append failure. Failed persistence grants no
+successful receipt or reusable claim. No Ready, permit, counter, generation or
+compatibility seal is created.
+
+Four affected gates are fresh on the committed implementation: formatting, pilot
+all-target Clippy, **113/0** pilot units (**1** ignored) and actual Rust **1.90**
+pilot all-target checking. Four default-feature gates reuse **258** identical
+effective inputs. All five current-host consumers, **36/0** frozen compatibility
+(**10** explicit diagnostics ignored), both legacy-source consumers and seven
+channel cases pass fresh. The legacy source conversation retains two requests,
+**29** usage mutation refusals and **25** trace mutation refusals. No retrieval,
+real-provider economics or task-quality improvement is claimed.
+
+Retained failures include source-transform/fixture quoting errors and initial type
+mismatches. The first native held fixture missed the original cached method: it
+shows no hold marker and false promise identity. That is not a passing drain
+control. The proxy lookup correction has its own regression and final native held/
+error proof. The next controller incorrectly required Bun's omitted exit callback
+on fatal startup; its raw expected store refusal/parent exit remain and the final
+negative criteria use exact installation-only traces plus independently reaped
+known refusal. No product assertion, deadline or resource limit is relaxed.
+Successful guarded phases sample at least **27,908,456,448
+bytes** free disk and at most **2,170,880,000 bytes**
+individual RSS; these are sampled bounds, not global/GPU quotas.
+
+Before Rust qualification, the duplicate source/dependency/package-cache trees
+and **22** generated native copies are pruned after full restoration/open-file
+checks; **759** other stage files remain exact. The retained source manifest refers
+to the one pinned native master, with no redundant native entry. Rust-cache
+cleanup/publication/replay are recorded below. Original user files,
+corpora, models, outcomes and encrypted backups remain intact. Rejected retrieval
+candidates are not run, selected or published.
+
+The implementation and qualification records are pushed to
+`experimental/context-ecosystem` as `4029e1c8e2f46c680f8ee95dcf2f49d4c79b3613`. A fresh HTTPS clone reads back
+all **432** tracked files with matching types, executable modes and bytes;
+main remains `d94b013e3c638276f6afba49f80194776e294fbb`. No CI run is observed on
+that head and no workflow is dispatched.
+
+Both new Rust build/MSRV trees are removed after open-file, source-retention and
+executable checks. The native-library scan finds no remaining duplicates; **993** other stage files remain exact.
+Stage allocation changes from **4,667,138,048** to
+**1,179,463,680 bytes**. Retained units, seven channel cases,
+six startup persistence cases and both legacy-source consumers then pass directly
+without the build trees. After replay, another open-file/native-library scan finds no duplicate copies; **1048**
+other files remain exact. Directory allocation is not a physical APFS reclamation
+measurement. The current continuation pins, original user files and exact
+restoration inputs remain intact. The terminal remote/cache/resource readback is
+in `final-readback.json`; full startup admission remains HOLD.
+
+Private evidence: `runs/pilot-auth-store-lifecycle-2026-11-16/`, including
+`protocol.json`, `sdk-completion-qualified-execution.json`, `native-auth-readback-final.json`,
+`startup-qualified-evidence/`, `qualification-readback.json`, `retained-source.json`,
+`restore-source.py` and resource-prune receipts. Older wrappers have expired clocks.
+The complete inventory, telemetry/update/logging, trusted-extension and daemon-
+presence ownership plus durable prefix acknowledgment/Ready echo remain open.
+Paid runs, model acquisition, training, release signing and v2/T006 execution
+remain gated. Review is in-session.
+
+## Source-owned settings retirement — 2026-11-16
+
+**The startup diagnostic now retires original settings work and the original CLI
+auth/settings link before recording HOLD. Complete startup admission remains open.**
+Implementation `a28b729e8e477e7e59942e632351487fc5ccf9f2` follows the [selected contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission)
+in a fresh 90-minute no-spend round after the catalog round's terminal receipt.
+
+The [incremental upstream MIT patch](references/omp-startup-settings-retirement.patch)
+targets `can1357/oh-my-pi@24439066040e006eb08da7b204f0ac41c79d2de9`, after the
+existing auth/caller/refusal/restricted/catalog patches. Its module/test pointers
+and intentional differences remain with the patch. One opt-in `Settings` owner is
+established at construction in the restricted CLI profile. Retirement closes new
+mutations, reloads and watching; joins original admitted reload/rescope/save work
+and completion observers; preserves staged global/project writes; and cancels the
+remaining timers. Ownership is bounded to 4,096 starts. Derived settings owners
+are refused in this profile; ordinary settings outside it retain their behavior.
+The SDK binding requires the exact already-sealed session, registry and global
+settings instance. It first retires the CLI's original auth/settings link. This
+CLI supplies authStorage/modelRegistry, so the SDK's `ownsAuthStorage` condition
+excludes a second session link. No general OAuth drain or physical credential-store
+close is established by these facts.
+
+**Four compiled-CLI controls** pass: original watching applies a real config edit;
+restricted retirement; held original reload/queued rescope; and original read error.
+The held continuation cannot finish before the parent releases it. Its actual
+filesystem marker and source trace precede retirement. Wrong manager/registry,
+repeated retirement, seven late mutation/reload/watch operations and derived
+settings owners refuse. All four retain the complete native model digest
+`83aac156b7678be8faab3ca2d09fbf4e9773214fc968f1c4a13839dc718317c9`,
+send no prompt, exit normally and leave no owned group. The watching positive
+control changes only its synthetic retry setting; it is not the selected profile.
+
+The separate startup-only host is pinned at `bd77411fd9dc4385f4b4e5674f6c593ab44e997780c1eb474be18a1c1dad071c`. All **10,329**
+source/native inputs are hashed before and after compilation. Every restoration
+input in the retained B5 master, overlays and native master is hash-verified;
+reconstruction/reinstallation has not been rerun after pruning. Applying the
+public patch reproduces its **four** changed/new files byte for byte. The three
+capture host pins remain unchanged. SDK evidence is **247/0** across nine files;
+the final formatted five-test owner suite passes again with type checking across
+**4,855** files. Each of three five-test mutations fails **4/1**: omitting joins,
+reopening synchronous mutation admission, and omitting queued rescope ownership.
+The queued-original test holds both actual reload bodies independently. Staged
+writes, original error reporting and unowned settings behavior are also covered.
+
+Rust validates the closed metadata and journals `startup_settings_retired` after
+catalog retirement. The owner-order check rejects early/duplicate reports; decoder
+controls refuse missing/false joins and invalid operation/rejection counts. The
+actual-host test passes **five** persistence cases: normal **nine-record HOLD**,
+refusal append failure, catalog append failure, new settings append failure and
+terminal-HOLD append failure. Failed persistence yields no successful receipt or
+reusable claim. No Ready, permit, counter, generation or compatibility seal exists.
+
+Four affected gates are fresh on the committed implementation: formatting, pilot
+all-target Clippy, **112/0** pilot units (**1** ignored) and actual Rust **1.90**
+pilot all-target checking. Four default-feature gates reuse **258** exact effective
+inputs; this is not a fresh full-repository run. All **five** current-host consumers,
+**36/0** frozen compatibility tests (**10** explicit diagnostics ignored), both legacy
+source consumers and seven channel cases pass fresh. The legacy source conversation
+still has two requests and rejects **29** usage and **25** trace mutations.
+No retrieval improvement, task-quality gain or real-provider economics is claimed.
+
+Retained failures include a missing scratch-directory setup, an overloaded test
+function type, one controller started before the compile manifest existed, two
+compilations stopped by the **20 GiB** disk floor and further preflight refusals.
+The first frozen suite is also interrupted at the disk floor; its SIGINT grace
+expires and the failure records forced cleanup with no owned processes remaining.
+The complete frozen suite then runs afresh on unchanged inputs. Final retention
+readback also catches a native-library manifest entry whose
+redundant copy was pruned. The original manifest is retained, the pinned master
+is byte-verified and the reference is repaired before publication. All failures are
+retained and superseded by green receipts, without changing acceptance,
+the shared deadline or resource limits. The legacy guard message mentions 512 MiB;
+this round overrides/enforces 20 GiB. Successful guarded phases have minimum sampled
+free disk **21,521,240,064 bytes** and
+maximum sampled individual RSS **3,327,344,640 bytes**,
+below the **8 GiB** ceiling. These sampled values are not global pressure measures.
+
+Recovery cleanup removes the redundant download cache and interrupted unqualified
+artifact after retaining its hash and original failure logs. Byte/mode-verified
+APFS file clones deduplicate unchanged public source, code and model copies while
+preserving their paths and independent future writes. Stale compiler intermediates
+inside two owned dataset fixture targets remove **13,464** files, totaling
+**3,295,457,280 allocated file bytes**; all **91** other target files remain exact.
+Four older task-owned temporary workspaces are matched to dated ownership
+receipts and their Foundry source manifests. Removing only their stale compiler
+intermediates removes **116,036** files totaling **38,805,032,960 allocated file
+bytes**; all **2,331** source/evidence/executable files outside that cache selection
+remain exact. No rejected candidate is executed, selected or published.
+Their stores, models, source and raw evidence remain intact. This is not a
+physical-reclamation claim. The source/dependency tree and **five** duplicate native
+libraries are also pruned after exact restoration/open-file checks; **249** other
+stage files were exact at that checkpoint; the later native-reference repair above
+has its own before/after manifest receipt. Original user untracked files remain
+byte-identical.
+
+Publication through `dc9720743530aa7d50f5a2cb9cd239304970b575` passes remote-head/main checks and full fresh
+HTTPS clone readback of **431** tracked files, including type, executable mode
+and bytes. No CI run is observed for that head; main remains
+`d94b013e3c638276f6afba49f80194776e294fbb`. The final record-only update is checked
+separately in the private publication receipt. New Rust build/MSRV trees are then
+removed after open-file/retained-executable checks, reducing directory allocation by
+**3,485,552,640 bytes**; **499** other stage files remain exact.
+Direct replay without Cargo/build caches passes **112/0** units (**1** ignored),
+seven channel cases, all five startup persistence cases and both legacy-source
+consumers. The normal nine-record journal still ends in HOLD. Every replay command
+exits 0 with no owned process remaining. The replay cleanup verifies **553** other
+files exactly. `retained-green.json`, `retained-unit.json`, `cleanup-build-result.json`
+and `retained-execution.json` bind this later runnable evidence. SDK checks were
+run before pruning; the source restoration recipe and its verified inputs remain.
+
+Private evidence/restoration: `runs/pilot-settings-lifecycle-2026-11-16/`, including
+`protocol.json`, guarded command receipts, `native-settings-readback.json`,
+`qualification-readback.json`, `retained-source.json`, `restore-source.py`,
+`source-clone-recovery.json`, `code-model-clone-recovery.json` and
+`old-dataset-cache-result.json` and `old-temp-cache-result.json`. Earlier round
+wrappers have expired clocks; do not run them. Source/dependency checks occurred before pruning; later retained replay
+is explicitly a runnable check. Paid/provider runs, model acquisition, training,
+release signing and v2/T006 execution remain gated. Auth-store/OAuth lifetime,
+telemetry/update/logging, trusted-extension and daemon-presence ownership plus the
+complete inventory and durable prefix acknowledgment/Ready echo remain open.
+
+## Source-owned startup discovery retirement — 2026-11-16
+
+**Discovery timeout completion does not settle its original operation. The
+startup-only qualifier now joins those originals before journaling catalog
+retirement and HOLD. Complete startup admission remains unqualified.** Implementation
+`b8738ef5a4242a1da20ac1aa0787d88b1f99e3e0` follows the [selected contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission)
+in one new 90-minute no-spend round after the preceding round's terminal receipt.
+
+The [incremental upstream MIT patch](references/omp-startup-discovery-retirement.patch)
+targets `can1357/oh-my-pi@24439066040e006eb08da7b204f0ac41c79d2de9`, after the
+existing caller/auth/refusal/restricted-startup patches. Named modules/tests and
+intentional differences are retained in it. One opt-in owner is established at
+`ModelRegistry` construction. Public discovery entry points close before draining;
+original provider operations and completion observers remain owned after a timeout,
+including post-header response bodies and shared catalog requests whose subscriber
+has aborted. Existing fetch-identity-scoped sessions carry that same owner.
+The ordinary timeout path retains its behavior. This is source callback ownership,
+not a global transport fence or permission. Ownership is bounded to 4,096 starts;
+unknown/mirrored/repeated bindings and unqualified Cursor native HTTP/2 discovery
+refuse. Static models and the fixed profile's preceding disabled-provider/model
+identities remain. No physical descriptor shutdown is claimed.
+
+An initial exact-function native control demonstrates the defect with pinned
+Bun 1.4.4 and an independent parent-owned UDP receiver: the timeout returns with
+zero packets and the original unfinished; releasing it subsequently produces one
+named-DNS request. This is the exact extracted source function, not a compiled CLI
+or complete transport proof. The later **five compiled-CLI controls** qualify the
+actual owner: fast baseline/restricted, held baseline/restricted, and restricted
+original failure. The ordinary background waiter returns with **0/2** originals
+complete and zero observed UDP requests. A parent-controlled release then permits
+two requests. Restricted retirement waits for **2/2** originals and both independent
+UDP observations before reporting completion, including the error case. Known
+failures remain bounded rejection counts; a retirement receipt is not a successful
+provider request. Both forms retain the same complete model digest
+`83aac156b7678be8faab3ca2d09fbf4e9773214fc968f1c4a13839dc718317c9`.
+All five send no prompt, exit normally and leave no owned group.
+
+The source host is pinned at
+`1d6bad5ae5c86ccc0b62aafd10d37a281f2c2f0aaf523e011b2c7a5af15653cf`. All **10,328** source/native inputs are hashed before
+and after compilation. Applying the public patch reproduces its **nine** changed/new
+files exactly; full reconstruction from the retained source master, exact overlays
+and native master is hash-verified. Three prior capture pins remain unchanged;
+this separate artifact is selected only for the startup diagnostic.
+
+SDK behavior evidence is **364/0** across seven files, followed by **37/0** focused
+tests after adding two exact SDK-to-registry identity cases. Only that test file
+changes between the two manifests. The catalog conditional-request regression is
+**38/0**. Source type checking covers **4,854** files. Three
+11-test mutations fail as intended: dropping original ownership gives
+**10/1**, dropping response-body ownership
+**10/1**, and reopening public admission during retirement
+**9/2** (passes/failures). Tests separately
+exercise primary-error identity, a held original, ignored abort, detached subscriber,
+reentrant retirement, exhausted ownership, unknown/mirrored ownership and late starts.
+
+The existing closed startup channel now carries the bound catalog retirement
+receipt after warm-up/restriction settlement. Rust requires all join facts, positive
+bounded operation counts and rejection counts no greater than starts. One local
+owner-order state rejects premature/duplicate reports and attempts after warm-up
+settlement. The actual-CLI test passes **four** cases: normal eight-record HOLD,
+refusal-append failure, new catalog-append failure and terminal-HOLD-append failure.
+Failures retain consumed claims and publish no successful observation receipt.
+No Ready, counter, permit, generation or compatibility seal is created.
+
+Four affected gates are fresh: formatting, pilot all-target Clippy, **111/0** pilot
+units (**1** ignored), and actual Rust 1.90 pilot all-target checking. The first four
+focused executions began before the local commit; complete pilot input hashes match
+its committed bytes. Four default-feature gates reuse **258** exact effective
+inputs; this is not a fresh full-repository run. All **five** current-host consumers,
+**36/0** frozen compatibility (**10** explicit diagnostics ignored), both legacy
+source consumers and seven channel cases pass fresh. The legacy source conversation
+retains two requests, **29** usage and **25** trace mutation refusals. No retrieval,
+provider economics or task-quality improvement is claimed.
+
+Retained failures include source transformation/setup errors, an overbroad native
+path guard placed in cache loading, and a read-only response-body fixture field.
+They are corrected before green type/behavior checks. The first compiled held
+controller fails its packet-count assertion after normal child exit; policy quote
+generation and distinct per-call DNS names are corrected. Its raw traces remain;
+no unsupported causal attribution is made from the missing initial parent counts.
+Four early Rust check attempts are refused before launch by the unchanged **20 GiB**
+reserve; they have no process/PID or test result. The driver's legacy error text
+mentions 512 MiB, but this round overrides/enforces 20 GiB. Disk snapshots fluctuate
+as low as about 13.1 GiB; the cause is unassigned and APFS physical reclamation is
+not inferred. The parent candidate is preserved in `parent-integration.patch`,
+restored to accepted bytes, then reapplied exactly when space recovers. The original
+round deadline, floor and acceptance requirements are never relaxed.
+
+Before Rust qualification, two duplicate SDK/dependency/package-cache trees and
+**8** identical generated native libraries are removed after open-file,
+source-restoration and byte checks; **421** other files remain exact.
+Directory allocation falls by **2,467,397,632 bytes**.
+Four older unit executables, then 38 older diagnostic/candidate executables, move
+to lossless cold storage. Every compressed stream is fully decompressed and hash/
+size checked before its original is removed; original mode/hash and restoration
+instructions remain in `cold-code-cache.json`, `cold-more-code.json` and
+`restore-cold-code.py`. The first cold pass verifies **4,933** other evidence files
+exactly; the second verifies all protected continuation pins. Current/frozen/source
+hosts, pinned Bun/native masters, continuation binaries and the latest accepted
+unit/integration executables stay hot. The cold phase reduces runs allocation by
+**2,768,801,792 bytes**. Original bytes remain recoverable; restore selected old
+executables before using their historical paths, and do not run expired-clock
+wrappers. Required corpora, datasets, models, transcripts, backup archives and the
+three original user files are preserved.
+
+Private evidence is `runs/pilot-catalog-lifecycle-2026-11-16/`, including
+`qualification-readback.json`, `timeout-witness-readback.json`,
+`sdk-qualified-execution.json`, `sdk-final-execution.json`,
+`native-restriction-readback.json`, each case's independent parent observations,
+`startup-qualified-evidence/`, the exact public-patch readback and cleanup receipts.
+Qualification completes at **4465.697 s** in the same 90-minute round.
+Successful guarded phases sample at least **22,972,784,640 bytes** free
+and at most **2,816,802,816 bytes** individual RSS. These are sampled
+process/disk bounds, not global/GPU quotas; refused launches are separate above.
+Review is in-session. No provider call, spend, model download, release signing,
+workflow dispatch or main/release change occurs.
+
+Other startup owners still require complete source-bound retirement/exclusion
+integration in this startup revision: auth/settings, telemetry/update/logging,
+extension initialization and daemon-presence cleanup. Existing controls from other
+profiles are not automatically the complete inventory. Catalog callback retirement
+does not durably classify every transport attempt. The full inventory and prefix
+acknowledgment/Ready echo remain open. T006 stays unaccepted and v2 remains
+unfunded/unfrozen/execution locked; paid runs and signing stay gated.
+
+Implementation and records are pushed through `e641b45` to
+`experimental/context-ecosystem`. A fresh HTTPS clone verifies all **430** tracked
+files by type/mode/bytes. Zero CI runs are observed and main remains `d94b013`.
+Only eight public code/test/reference/record paths are included; private artifacts,
+corpora, models, tasks, credentials and cold caches remain local.
+
+After publication, open-file and byte-retention checks remove the new build/MSRV
+trees and **0** duplicate native libraries. **822** other files remain
+exact; directory allocation falls from **3,947,876,352** to
+**462,680,064 bytes** at this phase. Unit/integration executables with
+only system dynamic-library dependencies are retained. Direct replay without
+Cargo, SDK dependencies or build intermediates passes all **111** pilot units
+(**1** ignored), seven channel cases, all **four** startup/HOLD/persistence cases and
+both legacy-source consumers. The source conversation retains its **29** usage
+and **25** trace mutation refusals. SDK/source type tests and the five CLI catalog
+controls are pre-prune evidence, not claimed as newly rerun after dependency cleanup.
+
+Post-replay cleanup verifies **875** other files exactly and removes
+**0** newly redundant native libraries. Combined directory-allocation reduction
+across cache cleanup and lossless cold storage is **8,721,285,120 bytes**. Physical
+APFS reclamation is not inferred. Target/runs/datasets allocation is
+**3,641,344 / 8,992,100,352 / 34,715,725,824 bytes**. Required original data,
+backup archives, exact restoration inputs and user files remain.
+Post-cleanup readback finishes at **4697.475 s** within the original round.
+`publication-fix.json`, `cleanup-build-result.json`, `retained-execution.json`,
+`cleanup-replay-result.json` and `post-cleanup-readback.json` retain the receipt.
+The wrap-up remains active. Complete startup inventory/acknowledgment, paid runs
+and release signing retain their stated gates.
+
+## Restricted startup ownership — 2026-11-16
+
+**The startup-only host now proves its actual SDK tool/MCP/memory restrictions
+and joins the original credential-usage preparation. Complete startup admission
+remains HOLD.** Implementation `bccd28130d5322186ca8e23ee58c32a0dfbffcdc` follows
+003 T006's [selected startup contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission).
+The current/frozen/legacy-source capture pins and Live/funding locks are unchanged.
+
+Source inspection found that CLI `--tools read,edit` does not set SDK
+`restrictToolNames`. The [upstream MIT patch](references/omp-restricted-startup.patch),
+against `can1357/oh-my-pi@24439066040e006eb08da7b204f0ac41c79d2de9` with the existing
+caller/auth patches, exposes explicit `--restrict-tools` requiring `--tools`.
+Only `StartupObservation` passes it. Ordinary tool selection retains its behavior.
+Restricted initialization uses the existing SDK guards to exclude MCP inheritance
+and memory controllers. Only explicitly trusted extension factories are prepared
+by the CLI and then bound once by the SDK to its actual session; ambient extension
+discovery and the unrelated Warp bridge are excluded in this mode.
+
+`sdk.ts::sealRestrictedStartup` binds the actual live session manager, registry,
+active tools and disabled MCP/memory result. Weak identity references avoid retaining
+disposed sessions. A second/concurrent creation makes the binding ambiguous;
+wrong identities, disposed sessions and repeated seals refuse. Sealing prevents
+later SDK creation. The existing bounded warm-up owner also joins the original
+credential-usage prefetch and its logging observer for restricted sessions,
+including primary-error exits. Rejected/unjoined preparation cannot attest success;
+ordinary startup retains its best-effort behavior.
+
+The separate compiled diagnostic host is pinned at
+`ac27541702668959592bca9d01d7b7db231be244b2d3016964c143497f0ac659`. All **10,326** qualified source/native inputs are
+hashed before and after compilation. The public patch reproduces all seven
+changed/new SDK files exactly. The early observer receives the SDK sealing function
+from the late trusted-extension loader through the public package entrypoint;
+it does not resolve SDK imports from the early preload closure.
+The child sends four closed restriction fields over the existing channel.
+Rust validates/journals them after the original warm-up joins, then records
+`startup_inventory_unqualified`. No Ready, permit, generation or capture seal exists
+in this diagnostic. The normal journal has **seven** records. Real CLI refusal-append
+and terminal-HOLD-append failures retain consumed claims and return persistence
+errors without publishing a successful observation receipt; all three cases pass.
+
+Two actual compiled-CLI controls, same complete model digest
+`83aac156b7678be8faab3ca2d09fbf4e9773214fc968f1c4a13839dc718317c9`,
+send no prompt. Unrestricted startup starts the owned local MCP marker and has
+memory enabled; restricted startup starts neither and reports the exact four-field
+receipt. Wrong manager/registry, duplicate seal and later creation refuse. Both
+exit normally with their owned groups gone. These controls qualify those owners,
+not every startup route or transport.
+
+All **24** SDK tests pass: sixteen caller/preparation tests and eight fresh-child
+CLI-to-real-SDK cases. Two earlier 23-test mutation matrices have teeth: disabling
+the restriction yields **18 passes / 5 failures**; skipping the original usage join
+yields **20 passes / 3 failures**. The disposed-session case was added afterward.
+Focused SDK format/lint and all **4,852** source type checks pass.
+
+Four affected Rust gates are fresh: formatting, pilot all-target Clippy,
+**109/0** pilot units (**1** ignored), and actual Rust 1.90 pilot all-target checking.
+Formatting/Clippy/units began before the local commit; their complete effective
+pilot input hashes match its committed bytes. Four default-feature gates reuse
+**258** exact effective inputs from the linked receipt, not a new full repository
+run. All **five** current-host diagnostics and both legacy-source consumers pass
+fresh; frozen compatibility is **36/0**, with **10** diagnostics ignored. The native
+channel's seven cases pass. Legacy-source conversation preserves two requests,
+**29** usage and **25** trace mutation refusals. No retrieval or economics gain is claimed.
+
+Retained unsuccessful attempts expose real loader boundaries: restricted SDK startup
+intentionally discards CLI-bound instances, so prepared factories must bind in its
+actual context; the early preload cannot resolve late SDK imports; the SDK subpath
+is not a compiled-host package entrypoint. These attempts remain separate from the
+latest pinned artifact's green CLI readbacks. A later build is stopped at
+**20,865,634,304 bytes** free by the unchanged
+20 GiB reserve, exit **-2**, with no owned processes left.
+It has no test result. Other filesystem activity is not attributed to a cause.
+
+Before retrying, exact changed/new source, original source master, lock/package/
+license identities, native master and compiled host are retained. Open-file and
+byte checks then prune the duplicate SDK/dependency tree and package cache,
+reducing directory allocation by **1,582,190,592 bytes** while **326** other files
+remain exact. The original deadline and disk floor are unchanged. Qualified native
+checks then pass without those trees. The restoration recipe reconstructs exactly
+10,326 inputs before any separately bounded dependency install/build; it is retained
+but not executed after pruning in this round.
+
+A complete catalog/discovery owner remains open: `ModelRegistry.awaitBackgroundRefresh`
+joins only its current background-refresh promise, not every configured discovery,
+hydration, policy or initial-refresh owner. Quiet/pending counts cannot replace
+those joins. Auth/settings, telemetry/update and extension owners still need their
+complete source-bound inventory/lifecycle integration. Source inspection also finds
+`main.ts`'s awaited daemon project-presence registration and its exit cleanup;
+it must be classified rather than omitted from the inventory. Full durable prefix
+acknowledgment/Ready echo remains unimplemented. T006 stays unaccepted, v2 remains
+unfunded/unfrozen/execution locked, and the rejected generic API fence remains rejected.
+
+Private evidence is `runs/pilot-startup-inventory-2026-11-16/`, including
+`qualification-readback.json`, `sdk-green-execution.json`, both mutation receipts,
+`native-restriction-readback-qualified.json`, `startup-qualified-evidence/`,
+`resource-prune-result.json` and `retained-source.json`. Qualification readback at
+**4477.712 s** is within the same new 90-minute round.
+Successful qualification phases sample minimum free disk **21,693,460,480 bytes**
+and maximum individual RSS **2,899,263,488 bytes**;
+the stopped attempt is reported separately above. Sampling is not a global/GPU quota.
+Review is in-session. No provider call, spend, model acquisition, release signing,
+workflow dispatch or main/release change occurs.
+
+Implementation and acceptance records are pushed through `633fc9b` to
+`experimental/context-ecosystem`. A fresh HTTPS clone passes full type/mode/byte
+readback of all **429** tracked files; zero CI runs are observed. Eight public
+code/test/reference/record paths are included. Main remains `d94b013`; private
+corpora, tasks, models, credentials and evidence are not published.
+
+After publication, open-file and exact-retention checks remove this round's Rust
+build/MSRV trees and **7** redundant native-module copies;
+**615** other files remain exact. Allocation falls from
+**4,745,904,128** to **459,657,216 bytes** at this phase.
+The source artifact, original master, exact restoration inputs, runnable unit and
+integration executables, licenses and raw successful/failed receipts remain.
+Direct replay without Cargo, SDK dependencies or either build tree passes all
+**109** pilot units (**1** ignored), all seven channel cases, the three startup/HOLD/
+persistence cases and **both** legacy-source consumers. The source conversation
+still rejects **29** usage and **25** trace mutations. SDK tests/type checks are
+pre-prune evidence; they are not claimed as rerun after dependency retirement.
+
+Post-replay cleanup verifies **667** other files exactly and
+removes **0** new duplicate native libraries. Combined directory-allocation
+reduction across the three cleanup phases is **5,868,351,488 bytes**; physical APFS
+reclamation is not inferred. Target/runs/datasets allocations are now
+**3,641,344 / 11,297,955,840 / 34,715,725,824 bytes**.
+The original three user files and required data/model/backup inputs remain.
+Post-cleanup readback finishes at **4635.463 s** within the same 90-minute round.
+Private receipts include `publication-fix.json`, `cleanup-build-result.json`,
+`retained-execution.json`, `cleanup-replay-result.json` and
+`post-cleanup-readback.json`. The wrap-up goal remains active; complete startup
+admission, paid runs and signing retain their existing gates.
+
+## Source-owned durable startup refusal — 2026-11-16
+
+**The known SDK warm-up now waits for a durable Rust refusal before constructing
+its transport or abort timeout. Incomplete inventory still ends in HOLD.** The
+integration is qualified at `6f3b8a1f0a5670b2992405ae92e613d5cb0d549c` under
+003 T006's [selected startup contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission).
+It continues the previous shared-channel round within its original 90-minute
+deadline; the clock is not reset. Full startup admission and T006 remain unaccepted.
+
+The [upstream source patch](references/omp-startup-refusal.patch) targets
+`can1357/oh-my-pi@24439066040e006eb08da7b204f0ac41c79d2de9`, specifically
+`packages/ai/src/providers/connection-prewarm.ts::prewarmModelConnection` and its
+named tests. Its immutable early observer is consulted before `transportFetch`
+and `AbortSignal.timeout`; resolving or rejecting the observer always refuses.
+A late/mutable binding also refuses. Observer error text is discarded. Ordinary
+unbound warm-ups retain their original path. The existing SDK caller owner still
+joins the original warm-up promises; no promise/prototype hook is substituted.
+The patch is reference data, not automatically applied by Foundry. Its MIT notices,
+module/test provenance and intentional differences are retained.
+
+The separate startup-only source artifact is pinned at
+`00e24e41653873b7c1e51552c3686a7fc2099b918e877b202ee4788161107432`. All **10,323** original-or-previously-qualified source
+files remain exact except the named AI module; the new test and exact existing
+native master account for the two additional build inputs. The package lock,
+pinned Bun 1.4.4 runtime, native-module identity and compiler input/readbacks are
+retained. Applying the public patch to the retained original AI file reproduces
+both changed/new source files exactly. The three earlier capture host pins remain
+unchanged; this fourth artifact grants no capture or Live authority.
+
+[`startup.rs`](../src/pilot_capture/startup.rs) adds closed, metadata-only revision
+2 to the existing framed pipes and journal. Limits are 20 attempts, shared 64 KiB
+headers, zero payload and a 30-second async observation deadline plus existing
+host cleanup grace. Only the declared official Anthropic HEAD origin is classified.
+Unknown messages/owners/routes, replay, stale identity, truncation, exhausted
+sequence, wrong version or payload refuse. There is no Ready, fetch, tool or
+capture variant in this startup-only revision, and no v1 fallback.
+
+[`CaptureSession::observe_startup`](../src/pilot_capture/startup.rs) appends/syncs a
+refusal and verifies the committed journal prefix before replying to the exact
+child attempt. The [early observer](../src/pilot_capture/startup_observer.ts) and
+later extension share one channel/sequence owner. A warm-up `owner_settled` frame
+reflects the original SDK caller join; it is not complete `startup_settled`.
+The parent records `startup_inventory_unqualified`, closes and reaps. The returned
+observation receipt is not an execution/compatibility seal. No provider transport,
+counter or permit is constructed by this API and it sends no prompt; these source
+facts are distinct from the independent IO control below.
+
+The actual compiled CLI passes three cases: normal durable refusal/HOLD, failed
+refusal append and failed terminal-HOLD append. The normal six-record journal has
+one attempt/refusal, owner settlement, terminal HOLD and normal group reaping with
+empty stderr. Both failure cases return persistence errors, retain their consumed
+run claim and publish no successful observation receipt. The first cannot reach
+owner settlement. The startup-only consumer is a durable ignored native test,
+explicitly selected for this qualification.
+
+An additional actual-IO control runs pinned Bun against the exact SDK source,
+with a custom fetch callback containing the named `node:dns.resolve4` route that
+bypassed the rejected generic fence. Its independent owned UDP counter observes
+**1 / 0 / 0** datagrams for unbound / observer-resolved / observer-rejected runs.
+Transport callback and abort-timeout construction counts are also **1 / 0 / 0**;
+the held observer has not completed the original warm-up. All cases retain the
+same complete synthetic model digest. This is an unbundled SDK/native-runtime
+before-IO proof, not compiled-CLI bypass coverage or a full transport inventory.
+
+All ten SDK tests pass; removing the observer await yields **8 passes / 2 failures**.
+Focused SDK lint/format/type checks pass. Four affected Rust gates are fresh:
+formatting, pilot all-target Clippy, **108/0** pilot units (**1** ignored), and
+actual Rust 1.90 pilot all-target checking. Four default-feature gates reuse 258
+exact effective input files. All **five** current-host and both earlier source
+consumers are fresh; frozen compatibility is **36/0**, with **10** explicit
+diagnostics ignored. The earlier source conversation preserves model digest
+`53bec6f047bbd7eeab26c93c1a6dd6c0e4ccc30d50a29d79e416c28692d5a027`,
+**29** usage and **25** trace mutation refusals. No retrieval or provider-economics
+gain is claimed.
+
+Retained setup failures include an incomplete initial source copy (corrected to
+all original files), the missing native-addon fixture, an incomplete synthetic
+model, an initial Clippy warning and a source compiler invocation from the wrong
+working directory. None is used as positive qualification evidence. The corrected
+source build and current green receipts are separate from these failed attempts.
+
+The complete owner/transport inventory, lifecycle controls beyond this warm-up,
+and full startup-prefix acknowledgment/Ready echo remain open. The generic API
+fence remains rejected; this source-owned seam does not qualify arbitrary network
+calls. V2 task/sample/funding freeze, paid execution, signing and release remain
+gated. No provider call, spend, model download or release signing occurs.
+
+Private evidence is `runs/pilot-startup-refusal-2026-11-16/`, including
+`qualification-readback.json`, `source-build.json`, `dns-bypass-readback.json`,
+`startup-committed-evidence/` and the fresh/reused gate receipts. At readback,
+shared elapsed time is **4711.831 s**; maximum sampled individual RSS is
+**2,237,923,328 bytes**, minimum sampled free disk
+**36,093,038,592 bytes**, within the unchanged 8 GiB/20 GiB limits.
+These are sampled process/disk bounds, not global/GPU quotas. Review is in-session.
+Code and acceptance records are published through `752cc1c`. The push
+succeeds, then its first fresh SSH clone times out during banner exchange. A live
+ref check confirms the pushed head and unchanged main; the deletion guard refuses
+to run without a completed publication receipt. A read-only HTTPS clone then
+passes full type/mode/byte readback of all **428** tracked files. Zero CI runs are
+observed, including a second check after retained replay. Only ten public code,
+synthetic-test, upstream-patch and existing-record files are included.
+
+Four generated trees are removed after open-file and exact-retention checks:
+Rust build/MSRV, the duplicate SDK/dependency tree and its package cache.
+**373** other files remain exact. Directory allocation falls from
+**5,521,084,416** to **454,057,984 bytes**, a reduction of
+**5,067,026,432 bytes**. Physical APFS reclamation is not inferred.
+The original 10,323-file source master, new compiled host, exact changed/new SDK
+files, notices/lock/package identities, public patch, source manifests and raw
+receipts remain. The retained restoration recipe requires exact manifest verification before any
+separately selected frozen-lockfile install/build. It is not executed after
+cleanup here; dependency installation and model acquisition are not implicit. The unbundled DNS control is **not**
+rerun after dependency cleanup; its prior source-hashed IO proof is retained.
+
+Direct replay without Cargo, the new SDK/dependency tree or build intermediates passes
+all **108** pilot units (**1** ignored), the seven-case native channel test, all
+three actual-CLI startup/HOLD/persistence cases and the existing two-generation
+source conversation. The latter preserves **29** usage and **25** trace mutations.
+Post-replay cleanup verifies **416** other files exactly; no duplicate
+native library needs deletion. All original user files and required datasets,
+models, source/artifact masters and backups remain retained.
+
+Post-cleanup readback completes at **5058.266 s** within the same original
+90-minute round. Target/runs/datasets allocations are **3,641,344 /
+10,837,721,088 / 34,715,725,824 bytes**. Private receipts include
+`publication-fix-failed.json`, `publication-fix.json`, `retained-source.json`,
+`cleanup-build-result.json`, `retained-execution.json` and
+`post-cleanup-readback.json`. The wrap-up remains active; complete startup
+admission, paid runs and signing retain their existing gates.
+
+## Shared early capture channel qualification — 2026-11-16
+
+**The early source-profile preload and later capture extension now use one
+channel owner. Complete startup admission remains HOLD.** This is the first
+implementation slice of 003 T006's [selected startup exchange](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission),
+qualified at `2b77d3ac56a11bb3cfaf7f87ac7371f171f63e33`. The requested stateless-host fix `98157db`
+was already published; it is not awaiting this push.
+
+[`bridge_channel.ts`](../src/pilot_capture/bridge_channel.ts) owns the exact FIFO
+identities, both sequence counters, bounded framing/decoder, writes and terminal
+state formerly inside the extension. Separate loaders obtain the same frozen
+object; they cannot reset its counters, attach a second reader, attach after
+termination or reuse it with a changed launch/pipe identity. This avoids creating
+a second transport for early startup. The extension keeps model/tool/relay
+semantics. V1 messages, all three host pins and execution authority remain unchanged.
+A truncated frame tail after Close now refuses with exit 72 instead of being
+silently ignored at EOF.
+
+The embedded bridge digest covers the entire executable source: channel owner plus
+extension. Only the explicitly selected source profile materializes and imports an
+additional exact copy before CLI startup. Actual-consumer assertions check its
+bytes, mode 0600, presence and launch environment; other profiles have no early
+module. This creates the shared owner early, but does not start an early startup
+exchange or claim before-IO observation.
+
+A durable [native framing test](../tests/pilot_capture/channel.rs) uses the pinned
+runtime, real inherited FIFOs and network-denied preload. Its seven cases cover
+clean two-loader operation with continuous sequence in both directions, replay,
+stale identity, oversized header, wrong version, early EOF and a truncated tail
+after Close. It also rejects changed launch identity and duplicate attachment.
+Forcing the late loader to create a new owner fails the test with `channel owner
+changed`; restoring reuse passes. Red source/receipt and green evidence remain
+private. These low-level controls exit in the preload; they do not prove CLI
+startup settlement, inventory completeness or parent-journal acknowledgment.
+
+Four affected gates are fresh: formatting, pilot all-target Clippy, **105/0** pilot
+units (**1** ignored), and actual Rust 1.90 pilot all-target checking. Four default-
+feature gates reuse **258** exact effective input files from their retained receipt;
+`pilot-capture` and its integration fixtures are excluded from those commands.
+This is four fresh checks plus four scoped reuses, not eight fresh runs.
+
+All **five** current-host consumers are freshly run, including the long native
+startup-owner matrix. Frozen compatibility passes **36/0**, with **9** explicit
+diagnostics ignored. Both source-profile consumers pass: the actual two-generation
+conversation and native auth lifecycle controls. The complete model digest remains
+`53bec6f047bbd7eeab26c93c1a6dd6c0e4ccc30d50a29d79e416c28692d5a027`;
+**29** usage mutations and **25** startup-trace mutations are refused. The actual
+consumers complement the low-level framing controls; none grants v2 admission.
+
+The closed startup message revision, source-owned before-dispatch refusal,
+complete owner/transport inventory with callback/timer settlement, durable parent
+startup prefix and matching acknowledgment echo remain unimplemented/unqualified.
+No missing inventory or failed exchange may fall back to readiness. The rejected
+generic API fence remains rejected. T006 is unaccepted; v2 sample/task/funding
+freeze, paid execution and release signing remain gated. No retrieval/G2 gain or
+provider economics is claimed.
+
+One unchanged no-spend 90-minute budget covers this slice, with one heavy job,
+20 GiB free-disk floor, 8 GiB sampled individual RSS ceiling and a 120-second
+cleanup reserve. Qualification readback completes at **2062.609 s**;
+maximum sampled individual RSS is **2,004,467,712 bytes** and
+minimum sampled free disk is **38,408,605,696 bytes**.
+These are process/disk samples, not global or GPU quotas. Review is in-session.
+Private evidence: `runs/pilot-startup-channel-2026-11-16/`, including
+`qualification-readback.json`, `channel-reset-red-execution.json`, the eight
+`*-committed-execution.json` receipts and exact-input reuse manifest. No provider
+calls, spend, model download or release signing occur. Original user files remain
+exact. Code and acceptance records are published through `5e74f0e`, with full
+fresh-clone type/mode/byte readback of all **425** tracked files, unchanged main
+and zero CI runs observed for the push (checked again after replay). The nine
+public files contain the shared owner/consumer changes, synthetic tests and existing
+records; private evidence, SDK source, binaries, models and tasks remain local.
+
+After open-file and exact retained-artifact checks, both new Rust build/MSRV trees
+are removed. **239** other evidence files remain byte-exact.
+Directory allocation falls from **3,698,896,896** to
+**217,747,456 bytes**, a reduction of **3,481,149,440 bytes**.
+This is an allocation reduction, not a claim about physical APFS reclamation.
+
+Direct replay without Cargo or build intermediates passes all **105** pilot units
+(**1** ignored), the seven-case channel test and the two-generation source
+conversation, including its **29** usage and **25** trace mutation refusals.
+Post-replay cleanup verifies **273** other files exactly; no duplicate
+native library needs deletion. Both build trees remain absent. All original user
+files, required datasets, models, source/artifact masters and backups are retained.
+
+Post-cleanup readback completes at **2268.036 s**, inside the same 90-minute
+budget. Target/runs/datasets allocations are **3,641,344 /
+10,383,228,928 / 34,715,725,824 bytes**. Private receipts include
+`publication-fix.json`, `cleanup-build-result.json`, `retained-execution.json`
+and `post-cleanup-readback.json` under the same run directory. The requested cache
+cleanup is complete for this slice. Full startup admission, paid runs and release
+signing retain their existing gates.
+
+## Journal attestation readback and transport census — 2026-11-16
+
+**The existing journal's seal/finish attestation now checks the writer's committed
+history. Full startup admission remains HOLD.** The repair stays with
+[`Journal::digest` and the probe-seal owner](../src/pilot_capture.rs) under
+003 T006's [existing startup contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission).
+No worker, database, independent log, new wire revision or model change is added.
+All three host pins, frozen v1 policy/receipt shape and execution locks remain.
+
+Before the repair, digest readback opens the pathname and hashes whatever bytes
+are there. Three owner tests fail as expected: earlier-record corruption, a new
+inode containing identical bytes, and an unowned tail passed to the real final-
+receipt consumer. A real frozen-host probe also returns a **successful ProbeSeal
+for a modified journal prefix** after its two local fixture requests. This is a
+verification-mode counterexample, not paid execution or a historical v1 finding.
+The red code is `55896c4`; its runnable unit/integration artifacts and raw failures
+are retained privately.
+
+Readback now requires the same device/inode as the writer, complete bounded JSONL,
+ordered sequence, each previous-record hash, the exact record count and the
+writer's last committed record digest. It hashes the complete unchanged bytes while
+streaming within the existing per-record bound. Healthy journals keep exactly the
+same digest. Probe sealing sets its sealed flag only after this readback succeeds;
+append/readback failures enter the existing monotonic halt, and failed halt
+persistence remains an error. No successful seal/final receipt or later request
+can follow. Consumed authority/run claims remain consumed.
+
+At implementation `7a78d88f472a650f8816db25fca1b198b7098d6c`, the three focused owner tests pass.
+The actual frozen-host probe passes corruption, truncation and replacement controls:
+sealing refuses, repeated sealing observes the halt, another slot/request refuses,
+finish publishes no successful receipt, and the original claim remains consumed.
+Each case stays at its original two fixture requests and retains credential
+absence checks. The first build's SHA-256 LowerHex type error is retained; using
+the crate's existing byte-to-hex format fixes compilation without changing tests.
+
+Four affected Rust gates are fresh: formatting, pilot all-target Clippy, **105/0**
+pilot units (**1** ignored), and actual Rust 1.90 pilot all-target checking.
+Frozen compatibility is **35/0**, with **9** explicit diagnostics ignored. Four
+current-artifact consumers are freshly run; the fifth, Host-only startup-owner
+matrix is reused after exact effective-input checks. It never calls Journal or
+CaptureSession: host/protocol, root privacy/clock/policy helpers, test prefix,
+control helper and all embedded witnesses/probes are unchanged. Its previous
+five-consumer receipt remains retained. Four default-feature gates also reuse
+exact effective inputs: the entire root pilot module is excluded by
+`src/lib.rs:51`, default `semantic` does not enable it, integration crates are
+feature-gated and the capture binary requires that feature. The conservative old
+input manifest's preflight rejection and corrected exclusion proof are retained.
+This is explicit scoped reuse, not eight freshly run gates.
+
+The source-host two-generation conversation passes unchanged, including complete
+model digest `53bec6f047bbd7eeab26c93c1a6dd6c0e4ccc30d50a29d79e416c28692d5a027`,
+**29** usage and **25** startup-trace mutation refusals. No retrieval behavior or
+G2 improvement is claimed. These are local fixtures; provider usage/economics and
+v2/T006 acceptance are not established.
+
+**Transport decision.** A separate before-IO API-fence experiment on the exact
+qualified source binary finds eleven intercepted routes: global/named Bun TCP,
+default/named Node TCP, direct Socket, default/named TLS, default/named HTTP/2,
+UDP send and an explicit DNS Resolver. Each valid baseline reaches an independent
+owned loopback counter; the guarded case does not. The first UDP baseline has
+zero packets and is explicitly invalid. Only after explicit loopback binding and
+its scoped sandbox permission produce a positive baseline is UDP interception
+measured. Those failed/corrected fixtures remain retained.
+
+The named `node:dns.resolve4` export bypasses the candidate: baseline and guarded
+cases each send **one UDP datagram**, with no hook observation. Replacing the default
+DNS object does not change that named export, even after syncBuiltinESMExports.
+An early Bun loader plugin registers, but its tested onResolve hook never sees
+the builtin DNS import. The generic-fence candidate is rejected; no part is adopted
+as complete transport enforcement. The WebSocket case after this counterexample
+is not run. These probes exit from the preload before CLI/SDK startup; they prove
+API/IO behavior, not host Ready, model parity, callback settlement or admission.
+The named DNS callback remains pending at the bounded probe exit.
+
+A source build census retains **3,690** file inputs (**47,961,593 bytes**), **4**
+virtual-input metadata records and **55** direct network-module import edges.
+The scan includes DNS subpaths and finds no direct DNS edge; that does not prove
+absence of indirect/builtin routes or inactive owners. All **10,323** retained
+original-or-qualified source files remain exact. The four virtual bodies are not
+captured independently; their producer source/lock and metadata are retained.
+The graph build digest `3b1e3222d58626725a535c66fc65b498180b06a9ccf9017c8c92f0bb63e522e0`
+differs from qualified host `b5e50ce94846e29ea3db04ddab00f716208f21c0299263a30aee725c006ff9e9`.
+It is not selected as a host pin or claimed as a byte-identical reproduction.
+Source-bound owner/transport integration remains necessary before the closed
+shared-channel startup acknowledgment can qualify readiness.
+
+The investigation and repair share one unchanged no-spend hour: one heavy job,
+20 GiB free-disk floor, 8 GiB sampled individual RSS ceiling and 120-second cleanup
+reserve. Qualification readback completes at **3243.703 s**;
+maximum sampled individual RSS is **2,924,232,704 bytes**
+and minimum sampled free disk **47,102,808,064 bytes**.
+Samples are not global/GPU quotas. The missing-scratch setup failure, invalid UDP
+positive control, preflight corrections and compile error remain recorded.
+Review is in-session. Private evidence is in
+`runs/pilot-startup-transport-2026-11-16/`, especially
+`qualification-readback.json`, `routes-udp-bind-readback.json`, `bundle-metafile.json`
+and `bundle-source-readback.json`. No provider call, model download or release
+signing occurs. Original user untracked files and required datasets/models/backups
+remain unchanged. Complete transport/timer coverage and durable startup
+acknowledgment remain open; paid trials and release/signing stay gated.
+Repair/records are published through `de5c481`, with a full fresh-clone
+type/mode/byte readback of all **423** tracked files, unchanged main and zero CI
+runs observed for that push. Only the two Rust code/test files and three existing
+record files are included; private probes, dependency source, binaries and evidence
+remain local.
+
+Five temporary cache/build trees are then pruned after open-file and identity
+checks: Rust build/MSRV, SDK copy/dependencies, package cache and the unselected
+graph build. The retained original SDK/host/native master remain unchanged, and
+the **3,690** bundled input snapshots plus package identities/notices remain exact.
+**4,061** other retained files remain exact. Directory allocation falls
+from **5,874,331,648** to **502,779,904 bytes**, by
+**5,371,551,744 bytes**; physical APFS reclamation is not inferred.
+
+Direct replay without Cargo or build intermediates passes all **three** readback
+owner tests, the native three-case probe failure test and the source conversation,
+retaining **29** usage and **25** trace mutations. A source-hashed before/after
+replay of all **12** valid ABI pairs confirms the eleven interceptions and the
+named DNS bypass again. Those preload-only IO probes still do not claim callback
+settlement or startup admission. Replay cleanup preserves **4,220** other files
+exactly; no duplicate native library remains to prune.
+
+Post-cleanup readback completes at **3524.309 s** inside the same hour.
+Target/runs/datasets allocations are **3,641,344 / 10,165,059,584 /
+34,715,725,824 bytes**. The existing IDE-mapped target leaf and original user files
+are preserved. Private receipts include `publication-fix.json`,
+`cleanup-build-result.json`, `retained-execution.json` and
+`post-cleanup-readback.json` under the same run directory. No paid, signing or
+complete-startup-admission gate changes.
+
+## Source-built capture profile qualification — 2026-11-16
+
+**The separately pinned source-built capture profile passes its actual no-provider
+consumers and affected Rust gates. Complete startup admission remains HOLD.**
+The [Rust launch owner](../src/pilot_capture/host.rs) adds explicit
+`SourceQualification`, leaving the current `OwnedQualification` and frozen
+`HostDefault` pins unchanged. This diagnostic profile does not authorize Live/v2,
+provider spend or release signing. The existing stateless-host repair remains
+published; this change closes the source-build auth-binding gap.
+
+The proposed [upstream auth-owner patch/tests](references/omp-startup-auth-retirement.patch)
+target oh-my-pi `24439066040e006eb08da7b204f0ac41c79d2de9` and its
+`createAuthStorageSettingsSync` in
+[auth-broker-config.ts](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/session/auth-broker-config.ts).
+It is reference/test data, unapplied by Foundry, retaining the actual MIT notice.
+The new upstream test path in that patch is proposed. Its two files apply/reverse
+against exact qualified bytes; patch digest `1572ad74ef2aa50aa46ece6bd3efcc3eca5dd1c6ec25eb5f91b5b30cfdc445b4`.
+It composes with the [previous five-call SDK owner](#source-built-bounded-startup-caller-owner--2026-11-16)
+under 003 T006's [existing contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission).
+
+The original CLI auth-settings sync retains its initial resolver and catch return,
+stops its real subscription, crosses the queued-listener turn and joins the current
+pending chain. A one-use binding requires the exact Settings/AuthStorage owner;
+missing/duplicate/wrong owners, rejected originals and a changing pending chain
+refuse completion. No unbounded change history is retained. The existing prefetch
+helper keeps its namespace/original-call and nested native-store closure checks.
+The source profile skips frame-dependent Promise/Set capture for this auth owner,
+recording explicit bound/retired metadata without inventing a four-Set count.
+Settings, memory/telemetry/logging, model/tool/usage, transport refusal and native
+warm-up deadline checks remain. General OAuth/broker drain and physical FD release
+are not claimed.
+
+The actual missing-binding red runs before the implementation: bridge fault,
+zero captured/local fixture HTTP requests, exit 1, no forced cleanup and process
+group absent. Seven new source-unit tests pass. Removing the join makes **4/7**
+fail; restored source passes **7/0**. The first run's three failures come from
+omitted mocked getters; fixing those fixtures and checking captured warnings
+produces the pass without changing production behavior. Focused source lint and
+type checking pass; formatting is applied. The previous five-call owner source
+and its frozen lock remain byte-exact. The source snapshot readback verifies
+**10,323** original-or-qualified files.
+
+The private build checks source and lock bytes before/after compilation, with
+retained Bun 1.4.4 and native-addon identities. Patch readback binds the same source
+bytes after the build. The binary digest is
+`b5e50ce94846e29ea3db04ddab00f716208f21c0299263a30aee725c006ff9e9`. The only signature is the compiler's ad hoc test-binary
+signature, read back with `codesign --display`; no release signing occurs.
+
+At Foundry implementation `4335237eb8e7d8dde6809dfd7208f2af4e61c01a`, the actual source capture completes both
+generations with full native model digest
+`53bec6f047bbd7eeab26c93c1a6dd6c0e4ccc30d50a29d79e416c28692d5a027`,
+**29/29** usage mutations and **25/25** startup-trace mutations rejected.
+Original auth retirement is complete before Ready; the observed native warm-up
+deadline elapses, and the before-prompt trace remains a prefix of the final trace.
+The fixture reports two qualified requests and four local HTTP requests. This is
+fixture evidence, not paid provider usage or end-to-end token economics.
+
+Three actual native auth cases pass: active produces policies **[11,10]**,
+retired produces **[]**, and delivered work at retirement produces **[10]** before
+the helper returns. The real Derived unsubscribe cancels the second queued
+recompute; already delivered policy work reads the restored setting. All cases
+reject a wrong Settings identity and duplicate binding, verify the actual
+AuthStorage receiver, restore instrumentation and preserve two equal complete
+model readbacks (`83aac156b7678be8faab3ca2d09fbf4e9773214fc968f1c4a13839dc718317c9`).
+Retired cases produce no future policy work. Wrong AuthStorage binding and rejected/
+changing chains are source-unit controls. These native cases have zero TCP
+connections, no prompt, empty stderr, natural exit and an absent process group.
+
+All **five** current-artifact native consumers pass. Frozen compatibility passes
+**34/0**, with **9** explicit diagnostics ignored. Pilot units pass **102/0**,
+with **1** ignored. Four affected gates are fresh: Rust formatting, pilot Clippy,
+pilot units and actual Rust 1.90 pilot all-target check. Four default-feature gates
+are reused only after exact effective-input verification and explicit feature
+exclusion; the receipt names the prior runs. This is not eight freshly rerun gates.
+No retrieval behavior change or G2 improvement is claimed.
+
+The original no-spend hour uses a shared `CLOCK_MONOTONIC` deadline, 120-second
+cleanup reserve, one heavy job, 20 GiB free-disk floor and 8 GiB sampled individual
+RSS ceiling. A preflight stops before native launch when disk falls below the
+floor; its inherited error text says "512 MiB", but the configured floor is
+21,474,836,480 bytes. The stopped receipt has no child identity or exit. Dependency/
+package caches, Rust intermediates and one verified duplicate native library are
+pruned after open-file checks, preserving **10,537** other files exactly. Directory
+allocation falls by **3,765,305,344 bytes**. Free disk is initially still below the
+floor, then recovers to **38,888,910,848 bytes**; only then does qualification resume,
+inside the unchanged deadline with unchanged assertions. No native failure is
+retried or hidden by that resource recovery.
+
+At qualification readback, elapsed time is **2965.688 s**,
+maximum sampled individual RSS **2,935,308,288 bytes**
+and minimum launched-command sampled free disk
+**22,225,371,136 bytes**. Samples are not
+global/GPU quotas. Raw failures, build/patch identity, controls, gate reuse and
+readback remain private under `runs/pilot-source-capture-2026-11-16/`, especially
+`qualification-readback.json`. Review is in-session. Original user-owned untracked
+files, required data/models, encrypted backups and other services remain untouched.
+
+Complete transport/timer coverage and durable parent startup acknowledgment remain
+open. Complete startup admission, paid runs, release signing and v2/T006 execution
+stay gated; the wrap-up goal remains active. The fix and records are published through `d3df73d`, with a fresh-clone
+type/mode/byte readback of all **423** tracked files; main is unchanged and the
+read-only workflow query reports zero CI runs for that push. The reviewed eleven
+paths contain public code, synthetic tests, the upstream patch and records;
+private evidence, models, tasks, credentials and binaries remain local.
+
+After publication, the two new build/MSRV cache trees are pruned after open-file
+checks. **10,799** other files remain exact; this second cleanup reduces
+directory allocation from **4,068,376,576** to
+**588,914,688 bytes**, by **3,479,461,888 bytes**.
+Together with the earlier dependency/cache retirement, the measured directory
+allocation reductions total **7,244,767,232 bytes**; physical APFS reclamation is not inferred.
+
+Both actual source consumers then pass directly from the retained executable,
+without Cargo or build intermediates, in **85.395 s**. The full model,
+**29** usage and **25** trace mutations, native auth identity/retirement and cleanup
+assertions still pass. The executable digest is
+`af09563f5e702127281a107330f1d7c99c1cdd5a73ed700f8abaca94e36009f6` and its dynamic libraries are system libraries, not retired
+build files. Source, lock, red/green executables, native master and raw evidence
+remain. No duplicate native-library copy remains to prune after replay;
+**10,832** other retained files remain exact.
+
+Post-cleanup readback completes at **3233.457 s** inside the original hour.
+Target/runs/datasets allocations are **3,641,344 / 9,660,985,344 /
+34,715,725,824 bytes**. The existing IDE-mapped target leaf is preserved;
+required datasets/models and encrypted backups remain unchanged. Private receipts
+are `publication-fix.json`, `cleanup-build-result.json`, `retained-execution.json`
+and `post-cleanup-readback.json` under the same run directory. Complete startup
+admission and the remaining paid/signing gates are unchanged.
+
+## Source-built bounded startup caller owner — 2026-11-16
+
+**The private source-built SDK candidate now owns all five generic connection
+warm-up calls and joins them on success and error exits. This does not admit a
+new capture host.** The retained [upstream patch and owner tests](references/omp-startup-connection-warmups.patch)
+target oh-my-pi `24439066040e006eb08da7b204f0ac41c79d2de9` under
+003 T006's [existing startup contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission).
+It is reference/test data, unapplied by Foundry. The new upstream helper/test paths
+in that patch are proposed; they are not landed upstream or Foundry Rust modules.
+The upstream MIT notice is retained. Applying and reversing the patch on a fresh
+three-file readback reproduces the exact qualified bytes.
+
+One per-session SDK owner starts the original function at each of the five sites,
+preserves concurrent startup and retains the original/observer promise pairs.
+Observers prevent early unhandled rejection; they do not replace original results.
+A sixth or sealed-owner call refuses before native work. The caller joins every
+pair before returning or throwing and preserves the body's primary error. A
+completed session is disposed before a warm-up rejection escapes; a failed disposal
+retains both errors through SuppressedError. There is no successful timeout race.
+The original [SDK caller](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/sdk.ts#L2356)
+and [warm-up implementation](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/ai/src/providers/connection-prewarm.ts#L49)
+remain the source basis. This covers those five generic SDK calls, not every host
+transport or connection-preparation owner.
+
+The source-owner suite passes **11/0**. The materialized discarded-return red
+fails **0/11**; removing only the join from the owner fails **2/9**. The final
+restored source passes all eleven. Controls cover pending normal/error exits,
+all five original calls, rejection while another original is pending, deterministic
+failure ordering, sixth/late calls, synchronous failure and joined disposal with
+both cleanup errors retained. The coding-agent package type check reports no
+errors in **4,850 files**. Focused lint and formatting pass on all three changed
+TypeScript files. The first lint launcher exits 127 because its Node shebang is
+unavailable in the cleared environment; invoking that same tool with pinned Bun
+passes without changing the host installation.
+
+Four real source-built SDK controls pass: immutable baseline and owned candidate,
+each with normal startup and a post-warm-up input-getter failure. The baseline
+rethrows the exact primary error at **1039 ms**, before its refusal at **5032 ms**;
+the owner waits until **5105 ms**, after its refusal at **5104 ms**, preserving
+that same error object. The getter is reached only after the actual original
+request starts. The failed helper SDK uses an isolated empty agent directory;
+the subsequent ordinary CLI still returns two equal native model readbacks.
+All four cases preserve complete model digest
+`83aac156b7678be8faab3ca2d09fbf4e9773214fc968f1c4a13839dc718317c9`,
+exit normally with empty stderr, and hold at least eleven seconds after observing
+the request before the second readback. Requests receive a held local refusal;
+network is denied and no prompt/provider request is sent.
+
+The native controls exercise initial normal/error paths. Other model-selection
+branches are changed in source but not separately live-exercised. Rejection and
+disposal-failure injection is source-unit evidence. The build binds all changed
+source bytes before/after compilation, the frozen lock, retained Bun1.4.4/native
+addon and binary digest `cd59e86cc512f27d6782c2f2c50b936ec3a47792e52e27695af1271220a6ea07`.
+All **10,320** original-or-qualified source/assets remain exact. Qualification
+readback completes at **1290.566 seconds** inside the original offline hour, with
+120 seconds reserved for cleanup, one heavy job, a 20 GiB disk floor and 8 GiB
+sampled individual RSS ceiling. Maximum sampled RSS is **3,236,724,736 bytes**;
+minimum observed free disk **30,152,314,880 bytes**. Samples are not global/GPU quotas.
+
+Private raw failures, build inputs, unit mutation, native traces and readback remain
+under `runs/pilot-owned-warmup-owner-2026-11-16/`; review is in-session. No Foundry
+Rust code changes or fresh Rust-gate run is claimed. Current/frozen host pins and
+the [Rust launch owner](../src/pilot_capture/host.rs) are unchanged. This source
+artifact still needs a separately bound capture profile and full actual-consumer
+conversation/usage/owner proof. Complete transport/timer coverage and durable parent
+acknowledgment remain open; complete startup admission stays HOLD. Paid runs,
+release signing and v2/T006 execution remain gated.
+
+Patch/tests and records are published first as `bfa5eed`, with fresh-clone
+type/mode/byte readback of all **421** tracked paths. Two generated dependency
+cache trees and five duplicate native libraries are pruned after exact/open-file
+checks. **10,682** other retained files remain exact, including source and the
+runnable owner binary; directory allocation falls by **1,821,429,760 bytes**.
+The immutable baseline/runtime and canonical native master remain retained.
+
+All four native normal/error controls pass directly after cleanup in **50.625
+seconds** of command receipts, preserving model/error identity and the native
+deadline hold. Four newly extracted libraries are then pruned after exact/open-file
+checks; **10,826** other retained files remain exact. The readback finishes at
+**2037.533 seconds** inside the original hour. Target/runs/datasets allocations are
+**3,641,344 / 9,070,243,840 / 34,715,725,824 bytes**. These are directory
+allocations, not measured physical APFS reclamation. Required models, datasets,
+backups, raw evidence and original user-owned untracked files are unchanged.
+`REBUILD.md`, both cleanup plans/results and `post-cleanup-readback.json` in the
+private root retain the rebuild and deletion details. Foundry Rust inputs and
+current/frozen host pins remain unchanged; the separate capture profile remains open.
+
+## Source-built warm-up caller feasibility — 2026-11-16
+
+**A private source-built caller can await the original initial warm-up before
+session startup; no replacement host pin or complete repair is selected.** This
+is no-provider feasibility for 003 T006's [startup contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission).
+The shipped artifact and a separately built unmodified baseline both enter
+session_start while their original warm-up transport promise is deliberately
+pending. Changing the initial SDK call from `void` to `await` makes the candidate
+wait until the held local refusal is delivered. No promise is substituted or
+manually resolved, and no SDK export or global promise hook is replaced.
+
+All three native controls pass two state readbacks, normal exit and empty stderr.
+Their twelve-second hold starts at process launch; it does not by itself prove
+that a native deadline created later has elapsed. The complete model digest is unchanged at
+`83aac156b7678be8faab3ca2d09fbf4e9773214fc968f1c4a13839dc718317c9`.
+Shipped/baseline/candidate session_start occurs at **1464 / 981 / 5038 ms**;
+the respective held refusal is delivered at **5421 / 4943 / 4991 ms**.
+The test-only Agent refusal holds the existing request for four seconds without
+delegating network IO; the native runs deny network access and send no prompt.
+This diagnoses the initial caller's lifetime, not complete transport coverage.
+
+Source is oh-my-pi `24439066040e006eb08da7b204f0ac41c79d2de9`,
+[`sdk.ts::createAgentSessionScoped`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/sdk.ts#L2356)
+and [`connection-prewarm.ts::prewarmModelConnection`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/ai/src/providers/connection-prewarm.ts#L49).
+The upstream [connection-prewarm tests](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/ai/test/connection-prewarm.test.ts)
+were inspected, not run. A separate private tree verifies **10,320** materialized
+source/assets against Git blobs, including the declared Windows CRLF conversion;
+the original 6,816-file program reference remains exact. Bun **1.4.4** comes from
+the [official release](https://github.com/oven-sh/bun/releases/tag/bun-v1.4.4), with
+download and executable digests retained. Frozen-lock installation uses
+`--ignore-scripts`; the existing hash-verified native addon is reused. Compiler
+inputs, one-line patch, dependency lock and both executables are retained. These
+builds do not reproduce the shipped binary byte for byte. Bun produces local
+linker-generated ad hoc signatures without a team identity; release signing is
+not performed or authorized.
+
+The unchanged [capture consumer](../tests/pilot_capture.rs) refuses the candidate's
+different artifact digest before host launch: **0 passed / 1 failed**, exit 101.
+That refusal is not a green bridge test or a model/conversation qualification.
+No pin assertion is relaxed. The other four SDK warm-up sites and error-exit
+ownership remain unchanged. Full native conversation/usage, complete startup
+inventory, transport/timer coverage and durable parent acknowledgment remain open
+for any future source-built profile; current and frozen profiles retain their pins.
+
+The 45-minute preparation keeps raw mechanical failures and the excluded first
+candidate compile. Its final build binds unchanged before/after SDK digests. A
+cross-process deadline initially used Python3.9's process-relative monotonic clock;
+this is corrected to CLOCK_MONOTONIC without resetting the original start. Earlier
+remaining-time fields are invalid and excluded. Retrospective deadline reconciliation
+puts qualification/readback at **1228.105 seconds**, within the original bound;
+per-command resource receipts remain valid. Maximum sampled individual RSS is
+**3,118,235,648 bytes**, minimum observed free disk **37,884,841,984 bytes**.
+Samples are not global/GPU quotas. Private evidence is
+`runs/pilot-owned-host-feasibility-2026-11-16/`; review is in-session. No Rust product
+change or fresh Rust-gate run is claimed. Paid runs, release signing and T006/v2
+execution remain gated; complete startup admission stays HOLD.
+
+Feasibility records are published first as `7a94eaf`, with full fresh-clone
+type/mode/byte readback of all **420** tracked paths. Two generated dependency
+cache trees, the download ZIP, one byte-identical unqualified build and four
+duplicate native libraries are then pruned after exact/open-file checks.
+**10,617** other retained files remain exact, including source inputs and both
+runnable builds; the owned-directory allocation reduction is **1,981,460,480
+bytes**. Required models, datasets and the canonical native library are untouched.
+
+All three controls pass directly from the retained artifacts after cleanup in
+**40.647 seconds** of command receipts. These stricter replays wait at least eleven
+seconds after observing the original request before their second equal-model
+readback, so they cross its native ten-second deadline. Baselines still enter
+early and the candidate still waits. Three newly extracted library copies are
+then removed after exact/open-file checks; **10,709** other retained files remain
+exact. No Cargo build or provider call is involved. The readback completes at
+**1763.175 seconds** within the original 45-minute bound. Target/runs/datasets
+allocations are **3,641,344 / 8,551,362,560 / 34,715,725,824 bytes**. Directory
+allocation reductions are not physical APFS reclamation measurements. Detailed
+plans, resource receipts, `REBUILD.md` and `post-cleanup-readback.json` remain in
+the private feasibility root.
+
+## Wrap-up gate and cache readback — 2026-11-16
+
+**The requested stateless-host repair and subsequent qualified fixes are already
+published through `bd7c2d1`; this continuation changes records and generated cache
+only.** A live remote readback confirms experimental at that head and main still
+at `d94b013`. Stateless source `98157db` is an ancestor. Runtime, test, script and
+dependency inputs are exact against qualified source `3f972c9`; the existing
+[retirement receipt](#fixed-profile-original-auth-retirement--2026-11-16) remains
+the gate evidence, including its four fresh affected checks and four explicitly
+reused default-feature gates. No build or native acceptance rerun is claimed here.
+The retained executable, all 223 preserved evidence files and original three
+user-owned untracked files pass fresh digest checks. The link check passes.
+
+The original target cleanup retained libraries mapped by live IDE helpers. A fresh
+open-file check now finds only one still mapped. After publication, exact inventory,
+digest and per-file open checks, **26** unused generated libraries are removed:
+**88,809,472 allocated bytes**. Target allocation falls from **92,450,816** to
+**3,641,344 bytes** (about 3.47 MiB). The mapped library and IDE helpers remain
+untouched. Runnable qualification binaries, raw evidence, models, datasets and
+backups remain retained. Directory reductions do not establish physical APFS
+reclamation. Private plan/readback: `runs/wrapup-gate-readback-2026-11-16/`.
+
+The proposed static canonical-registration route is the already rejected native
+candidate recorded [below](#owned-native-settings-quiescence--2026-11-15), not a
+new untested alternative. It is not repeated or landed. Original warm-up promise
+ownership, full transport/timer coverage and durable parent acknowledgment remain
+open; complete startup admission stays HOLD. No provider request, model download
+or spend; paid trials and release signing remain gated. The wrap-up goal remains
+active.
+
+## Fixed-profile original auth retirement — 2026-11-16
+
+**The owned no-provider qualifier retires the original native auth owner before
+capture Ready on `3f972c9`; complete startup admission remains HOLD.** The
+preload retains exactly four original settings-listener entries, the initial
+resolver's source/return pair and at most eight original continuation pairs.
+Pinned native frames and callback fingerprints bind this bookkeeping; every valid
+original receiver, argument, callback and returned object is preserved. After the
+existing settings watcher/reload barrier, the helper removes only those four
+entries, crosses one immediate turn for already queued callbacks, and joins the
+original promises. It refuses missing, duplicate, rejected, late or over-cap work.
+Matching late registrations/continuations after sealing terminate the qualifier.
+
+The existing helper then closes the session's actual AuthStorage. One native
+SQLite close must occur synchronously inside that call and return normally;
+metadata-only version/revision polling succeeds before it and throws afterward.
+No credential values, replacement sync or replacement store is used. This proves
+logical wrapper closure, not physical file-handle release or general OAuth drain.
+It excludes unused native credential reconfiguration only in the explicit fixed
+qualification profile; Rust already owns the actual provider credential and
+transport. The frozen default profile and coding/usage requirements remain.
+
+Actual-bridge red on `0dc53aa` fails at the new Ready requirement before prompting.
+The red receipt checker initially expected a report not emitted on that early
+failure; its raw Cargo/host receipt is retained and verified without rerunning or
+rewriting it. First actual-bridge green on `97180ba` completes the two-generation
+fixture conversation and native usage checks. Final source `3f972c9` passes all
+five current native consumers and frozen **33/0/7** fresh. The real owned bridge
+records registered/retired metadata before Ready in the existing diagnostic trace;
+its reader rejects **23** format/owner mutations, and native usage rejects **29**
+mutations. The trace remains separate from the proposed durable startup journal
+acknowledgment and cannot grant complete admission.
+
+Native active/retired/queued controls preserve the original owner. Active produces
+setter values **[11,10]**; retired excludes later continuations; queued retirement
+joins two original setter calls **[10,10]** and excludes subsequent work. All
+three return two equal complete models, exit normally, restore synthetic overrides
+and use the existing AuthStorage. Previous settings-chain, resolver, watchdog,
+Agent/raw, prefetch, off-memory, logging, telemetry and marketplace controls remain
+in the full owner consumer; **47** generated libraries are retired after reaping.
+
+Fresh checks are formatting, pilot all-target Clippy, pilot units **102/0/1 ignored**
+and actual Rust1.90 all-target pilot check. Four default-feature gates are explicitly
+reused on exact effective inputs: the modified module and native integration crate
+are excluded when pilot-capture is disabled, and source/dependencies outside them
+are unchanged. Reused default totals remain **1,319/0/35 ignored**; no new ignore or
+relaxed previous deadline. Current and frozen runtime evidence is fresh, not reused.
+Check times: current **597.459s**, frozen
+**288.471s**. Qualification/readback completes in
+**2035.475s** within the stated offline hour, with a
+120-second cleanup reserve. Maximum sampled individual RSS is
+**1929.859 MiB**, minimum free disk
+**26.158 GiB**; samples are not global/GPU quotas.
+
+The [existing contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission),
+[early observer](../src/pilot_capture/startup_probe.ts),
+[auth helper](../src/pilot_capture/startup_auth.ts), [bridge](../src/pilot_capture/bridge.ts)
+and [native consumer](../tests/pilot_capture.rs) own the repair. Associated upstream
+24439066040e006eb08da7b204f0ac41c79d2de9 symbols are
+createAuthStorageSettingsSync, Derived.listen, Settings.onEffectiveChange,
+AuthStorage/LocalAuthStorageBackend.close, OAuthRefresher.close and
+SqliteAuthCredentialStore.close/pollExternalChanges. Relevant upstream
+settings-live-routing and auth-storage-close-releases-handles tests are source
+references only, not executed. This retires the CLI's original owner instead of
+substituting their separate sync/store. Source association is not reproducible-build
+proof. Private probes/receipts are under runs/pilot-auth-listener-seam-2026-11-16/,
+runs/pilot-auth-retirement-seam-2026-11-16/ and
+runs/pilot-auth-retirement-repair-2026-11-16/. Review is in-session.
+
+Original warm-up promise identity, complete transport/timer coverage and durable
+parent acknowledgment remain open. No real provider request, model download or
+spend; paid trials, release signing and release publication remain gated.
+v2/T006 stays unfunded/unfrozen and execution locked.
+
+The qualified repair/tests/records through `34c574c` are published to
+experimental; a fresh clone matches all **420 tracked paths** by type, executable
+mode and bytes. Main remains `d94b013`; head uses `[skip ci]`, with no workflow
+dispatch, release signing, release/tag or paid run. Verified generated build/MSRV
+allocation falls from **3,480,743,936** to **35,651,584 bytes**, removing
+**10,430 generated files** while retaining one
+private runnable 40-test executable and exact hashes of **223
+other stage files**. Red source and raw receipts remain; no dedicated red executable
+is claimed. Five completed probe-library copies are removed after exact master
+comparison and open/mapped-use checks; **179 other
+preflight files** stay exact. Combined reported allocation reduction is
+**4,000,653,312 bytes (3.726 GiB)**;
+physical APFS reclamation is not inferred.
+
+All five current native consumers pass **directly without Cargo after cleanup** in
+**580.219 seconds**: first request, owned two-generation
+conversation/native usage, settings/MCP isolation, all owner controls and tool
+follow-up. The actual bridge still retires auth before Ready; active/retired/queued
+controls, initial/queued joins, future exclusion, model identity, **23** diagnostic
+mutations and **29** native usage mutations remain checked. The owner cases retire
+**47** verified per-case libraries after reaping. Executable digest and 40-test
+inventory match; source, earlier evidence and user-owned untracked bytes stay exact.
+Final allocation readback: target **92,450,816**,
+runs **7,686,852,608**, datasets
+**34,715,725,824 bytes**. Private evidence,
+archives, models, native masters, prepared stores and corpus/oracle/holdout inputs
+remain local. Qualification, publication, cleanup and replay remain within the
+stated hour. Remaining startup/transport/acknowledgment gates stay open; no physical
+FD-release, general OAuth-drain or full admission claim. Paid runs and release
+signing remain gated.
+
+## Original native settings-policy chain — 2026-11-16
+
+**The CLI's original reserve-policy continuations are identified and joined on
+`3ac1e4a`; complete startup admission remains HOLD.** This is a test-only
+qualification; application, bridge, launch configuration and dependencies are
+unchanged. A temporary native Promise.then observer retains each original source
+and return at the actual listener's registration frame, with the complete sync
+fingerprint and continuation callback SHA256
+73e10fcea65a780ac7077e5857e780e8442086c285b36d9c75c345e4e634602c.
+It passes the exact receiver, arguments and callback to the original method and
+returns its exact promise. The second native source equals the first native return.
+No second sync handle or AuthStorage is created.
+
+The unchanged control has no continuations or setter calls. Serial change/restore
+produces actual original setter calls with synthetic values **[11,10]**; a two-write
+coalesced burst produces **[12,10]**. Before each join the continuation is registered
+but its new setter call has not run; after awaiting the exact original pair, the
+setter has returned normally and both promises fulfilled. The setter's actual
+receiver is the session's existing AuthStorage, not a substitute. The original
+value and absence of a hard runtime override are restored (`hasRuntimeOverride`
+is false before and after); broader setting-layer identity is not inferred.
+Both exact method descriptors are restored at factory exit. No credential,
+account-policy entry or fulfilled promise value is serialized.
+
+Each case returns the same complete native model twice twelve seconds apart,
+crosses the original warm-up deadline and exits with empty stderr, no prompt and
+zero connections. The materialized native green/no-await comparison passes with
+the original await; removing only that await fails the completion assertion while
+both native model readbacks still complete. Normal exit alone does not establish
+this listener's completion.
+
+The [existing contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission),
+[SDK witness](../tests/pilot_capture/settings_chain_witness.mjs) and
+[native consumer](../tests/pilot_capture.rs) own this boundary. Associated upstream
+24439066040e006eb08da7b204f0ac41c79d2de9 paths are
+session/auth-broker-config.ts::createAuthStorageSettingsSync (blob
+e212c2a0766f5bfc9ce4c843b389431bbc9f7aa8), config/registry.ts::Derived.listen and
+AuthStorage::setAccountPolicies. The relevant settings-live-routing upstream test
+uses a separate sync handle; it is not executed. This consumer observes the
+already registered CLI listener. Source association is not reproducible-build
+proof, and setter-call completion does not establish account-routing efficacy or
+provider economics. Private probes/receipts are under
+runs/pilot-settings-chain-seam-2026-11-16/,
+runs/pilot-settings-chain-pending-2026-11-16/ and
+runs/pilot-settings-chain-owner-2026-11-16/.
+
+The whole current native owner regression passes in **570.760
+seconds including a cold build**. All prior groups remain, with **44** verified
+native-library copies retired after their cases are reaped. Fresh formatting,
+all-target pilot Clippy and actual Rust1.90 all-target pilot check pass. The five
+unchanged effective gates are explicitly reused after exact application, gate,
+consumer-body and artifact checks; no new ignore or relaxed previous deadline.
+Reused default totals remain **1,319/0/35 ignored**, pilot units **102/0/1 ignored**.
+Current conversation/settings/usage and frozen **33/0/7** receipts from `7863a44`
+are unchanged and reused, not rerun.
+
+Qualification/readback takes **881.998 seconds** within
+the stated offline hour with a 120-second cleanup reserve. Maximum sampled
+individual RSS is **1770.922 MiB**;
+minimum observed free disk **29.788 GiB**.
+These samples do not establish a global/GPU quota. Review is in-session. This
+qualifies the reserve-policy branch only: broker/store replacement, polling,
+refresh/close, the discarded warm-up promise, complete timer/transport coverage
+and durable parent acknowledgment remain open. No provider request, model download
+or spend. Paid runs, release signing and release publication remain gated;
+v2/T006 stays unfunded/unfrozen and execution locked.
+
+Qualified tests/records through `df6471d` are published to experimental;
+a fresh clone matches all **419 tracked paths** by type, executable mode and bytes.
+Main remains `d94b013`; head uses `[skip ci]`, with no workflow dispatch, release
+signing, release/tag or paid run. Verified new build/MSRV allocation falls from
+**3,301,769,216** to **35,573,760 bytes**, removing **10,424
+generated files** while retaining one private runnable 40-test executable.
+All **206 other stage files** keep exact hashes;
+MSRV phase logs are outside the generated cache and remain intact. Six completed
+probe libraries are removed after exact master equality and open/mapped-use checks,
+with **206 other preflight files** preserved exactly.
+Combined reported allocation reduction is **3,932,868,608
+bytes (3.663 GiB)**; physical APFS reclamation is not inferred.
+
+The complete owner regression passes **directly without Cargo after cleanup** in
+**481.088 seconds**, including original policy-chain
+identity, serial/coalesced setter completion, absence of a hard runtime override,
+both equal model readbacks and every prior owner group. All **44** per-case native
+library copies are verified and retired after reaping. The retained executable's
+digest and 40-test inventory match; source, earlier evidence and user-owned
+untracked bytes remain exact. Final allocation readback: target
+**92,450,816**, runs
+**7,644,217,344**, datasets
+**34,715,725,824 bytes**. Private evidence,
+archives, native masters, models, prepared stores and corpus/oracle/holdout inputs
+remain local. Qualification, publication, cleanup and replay remain within the
+stated hour. Paid runs and release signing remain gated.
+
+Next-owner source inspection at the same pinned upstream commit finds that
+`LocalAuthStorageBackend.close` retires its current modules, while `replaceStore`
+can compose another store later. `OAuthRefresher.close` returns void and may defer
+store closure behind tracked work; `Settings.cancelPendingSaves` leaves the auth
+listener registered. Closing AuthStorage alone therefore cannot establish durable
+owner retirement. The relevant upstream auth-storage-close-releases-handles test
+checks a separate store's exclusive-access boundary and is not executed here.
+Private source pins are in next-owner-source-notes.json. An early Set.add
+registration observation is an unexecuted candidate for retaining the four exact
+listener entries; queued original continuations and actual conversation/usage
+acceptance would still be required before any runtime change. No auth-retirement
+implementation or complete startup admission is selected by this finding.
+
+## Original native credential-resolver join — 2026-11-16
+
+**The original initial resolver pair is identified and joined on `4682e9e`;
+complete startup admission remains HOLD.** Application source is unchanged. The
+pinned OMP18.18.1 / Bun1.4.4 export identifies `createAuthStorageSettingsSync` as
+`aee`; function-source SHA256 is
+25f681643c58b0b08a43f839ab6760b76ab1cbd65e5ff3ba61d110fff8c03ca9.
+A bounded test-only Promise.catch observer captures the exact receiver and original
+return at its native registration frame. It preserves the receiver, callback and
+return object, restores the exact descriptor at factory entry, and awaits both
+original promises without reading their values. All three actual native controls
+find this pair fulfilled before the factory; this selects no runtime repair.
+
+The existing [contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission)
+and [native consumer](../tests/pilot_capture.rs) own ordinary, synthetic-pending
+and synthetic-rejection controls. Each returns the same complete model twice,
+separated by twelve seconds, crosses the native warm-up deadline and exits normally
+with empty stderr, no prompt and zero connections. A synthetic pending source stays
+pending until explicitly resolved. A rejected synthetic source refuses the join
+although its original catch return fulfills. A materialized native green/mutant
+comparison passes with the original await and fails the pending assertion when
+only that await is removed; both runs complete native readbacks. No second
+resolver or settings-sync invocation is substituted for the original.
+
+Association remains upstream 24439066040e006eb08da7b204f0ac41c79d2de9,
+[auth-broker-config.ts::createAuthStorageSettingsSync](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/session/auth-broker-config.ts#L153)
+(blob e212c2a0766f5bfc9ce4c843b389431bbc9f7aa8), with the original discarded
+handle in main.ts (blob 2bfe0b7230e9b3e30aebfd493a03bffb652cdfb3).
+Relevant upstream auth-broker-live-settings and settings-live-routing tests cover
+later broker/policy changes; neither is executed. This test observes the fixed
+empty no-provider profile's initial call without changing auth settings. Source
+association is not reproducible-build proof. Initial feasibility and qualified
+receipts remain private under runs/pilot-credential-promise-seam-2026-11-16/,
+runs/pilot-credential-resolver-owner-2026-11-16/ and
+runs/pilot-credential-resolver-qualification-2026-11-16/.
+
+The whole current owner regression passes in **528.384
+seconds including a cold build** (native test body **438.78 seconds**), with every
+previous owner group intact and **41** verified generated native libraries retired
+after their cases are reaped. Fresh formatting, all-target pilot Clippy and actual
+Rust1.90 all-target pilot check pass. The five unaffected effective gates are
+explicitly reused after exact application/gate/body/artifact checks; no new ignore
+or relaxed existing deadline. Reused default totals are **1,319/0/35 ignored**,
+pilot units **102/0/1 ignored**. Current conversation/settings/usage and frozen
+**33/0/7** receipts from `7863a44` are unchanged and reused, not rerun.
+
+Qualification/readback takes **821.233 seconds** within
+the stated offline hour, with 120 seconds reserved for cleanup. Maximum sampled
+individual RSS is **1812.672 MiB**;
+minimum observed free disk **41.085 GiB**.
+Samples do not establish a global/GPU quota. Review is in-session. The original
+listener's later settings-change chain, refresh/polling/close lifetimes, discarded
+warm-up promise, complete timer/transport coverage and durable parent acknowledgment
+remain open. No provider request, model download or spend. Paid runs, release
+signing and release publication remain gated; v2/T006 stays unfunded/unfrozen and
+execution locked.
+
+Tests/qualified records through `2ba7b1c` are published to experimental;
+a fresh clone matches all **418 tracked paths** by type, executable mode and bytes.
+GitHub readback reports zero workflow runs for that exact head. Main remains
+`d94b013`; publication head uses `[skip ci]`, with no workflow dispatch,
+release signing, release/tag or paid run. The new build/MSRV allocation falls from
+**3,301,994,496** to **35,774,464 bytes**, removing **10,423
+generated files** while retaining the private runnable 40-test executable and
+**197 other stage files** at exact hashes.
+The initial marker guard stopped before build deletion because MSRV logs share its
+target root. Pruning was narrowed to the generated Cargo subtrees; all four phase
+logs/receipts remain byte-identical at their original paths. Five duplicate native
+libraries are removed only after master equality and open/mapped-use checks;
+**180 other preflight files** remain exact.
+Combined reported allocation reduction is **3,821,780,992
+bytes (3.559 GiB)**; physical APFS reclamation is not inferred.
+
+The complete owner regression passes **without Cargo after cleanup** in
+**439.061 seconds**, including the original resolver
+pair, pending/rejection controls and every prior owner group. All **41** per-case
+native-library extractions are verified and retired after reaping. The retained
+executable's digest and 40-test inventory match; all source, earlier evidence and
+user-owned untracked bytes remain exact. Final allocations are target
+**92,450,816**, runs
+**7,602,810,880**, datasets
+**34,715,725,824 bytes**. Private evidence,
+archives, models, prepared stores and corpus/oracle/holdout inputs remain local.
+Qualification, publication, cleanup and replay remain within the stated hour;
+paid runs and release signing remain gated.
+
+## Native startup watchdog and promise-hook limits — 2026-11-15
+
+**The original native watchdog is cancelled before handler entry; complete
+startup admission remains HOLD.** Qualification completed 2026-11-16 on test source
+`b9c7104`; application source remains unchanged. Initial feasibility follows.
+In pinned OMP18.18.1 / Bun1.4.4, its original 10-second
+handle is pending in the early trusted factory and cancelled once by the
+session-start readback. Holding that factory eleven seconds makes the actual callback emit
+one notice, after which normal cancellation prevents the later notice. The three
+native cases return two equal complete models, cross the original warm-up deadline
+and exit normally without a prompt or provider call. Callback and timer arguments
+are passed unchanged; no callback is invoked manually. Application source is unchanged.
+
+The same actual-artifact probe tests promise-hook functionality with a controlled
+Promise. node:async_hooks.createHook enables without throwing but emits no events,
+including for that control; node:v8.promiseHooks.createHook throws
+NotImplementedError. Empty observations therefore cannot prove owner absence or
+the original discarded promise's identity/settlement. This closes that observation
+candidate; original credential and warm-up lifetimes remain unqualified.
+
+The [existing contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission)
+selects real normal/delayed/cancellation-suppressed watchdog controls in the
+existing [native consumer](../tests/pilot_capture.rs). No runtime repair, product
+timer wrapper, channel or worker is selected. Associated
+[main.ts::armStartupWatchdog/stopStartupWatchdog](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/main.ts#L360)
+already cancels before runRpcMode. The native callback hash is
+749865907ec3a454d6eadc0146e603c933a980d0863ae36cd253682f311bcccc. Source association
+is not reproducible-build proof. No directly named watchdog test was found by the
+bounded literal search of retained coding-agent test sources; no upstream tests
+were executed. Private probes/receipts live in
+runs/pilot-native-lifetime-seams-2026-11-15/ and
+runs/pilot-watchdog-owner-2026-11-15/.
+
+Three completed preflight native-library extractions match the retained master
+byte-for-byte and by digest and have no open/mapped use; only these duplicates are
+removed after preserving every other preflight file. The qualification below uses
+the stated one-hour resource bounds and two
+outer test threads. Existing conversation/settings/usage and frozen evidence are
+reused only with exact unchanged-input checks. Complete startup admission remains
+HOLD; paid runs and release signing remain gated.
+
+The initial witness on `3bd30be` read its session snapshot after a registry await.
+Its native owner test and all eight gates pass, but that snapshot alone cannot
+prove cancellation at handler entry. Review moved the snapshot before the await,
+bound the actual materialized witness digest to its compiled input, and reran the
+complete owner test on `b9c7104`. The earlier readback remains separate evidence.
+All application/gate source inputs (**138 files**) and every consumer body outside
+the owner test remain byte-identical. No runtime repair, provider policy, codec,
+launch configuration or dependency changes.
+
+The native ordinary/delayed/cancellation-suppressed cases produce **[0,1,2] real
+notices**. The first two actually clear the exact original handle; suppressing only
+that cancellation leaves it pending at handler entry and prints another notice.
+All three exit normally and return the same complete model twice, separated by a
+22-second hold. Thus normal exit alone is not settlement proof. Native callback
+and arguments are unchanged; raw bounded notices and their hashes are retained.
+The current witness is SHA256
+22b301d5d8f4b0cf79ec99f4f63ff4da278af5b3875d2fd6ad0944f6cd273d0f.
+
+The full native owner regression passes in **398.332 seconds**, including
+all previous Agent/raw, credential-prefetch, off-memory, warm-up, logging, telemetry
+and marketplace controls. After each case is reaped, the helper now verifies any
+recoverable SDK library's owner, strict private mode, size and canonical path,
+checks its exact retained-master digest, and removes only that generated copy.
+**38 copies** are retired in the qualified run instead of accumulating across
+serial cases. Private-mode checks for all other output still run. These temporary
+copies are not counted as additional final storage savings.
+
+All eight gates first pass on `3bd30be` in **1236.309 seconds**. After the
+integration-fixture refinement, formatting, pilot Clippy with all targets and the
+actual Rust1.90 pilot check run fresh on `b9c7104` and pass. The other **five**
+checks have unchanged effective inputs: the default feature excludes this macOS
+integration crate, and library-only pilot tests do not include its fixtures.
+Their accepted receipts are reused explicitly. Default totals are **1,319/0/35
+ignored**, pilot units **102/0/1 ignored**; existing assertions/deadlines and
+internal concurrency remain intact, with no new ignore. Conversation/settings/
+usage and frozen **33/0/7** runtime evidence from `7863a44` are reused on exact
+unchanged application, consumer and native-artifact inputs; they were not rerun.
+
+Receipt verification completes in **2887.015 seconds** within
+the shared hour. Maximum sampled individual RSS is
+**2045.906 MiB**; minimum observed free disk
+is **22.358 GiB**. These are samples, not global/GPU
+enforcement. Review is in-session. Original credential resolver/settings-sync/
+refresh lifetimes, the discarded warm-up promise, complete transport coverage and
+durable parent acknowledgment remain open. No provider call, model download or
+spend; paid runs and release signing stay gated.
+
+The qualified tests/records through `b963af3` are published to
+experimental, with full type/executable-mode/byte readback of **416 tracked paths**
+from a fresh clone. Main remains `d94b013`; no release signing, tag/release, paid
+request or workflow dispatch. After cache-marker, open-file and system-library
+dependency checks, the new build/MSRV cache falls from **8,442,396,672** to
+**35,524,608 allocated bytes**. **11,755 generated files**
+are removed, retaining one runnable 40-test integration executable; all
+**228 other stage files** keep exact hashes.
+Earlier runnable red/green executables and private masters remain in their existing
+roots. Combined with the three verified duplicate preflight libraries, this stage
+reduces allocation by **8,740,208,640 bytes (8.140 GiB)**. This is du allocation, not inferred
+physical APFS reclamation. Temporary per-case SDK copy retirement is not added to
+that number.
+
+The complete current owner test passes **directly from the retained executable
+without Cargo** after cleanup in **395.363 seconds**.
+It retains the [0,1,2] native notice controls, precise handler-entry snapshots,
+materialized witness digest, both equal model readbacks and every previous owner
+group. The executable's digest/40-test inventory and embedded witness bytes match;
+all application/test source and user-owned untracked bytes remain exact. The
+post-cleanup owner cases retire their own verified SDK copies after reaping.
+This is a fresh owner replay, not a repeated conversation or frozen suite.
+Qualification and final readback remain within the stated shared hour across the
+calendar boundary. Final allocations: target
+**92,450,816**, runs
+**7,561,998,336**, datasets
+**34,715,725,824 bytes**. Evidence, archives,
+models, prepared stores, corpus/oracle/holdout data and native masters remain local.
+Original credential/warm-up lifetimes, full transport coverage and durable parent
+acknowledgment stay open. Paid runs, release signing and release publication remain
+gated.
+
+## Fixed-profile marketplace update exclusion — 2026-11-15
+
+**The owned qualifier excludes the native marketplace task before capture Ready;
+complete startup admission remains HOLD.** Qualified source `7863a44`
+implements the selected contract. The prior owned configuration defaulted to notify.
+In the actual pinned OMP 18.18.1 / Bun 1.4.4, that invoked the native
+MarketplaceManager.refreshStaleMarketplaces and checkForUpdates; both original
+promises complete. Explicit notify does the same, while initial off excludes both
+calls. A trusted-factory change from notify to off still runs the task. All four
+controls preserve the complete native model, return two state responses, have
+empty stderr and exit normally without a prompt. Network is denied and spend is
+zero. A controller setup error started no host and remains recorded separately.
+
+The supported test observer wraps actual exported class methods, preserving the
+receiver, arguments and original return promise. The feasibility observer restores
+them after session observation; the committed regression extends observation
+through process exit. These controls do not establish full startup settlement,
+real-provider economics or arbitrary marketplace behavior.
+
+The [selected existing contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission)
+puts off in the owned launcher's initial settings and verifies the real readback
+before Ready. Late bridge mutation is insufficient: associated
+[main.ts](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/main.ts#L2393)
+captures options before trusted factories and schedules the task before RPC
+session_start. Native
+[scheduleMarketplaceAutoUpdate](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/extensibility/plugins/marketplace-auto-update.ts#L12)
+returns before import/construction for off. Verified source blobs, private native
+controls and command/resource receipts remain in
+runs/pilot-marketplace-feasibility-2026-11-15/ and
+runs/pilot-marketplace-owner-2026-11-15/. Source association is not a reproducible
+build. The upstream
+[manager tests](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/test/marketplace/manager.test.ts#L1306)
+cover update results and fresh/stale refresh behavior; they were read, not run.
+Foundry intentionally excludes the fixed qualifier's task rather than modifying
+those native marketplace semantics.
+
+The committed native regression on `7dab0cd` fails at the owned initial-setting
+assertion after all four controls finish normally: call counts are **[2,2,0,2]**
+for notify/owned/off/late-off. It takes **116.886 seconds**, including compilation,
+with no prompt or provider call. The executable and all rows remain retained.
+The private verifier initially used the capture bridge's modified model pin for
+these unmodified native control models. Corrected readback matches the earlier
+native owner controls; the original rejection remains recorded and no native run
+is repeated. The regression itself failed at the intended assertion.
+
+Before that proper red, the initial offline build stopped at the 20 GiB disk
+reserve, before any native host launched, and reaped normally without forced
+cleanup. It is not an accepted run. Four duplicate native-library extractions are
+byte/hash-identical to the retained master and not open/mapped; removing only
+those preserves **138 other preflight files** exactly. Five already-cold,
+non-runtime source/fact snapshots are losslessly gzip-retained, recovering
+**2,490,179,584 allocated bytes**. Every decoded byte count/SHA256 matches before
+the uncompressed copy is removed; a complete real-file restore and the helper's
+no-clobber refusal also pass. All other cold receipts remain exact. Their original
+historical receipts remain, and the private cold-stores/gzip-retention-index.json,
+per-snapshot maps and RESTORE.md provide the new locations and restore procedure.
+Active prepared stores, models, corpora, questions, oracles and holdout data are
+unchanged. Extra volume headroom later recovered; its cause is not established.
+A fresh stated hour begins with over 35 GiB available and retains the same
+20 GiB floor, one heavy job, four outer test threads, 120-second cleanup reserve
+and 8 GiB sampled individual RSS ceiling. The original partial stage remains
+separate from this qualification continuation.
+
+The [Rust launcher](../src/pilot_capture/host.rs) sets initial
+marketplace.autoUpdate=off only for OwnedQualification. The existing
+[bridge](../src/pilot_capture/bridge.ts) checks the actual native setting after its
+final strict settings reload and before Ready. No new module, owner, worker,
+configuration mechanism or protocol is added. Ordinary capture/frozen v1 retain
+their settings; provider policy, shared channel and metadata bounds are unchanged.
+
+The repaired original-call controls yield **[2,0,0,2]** for notify/owned/off/late-off,
+with complete equal native control models, original promise returns, completed
+positive calls, empty stderr, normal reaping and no forced cleanup. The observer
+remains through process exit and restores both descriptors; overflow fails.
+All **five current diagnostics pass in 362.893 seconds**, preserving
+the owned two-generation tool conversation, four synthetic TLS POSTs, native
+usage/29 mutations, metadata/16 mutations, catalog/model identity, MCP/disk-edit
+checks and all prior startup controls. The native controls use the original catalog
+model; the capture bridge's deliberate model override has its own unchanged pin.
+Synthetic counters and responses do not establish provider economics or task benefit.
+
+Frozen compatibility passes **33/0/7 ignored in 291.783 seconds**;
+focused lint and all **eight gates pass** (966.896 seconds), including
+actual Rust **1.90.0**. Default outer totals are **1,319/0/35 ignored**; pilot units
+are **102/0/1 ignored**. No existing assertion or per-test deadline is weakened
+and no ignore is added. Four outer threads bound scheduling while explicit concurrency tests keep their
+internal concurrency. Review is in-session. The continuation qualification finishes
+in **1948.213 seconds**; maximum sampled individual RSS is
+**2029.531 MiB**, and minimum observed
+free disk is **24.599 GiB**. These are
+samples, not global/GPU resource enforcement. No model download, real credential
+or provider spend is used. Remaining credential lifetimes, other startup owners,
+complete timer/transport coverage and durable parent acknowledgment stay open.
+V2 remains unfunded/unfrozen; paid runs and release signing remain gated.
+
+The repair/records through `467bd45` are published to experimental;
+all **414 tracked paths** match a fresh clone by type, executable mode and bytes.
+Main remains `d94b013`; no release signing, tags/releases, paid request or workflow
+dispatch. After cache-marker, open-file and system-library-only dependency checks,
+the new build/MSRV cache falls from **8,442,441,728** to **35,467,264 allocated bytes**.
+Only **11,755 generated files** are removed, retaining
+the final standalone native test executable and the separate proper red. All
+**196 other stage files** retain exact hashes.
+Together with the earlier four duplicate SDK extractions and lossless cold-snapshot
+compression, allocation falls by
+**11,341,602,816 bytes (10.563 GiB)**.
+This is allocated size, not inferred physical APFS reclamation.
+
+All **five current native diagnostics pass directly from the retained final binary
+without Cargo** after cleanup, in **342.156 seconds**.
+The original-call marketplace matrix remains [2,0,0,2]. Both red/green digests and
+their 40-test inventories match, all code/test source is unchanged, user-owned
+untracked bytes remain exact, and all five gzip archive digests still match. The
+continuation and final readback finish within the stated hour; the initial partial
+stage remains separate. Final allocations: target
+**92,450,816**, runs
+**7,520,727,040**, datasets
+**34,715,725,824 bytes**. Evidence,
+models, canonical prepared stores, corpus/oracle/holdout data and native masters
+remain local. Original credential and other-owner lifetimes, full timer/transport
+coverage and durable parent acknowledgment remain open. Paid runs, release signing
+and release publication remain gated.
+
+## Fixed-profile native logging quiescence — 2026-11-15
+
+**The owned qualifier retires the native buffered logger and joins its queued
+retention callback before capture Ready; full startup admission remains HOLD.**
+Qualified source `a989a1f` implements the selected
+[startup-owner contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission).
+Ordinary capture/frozen v1 retain their logging. No provider, signing or release
+permission is added.
+
+The associated native logger owns a one-second unref'd file-flush timer and a
+separate unref'd retention immediate. Three no-prompt native controls establish
+actual handles and bytes. Enabled logging writes both synthetic markers and the
+scoped timer fires. Native setTransports(false/false) flushes the first marker and
+cancels that exact timer, but returns with retention still pending. After one
+native immediate turn, retention has actually run and the observer sees no pending
+handle. Later SDK logging writes no second marker in either disabled case. The
+complete native model matches across cases, both state readbacks succeed, stderr
+is empty and all hosts exit normally. Console was already off in these RPC cases;
+this is not console-on transition evidence. A first observer missed the lazy
+constructor because it watched only the setter; its rejected run is retained.
+The corrected observer includes construction on the first record.
+
+A source census verifies **6,816 regular program/manifest Git blobs** (83,915,886
+bytes) at oh-my-pi **24439066040e006eb08da7b204f0ac41c79d2de9**. The literal
+production reconfiguration reference is the separate auth-broker CLI's runServe;
+this RPC profile does not run it. Literal-reference census is not whole-program
+absence proof. A bounded full-archive transfer stopped at 64 MiB; the incomplete
+cache was removed after its digest/limit record. A filtered Git fetch and sparse
+program checkout avoid asset blobs, with hooks, filters and submodule recursion
+disabled. No source from this checkout was executed.
+
+Source owners are
+[logger.ts::setTransports/schedulePruneStaleProcessLogs](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/utils/src/logger.ts#L544)
+(blob **22c731efb1939c584f091d943338f31db3083071**),
+[RotatingFileSink::flush/close](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/utils/src/logger/rotating-file.ts#L133)
+(blob **a927106076e5afa3ac89d983f5b375c1e1382649**). The upstream
+[logger-contract-probe.ts](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/utils/test/fixtures/logger-contract-probe.ts#L192)
+is a source test reference, not executed here. The retirement callback uses synchronous file
+operations; close is best-effort and these healthy marker writes are not log
+durability/power-loss proof. Source association is not reproducible-build proof.
+Native evidence uses the pinned OMP 18.18.1 / Bun 1.4.4 artifact.
+
+The actual artifact rejects reassignment of read-only/non-configurable Bun.plugin
+and redefinition of the warm-up module export. Their initial failure and normal
+readback remain private. The supported logger sink does observe the original
+warm-up catch, its next microtask and disposer even with file logging disabled.
+This demonstrates a useful native observation seam, **not original promise identity
+or a join of the discarded warm-up promise**. No replacement of those exports or
+new promise-inspection platform is introduced.
+
+On committed red source `4ed5d01`, actual capture Ready lacks logging completion.
+The consumer fails before any fixture POST, with normal zero host exit and reaped
+group, in **101.065 seconds** including offline compilation. The original native
+warm-up's three deadline states are already present; this is a separate logging
+requirement. The runnable red remains retained. The first repair build then failed
+on a test-only module shorthand before any host launched; `a989a1f` qualifies that
+path and the original compile receipt remains excluded from green qualification.
+
+The [Rust launcher](../src/pilot_capture/host.rs) materializes/hash-binds the small
+[startup_logging.ts](../src/pilot_capture/startup_logging.ts) extension helper only
+for OwnedQualification. It calls the native setter and awaits one immediate turn;
+it adds no logging implementation, background loop, worker or dependency. The
+trusted [bridge](../src/pilot_capture/bridge.ts) invokes it before SDK construction.
+The existing preload metadata owner records one closed logging/quiesced row and
+requires completion before final seal/Ready. Bounds are 26 rows, 20 attempts and
+8192 bytes; all **16** corruptions reject. Missing/duplicate completion refuses.
+Default profile has neither helper file nor helper hash. Actual SDK controls import
+the exact same helper and independently observe timer cancellation, the queued
+callback and marker bytes. Disabling file logging does not disable native log sinks.
+No product timer monkeypatch, alternate channel, independent log or wire revision
+is added. Arbitrary injected reconfiguration and every host logging backend remain
+outside this selected proof.
+
+All **five current diagnostics pass** in **319.212 seconds**. The complete model,
+actual two-generation tool conversation, four owned TLS POSTs, synthetic native
+usage/29 mutations, catalog identity, five warm-up controls, eight prefetch controls,
+nine off-memory controls, three telemetry controls, stock/guard/raw [1,0,1], MCP
+exclusion and disk-edit checks remain green. New logging controls distinguish
+active logging, stop-only with pending retention, and the actual drained helper.
+Every owned control is reaped without forced cleanup. Synthetic counters and
+markers establish no real-provider economics or task benefit.
+
+Frozen compatibility passes **33/0/7 ignored** in **299.638 seconds**, focused
+lint passes and all **eight gates pass** in **867.250 seconds**, including actual
+Rust **1.90.0**. Default outer totals are **1,319/0/35 ignored**; pilot units are
+**102/0/1 ignored**. No assertion/deadline is relaxed or ignore added. Review is
+in-session.
+
+Private evidence lives in runs/pilot-startup-entry-seams-2026-11-15/,
+runs/pilot-logging-feasibility-2026-11-15/, runs/pilot-startup-source-census-2026-11-15/
+and runs/pilot-logging-owner-2026-11-15/: primary blobs/complete program manifest,
+failed/corrected probes, real-bridge red/green, timer/immediate/marker controls and
+command/resource receipts. The initial gate run stopped at the 20 GiB disk reserve;
+its interrupt grace
+expired and forced cleanup removed every observed owned process. That interrupted
+run is not accepted. Native/frozen/lint evidence on unchanged bytes remains valid.
+After exact/open-file checked removal of five duplicate native libraries and 37
+unchanged published-source readback checkouts (all receipts/manifests retained),
+the same eight gates run with **RUST_TEST_THREADS=4** to bound concurrent temporary
+fixtures. Explicit concurrency tests retain their own internal concurrency. No
+test body, assertion, count or per-test deadline changes. A fresh offline hour
+covers that continuation and final direct native readback; the original partial
+stage stays separate. Continuation qualification completes in
+**930.540 seconds**, with one heavy job, 120-second cleanup
+reserve, the same 20 GiB disk floor and 8 GiB sampled individual RSS ceiling.
+Maximum sampled
+individual RSS is **2027.641 MiB**; minimum observed free disk
+is **22.372 GiB**. These are samples, not hard global/GPU
+resource enforcement. No real credential, model download or provider spend is used.
+Credential lifetimes, remaining startup owners, complete timer/transport coverage
+and durable parent acknowledgment remain open. V2 stays unfunded/unfrozen; paid
+runs, signing and release remain gated.
+
+The repair and records through `fe46c66` are published to experimental;
+all **413 tracked paths** match a fresh clone by type, executable mode and bytes.
+Main remains `d94b013`; no release signing, tags/releases, paid request or workflow dispatch.
+The new build/MSRV cache is pruned from **8,442,310,656** to **35,463,168 allocated bytes**
+after cache-marker, open-file and system-library-only dependency checks. Exactly
+**11,755 generated files** are removed while one runnable
+final integration executable and the separate proper red remain retained; all
+**190 other stage files** retain exact hashes.
+Before the gate continuation, five private-preflight native-library extractions are byte-identical to the
+retained master and not open/mapped; only those copies are removed, preserving
+**130 other preflight-case files** exactly. The same resource recovery removes **37** task-created,
+unchanged published-source readback checkouts, after checking their exact recorded
+heads, clean/untracked/ignored state, sole refs/reflog, every recorded file byte,
+no worktrees and no open paths. Their original publication/file manifests remain.
+These recoverable public-code checkouts contain no private evidence. Combined cache
+allocation falls by **9,685,164,032 bytes (9.020 GiB)**. This is du allocation,
+not inferred physical APFS reclamation.
+
+All five current native diagnostics, including all new logging and five warm-up controls, pass
+**directly from the retained final binary without Cargo** in
+**314.975 seconds** after cleanup. Both red/green binary
+digests and their 40-test inventories match; code/test source remains exact.
+The resumed gates and post-cleanup readback finish within the stated continuation
+hour; the original partial stage remains separate. Final allocations: target **92,450,816**,
+runs **9,950,068,736**, datasets
+**34,715,725,824 bytes**. Retained evidence,
+models, corpus/oracles, native masters and user-owned untracked files remain local;
+no further dataset deletion is needed for this change. Private publication,
+cleanup and direct-readback receipts remain in the existing qualification root.
+Complete startup admission and paid/signing/release gates are unchanged.
+
+## Known native warm-up deadline before capture Ready — 2026-11-15
+
+**Capture Ready now waits for the identified native warm-up deadline and detached
+observer; complete startup admission stays HOLD.** Source `13811cf` implements the
+selected [owner contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission).
+This adds approximately ten seconds to the fixed owned qualifier's startup. Ordinary
+capture, frozen v1, provider policy and execution authority remain unchanged.
+
+The native preflight binds the exact original SDK abort callback to one refused
+canonical Anthropic HEAD. Its baseline session-start witness sees the original
+10,000 ms signal still pending. An awaiting witness sees the native timeout and
+observer removal. Per-instance observation also passes with the same complete model,
+two native state responses, empty stderr and normal cleanup. RPC Ready arrives
+independently before the awaiting witness; it is therefore not settlement proof.
+The regression observes the actual capture bridge's Ready before any prompt.
+
+On red source `afdfb00`, that Ready precedes deadline settlement. The native test
+fails for that reason, with zero Count/Messages fixture POSTs, normal zero host exit,
+no forced cleanup and a reaped group, in **91.103 seconds** including offline
+compilation. The runnable red executable remains retained. Initial private runner
+setup failures started no host. The first green native run
+passed the owned conversation, then stopped on an exclusive evidence-directory
+creation in the test fixture after its first warm-up control. That failed run is
+retained and excluded from the complete green qualification; source `607389b`
+uses the existing idempotent fixture helper.
+
+The preload preserves the original timeout call's receiver, arguments and exact
+returned signal. It observes listener registration/removal only on those returned
+10-second signal instances. During synchronous delivery of the known request's
+local error, it verifies removal of the exact original SDK callback, then binds its
+own once-only observer through the saved native method. The native TimeoutError
+must occur and that observer must detach. A 12-second helper deadline is cleared
+on every outcome before successful sealing/Ready. The native timer is neither
+cancelled nor replaced, and no throttle-cache priming or successful response is
+introduced. The existing Agent still refuses the original connection before IO.
+
+The same bounded metadata sequence records listener_released, deadline_elapsed
+and sealed with native_timeout_ms=10000. Its strict parser allows at most 25 rows,
+20 attempts and 8192 bytes. Twelve corruptions fail; live-prefix validation checks
+all three ordered states at capture Ready, before the later 12-second hold can
+mask an early Ready. There is no new channel, worker, log, dependency or wire
+revision. The original prewarm promise is discarded by the SDK and is **not joined
+by this repair**. Other native timers and owners remain unqualified.
+
+The primary source association remains oh-my-pi
+`24439066040e006eb08da7b204f0ac41c79d2de9`,
+`providers/connection-prewarm.ts::prewarmModelConnection` (native 10-second signal)
+and `providers/cowork-fetch.ts::sendCoworkRequest` (original abort callback and
+request-error release). Pinned blobs/tests remain with the existing [warm-up
+receipt](#native-warm-up-refusal-lifetime-repair--2026-11-15) and private upstream copies. Source association is not reproducible-build
+proof; native evidence uses the actual artifact-pinned OMP 18.18.1 / Bun 1.4.4.
+
+All **five current-host diagnostics pass** in **299.725 seconds** on `13811cf`.
+The actual owned two-generation tool conversation retains its complete model,
+four owned TLS POSTs, native synthetic usage and 29 usage corruptions. At capture
+Ready the real signal's deadline has elapsed and its observer has been removed.
+Five additional SDK controls produce sealed/refused/refused/sealed/sealed for
+success, missing binding, unfinished signal, repeated seal and repeated known
+request; exit codes are 0/0/0/75/75 with reaped groups and zero TCP-counter
+connections. Missing/unfinished controls inject faults and are not native timing
+proof. The restart is a direct canonical Agent request, not a replay of the SDK's
+throttled prewarm function. Existing stock/guard/raw counts [1,0,1], eight prefetch,
+nine off-memory, three telemetry, MCP exclusion and disk-edit controls remain green.
+Raw sockets remain an explicitly demonstrated bypass. No full transport fence is
+claimed.
+
+Frozen compatibility passes **33/0/7 ignored** in **295.798 seconds**, focused
+lint passes and all **eight gates pass** in **826.490 seconds**, including actual
+Rust **1.90.0**. Default outer totals are **1,319/0/35 ignored** and pilot units are
+**102/0/1 ignored**. No existing test assertion/deadline is relaxed or ignore added;
+the private retained-run command bound includes the five new SDK controls. Review
+is in-session. Synthetic messages/usage establish no real-provider economics.
+
+Evidence is private in `runs/pilot-warmup-deadline-2026-11-15/` and
+`runs/pilot-warmup-owner-2026-11-15/`: native preflight, proper red, source hashes,
+current/frozen consumers, strict trace controls, gates and resource receipts.
+Qualification finishes in **2442.168 seconds** within the offline
+hour, with 120-second cleanup reserve, one heavy job, 20 GiB disk floor and 8 GiB
+sampled individual RSS ceiling. Maximum sampled individual RSS is
+**1945.609 MiB**, minimum observed free disk is
+**33.359 GiB**; these are samples, not hard
+global/GPU memory enforcement. No spend, model download or real credential is used.
+Credential lifetimes, remaining owners, complete timer/transport coverage and
+durable parent acknowledgment remain open. V2 stays unfunded/unfrozen; paid runs,
+signing and release remain gated.
+
+The repair and records through `1dc6f14` are published to experimental;
+all **410 tracked paths** match a fresh clone by type, executable mode and bytes.
+Main remains `d94b013`; no signing, tags/releases, paid request or workflow dispatch.
+The new build/MSRV cache is pruned from **8,442,290,176** to **35,426,304 allocated bytes**
+after cache-marker, open-file and system-library-only dependency checks. Exactly
+**11,755 generated files** are removed while one runnable
+final integration executable and the separate proper red remain retained; all
+**343 other stage files** retain exact hashes.
+Three new private-preflight native-library extractions are byte-identical to the
+retained master and not open/mapped; only those copies are removed, preserving
+**78 other preflight-case files** exactly. Combined directory
+allocation falls by **8,740,200,448 bytes (8.140 GiB)**. This is du allocation,
+not inferred physical APFS reclamation.
+
+All five current native diagnostics, including all five warm-up controls, pass
+**directly from the retained final binary without Cargo** in
+**295.612 seconds** after cleanup. Both red/green binary
+digests and their 40-test inventories match; code/test source remains exact.
+The final source qualification and post-cleanup readback finish within the same
+stated hour. Final allocations: target **92,450,816**,
+runs **9,745,678,336**, datasets
+**34,715,725,824 bytes**. Retained evidence,
+models, corpus/oracles, native masters and user-owned untracked files remain local;
+no further dataset deletion is needed for this change. Private publication,
+cleanup and direct-readback receipts remain in the existing qualification root.
+Complete startup admission and paid/signing/release gates are unchanged.
+
+## Fixed-profile telemetry exporter exclusion — 2026-11-15
+
+**The owned qualifier excludes trace, metric and log exporter registration before
+main initializes telemetry; full startup admission stays HOLD.** Code/test source
+`2bc27c0` implements the selected
+[startup-owner contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission).
+Ordinary capture and frozen v1 retain their settings. This qualifies exporter
+exclusion in the fixed profile, not draining a graph that was already active.
+
+The late import finding is now explained at its observed boundary. Native import
+returns `ERR_MODULE_NOT_FOUND` for the coding-agent package; it does not report a
+false exporter state. The associated build
+[`BUNDLED_PACKAGES`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/scripts/legacy-pi-virtual-module.ts#L27)
+sets coding-agent's root catch-all to null (blob
+`46e636cfcf05c365e93955b4a08346d161cd8378`), while explicitly exported directories
+remain available. Main awaits telemetry initialization before trusted factories,
+so late module import is not an early observation seam. This is source association
+with the pinned artifact, not reproducible-build proof.
+
+The actual native registration globals provide another readback: trace/metrics
+use API **1.9.1**; logs use a function-valued global with numeric API selector **1**.
+Other selector inputs remain unqualified. These are artifact-specific
+fixture coordinates, not a new product API or a general compatibility claim.
+Actual native tracer, meter and logger calls produce owned synthetic markers.
+Metrics/logs are explicitly flushed through their real provider methods, and an
+independent plain-HTTP Hyper collector verifies all three paths and markers in
+bounded, chunk-decoded bytes. It retains only method/path, framing, size, digest
+and marker presence; no payload or headers are retained. No prompt, provider
+request or real credential is used.
+
+The final native on/off pair passes in **7.068 seconds**. Enabled
+startup registers all three providers and delivers the trace/log/metric markers;
+disabled startup registers none and produces zero collector connections/requests.
+Complete native model objects match; both exits are normal with empty stderr and
+two state readbacks. Original private controls remain: initial authority matching
+and Content-Length-only reception did not establish collector delivery; the real
+exporter uses chunked framing. Early schema assumptions missed the function-valued
+logs registration; a repeated exclusive diagnostic write also interrupted a later
+readback. Partial/failed controls are retained and excluded from complete three-
+signal evidence. The successful collector handles real framing and the native ABI.
+
+The repair changes OwnedQualification's existing configuration before launch:
+`telemetry.otlpExportEnabled=false`. The bridge requires the actual registered
+setting to be false after settings quiescence and before Ready; missing/unknown
+readback refuses the existing settings stage. Its config digest is
+`f9e188517ace05dca14633dcbd2a8ebbab704c07acf8204a35579978184bdde2`. The initial environment remains cleared; no test-only
+endpoint or network override enters the product launcher. No exporter, startup
+module, protocol, runtime worker or dependency is added.
+
+The source owner is oh-my-pi `24439066040e006eb08da7b204f0ac41c79d2de9`:
+[`main.ts::initTelemetryExport`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/main.ts#L2404),
+[`initTelemetryExport`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/telemetry-export.ts#L79)
+(blob `2b14605ed5ca47c66300fe787ba35b4e89ba03c3`) returns before loading/registering
+the OTLP graph when the flag is false; otherwise
+[`registerProviders`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/telemetry-export-otlp.ts#L152)
+(blob `4ab4a333b868fca4ac9d2c24d2a1189566e86831`) constructs providers, listeners
+and a periodic flush timer. The controlled native deliveries establish the actual
+consumer difference, beyond a source-only inference or empty trace.
+
+The permanent SDK regression obtains configuration bytes from the actual Host
+launcher. Explicitly enabled, unmodified owned and explicitly disabled cases use
+owned equivalent endpoints and the same native model. Its test-only preload
+admits only HTTP POSTs to that exact numeric loopback address and the three OTLP
+paths; provider warm-up stays refused. On red source `357b815`, the unmodified
+owned case still registers all three providers and delivers all markers. Both
+exporter controls are valid, every prior owner control passes, and only exclusion
+fails in **236.296 seconds** including offline compilation. The red executable
+and all three rows remain retained.
+
+On `2bc27c0`, all **five current-host diagnostics pass** in **212.858 seconds**.
+The three exporter settings/registration outcomes change from **[true, true, false]**
+to **[true, false, false]**; enabled still delivers all three markers and the two
+disabled cases deliver nothing. All models match, globals remain stable across
+SDK construction, and all process groups exit normally without forced cleanup.
+The actual owned post-warm-up-deadline two-generation conversation, four owned
+TLS POSTs, native synthetic usage/29 corruptions, model/cache identity, six trace
+mutations, Agent stock/guard/raw counts **[1, 0, 1]**, eight prefetch controls, nine
+memory controls, MCP exclusion and disk-edit checks remain green. Synthetic usage
+and telemetry markers establish no provider economics or task benefit.
+
+Frozen compatibility passes **33/0/7 ignored** in **288.842 seconds**, focused
+lint passes, and all **eight gates pass** in **867.373 seconds**, including actual
+Rust **1.90.0**. Default outer totals are **1,319/0/35 ignored**; pilot units are
+**102/0/1 ignored**. Custom recovery and nested child summaries stay separate.
+No existing assertion/deadline is relaxed or ignore added. Review is in-session.
+
+Private evidence is `runs/pilot-telemetry-feasibility-2026-11-15/` and
+`runs/pilot-telemetry-owner-2026-11-15/`: bounded diagnostics, partial/rejected
+controls, successful three-signal pair, source blobs, actual-launcher red/green,
+current/frozen consumers and command/resource receipts. Qualification readback
+finishes at **1842.499 seconds** inside its stated offline hour, with
+one heavy job, 120-second cleanup reserve, 20 GiB disk floor and 8 GiB sampled
+individual RSS ceiling. Maximum sampled individual RSS is
+**1892.703 MiB**, minimum observed free disk is
+**41.174 GiB**. Samples are not hard global/GPU resource enforcement.
+No provider spend, real credential or model download is used. Credential lifetimes,
+other startup owners, native timers, complete transport coverage and durable parent
+acknowledgment remain open. V2 stays unfunded/unfrozen; paid runs, signing and
+release remain gated.
+
+Publication and cache cleanup follow this qualification. Code/records through
+`3224b6b` are pushed to `experimental/context-ecosystem`; a fresh clone
+matches all **409 tracked files** by bytes, type and executable mode. Main stays
+`d94b013`; no tag, release, signing or workflow dispatch is made. Public changes
+are nine code/test/contract/record paths. Private evidence, models, tasks,
+credentials, holdouts and backups stay local; unrelated untracked files stay exact.
+
+After publication, cache tags, exact path/source checks, system-only dynamic
+library dependencies and no-open-file checks permit pruning this stage's generated
+build/MSRV cache from **8,442,163,200 to
+35,364,864 allocated bytes**, removing
+**11,755 generated files**. The standalone green integration
+executable remains SHA-256 `ed3fddc7987b83d2fa4cdf3d73b2cb55e123ebd165d9d4a369cc838a32d85574`; the separately retained actual
+expected-red executable remains `73b404897ea17fbdb955887fee9249a43e17c902148593680e9958a19b98a7ae`. Both list all **40 tests**.
+All **185 existing implementation-evidence files** stay exact.
+
+Fourteen extracted SDK libraries are byte-identical to the retained current master
+(`ee0bf26f4e88b0905611f761efcd6e73a0f2e55a9355e293b0251542dc8b900b`)
+and have no open/mapped handles. Removing only those duplicates deletes
+**1,555,544,480 logical bytes** while all **372 other probe files**
+remain exact. The retained master, current/frozen host artifacts, required datasets
+and earlier acceptance evidence remain available. Combined owned-directory
+allocation falls **9,962,369,024 bytes**; du allocation is not an
+APFS physical-reclamation claim.
+
+All five current native diagnostics pass directly from the retained green
+executable in **195.945 seconds** after cleanup, including three telemetry, nine memory and eight
+prefetch controls, actual conversation and usage, model/cache, MCP/settings and
+TCP controls. Cargo is not invoked and build/MSRV caches are not recreated.
+Post-cleanup source/test bytes and red/green executable hashes remain exact.
+Storage readback reports target **92,450,816 bytes**,
+runs **9,667,809,280 bytes** and required datasets
+**34,715,725,824 bytes** (directory allocation).
+The bounded stage including retained checks finishes at
+**2308.401 seconds**. Provider spend stays zero; full startup
+admission, paid runs and signing remain gated.
+
+## Fixed off-memory startup owner qualification — 2026-11-15
+
+**The fixed read/edit qualifier now checks its actual off-memory startup owner
+before bridge Ready; full startup admission stays HOLD.** Code/test source
+`48822e9` implements the selected
+[startup-owner contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission).
+Ordinary capture, frozen v1 and future admitted memory/task-context integrations
+retain their separate contracts. No memory capability is removed from the product.
+
+A native baseline/observer pair on the pinned current artifact selects the actual
+`offBackend` singleton and `autolearn.enabled=false`. It observes one original
+start call on the actual model registry, one completion and no pending/rejected
+work before session-start readback. Complete native model objects match, both
+exits are normal with empty stderr and each has two state readbacks. The bounded
+stage takes **23.833 seconds**, including a corrected scratch-directory
+preparation failure before any host launch; original deadlines are preserved.
+No prompt or provider request is sent. The actual AuthStorage instance remains
+open with zero cached credential providers and no broker configured. Those metadata
+checks do not establish all credential callback/refresh/polling lifetimes.
+
+The source basis is oh-my-pi `24439066040e006eb08da7b204f0ac41c79d2de9`:
+[`createAgentSessionScoped::startMemoryBackend`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/sdk.ts#L5704),
+[`resolveMemoryBackend`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/memory-backend/resolve.ts#L23)
+(blob `c38c4aef395a661664c6cd4354fd8d1e272dc525`) and
+[`offBackend`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/memory-backend/off-backend.ts#L8)
+(blob `f354947d9da408bb9496b9cceba1e8f6d87373f9`). Off start contains no downstream
+work; other backends and auto-learn execution are unqualified. Source association
+is not reproducible-build proof. Eight primary-source blobs are retained and
+Git-blob verified locally.
+
+Credential teardown remains unqualified. The actual source
+[`AuthStorage.close`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/ai/src/auth-storage.ts#L217)
+returns void, allows an existing refresh to finish saving, and prohibits reuse of
+the closed instance. [`OAuthRefresher.close`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/ai/src/auth/refresh.ts#L407)
+(blob `6edc62f044ced69f1ab758a12294ab6834f25e74`) starts an asynchronous drain when
+work remains. This is source evidence, not an executed OAuth/drain proof. The
+telemetry setting reads true, but the late telemetry-export module import is
+unavailable. Exporter state remains **unknown**, never false by default or inferred
+from the empty trace. Those owners still need qualification.
+
+One small [embedded helper](../src/pilot_capture/startup_memory.ts) is consumed by
+the real bridge factory and real SDK controls. It requires native Settings identity,
+the off backend and disabled auto-learn before SDK construction resumes, observes
+the original start without changing its receiver/arguments/promise, then requires
+one completed call on the same Settings and model-registry identities before Ready.
+Missing, foreign, duplicate, unfinished or rejected work refuses the existing
+settings stage; a later start terminates the host with exit 75. Only bounded
+counters and object identity are kept. Host::launch binds private materialized
+bytes to SHA-256 `c50927240b8665413bf987642316f2a0c3e07d819bbf41f99aca40ce7e6045cf` only for OwnedQualification. Its repeated
+embedded-source write/read/hash operation is now one private helper used by the
+existing bridge, probe, auth and memory sources, preserving prior fault codes.
+No new protocol, worker, model, loop, test-injection API or memory backend is added.
+
+The actual bridge first fails on `e0be803`, which cannot observe its original
+memory start: **89.227 seconds** including offline compilation, a settings fault,
+zero fixture requests, normal reaping and no forced cleanup. The executable and
+receipt are retained. All **five current-host diagnostics pass** on `48822e9` in
+**203.115 seconds**. Nine actual SDK memory controls cover success, late
+installation, active-backend and auto-learn eligibility, unsettled completion,
+foreign Settings/registry, duplicate start and restart. Eligibility faults use
+actual native Settings overrides and restore off/false before SDK construction;
+they do not run or qualify an active backend or auto-learn. Success/restart report
+one original start and one completion; all named faults refuse. Restart exits 75;
+the others exit zero. All process groups are gone, stderr is empty, complete models
+match the credential controls and owned TCP counts stay zero, without a prompt.
+
+The actual owned bridge's post-warm-up-deadline two-generation tool conversation,
+full history, four owned TLS POSTs, native synthetic usage and 29 corruptions,
+model/cache identity, six trace mutations, Agent stock/guard/raw counts **[1, 0, 1]**,
+eight original-prefetch controls, project MCP exclusion and disk-edit controls
+remain green. The owned config digest stays `438b16919108fe971ffb7439c040be5baf4b77670800efa5400f300db2e8a2e2`. Synthetic
+usage is not provider economics.
+
+Frozen compatibility passes **33/0/7 ignored** in **299.851 seconds**, and focused
+lint passes. All **eight local gates pass** in **819.930 seconds**, including
+actual Rust **1.90.0**. Default outer totals are **1,319/0/35 ignored**; pilot units
+are **102/0/1 ignored**. The custom 21 recovery checks and nested child summaries
+remain separate. No assertion/deadline is relaxed or ignore added. Review is
+in-session, not independent.
+
+Private evidence is `runs/pilot-startup-lifecycle-2026-11-15/` and
+`runs/pilot-memory-owner-2026-11-15/`: source blobs, baseline/observer, exact native
+readbacks, actual-bridge expected red, SDK fault/success controls, current/frozen
+consumers and command/resource receipts. Readback finishes at
+**1612.735 seconds** inside the selected offline hour, with one heavy
+job, 120-second cleanup reserve, 20 GiB disk floor and 8 GiB sampled individual
+RSS ceiling. Maximum sampled individual RSS is
+**2032.938 MiB** and minimum observed free disk is
+**43.342 GiB**. Samples do not establish global/GPU memory
+or hard memory enforcement. No provider spend, real credential or model download
+is used. Complete owner/transport coverage, credential and telemetry lifetimes,
+native timers and durable parent acknowledgment remain open. V2 stays unfunded/
+unfrozen; paid runs, signing and release remain gated.
+
+Publication and cache cleanup follow this qualification. Code/records through
+`6761cdb` are pushed to `experimental/context-ecosystem`; a fresh clone
+matches all **407 tracked files** by bytes, type and executable mode. Main stays
+`d94b013`; no tag, release, signing or workflow dispatch is made. Public changes
+are nine code/test/contract/record paths. Private evidence, models, tasks,
+credentials, holdouts and backups stay local; unrelated untracked files stay exact.
+
+After publication, cache tags, exact path/source checks, system-only dynamic
+library dependencies and no-open-file checks permit pruning this stage's generated
+build/MSRV cache from **8,441,905,152 to
+35,004,416 allocated bytes**, removing
+**11,755 generated files**. The standalone green integration
+executable remains SHA-256 `f3d2bf5a1c706c6609ea3ae4e3192b392a38e99ce4a375d04f8b450f58da71cd`; the separately retained actual
+expected-red executable remains `6566f043f2367bf605bc7b0ca90b0603b14d64a8108cb59c08c86c0619ae0aea`. Both list all **40 tests**.
+All **141 existing implementation-evidence files** stay exact.
+
+Two extracted SDK libraries are byte-identical to the retained current master
+(`ee0bf26f4e88b0905611f761efcd6e73a0f2e55a9355e293b0251542dc8b900b`)
+and have no open/mapped handles. Removing only those duplicates deletes
+**222,220,640 logical bytes** while all **52 other probe files**
+remain exact. The retained master, current/frozen host artifacts, required datasets
+and earlier acceptance evidence remain available. Combined owned-directory
+allocation falls **8,629,125,120 bytes**; du allocation is not an
+APFS physical-reclamation claim.
+
+All five current native diagnostics pass directly from the retained green
+executable in **183.876 seconds** after cleanup, including nine memory and eight
+prefetch controls, actual conversation and usage, model/cache, MCP/settings and
+TCP controls. Cargo is not invoked and build/MSRV caches are not recreated.
+Post-cleanup source/test bytes and red/green executable hashes remain exact.
+Storage readback reports target **92,450,816 bytes**,
+runs **9,585,451,008 bytes** and required datasets
+**34,715,725,824 bytes** (directory allocation).
+The bounded stage including retained checks finishes at
+**1935.750 seconds**. Provider spend stays zero; full startup
+admission, paid runs and signing remain gated.
+
+## Original credential-prefetch owner qualification — 2026-11-15
+
+**The owned qualifier observes and settles the SDK's original non-OAuth prefetch
+before bridge Ready, and halts on a later prefetch. Full startup admission stays
+HOLD.** Code/test source `5ed922b` implements the selected
+[startup-owner contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission).
+Ordinary capture, frozen v1 admission and its wire policy stay unchanged.
+
+The first native preload observer could not install and its empty counts were
+rejected; they establish no absence or settlement. The supported trusted-extension
+factory runs earlier than SDK session construction. A fresh native baseline/observer
+pair there completes in **6.706 seconds**. On the actual
+shared AuthStorage namespace it observes one original fixed-provider call, one
+non-OAuth source check, original-promise completion and zero pending/rejected work
+before session_start. Both exits are normal, stderr is empty and their complete
+native model objects match. Neither run sends a prompt or provider request.
+
+The source basis is oh-my-pi `24439066040e006eb08da7b204f0ac41c79d2de9`:
+[trusted factories before session construction](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/main.ts#L2502),
+[`createAgentSessionScoped` startup prefetch](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/sdk.ts#L2364),
+and [`KeyCascade.source/prefetchUsage`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/ai/src/auth/cascade.ts#L360)
+(blob `cf4e827bf6c631243da445609d392af2d11d8b40`). The original method classifies
+source synchronously before awaiting the OAuth usage selector. Undefined means
+explicitly no configured auth; unknown shapes/kinds are refused. This is source
+association with the pinned artifact, not reproducible-build proof.
+
+One small [embedded helper](../src/pilot_capture/startup_auth.ts) owns this operation
+for both the actual bridge factory and real SDK controls. Host::launch writes and
+reads back its private bytes, binding SHA-256 `62f0ae84177e636337fafb6db3bf7eb6bbb57d1596d2f1bfa41bd71549b39c4f` only for
+OwnedQualification; ordinary/frozen paths materialize no helper. It preserves
+original receiver, arguments, source metadata and promise on the admitted path,
+records only bounded counters/identity, and never retains credentials or account/
+session identifiers. The bridge seals that actual namespace before Ready using
+the existing settings fault. A restarted prefetch terminates with exit 75. No new
+channel, journal, worker, provider route, test-injection API or v1 field is added.
+
+The actual owned bridge first fails on `0ffb978`, whose helper cannot record its
+original call: **87.530 seconds** including offline compilation, settings fault,
+zero fixture requests, normal reaping and no forced cleanup. Its executable and
+receipt are retained. The first tracking run passed the conversation and seven
+controls but failed the test parser's assumption that every trace exits zero:
+the restart had correctly exited 75. The parser now takes the explicitly declared
+negative-control exit; ordinary validation still requires zero. That failed run
+is retained and is excluded from green evidence.
+
+All **five current-host diagnostics pass** on `5ed922b` in **124.383 seconds**.
+Eight actual SDK controls cover original-call success, late installation, synthetic
+OAuth classification, unknown classification, unsettled completion, wrong namespace,
+duplicate call and restart after sealing. Success/restart report exactly one call,
+one completion and one non-OAuth source check; the six faults refuse. Restart exits
+75 and the others exit zero. Every process group is gone without forced cleanup,
+all complete models match, no prompt is sent, and owned TCP counts remain zero.
+The synthetic metadata faults do not establish OAuth integration or refresh behavior.
+
+The actual owned bridge's two-generation read-tool conversation still preserves
+full history after the warm-up deadline. Four owned TLS fixture POSTs, native
+synthetic usage reconciliation and 29 corruptions, model/catalog identity, six
+trace mutations, Agent stock/guard/raw counts **[1, 0, 1]**, project MCP exclusion
+and later disk-edit controls all pass. Synthetic usage is not provider economics.
+The owned config digest remains `438b16919108fe971ffb7439c040be5baf4b77670800efa5400f300db2e8a2e2`.
+
+Frozen compatibility passes **33/0/7 ignored** in **292.228 seconds** and
+focused lint passes. All **eight local gates pass** in **819.433 seconds**,
+including actual Rust **1.90.0**. Default outer totals are **1,319/0/35 ignored**;
+pilot units are **102/0/1 ignored**; the custom 21 recovery checks and nested child
+summaries are separate. Existing assertions/deadlines are retained, with no added
+ignore. Review is in-session, not independent.
+
+Private evidence is `runs/pilot-auth-prefetch-2026-11-15/`: rejected preload,
+factory baseline/observer, protocol, actual-bridge expected red, source-pinned
+current/frozen consumers, eight SDK controls and full command/resource receipts.
+Readback finishes in **1695.864 seconds** inside the stated offline
+hour, with one heavy job, 120-second cleanup reserve, 20 GiB disk floor and 8 GiB
+sampled individual RSS ceiling. Maximum sampled individual RSS is
+**1945.328 MiB**; minimum observed free disk is
+**47.534 GiB**. Samples do not establish global/GPU memory
+or hard memory enforcement. No provider spend, real credential or model download
+is used.
+
+This closes only the original non-OAuth prefetch owner. Credential refresh/polling,
+OAuth integration, other startup owners/callbacks, native-timer settlement, general
+transport coverage and durable parent acknowledgment remain open. The qualifier
+still cannot grant full startup admission. V2 remains unfunded/unfrozen; paid runs,
+signing and release remain gated.
+
+Publication and cache cleanup follow this qualification. Code/records through
+`6367ca5` are pushed to `experimental/context-ecosystem`; a fresh clone
+matches all **405 tracked files** by bytes, type and executable mode. Main stays
+`d94b013`; no tag, release, signing or workflow dispatch is made. Public changes
+are nine code/test/contract/record paths. Private evidence, models, tasks,
+credentials, holdouts and backups stay local; unrelated untracked files stay exact.
+
+After publication, cache tags, exact path/source checks, system-only dynamic
+library dependencies and no-open-file checks permit pruning this stage's generated
+build/MSRV cache from **8,443,551,744 to
+34,988,032 allocated bytes**, removing
+**11,755 generated files**. The standalone green integration
+executable remains SHA-256 `7e48ebb5735d2d34eb122c3fc7e8f9670a3a5a66811e4f3bf7aa323e27865e91`; the separately retained actual
+expected-red executable remains `cf048fb741dfbf73ba49b6b86cc61e09f1c6195229f697a1204cc932656f7a62`. Both list all **40 tests**.
+All **177 existing implementation-evidence files** stay exact.
+
+Four extracted SDK libraries are byte-identical to the retained current master
+(`ee0bf26f4e88b0905611f761efcd6e73a0f2e55a9355e293b0251542dc8b900b`)
+and have no open/mapped handles. Removing only those duplicates deletes
+**444,441,280 logical bytes** while all **106 other probe files**
+remain exact. The retained master, current/frozen host artifacts, required datasets
+and earlier acceptance evidence remain available. Combined owned-directory
+allocation falls **8,853,012,480 bytes**; du allocation is not an
+APFS physical-reclamation claim.
+
+All five current native diagnostics pass directly from the retained green
+executable in **121.203 seconds** after cleanup, including eight
+prefetch controls, actual conversation and usage, model/cache, MCP/settings and
+TCP controls. Cargo is not invoked and build/MSRV caches are not recreated.
+Post-cleanup source/test bytes and red/green executable hashes remain exact.
+Storage readback reports target **92,450,816 bytes**,
+runs **9,510,760,448 bytes** and required datasets
+**34,715,725,824 bytes** (directory allocation).
+The bounded stage including retained checks finishes at
+**1924.820 seconds**. Provider spend stays zero; full startup
+admission, paid runs and signing remain gated.
+
+## Fixed qualifier project MCP exclusion — 2026-11-15
+
+**The fixed read/edit qualifier excludes project MCP commands before SDK
+construction; full startup admission remains HOLD.** Source is `ecdf962` under
+003 T006's existing [startup contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission).
+Ordinary capture, frozen v1 and future admitted MCP/task-context integrations
+retain their separate contracts. This is not a general MCP-disable policy.
+
+The pinned current artifact exposes the actual MCPManager singleton, its settings
+owner and the AuthStorage class via the public AI entry point. The inventory's
+class identity/private-agent-directory checks pass in **3.356 seconds**; the narrow
+auth-storage import is unavailable, and the supported root export matches the
+actual instance. The observer inspects namespace/method metadata without invoking
+key lookup APIs. Credential prefetch lifetime is still unqualified. The default RPC
+profile has project MCP enabled and a 250-ms startup window; active read/edit tool
+names do not exclude that startup owner.
+
+A native configuration pair completes in **6.647 seconds** with no prompt or
+provider request. Its private project .mcp.json names an owned /usr/bin/touch
+command whose only effect is a marker inside its own workspace. With the flag
+enabled the marker exists and the actual manager knows one server; with
+`mcp.enableProjectConfig=false` no marker exists and it knows zero. Both exits are
+normal with empty stderr and the same complete model. The witness does not
+implement an MCP handshake: connected-server counts are zero in both cases.
+This demonstrates command execution/exclusion, not successful MCP integration.
+
+The source basis is oh-my-pi `24439066040e006eb08da7b204f0ac41c79d2de9`:
+[`cfgMcpEnableProjectConfig`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/mcp/settings.ts#L9)
+(blob `23e41ba77c247256287ec38a0c46e53ff5dfaa45`) and
+[`loadAllMCPConfigs`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/mcp/config.ts#L103)
+(blob `1e4f839bd63c630e8d7fa79dbb58bc6de881c50a`). Project entries are filtered
+before deduplication/connection; user-level entries retain their own eligibility.
+The related [scope/dedup tests](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/test/mcp-config-scope-dedup.test.ts#L67)
+were inspected, not run. Source association is not reproducible-build proof.
+`MCPManager.disconnectAll` aborts and clears pending maps; that source alone does
+not prove every outstanding promise/callback joined. No empty snapshot or late
+disconnect is used as settlement evidence.
+
+The [actual-launcher settings regression](../tests/pilot_capture.rs) is extended
+with this project-command witness. Source `b83a696` first fails solely at the
+owned exclusion assertion in **93.295 seconds**, including its offline
+build: both ordinary and owned profiles execute the marker. The existing disk-edit
+controls still report **[true, false]**, complete model digests remain exact and
+both process groups are normally reaped with empty stderr. No prompt is sent.
+Workspace private-mode checks pass, including the actual command's output.
+The expected-red executable and native reports remain retained.
+
+The repair changes one owned-configuration format string in
+[`Host::launch`](../src/pilot_capture/host.rs), setting the existing project MCP
+flag before construction. HostDefault's configuration/digest stays identical;
+the owned launch digest becomes
+`438b16919108fe971ffb7439c040be5baf4b77670800efa5400f300db2e8a2e2`.
+Both materialized configuration checks and actual consumers bind those bytes. No new protocol,
+module, server implementation, subprocess wrapper or configuration owner is added.
+
+All **five current-host diagnostics pass** on `ecdf962` in **82.309 seconds**.
+The launcher witness now reports **[true, false]** for ordinary/owned. Later
+disk-edit assertions, complete native model identities and the post-deadline
+two-generation tool conversation remain green. All four owned fixture POSTs,
+synthetic native usage totals and 29 corruptions, authoritative one-model cache,
+six trace mutations and stock/guard/raw TCP counts **[1, 0, 1]** pass. Synthetic
+usage counters do not establish provider economics.
+
+Frozen compatibility passes **33/0/7 ignored** in **287.474 seconds**;
+focused lint passes. All **eight local gates pass** on `ecdf962` in
+**808.180 seconds**, including actual Rust **1.90.0**. Default outer totals
+are **1,319/0/35 ignored**; pilot units are **102/0/1 ignored**. The 21 custom recovery
+successes and nested child summaries stay separate. This extends the existing
+profile regression; no existing assertion/deadline is relaxed or ignore added.
+
+Private evidence is `runs/pilot-startup-owners-2026-11-15/` and
+`runs/pilot-project-mcp-2026-11-15/`, including the owner API inventory, native
+configuration controls, actual-launcher red/green, source blobs and command/resource
+receipts. The in-session qualification readback finishes at
+**1463.411 seconds** within its offline hour, with one heavy
+job, 120-second cleanup reserve, 20 GiB disk floor and 8 GiB sampled individual
+RSS ceiling. Maximum sampled individual RSS is **2042.531 MiB**;
+minimum observed free disk is **46.800 GiB**. These samples
+do not establish global/GPU memory or hard resource enforcement.
+
+The qualifier has no admitted project MCP server. Future declared MCP/task-context
+integration remains required and needs an explicit server/tool inventory and fresh
+qualification. General MCP cancellation, other startup owners, native-timer and
+callback settlement, transport coverage and durable parent acknowledgment remain
+open. V2 stays unfunded/unfrozen; paid runs, signing and release remain gated.
+No provider spend, real provider credential or model download is used.
+
+The repair and qualification records through `a55c497` are published to
+experimental with complete fresh-clone byte/type/executable-mode readback of all
+**403 tracked paths**; main remains `d94b013`. New build/MSRV allocation falls
+from **8,441,696,256 to 34,955,264 bytes**,
+removing **11,755** generated files. The runnable green
+diagnostic and separately retained proper-red executable keep their exact hashes,
+list all **40** tests and require only system dynamic libraries. All
+**105** existing implementation evidence files remain exact.
+
+Three duplicate SDK-library extractions from the owner
+controls are removed only after exact byte comparison with the retained master
+and empty open-file checks: **333,330,960 logical bytes**. All
+**108** other files in those roots remain exact. Their inputs
+and original bounds are retained. The qualified executable then passes
+all **five current diagnostics** directly in **63.860 seconds**
+without Cargo, including project-command exclusion, later disk edits, the
+post-deadline tool conversation and TCP controls. The owned-directory allocation reduction totals
+**8,740,077,568 bytes**; this is not an inferred APFS physical
+free-space gain. Post-cleanup readback finishes at **1739.081
+seconds** inside the implementation hour. Target/runs/datasets allocations are
+**92,450,816 / 9,434,599,424 /
+34,715,725,824 bytes**. Required models, datasets,
+backups, SDK masters and all other evidence remain retained. Detailed mappings are
+in `cleanup-build-result.json`, `private-probe-cleanup-result.json`,
+`retained-result.json` and `post-cleanup-readback.json` in the implementation root.
+
+## Native warm-up refusal lifetime repair — 2026-11-15
+
+**The known Agent refusal now completes through the SDK's request error path;
+full startup admission remains HOLD.** Source is `61a286f`, under 003 T006's
+existing [startup contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission).
+The preceding TCP and short-conversation checks did not cover the native
+10-second warm-up abort deadline. Ordinary capture, v1 policy/protocol and paid
+authority retain their existing behavior.
+
+The synchronous refusal introduced in `7f54889` throws during request construction.
+On the pinned OMP 18.18.1 / Bun 1.4.4 artifact, a no-prompt SDK host reaches Ready
+and returns native state, then exits **1** with an uncaught ReferenceError after
+**11.218 seconds**, without a normal trace exit row. The initial controller also
+rejects that missing row; its failed result is retained. A corrected bounded
+counterfactual records this outcome explicitly rather than calling it a passing
+host. The paired immediate-destruction case survives the unchanged deadline, but
+that observation alone does not prove cleanup.
+
+Source owner:
+[`sendCoworkRequest`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/ai/src/providers/cowork-fetch.ts#L185)
+at oh-my-pi `24439066040e006eb08da7b204f0ac41c79d2de9`, Git blob
+`eae421ff469791b76a485bb687c1e64896f9edfb`. It installs its abort listener before
+https.request initializes the captured request variable, and releases the listener
+from request error/response cleanup. The Agent throw bypasses that release path.
+[`prewarmModelConnection`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/ai/src/providers/connection-prewarm.ts#L48)
+creates the unmodified 10-second signal (blob
+`14e6795b6630d2dae57fca8b9da988fcae4d00ce`). The related
+[prewarm tests](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/ai/test/connection-prewarm.test.ts)
+were inspected, not run; source association is not reproducible-build proof.
+
+The committed actual-capture regression on `91d0c34` crosses the native deadline
+after initial settings readback and requires another state response before its
+first prompt. It fails in **103.790 seconds** including the offline build:
+the correct native model was read, then the host exits 1 with **134 stderr bytes**,
+no force and its process group reaped. Its stderr digest exactly matches the SDK
+counterexample: `b3984f9235b9df87e9a4bf4b944ba100e21430ca755dc12bfeef89a727512ca2`.
+The independent owned fixture sees
+**zero Count/Messages calls**, and no request is captured. The red executable and
+closed failure metadata are retained; product stderr still remains count/hash only.
+
+Immediate destruction candidate `1c75a4f` passes four current diagnostics but fails
+the custom-Agent witness: TCP remains zero and its refusal error never arrives,
+so the witness times out. No full gates run on that candidate. An additional native
+control shows that both immediate and microtask-deferred destroy(error) leave the
+SDK listener registered, even while the host survives the deadline. Its rejected
+removal assertion and all native reports remain retained. Neither candidate is
+accepted based on survival or zero TCP alone.
+
+The final guard retires the socketless request and explicitly emits its local
+refusal error in one queued microtask, after construction lets the consumer install
+its handler. The original Agent queue is never invoked. A native owner control
+observes one timeout creation, one abort-listener addition and one removal, with
+two state responses and normal exit in **12.564 seconds**. Its metadata wrappers
+call the original timeout/add/remove methods, add no abort listener and keep only
+weak signal identities. They are private diagnostics, not a product owner or
+admission authority. No uncaught exception is suppressed, successful response
+invented or native timeout shortened. The implementation stays in the existing
+[embedded preload](../src/pilot_capture/startup_probe.ts), SHA-256
+`1468f13e8b2e18d2b26a41d5c73216b126ce8f5ed9a0e5811603bf685030c6b0`;
+no new module, transport, worker or protocol is added.
+
+All **five current-host diagnostics pass** on `61a286f` in **86.720 seconds**.
+The actual owned capture bridge answers a fresh state query after its 12-second
+hold, preserves the complete native model digest and finishes the strict
+two-generation tool conversation. All four owned fixture POSTs, synthetic native
+usage totals and 29 corruptions, authoritative one-model cache and six trace
+mutations pass. Independent stock/guard/raw TCP counts remain **[1, 0, 1]**, and
+the custom-Agent error is now delivered. Raw sockets remain an uncovered control.
+Synthetic usage counters do not establish provider economics.
+
+Frozen-host compatibility passes **33/0/7 ignored** in **297.527 seconds**;
+focused lint passes. All **eight local gates pass** on `61a286f` in
+**822.094 seconds**, including actual Rust **1.90.0**. Default outer totals
+are **1,319/0/35 ignored**; pilot units are **102/0/1 ignored**. The 21 custom recovery
+successes and nested child summaries remain separate. No existing assertion or
+deadline is relaxed; the existing owned conversation gains the deadline check.
+
+Private evidence is `runs/pilot-warmup-lifetime-2026-11-15/` and
+`runs/pilot-warmup-repair-2026-11-15/`, including all failed candidates/controllers,
+raw SDK error/trace data, actual-capture failure hashes, native lifecycle metadata,
+source pins and in-session readback. Qualification finishes at
+**1883.128 seconds** inside the original offline hour; the
+candidate failure does not reset its deadline. One heavy job, 120-second cleanup
+reserve, 20 GiB disk floor and 8 GiB sampled individual RSS ceiling apply. Maximum
+sampled implementation-process RSS is **2005.719 MiB**;
+minimum observed free disk is **48.294 GiB**. These
+samples do not establish global/GPU memory or hard resource enforcement.
+
+This repairs the demonstrated request/abort-listener lifetime failure. It does
+not establish cancellation of the native timeout itself, complete owner/transport
+coverage, all callback settlement or the shared-channel durable startup acknowledgment.
+V2 remains unfunded/unfrozen; paid execution, signing and release remain gated.
+No provider spend, real provider credential or model download is used.
+
+The repair and qualification records through `a3538fc` are published to
+experimental with complete fresh-clone byte/type/executable-mode readback of all
+**403 tracked paths**; main remains `d94b013`. New build/MSRV allocation falls
+from **8,444,424,192 to 34,938,880 bytes**,
+removing **11,755** generated files. The runnable green
+diagnostic and separately retained proper-red executable keep their exact hashes,
+list all **40** tests and require only system dynamic libraries. All
+**156** existing implementation evidence files remain exact.
+
+Six duplicate SDK-library extractions from the lifetime
+controls are removed only after exact byte comparison with the retained master
+and empty open-file checks: **666,661,920 logical bytes**. All
+**203** other files in those roots remain exact. Their failed
+attempts and original bounds are retained. The qualified executable then passes
+all **five current diagnostics** directly in **65.434 seconds**
+without Cargo, including post-deadline state readback, the full tool conversation,
+disk-edit and TCP controls. The owned-directory allocation reduction totals
+**9,076,158,464 bytes**; this is not an inferred APFS physical
+free-space gain. Post-cleanup readback finishes at **2165.632
+seconds** inside the implementation hour. Target/runs/datasets allocations are
+**92,450,816 / 9,359,921,152 /
+34,715,725,824 bytes**. Required models, datasets,
+backups, SDK masters and all other evidence remain retained. Detailed mappings are
+in `cleanup-build-result.json`, `private-probe-cleanup-result.json`,
+`retained-result.json` and `post-cleanup-readback.json` in the implementation root.
+
+## Owned native settings quiescence — 2026-11-15
+
+**The explicit owned qualifier disables live config reloading before bridge Ready;
+full startup admission remains HOLD.** Code/test source is `6a9bb15`, under
+003 T006's existing [startup contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission).
+Ordinary capture, frozen v1 policy/protocol and paid authority remain unchanged.
+
+A valid static canonical-model registration is rejected: it still observes one
+startup HEAD and changes `compat`, `isOAuth` and `webSearchModel`. Both native
+cases exit normally with an authoritative one-model cache, but the candidate's
+complete model digest differs. No candidate is landed. Earlier wrapper, timeout,
+alias and configuration-validation attempts remain retained and are excluded
+from that semantic comparison; the original bounds are not reset or presented
+as one successful run. Evidence is `runs/pilot-early-catalog-2026-11-15/`.
+
+Literal imports on the pinned OMP 18.18.1 artifact expose the actual Settings
+singleton and off memory backend. The owner readback sees memory start settle,
+then settings watching start before session_start. Its first controllers fail
+mechanically and are not accepted as complete qualification. A subsequent fixed
+native settings control completes in **14.664 seconds**: a benign disk edit
+applies with watching, but not after cancellation even after explicitly calling
+startWatching again. Telemetry/autolearn import failures do not prove those
+owners absent. These private roots are `runs/pilot-startup-owner-readback-2026-11-15/`
+and `runs/pilot-settings-freeze-2026-11-15/`.
+
+The source basis is oh-my-pi `24439066040e006eb08da7b204f0ac41c79d2de9`,
+[`Settings::cancelPendingSaves`, `flush`, `reloadFromDisk` and `#exclusive`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/config/settings.ts#L1315),
+Git blob `8d427132126850002b94dbf6fd897f1ae6062e29`.
+The related [settings-manager tests](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/test/settings-manager.test.ts#L1234)
+for mutation during reload and retained runtime overrides were inspected, not run.
+The bridge verifies the owner's private agent directory, flushes intended startup
+writes, cancels watching/future background saves, joins existing saves and awaits
+a serialized strict reload before final model/settings readback and Ready.
+Cancellation normally serves discarded instances; the owned immutable run uses
+that existing capability intentionally. The operation stays in the existing
+[bridge settings stage](../src/pilot_capture/bridge.ts), bound by its source hash;
+no new worker, module, protocol or source owner is introduced.
+
+The durable [actual-launcher regression](../tests/pilot_capture.rs) changes only
+the private compaction flag after RPC and bridge Ready, then reads native state.
+Initial test source `10c8d52` stops on an incorrect assumption that ordinary and
+owned catalog metadata match; that **89.809-second** result is retained and is not
+the intended red. Corrected source `db47f71` preserves/checks identity within each
+profile and fails the owned assertion in **12.756 seconds**:
+both profiles apply the disk edit. The repaired control yields **[true, false]**
+for ordinary/owned, with the changed disk bytes retained in both cases. Both
+complete native model digests remain exact across red/green and before/after.
+Owned digest stays `53bec6f047bbd7eeab26c93c1a6dd6c0e4ccc30d50a29d79e416c28692d5a027`.
+No prompt or provider request is sent by this control; exits are normal and reaped.
+
+All **five current-host diagnostics pass** in **71.470 seconds**,
+including the strict two-generation tool conversation, four owned fixture POSTs,
+native usage totals and 29 corruption controls, authoritative fixed-model cache,
+six trace mutations and independent TCP counts **[1, 0, 1]**. These are synthetic
+usage counters, not provider economics. The complete nonignored frozen-host suite
+passes **33/0/7 ignored** in **303.708 seconds**; focused lint passes.
+All **eight local gates pass** on `6a9bb15` in **851.019 seconds**, including
+actual Rust **1.90.0**. Default outer totals are **1,319/0/35 ignored**; pilot units
+are **102/0/1 ignored**. Nested child summaries and the 21 custom recovery successes
+stay separate; no existing assertion or deadline is relaxed.
+
+Private implementation evidence is `runs/pilot-settings-quiescence-2026-11-15/`,
+with both original failure and proper expected-red executable, native reports,
+source pins, command/resource receipts and the in-session readback. Qualification
+finishes at **1532.642 seconds** within the offline hour,
+with 120 seconds reserved for cleanup, one heavy job, 20 GiB disk floor and 8 GiB
+sampled individual RSS ceiling. Maximum observed individual RSS is **2044.812 MiB**;
+minimum observed free disk is **51.187 GiB**. Samples do not establish global/GPU
+memory or hard resource enforcement.
+
+The disk-edit regression proves effective settings stability in this profile,
+not every in-flight reload interleaving. Join semantics are source-grounded in
+the pinned native owner; complete callback/timer and transport coverage, other
+startup owners and the shared-channel durable parent acknowledgment remain open.
+V2 is unfunded/unfrozen. No provider spend, model download, real provider credential,
+paid execution, signing, main update, tag or release is used or enabled.
+
+The repair and qualification records through `e3c9540` are published to
+experimental with complete fresh-clone byte/type/executable-mode readback of all
+**403 tracked paths**; main remains `d94b013`. New build/MSRV allocation falls
+from **8,443,121,664 to 34,934,784 bytes**,
+removing **11,755** generated files. The runnable green
+diagnostic and separately retained proper-red executable keep their exact hashes,
+list all **40** tests and require only system dynamic libraries. All
+**109** existing implementation evidence files remain exact.
+
+Eleven duplicate SDK-library extractions from the rejected catalog and owner
+controls are removed only after exact byte comparison with the retained master
+and empty open-file checks: **1,222,213,520 logical bytes**. All
+**330** other files in those roots remain exact. Their failed
+attempts and original bounds are retained. The qualified executable then passes
+all **five current diagnostics** directly in **54.210 seconds**
+without Cargo, including the disk-edit control, actual tool conversation and TCP
+bypass control. The owned-directory allocation reduction totals
+**9,630,420,992 bytes**; this is not an inferred APFS physical
+free-space gain. Post-cleanup readback finishes at **1707.818
+seconds** inside the implementation hour. Target/runs/datasets allocations are
+**92,450,816 / 9,283,108,864 /
+34,715,725,824 bytes**. Required models, datasets,
+backups, SDK masters and all other evidence remain retained. Detailed mappings are
+in `cleanup-build-result.json`, `private-probe-cleanup-result.json`,
+`retained-result.json` and `post-cleanup-readback.json` in the implementation root.
+
+## Native Agent startup refusal — 2026-11-15
+
+**The known SDK/custom-Agent HTTPS route is refused before its TCP connection in
+the explicit no-provider qualifier; full startup admission remains HOLD.**
+Implementation/test source is `7f54889`, owned by 003 T006's existing
+[startup contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission).
+Ordinary CaptureSession/HostDefault, the frozen host/protocol/policy and the
+capture bridge remain unchanged. This does not enable live use of the current host.
+
+Three fixed native primitive controls use the pinned OMP 18.18.1 artifact and an
+independent owned raw TCP listener: stock namespace HTTPS connects once; refusing
+at Agent.addRequest or Agent.createConnection connects zero times. Both hooks
+observe the SDK startup destination and custom-Agent witness, retain normal RPC/
+model behavior and identical native metadata. The controls finish in **66.599
+seconds** within their four-minute command/process-cleanup bound. Select the
+earlier addRequest boundary. No DNS, complete transport coverage or owner
+settlement is inferred from the TCP counter.
+
+The durable native test first obtains configuration from the actual Rust launcher,
+then runs pinned SDK controls with that configuration and the exact embedded
+preload. Only the exact owned numeric-loopback port is re-allowed in these control
+sandboxes; the product launcher gains no network override. The stock fixture has
+the same local global-fetch refusal. A separate raw `Bun.connect` control exposes
+a route the Agent hook does not observe. No user prompt or provider call is sent.
+
+Test/contract `bff78f7` initially fails to compile because its home-path conversion
+is ambiguous. That original failure is retained and does not count as behavioral
+red. Correction `dbe7033` leaves the preload unchanged: the committed native test
+then fails solely at the guarded listener assertion in **29.074 seconds**, with
+stock/observation-only/raw counts **[1, 1, 1]**, matching complete model digests,
+normal exits and the explicit raw-open witness. The red executable is retained.
+
+`7f54889` replaces ClientRequest.end observation with a refusal on the shared HTTP/
+HTTPS Agent prototypes. It reads only the destination/method metadata, writes the
+bounded trace and throws locally without invoking the original queue operation.
+Missing expected methods fail closed. The existing 20-attempt/8-KiB bounds and
+metadata privacy remain; the trace is still a diagnostic rather than the product
+journal. Embedded preload SHA-256 is
+`80517cd37a140a3204e5c6cf0e398ec6b514ff0137a979367095c8ed886aa95d`.
+
+All **four current-host diagnostics pass** in **63.578 seconds**. The permanent
+TCP control reports **[1, 0, 1]**: stock HTTPS reaches the listener, guarded custom-
+Agent HTTPS is locally refused, and the raw socket still reaches it. The complete
+native model digest is identical across red/green controls:
+`83aac156b7678be8faab3ca2d09fbf4e9773214fc968f1c4a13839dc718317c9`.
+The primitive's pretty JSON has a different byte digest; decoding/re-encoding it
+compactly matches this value. No model difference is inferred from serialization.
+
+The other current diagnostics exercise the actual capture bridge, canonical model,
+xhigh setting and complete two-generation read-tool conversation. Strict request
+validation, all four owned fixture POSTs, native usage's four scripted categories/
+totals and 29 corruptions, the authoritative single-model cache and six malformed-
+trace controls pass. Actual bridge model digest remains
+`53bec6f047bbd7eeab26c93c1a6dd6c0e4ccc30d50a29d79e416c28692d5a027` as recorded
+in the [preceding receipt](#early-capture-api-rejection-and-native-model-identity--2026-11-15).
+These are synthetic usage counters, not provider economics.
+
+The actual-profile trace records one pre-prompt Agent HEAD and no observed later
+attempt during the fixture. The final trace is **290 bytes**, SHA-256
+`529fac26dc989820f27b93a2037d0ac6beec7d2d02d9c8353bd2ec1adbe61666`;
+the exact pre-prompt prefix is **252 bytes**, SHA-256
+`621eb30b849966a811bef641c3e94a77da6193df764efd89798ca17e3bdf5c9f`.
+
+The complete nonignored frozen-host suite passes **33/0/6 ignored** in **303.117
+seconds**; focused lint passes. All **eight local gates pass** on `7f54889` in
+**904.877 seconds**, including actual Rust **1.90.0**. Default outer totals are
+**1,319 passed, 0 failed, 35 ignored**; pilot units are **102 passed, 0 failed,
+1 ignored**. The 21 custom recovery successes and nested child summaries remain
+separate. The additional ignored test is the explicitly executed current-host TCP
+control; no previous test assertion/deadline is relaxed.
+
+Private evidence is `runs/pilot-startup-agent-2026-11-15/` and
+`runs/pilot-agent-refusal-2026-11-15/`, including original failures, raw traces/
+requests/native sessions, listener counts, source/model hashes, lifecycle/resource
+receipts and the in-session readback. Implementation qualification finishes at
+**1,843.620 seconds** within its offline hour, with 120 seconds reserved for cleanup,
+one heavy job, a 20 GiB disk floor and an 8 GiB sampled individual RSS ceiling.
+Across implementation commands, including compilation failure, maximum sampled
+individual RSS is **2,010.156 MiB** and minimum observed free disk **67.775 GiB**.
+Samples are lower bounds, not global/GPU memory measurements. Qualified commands
+exit naturally; no real credential, model download, provider spend, owner signing,
+tag or release publication is used.
+
+A partial source census is retained with verified upstream Git blobs. In
+`can1357/oh-my-pi` at `24439066040e006eb08da7b204f0ac41c79d2de9`,
+[`main.ts::buildSessionOptions`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/main.ts#L1419)
+sets active tool names; this does not establish
+[`sdk.ts`'s restricted-startup guard](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/sdk.ts#L2480)
+for MCP/memory. Credential usage,
+telemetry eligibility, RPC settings watching and abort-deadline callbacks still
+need owner/lifetime proof. The upstream `connection-prewarm.test.ts` test "warms
+official Anthropic with the real request's TLS options and no credentials" was
+inspected, not run. Source association is not reproducible-build or runtime
+settlement proof. The raw bypass, complete owner inventory and shared-channel
+durable parent acknowledgment remain open; v2 is unfunded/unfrozen and paid runs,
+signing and release remain gated.
+
+The guard and records through `1918830` are published to experimental with full
+fresh-clone byte/type/executable-mode readback of all **403 tracked paths**; main
+remains `d94b013`. The new build/MSRV allocation is then reduced from
+**8,443,154,432 to 34,873,344 bytes**, deleting **11,755** generated files. The
+qualified diagnostic and separately retained expected-red executable keep their
+exact hashes, list all **39** tests and depend only on system dynamic libraries.
+All **106** implementation evidence files pass exact readback.
+
+Three primitive-control SDK libraries are removed only after byte comparison with
+the retained master and empty open-file checks: **333,330,960 logical bytes**.
+All **93** other primitive files remain exact; these evidence scopes are disjoint.
+The retained executable then passes all **four current-host diagnostics** in
+**45.017 seconds**, including the actual bridge conversation and `[1, 0, 1]` TCP
+controls, without Cargo or a rebuild. No new SDK extraction remains in either stage.
+
+`cleanup-build-result.json`, `primitive-cleanup-result.json`,
+`retained-result.json` and `post-cleanup-readback.json` retain deletion/retention
+mappings and the actual-consumer proof. Combined owned-directory allocation drops
+by **8,741,617,664 bytes**, not an inferred APFS physical free-space gain. The
+post-cleanup readback finishes at **2,509.958 seconds**, inside the implementation
+hour. Observed target/runs/dataset allocations are **92,450,816 / 9,203,838,976 /
+34,715,725,824 bytes** respectively. Cleanup is confined to this stage's generated
+build/MSRV cache and the three duplicate libraries; required data, models, backups
+and all other evidence remain retained.
+
+## Early capture-API rejection and native model identity — 2026-11-15
+
+**Early configuration candidate rejected; retained diagnostics qualified on
+`5d9aa0e`; full startup admission remains HOLD.** The current and frozen host
+artifacts, capture bridge, preload, wire policy and ordinary launch configuration
+retain the pins and scope of the [preceding diagnostic](#actual-bridge-startup-diagnostic--2026-11-15).
+This is 003 T006 no-provider work under the existing
+[startup contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission).
+
+The committed paired red at `f46d773` uses the original models.yml in both arms.
+Both complete two generations, four owned TLS fixture POSTs, the authoritative
+one-model cache, six malformed-trace controls and all 29 native-usage corruptions.
+Their complete native model digests match; the final zero-attempt assertion then
+fails on the known HEAD. The first receipt parser looks for the panic in stdout
+instead of stderr and rejects its readback. That original result remains retained;
+the corrected wrapper reruns the pinned red in **12.925 seconds** without resetting
+the shared deadline.
+
+Candidate `a9f89fe` sets only the canonical model's API override to the custom
+capture API before SDK selection. It fails before its first captured request.
+Diagnostic `7ca2651` retains the closed bridge fault **`model_selection`**, with
+normal exit and the observed process group gone; the HEAD is still present. Its
+complete model comparison and zero-attempt acceptance are unexecuted. Matching
+source at `24439066040e006eb08da7b204f0ac41c79d2de9` exposes the override function,
+but [`models-config-schema-bundle.ts::ApiSchema/ModelOverrideSchema`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/config/models-config-schema-bundle.ts#L122)
+accepts a closed API set excluding our custom API. That supports an explanation;
+it does not establish the exact runtime fault caller or a reproducible host build.
+The upstream supported-API override test was inspected, not run. No assertion is
+relaxed to admit this candidate. Its profile/configuration is removed in `5d9aa0e`;
+the red and rejected executables, source commits and raw evidence remain retained.
+
+The remaining code hashes the complete parsed native model object after bridge
+setup, retaining a digest rather than its headers. The owned diagnostic now checks
+SHA-256 `53bec6f047bbd7eeab26c93c1a6dd6c0e4ccc30d50a29d79e416c28692d5a027` on
+the pinned current artifact. It also verifies materialized models.yml against the
+launch digest and retains only the closed bridge fault code on failed capture.
+Ordinary capture behavior, the qualified catalog, bridge and preload are unchanged.
+
+All **three current-host diagnostics pass** in **35.462 seconds** on `5d9aa0e`.
+The owned full-history/tool conversation, strict fixture requests, native usage,
+catalog and six trace controls pass. Its trace/prefix bytes and digests exactly
+match the preceding diagnostic: one pre-prompt HEAD and no observed later attempt
+during this fixture. The complete nonignored frozen-host suite passes **33/0/5
+ignored** in **292.892 seconds**; focused lint passes. All **eight local gates
+pass** in **820.434 seconds**, including the actual Rust **1.90.0** toolchain.
+Default outer harness totals are **1,319 passed, 0 failed, 35 ignored**; pilot unit
+totals are **102 passed, 0 failed, 1 ignored**. The **21** custom recovery successes
+and nested child summaries are bound separately rather than added to those totals.
+
+Private evidence is `runs/pilot-early-api-2026-11-15/`: protocol/source pins, five
+Git-blob-verified upstream files, every original failure, raw requests, native
+sessions/catalog/usage/trace readbacks and resource/lifecycle receipts. The
+in-session qualification readback finishes at **1,838.788 seconds** within the
+same offline hour, with a 120-second cleanup reserve, one heavy job, 20 GiB disk
+floor and 8 GiB sampled individual RSS ceiling. Across all monitored commands,
+including rejected cases, peak sampled individual RSS is **2,040.328 MiB** and
+minimum observed free disk is **76.799 GiB**. Samples are lower bounds, not global
+or GPU memory measurements. No SDK-native extraction remains in this stage.
+All qualified commands exit naturally. Synthetic usage is not provider economics.
+No real credential, model download, training or provider spend is used.
+
+No warm-up repair, complete transport/owner coverage, settlement or durable
+startup acknowledgment is accepted by this work. V2 remains unfunded/unfrozen;
+paid runs, owner signing and release publication remain gated. The stateless
+request repair at `98157db` remains an ancestor of this freshly checked source.
+
+The diagnostic/rejection records through `786e96d` are published to experimental
+with a full fresh-clone byte/type/executable-mode readback of all **401 tracked
+paths**; main remains `d94b013`. This stage's build/MSRV allocation is then reduced
+from **8,441,249,792 to 34,529,280 bytes**, removing **11,755** generated files.
+The green diagnostic and separately saved paired-red/rejected executables retain
+their exact hashes, list all **38** tests and depend only on system dynamic
+libraries. All **252** pre-existing non-cache evidence files pass exact readback.
+The retained green executable then directly completes the actual owned-host
+two-generation/tool/strict-wire/native-usage/trace checks in **6.630 seconds**,
+without Cargo or a rebuild. No SDK-native extraction remains in this stage.
+
+`cleanup-build-result.json`, `retained-result.json` and
+`post-cleanup-readback.json` retain the deletion mapping and actual-consumer proof.
+The post-cleanup readback finishes at **2,098.301 seconds** within the shared hour.
+Removed cache allocation is **8,406,720,512 bytes**; this is `du` allocation, not an
+inferred APFS physical free-space gain. Observed totals are **92,450,816 bytes**
+for the repo's target, **9,129,259,008 bytes** for runs and **34,715,725,824 bytes**
+for the retained datasets. This cleanup changes only the new stage's generated
+build/MSRV cache; required data, models, evidence and backup inputs remain retained.
+
+## Actual bridge startup diagnostic — 2026-11-15
+
+**Qualified at the selected no-provider diagnostic boundary; full startup admission
+remains HOLD.** Contract/test `404b359` requires the missing trace before launcher
+implementation `8b0d438`; `1357756` adds the pre-prompt prefix check and is the
+source for the complete acceptance run. The current host remains owned OMP
+18.18.1, SHA-256
+`ce80099f10c5ea4367523767230cb5b920f30cc139b9cf8758c1cc4b2f1f9409`.
+
+The existing explicit owned-catalog qualifier now materializes a hash-verified
+embedded preload and binds its SHA in the launch record. It starts from the
+private host root using a fixed relative preload path, then restores the canonical
+workspace. The actual test uses a host root containing spaces. Ordinary capture
+still selects HostDefault, does not materialize a preload or trace and starts in
+the workspace; its frozen compatibility is exercised separately. The bridge
+source, v1 wire/protocol/pin/contract and Cargo dependencies remain unchanged.
+No proxy setting or startup admission mode is enabled.
+
+The preload records at most 20 attempts and 8 KiB of metadata in the owned host
+root: installation/runtime/workspace restoration, normalized destination/method/
+route observations and normal exit. Global fetch/preconnect are refused locally;
+ClientRequest.end is observed and delegated under the existing network denial.
+This observation is not a before-IO guard. Only the Host destination is read from
+headers; bodies, other headers, query strings, credentials and exception text are
+absent from the trace. The explicit diagnostic file is not the product journal
+and grants no readiness, budget or provider authority. A product observer still
+needs the proposed shared channel/sequence owner and durable parent acknowledgment.
+
+The freshly pinned actual-host red completes two generations, all four owned TLS
+fixture POSTs, the authoritative one-model cache and all 29 native-usage mutation
+controls, then fails solely for the missing trace in **6.943 seconds**. An earlier
+wrapper captured its source pin before the test commit finished; its final
+source-binding check rejects that attempt. The original receipt is retained and
+the red rerun uses the committed pin without resetting the shared deadline.
+
+All **three** current-host diagnostics pass on `1357756`. In the owned qualifier,
+the actual embedded bridge, custom API, xhigh setting, read tool and complete
+two-generation conversation pass unchanged strict request validation. Both native
+assistant entries reconcile the four scripted usage categories/totals and reject
+all 29 corruptions. These are fixture counters, not provider economics. The SDK
+cache remains authoritative with one canonical model. The launch record binds
+preload SHA-256 `f0f81928c6bb8d2b5ca22eaf71c31b7f0a2cc373b7adcdeabfb3c1eba8251754`.
+
+The actual-profile trace contains installation, one classified Anthropic `HEAD`
+through ClientRequest.end and exit 0. A complete byte prefix saved before the
+first user prompt contains that HEAD, and the final trace starts with those exact
+bytes. No later attempts are observed during this fixture conversation. Six
+malformed/partial trace controls reject: absent exit, wrong exit code, sequence
+gap, forbidden body field, wrong runtime and duplicate terminal row. The final
+trace is **291 bytes**, SHA-256
+`d415a72846a7abb66e111e6ad3ba990b51c3133c4d7fdbaf0277f6ef4619393f`;
+the pre-prompt prefix is **253 bytes**, SHA-256
+`a2f4326449f9a81f90d5dbc7886ec7f935d5685294bff8c209ec6b73dd48b436`.
+The initial three-test check precedes the prefix assertion; the strengthened
+check reruns the actual consumer after that test change. Both are retained.
+
+The complete nonignored frozen-host suite passes **33/0/5 ignored** in **312.638
+seconds**, and focused lint passes. All **eight gates pass** on `1357756` in
+**844.048 seconds**: default outer harness totals are **1,319 passed, 0 failed,
+35 ignored**; pilot unit totals are **102 passed, 0 failed, 1 ignored**.
+Child-process summaries remain separate in the readback.
+
+Implementation is [`Host::launch`](../src/pilot_capture/host.rs), the embedded
+[`startup probe`](../src/pilot_capture/startup_probe.ts) and the native
+[`qualification`](../tests/pilot_capture.rs), owned by 003 T006. The previous
+[HTTPS controls](#native-https-startup-boundaries--2026-11-15) establish why end
+observation cannot grant admission. Unlike that trusted-observer experiment,
+this check runs through the actual Rust launcher and capture bridge/profile.
+It still observes only the named hooks after their installation, not every owner,
+non-fetch route, callback or timer. Zero observed later calls does not establish
+permanent silence or settlement. The registry-wait counterexample and full
+before-IO/settlement/durable-prefix acknowledgment requirements remain open.
+
+Private evidence: `runs/pilot-bridge-startup-2026-11-15/`, with source/host pins,
+red and green raw requests, native sessions/usage/cache readback, pre-prompt and
+final trace bytes, resource/lifecycle receipts and the in-session readback.
+The quoted-path and file-URI preflights fail to execute the spaced-path sentinel;
+the relative-path sentinel exits 73 and proves workspace restoration. Original
+failures remain. The shared offline hour includes 120 seconds reserved for cleanup,
+one heavy job, a 20 GiB disk floor and an 8 GiB sampled individual RSS ceiling.
+Qualification/readback finishes at **2309.363 seconds**. Across all monitored
+commands, maximum sampled individual RSS is **2029.094 MiB** and minimum observed
+free disk is **62.674 GiB**. Argument-preflight resource peaks are not measured.
+Samples are lower bounds on actual peaks, not global/GPU memory measurements.
+All qualified commands exit naturally with observed processes gone. External
+networking is denied; all Count/Messages traffic uses the owned numeric-loopback
+TLS fixture and synthetic key. No real credential access, model download,
+training, provider spend, owner signing identity, tags or release publication is
+used. V2 remains unfunded/unfrozen; paid runs, signing and release remain gated.
+
+The qualifier and records through `54b5b8e` are published to the experimental
+branch with full fresh-clone byte/type/executable-mode readback of all **401
+tracked paths**; main remains `d94b013`. After publication, this stage's build/MSRV
+allocation falls from **8,441,352,192 to 34,525,184 bytes**, removing **11,755**
+generated files while retaining the green standalone diagnostic and the separately
+saved red executable. Both successfully list all **38** tests after cleanup and
+depend only on system dynamic libraries. All **180** pre-existing non-cache
+evidence files pass exact readback.
+
+Two duplicate SDK-native libraries created by the path preflights are removed
+after exact comparison with the retained library and empty open-file checks:
+**222,220,640 logical bytes**. The native cleanup separately verifies all **182**
+retained files; these scopes overlap and are not additive. Combined owned-directory
+allocation decreases by **8,629,018,624 bytes**, not an inferred APFS physical gain.
+`cleanup-build-result.json`, `cleanup-result.json` and `post-cleanup-readback.json`
+retain deletion/retention mappings and flag scopes. The post-cleanup readback
+finishes inside the shared hour at **2,908.567 seconds**, with no provider spend.
+
+## Native HTTPS startup boundaries — 2026-11-15
+
+**Qualified counterexamples and one narrow routing control; complete startup
+admission remains HOLD.** Public base is `23aea9a`. All application, test and Cargo
+inputs remain byte-identical to eight-gate-qualified `0b19098`; no Rust build or
+production hook/proxy setting changes in this continuation. The owned OMP 18.18.1
+artifact retains SHA-256
+`ce80099f10c5ea4367523767230cb5b920f30cc139b9cf8758c1cc4b2f1f9409`.
+
+The native diagnostic uses a trusted catalog observer, the canonical SDK model/API
+and thinking `off`, rather than the capture bridge's custom API. Its config bytes
+equal the qualified owned-catalog config. Seven native RPC cases return the same
+complete model metadata, zero messages and no streaming, then exit 0 normally with
+observed processes gone. This is not an actual CaptureSession startup qualification.
+
+| Actual native control | Observed result | Implication |
+| --- | --- | --- |
+| Replace default `node:https.request`, then call `syncBuiltinESMExports` | The observer's HTTPS namespace retains a different function; its direct witness opens one connection to the owned listener | The default-export patch does not intercept this namespace call on the embedded Bun 1.4.4 runtime |
+| Refuse at shared `ClientRequest.end` | Records the SDK's credentialless `HEAD` to `api.anthropic.com` and reports an owned refusal for the witness; a durable independent listener log still records one connection | Observing/refusing at `end` cannot establish a before-IO gate. The precise constructor/destroy ordering is not established |
+| Set only `PI_PROXY_ANTHROPIC` to the owned loopback endpoint | The SDK warm-up reaches global fetch with proxy options and is locally refused; a separate direct HTTPS witness still opens one loopback connection | Existing SDK routing can expose this known warm-up to the observer, but is not a general transport fence |
+
+The durable counterexample retains the original failing before-IO assertion; it
+is not relabeled as a repaired gate. The proxy control and counterexample readback
+complete in **15.076 seconds**. The earlier zero-count warm-up prediction, failed
+export/prototype candidates, sandbox-address parser refusal and unstarted cases
+remain intact. A separate readback corrects a copied proxy-case hook flag using
+the actual branch, controller state and runtime events without rewriting it.
+One private generator syntax error occurred before any host started. Nothing here
+establishes permanent silence or complete non-fetch/owner coverage.
+
+Source/release association is upstream commit
+`24439066040e006eb08da7b204f0ac41c79d2de9`:
+[`createAgentSessionScoped` warm-up](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/sdk.ts#L2351),
+[`prewarmModelConnection`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/ai/src/providers/connection-prewarm.ts#L46),
+[`transportFetch`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/ai/src/utils/transport-fetch.ts#L27),
+[`sendCoworkRequest`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/ai/src/providers/cowork-fetch.ts#L209)
+and [`getProxyForProvider` / `withProxyInit`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/ai/src/utils/proxy.ts#L136).
+All **12** retained source files pass Git-blob/SHA-256 readback. The relevant
+[`connection-prewarm.test.ts`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/ai/test/connection-prewarm.test.ts#L51)
+is read, not run. This is source/release association, not reproducible-build proof.
+003 T006 owns these controls. No proposed hook is landed as application code.
+
+The source inventory also identifies credential-usage prefetch, auth-settings
+listeners, marketplace refresh and settings watchers. Telemetry registration has
+an endpoint/env gate, and the version check is in the interactive branch. Those
+source observations do not qualify a complete inactive-owner inventory or drain.
+The next boundary must cover the actual bridge/profile, every admitted owner and
+unsupported routes before IO, then the proposed shared-channel durable refusal,
+settlement and parent acknowledgment. Any use of the supported proxy setting also
+needs complete request/tool/headroom qualification under that selected profile.
+
+Private evidence: `runs/pilot-startup-https-2026-11-15/`, including all phase
+protocols, raw RPC/metadata and listener logs, original failed assertions, source
+pins and `qualification-readback.json`. Each phase has a finite 120–240-second
+budget, 60 seconds reserved for cleanup, 25–30 seconds per command, one job, a
+20 GiB disk floor and an 8 GiB sampled individual RSS ceiling. Native metadata is
+capped at 20 attempts/8 KiB; the listener counter has its own finite cap. Maximum
+sampled individual RSS is **465.641 MiB** and minimum observed free disk is
+**83.620 GiB**. Seven normal native cases and one pre-start sandbox refusal are
+retained. Closed modes are normalized only in this owned probe; transient modes
+remain unqualified. External networking stays denied, with an explicit owned-port
+loopback exception in listener cases. Only `get_state` is sent; no generation
+prompt or parent Count/Messages transport, real credential access, model download,
+training, owner signing identity or provider spend is used. V2 remains unfunded
+and unfrozen; paid runs, signing and release remain gated.
+
+The findings through `0cd6514` are published to the experimental branch with full
+fresh-clone byte/type/executable-mode readback of all **400 tracked paths**; main
+remains `d94b013`. After publication, seven duplicate native-library extractions
+are removed following exact-byte comparison with the retained library and empty
+open-file checks: **777,772,240 logical bytes**. All **262** other existing evidence
+files pass exact readback. This probe's allocation falls from **781,787,136 to
+4,050,944 bytes**; no APFS physical free-space gain is inferred. Raw failed and
+successful controls, durable listener logs, source pins, configs and generated
+catalog data remain available in `cleanup-result.json`'s retention mapping.
+No Rust build cache is created.
+
+## Owned canonical host catalog qualification — 2026-11-15
+
+**PASS at the explicit no-provider qualification boundary.** Red contract/test
+`88f420c` precedes bridge implementation `0b19098`. The opt-in host profile is bound
+to owned OMP 18.18.1, SHA-256
+`ce80099f10c5ea4367523767230cb5b920f30cc139b9cf8758c1cc4b2f1f9409`,
+and rejects an unqualified artifact before creating host state. It disables the
+other **92** IDs from the actual SDK's **93**-provider catalog union, including
+legacy `minimax-cn`. Ordinary capture explicitly retains host defaults; no ambient
+environment variable can select this profile through the cleared host launch.
+
+The existing bridge uses the supported registration callback to return a fresh
+copy of one bounded bundled-model definition. It preserves canonical Anthropic
+identity and native metadata, with no IO, timer, retry or credential operation in
+the callback. The launch receipt hashes the actual written config. Neither v1's
+frozen host pin/contract nor wire admission changes. This is not a v2 execution
+configuration or a complete startup barrier.
+
+The actual current-host red test completes its two-generation tool conversation,
+all four numeric-loopback fixture POSTs and all 29 native-usage mutation controls,
+then fails the intended SDK-cache assertion: **19 models, authoritative 0**.
+With the callback, the real private SDK cache instead contains **one fixed model,
+authoritative 1**. All **three** current-host diagnostics pass, including full
+history, read-tool completion, strict request validation and native usage. Both
+follow-up variants match the four scripted usage categories and totals and reject
+all 29 corruptions. These are synthetic fixture counters, not provider economics.
+All native processes exit normally with their observed groups gone.
+
+The complete nonignored frozen-host suite passes **33/0/5 ignored**. The private
+wrapper initially expects four ignored tests and fails its summary assertion;
+`frozen-readback.json` verifies the same completed exit-0 command, all five named
+ignored cases and the compiled **38**-test list. The original wrapper failure is
+retained; no Rust test is rerun or weakened. Focused lint passes. All **eight gates
+pass** on `0b19098` in **819.684 seconds**. Default outer harness totals are **1,319
+passed, 0 failed, 35 ignored**; pilot unit totals are **102 passed, 0 failed,
+1 ignored**. Child-process summaries remain separate in the readback and are not
+added to these totals.
+
+Startup probes retained in this continuation establish narrower boundaries:
+
+- The actual registry wait method returns while one controlled, abort-ignoring
+  Ollama fetch is still pending. Joining the explicitly observed fetch promises
+  delays the handler/state response until that controlled operation settles.
+  All three controls pass in **22.185 seconds**. This covers that subset, not all
+  owners, native channels or durable parent acknowledgment.
+- Late provider registration preserves the complete native model bytes (SHA-256
+  `d83362d570f6dc8c135e3da69c167b830cea0f0a730725e26b3b7cdb0caff233`)
+  and produces the authoritative one-model row, but an initial shared-catalog
+  fetch has already begun. Its original zero-fetch expectation fails and remains
+  failed; the network-witness case remains unstarted.
+- A declarative alias also fails the zero-fetch expectation and changes native
+  `provider`, `compatConfig`, `int` and `promptCacheConfig`. It is rejected and
+  absent from product code; its re-enable control remains unstarted. The native
+  catalog inventory then enumerates the missing legacy provider in **7.531 seconds**.
+
+Source/release association is upstream commit
+`24439066040e006eb08da7b204f0ac41c79d2de9`:
+[`getBundledModel`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/catalog/src/models.ts#L58),
+[`fetchDynamicModels`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/extensibility/extensions/types.ts#L2267),
+[`model_cache`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/catalog/src/model-cache.ts#L251)
+and the prior disabled-provider tests linked below (read, not run). Relevant source
+files pass Git-blob/SHA-256 readback; this is not reproducible-build proof. Foundry
+003 T006 owns this qualification. Landed implementation is
+[`CatalogProfile`](../src/pilot_capture/host.rs), the
+[`bridge`](../src/pilot_capture/bridge.ts) and the actual-host
+[`diagnostic`](../tests/pilot_capture.rs). The intentional difference from ordinary
+SDK discovery is a fixed single-model callback inside an explicit artifact-bound
+qualifier, with ordinary capture left on its existing profile.
+
+Private evidence is in `runs/pilot-owned-catalog-implementation-2026-11-15/`,
+`runs/pilot-startup-owner-wait-2026-11-15/`,
+`runs/pilot-owned-catalog-2026-11-15/` and
+`runs/pilot-local-catalog-2026-11-15/`. Raw red/green requests, native sessions/cache
+rows, rejected controls, source pins, lifecycle/resource receipts and the in-session
+readbacks remain local. The shared implementation hour includes offline builds,
+120 seconds reserved for cleanup, one heavy job, a 20 GiB disk floor and an 8 GiB
+sampled individual RSS ceiling. The complete qualification readback is reached in
+**1375.926 seconds**; maximum sampled individual RSS is **2008.266 MiB**, and minimum
+observed free disk is **79.039 GiB**. Sampled RSS is a lower bound on actual peaks,
+not a global/GPU memory claim.
+No external provider calls, spend, model downloads, training, owner signing
+identity, tags or release publication are used. Complete startup owner inventory,
+non-fetch coverage, settlement and durable parent acknowledgment remain open;
+v2 is unfunded/unfrozen, and paid runs, signing and release remain gated.
+
+The qualifier and records through `008b5a3` are published to the experimental
+branch, with full fresh-clone byte/type/executable-mode readback of all **400
+tracked paths**; main remains `d94b013`. After publication, this stage's build/MSRV
+allocation falls from **8,443,719,680 to 34,451,456 bytes**, removing **11,755**
+generated files while retaining the green standalone diagnostic. Its separately
+retained red executable also remains exact. Both executables successfully list
+all **38** tests after cleanup and depend only on system dynamic libraries.
+All **107** pre-existing non-cache evidence files pass exact readback.
+
+Eight duplicate native-library extractions in the three startup-probe directories
+are removed after exact comparison with the previously retained library and empty
+open-file checks: **888,882,560 logical bytes**. All **246** other existing probe
+files pass exact readback, including original failures, configs, native model/cache
+data and unstarted controls. Combined owned-directory allocation decreases by
+**9,298,165,760 bytes (8.660 GiB)**. This is directory allocation, not an inferred
+APFS physical free-space gain. Private `cleanup-build-result.json`,
+`cleanup-probes-result.json` and `post-cleanup-readback.json` record retention and
+deletion mappings. Complete qualification/publication/cleanup readback is reached
+inside the shared hour, in **1,566.229 seconds**; no provider calls or spend occur.
+
+## Restricted startup provider profile — 2026-11-15
+
+**Qualified at the selected owned RPC/configuration boundary.** On public base
+`8b3bcd7`, application/test/Cargo inputs remain byte-identical to `40b75c6`; its
+eight-gate evidence remains applicable. The owned OMP 18.18.1 artifact retains
+SHA-256 `ce80099f10c5ea4367523767230cb5b920f30cc139b9cf8758c1cc4b2f1f9409`.
+Only fresh owned config copies change. No v1 default, policy, pin or production
+configuration changes, and no v2 execution configuration is frozen.
+
+All three actual-host controls pass under the existing launcher's sandbox
+permissions, fresh cleared homes/environments and the same seven-second observation
+window. A pre-main hook records and locally refuses each fetch without invoking
+the original transport:
+
+| Owned config | Disabled provider IDs | Observed fetch invocations |
+| --- | ---: | ---: |
+| Existing config | 0 | 15 |
+| Retain Anthropic, disable other catalog/implicit providers | 91 | 1 shared-catalog fetch |
+| Same restriction, re-enable Ollama | 90 | Shared catalog plus Ollama tags |
+
+Every native state response keeps provider `anthropic`, model `claude-sonnet-5-5`,
+thinking `off`, zero messages and no streaming. Only `get_state` is sent. Each host
+exits normally with empty stderr and its observed group gone. Config files match
+the declared base plus the exact disabled list; model config bytes are unchanged.
+The remaining shared-catalog call is observed, not silently treated as zero.
+This phase completes in **22.304 seconds**, with all original artifacts retained.
+
+Source association is upstream commit `24439066040e006eb08da7b204f0ac41c79d2de9`:
+[`cfgDisabledProviders`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/config/model-settings.ts#L77),
+[`ModelRegistry` discovery filtering](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/config/model-registry.ts#L2201)
+and the [Anthropic catalog manager](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/catalog/src/provider-models/openai-compat.ts#L7004).
+The list comes from all **91** compiled catalog entries plus source-declared
+implicit `llama.cpp`, retaining Anthropic. Four source files pass Git-blob/SHA-256
+readback. Relevant disabled-local-provider tests at
+[`model-registry.test.ts`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/test/model-registry.test.ts#L2588)
+are read, not run. This is source/release association, not reproducible-build proof.
+
+This filter reduces observed built-in work; it is not a transport gate. The source's
+separate extension-registered runtime-manager path is not covered by this filter
+proof. Complete owner inventory, non-fetch coverage, owner settlement and parent
+journal acknowledgment remain unqualified. The fixed observation window proves
+neither permanent silence nor a latency improvement. Actual generation payload,
+tool behavior and request headroom are not exercised by `get_state`; they must be
+qualified under any future selected v2 profile before freeze.
+
+Private evidence: `runs/pilot-startup-profile-2026-11-15/`, including protocol,
+source pins, exact provider list/configs, raw RPC/refusal metadata, phase receipts
+and `qualification-readback.json`. Bounds are 240 seconds with 60 for cleanup,
+30 seconds per command, one job, 20 GiB disk floor, 8 GiB sampled individual RSS,
+20 fetches and 8 KiB startup metadata. Closed modes pass; transient modes remain
+unqualified. No parent Count/Messages transport, generation prompt, provider spend,
+model download, owner signing identity or Rust build is used. Complete current-host
+startup and pilot-v2 acceptance remain **HOLD**.
+
+The profile finding through `ed58509` is published to the experimental branch with
+full fresh-clone byte/type/executable-mode readback of all **400 tracked paths**;
+main remains `d94b013`. After publication, three duplicate native-library
+extractions are removed following exact-byte comparison with the prior retained
+library and an empty open-file check. **333,330,960 logical bytes** are removed;
+this probe's directory allocation falls from **344,326,144 to 11,005,952 bytes**.
+All **86** other existing evidence files pass exact readback. The original configs,
+source pins, catalogs and raw controls remain available; `cleanup-result.json`
+records the mapping. No Rust cache is created, and directory allocation is not
+treated as an APFS physical free-space measurement.
+
+## Startup settlement counterexample — 2026-11-15
+
+**Qualified counterexample to treating native RPC readiness as startup settlement.**
+Public base is `1f9c7ab`; application/test/Cargo inputs remain byte-identical to
+`40b75c6`, whose eight-gate receipt remains applicable. The owned OMP 18.18.1
+artifact retains SHA-256
+`ce80099f10c5ea4367523767230cb5b920f30cc139b9cf8758c1cc4b2f1f9409`.
+No production code, v1 policy, host pin or admission changes in this phase.
+
+With the existing launcher's sandbox permissions and exact owned config/model
+files, a preload locally delays one actual Ollama catalog fetch for six seconds,
+ignores its abort signal, and refuses every intercepted request without calling
+the original fetch. Native RPC emits `ready` and successfully answers `get_state`
+while that invocation is pending. The readiness snapshot contains metadata
+sequence **0–13**; two more refusal records appear afterward, followed by the
+ignored abort at **16**, delayed local refusal at **17**, and normal exit at **18**.
+The host exits 0 with empty stderr in **7.036 seconds**, and its observed group is
+gone. A fresh canonical-policy baseline without any preload also exits normally
+after the owned idle interval, in **7.027 seconds**. Only `get_state` is sent; no
+generation prompt or parent Count/Messages transport is constructed.
+
+The source association is pinned upstream
+[`discoverOllamaModels` / `withTimeoutSignal`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/config/model-discovery.ts#L90)
+and [`ModelRegistry.refreshInBackground`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/config/model-registry.ts#L902).
+The source races a timeout while signalling abort; the actual-host control shows
+readiness before the controlled operation settles. The registry wait method itself
+is not exercised here, and no complete owner inventory or drain API is qualified.
+This is source/release association, not reproducible-build proof. Relevant upstream
+constructor-fetch tests were read previously, not run; this private actual-host
+probe owns the narrower readiness observation.
+
+All original failures remain: five segmentation faults occur in ad-hoc sandbox
+controls, including controls without a preload or fetch replacement; one stricter
+policy fails native-addon loading. Those profiles differ from `Host::launch`.
+The exact permission/runtime cause is unestablished; the corresponding canonical
+policy runs complete normally. (A [read-only diagnosis of
+2026-11-20](#sandbox-profile-segmentation-fault-diagnosis--2026-11-20) since reads
+the five crash reports and infers a cause.) An absent-preload-log collector error is preserved,
+then fixed only for the fresh baseline. A readback assumption that all other
+refusals preceded readiness is also retained and corrected to check the actual
+contiguous prefix. The unstarted no-listener case stays unstarted. None of these
+failures is relabeled as passing or attributed to a production regression/fix.
+
+Each bounded diagnostic phase allows 180 seconds with 60 reserved for cleanup,
+30 seconds per command, one job, a 20 GiB disk floor and an 8 GiB sampled individual
+RSS ceiling. Captured startup metadata is capped at 20 attempts/8 KiB. Eleven
+runtime cases are retained; observed processes are gone without forced cleanup.
+Networking is denied throughout. The baseline retains the SDK's original fetch;
+the delayed case refuses locally. Environments/homes are fresh, with zero external
+provider traffic/spend, owner signing identities, model downloads or Rust builds.
+Closed evidence modes are checked; transient modes remain unqualified.
+
+Private evidence: `runs/pilot-startup-settlement-2026-11-15/`, including all phase
+protocols, original failures, raw RPC/metadata, canonical baseline/delay reports,
+and `qualification-readback.json`. The [v2 draft](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission)
+now specifies explicit owner settlement and durable prefix acknowledgment. That
+boundary remains proposed; complete startup/current-host/v2 acceptance stays **HOLD**.
+
+The finding/design through `2238253` is published to the experimental branch with
+full fresh-clone byte/type/executable-mode readback of all **400 tracked paths**;
+main remains `d94b013`. After publication, ten newly extracted native-library
+copies are removed following exact-byte comparison against the retained current
+library and an empty open-file check. **1,111,103,200 logical bytes** are removed;
+the probe's directory allocation falls from **1,191,825,408 to 80,752,640 bytes**.
+All **255** other existing evidence files pass exact readback, including original
+crashes, collector failures and generated catalogs. `cleanup-result.json` records
+the mapping; prior manifests keep their pre-cleanup meaning. No Rust cache is
+created, and no APFS physical free-space gain is inferred from directory allocation.
+
+## Native four-category fixture usage — 2026-11-15
+
+**PASS at the selected native transcript/owned-fixture boundary.** Contract/test
+`5eb0008` extends the existing ignored current-host continuation; `40b75c6` saves
+the session path before consuming the host at shutdown. The initial E0382 compiler
+failure remains in the private evidence. Application, Cargo, v1 host pin, codec and
+admission inputs remain equal to `98157db`. The owned OMP 18.18.1 executable keeps
+SHA-256 `ce80099f10c5ea4367523767230cb5b920f30cc139b9cf8758c1cc4b2f1f9409`.
+
+After the actual two-generation conversation and normal host exit, the existing
+bounded/private native-session reader finds one **5,057-byte** transcript, SHA-256
+`bde8ca3c2c07796e56bdfde0314e85fa12d7db6d3dc0f4cf7c27ff56c464ee45`.
+Both assistant entries match the accepted wire response IDs, model, order and
+stop disposition. There are no unparsed lines or out-of-transcript `model_usage`
+entries. Native counters equal the four accepted scripted wire buckets and their
+checked totals:
+
+| Scripted response | Uncached input | Cache read | Cache write | Output | Total |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Tool call | 1,300 | 40 | 0 | 30 | 1,370 |
+| Final text | 1,200 | 0 | 40 | 12 | 1,252 |
+
+**These are fixture values, not actual-provider usage or cost.** The unreported
+reasoning subset stays absent in both wire and native observations; it is not
+invented as zero. Calculated native prices are not qualified. All **29** controls
+on copies of the actual native rows reject: wrong response identity; missing,
+null, negative, fractional or changed counters; fabricated reasoning zero;
+duplicate assistant; and an out-of-transcript usage entry. The original transcript
+is retained byte-for-byte and never altered by those controls.
+
+The two explicit current-host diagnostics pass on `40b75c6` in **12.535 seconds**;
+focused pilot Clippy passes in **27.944 seconds**. All eight local gates exit 0 in
+**812.273 seconds**, with **1,319 default tests passed / 0 failed / 35 ignored**,
+**21 recovery cases**, **101 pilot unit tests passed / 0 failed / 1 ignored**, and
+the three actual Rust 1.90 checks. The unchanged application/frozen-host fixture
+inputs retain their earlier full-suite evidence; that host suite is not rerun in
+this test-only phase. The shared hour includes the retained failed build; the
+stage completes in **966.409 seconds**, leaving more than the 120-second cleanup reserve.
+Sampled individual RSS peaks at **2,035.938 MiB**, with minimum sampled free space
+**96.649 GiB**; these are sampled observations, not global memory guarantees.
+
+Pinned upstream source supplies the
+[`Usage` field contract](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/catalog/src/types.ts#L211)
+and [`streamAnthropic` delta mapping](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/ai/src/providers/anthropic.ts#L3194).
+Three source files pass Git-blob/SHA-256 readback; this is source/release association,
+not reproducible-build proof. Foundry's actual-host
+`current_host_tool_followup_preserves_full_history` test owns this qualification;
+upstream tests are not run. The intended difference is a bounded, synthetic
+two-generation diagnostic rather than a new native import policy or economic claim.
+
+Private evidence: `runs/pilot-current-native-usage-2026-11-15/`, including protocol,
+retained build failure, accepted requests/fixture HTTP bodies, exact native session,
+native usage report, all gate logs and `qualification-readback.json`. The fixture
+receives exactly four HTTP requests; external-provider calls and spend are zero.
+No owner signing identity or model download is used. Complete startup coverage,
+transient modes, current-host CaptureSession/Live admission and pilot-v2 outcomes
+remain **HOLD**; paid runs and signing remain gated.
+
+The three commits through `22fa8fb` are published to the experimental branch with
+full fresh-clone byte/type/executable-mode readback of all **400 tracked paths**;
+main remains `d94b013`. Only after publication, this stage's build/MSRV cache is
+pruned from **8,442,306,560 to 34,422,784 allocated bytes**. One standalone native
+diagnostic is retained after hash/system-dependency checks; existing application
+diagnostics remain in the prior stage. **11,755** generated files are removed;
+all **76** other existing evidence files pass exact hash readback. No open/mapped
+build file is found. `cleanup-build-result.json` records the retained artifact and
+evidence hashes. Directory allocation changes are not APFS physical-space claims.
+
+## Current-host startup preload feasibility — 2026-11-15
+
+**An early fetch-interception seam is demonstrated; complete startup observation
+remains unqualified.** On public base `68e87ec`, private, bounded probes use the same
+owned OMP 18.18.1 artifact, SHA-256
+`ce80099f10c5ea4367523767230cb5b920f30cc139b9cf8758c1cc4b2f1f9409`.
+No application, Cargo, v1 pin, protocol or request-policy input changes.
+[Bun's standalone documentation](https://bun.sh/docs/compiler/executables#runtime-arguments-via-bun-options)
+describes runtime options; the shipped artifact is checked directly rather than
+assumed to share the separately installed Bun's behavior.
+
+All nine sentinel/control commands pass their declared checks in **4.169 seconds**.
+`BUN_OPTIONS="--preload /abs/owned/preload.mjs"` makes the owned host write a marker
+and exit 73 before its ordinary `--help` entrypoint. A missing preload exits 1
+without the marker. Passing `--preload` as ordinary host CLI arguments does not
+execute it. Installed Bun **1.3.14** supplies positive main/preload and missing-file
+controls; the host later identifies its embedded runtime as **1.4.4**.
+
+A separate RPC startup with stdin EOF installs a private preloader that records
+bounded destination metadata and rejects every intercepted fetch locally without
+calling the original fetch. It records **15 GET invocations**: eight to loopback
+destinations and seven to other hosts. Native RPC `ready` is observed, followed by
+normal exit 0, empty stderr and observed group cleanup in **1.451 seconds**.
+The native `ready` is not a Foundry startup-prefix acknowledgment. The probe first
+fails on a private JavaScript syntax error before its hook installs. After that is
+corrected, its site-specific `models.dev` assertion fails: the actual invocations
+target other destinations. Both failures remain unchanged. Separate readback
+verifies the actual metadata sequence, local refusal, runtime, bytes and lifecycle;
+it does not relabel the original observer test as passing.
+
+The inherited network-denied sandbox is enforced, child environments are cleared,
+homes are fresh, no prompt or credential is supplied, and no provider transport is
+constructed. Bounds are 240 seconds with 60 reserved for cleanup for the sentinel
+phase, then 120/60 seconds for RPC observation; commands are capped at 15/30 seconds,
+with a 20 GiB disk floor and 8 GiB sampled individual RSS ceiling. Observation is
+capped at 16 fetches/8 KiB metadata. Closed evidence modes pass; transient modes,
+non-fetch bypass coverage, complete owner attribution, drain/cancellation and a
+durable parent-journal acknowledgment remain unqualified. Source association is
+the earlier [pinned-source finding](#current-host-startup-source-feasibility--2026-11-14),
+not reproducible-build or runtime caller attribution. No Rust build runs in this
+phase, and no external-provider request, spend, signing or release action occurs.
+
+Private evidence: `runs/pilot-startup-preload-2026-11-15/`, including both protocols,
+`probe.py`, retained `observe-initial.py`, corrected `observe.py`, original failed
+reports and `qualification-readback.json`. The next implementation can evaluate an
+owned preload in the existing launcher; it need not assume an upstream rebuild is
+required. Production `Host::launch`, frozen v1 admission and pilot-v2 execution
+remain unchanged. Complete current-host/v2 acceptance stays **HOLD**.
+
+The finding through `9684a58` is published to the experimental branch with full
+fresh-clone byte/type/executable-mode readback of all **400 tracked paths**; main
+remains `d94b013`. Only after publication, three newly extracted native-library
+copies are removed after exact-byte comparison against the retained current-host
+copy and an empty open-file check. This removes **333,330,960 logical bytes**;
+the owned probe's allocated size falls from **342,056,960 to 8,740,864 bytes**.
+All **105** other existing files pass exact readback, including the generated
+catalog and raw failures. `cleanup-result.json` records the mapping. These are
+directory allocations, not a claim about APFS physical free-space gain; older
+manifests retain their pre-cleanup meaning. No new Rust build cache is created.
+
+## Current-host tool continuation — 2026-11-15
+
+**PASS at the selected owned-fixture consumer boundary.** Test/contract commit
+`7ee124e` adds a second ignored current-host diagnostic and shares the existing
+setup; `bb17708` distinguishes owned-fixture HTTP from external-provider usage.
+Application, Cargo, frozen v1 pin, frame codec and request/SSE admission inputs
+remain identical to `98157db`. The owned OMP 18.18.1 artifact retains SHA-256
+`ce80099f10c5ea4367523767230cb5b920f30cc139b9cf8758c1cc4b2f1f9409`.
+
+Both explicitly selected current-host tests pass. The new case uses only the
+existing numeric-loopback TLS fixture, synthetic credential and
+`Endpoint::Verification` transport. Two actual native serialized requests pass
+unchanged admission, omit `thread` and preserve the initial message. A synthetic
+SSE tool response causes one policy-admitted read of the owned `src/lib.rs` fixture;
+the actual ToolDone precedes a three-message followup containing its source result.
+The same followup bytes are rejected as `followup_not_tool_progression` when a
+control removes completion evidence. The final synthetic text response leads to
+native `prompt_result: completed`, followed by normal host exit with its group gone.
+The fixture source file remains byte-identical and no extra fetch is observed.
+
+The server observes exactly **four POSTs**, in Count/Messages/Count/Messages order,
+with no scripted response left unused. Messages bodies match the native payloads
+byte-for-byte; Count bodies match their exact admitted projections. Both synthetic
+SSE streams pass the existing `MessagesStream` event/terminal/usage checks before
+relay. Source, model, tool and settings linkage are checked at this actual boundary.
+**All counter and
+usage numbers are scripted fixture data, not real-provider usage or cost.** The
+native transcript's usage ledger is not read back by this test.
+
+The initial diagnostic pair passes in **94.726 seconds**, including offline build.
+After adding explicit fixture/external HTTP labels, the final pair passes in
+**12.070 seconds** on `bb17708`; focused pilot Clippy passes in **28.832 seconds**.
+All eight local gates pass on that candidate in **850.851 seconds**: default tests
+**1,319 passed / 0 failed / 35 ignored**, **21 recovery cases**, pilot unit tests
+**101 passed / 0 failed / 1 ignored**, plus formatting, both Clippy boundaries and
+the three actual Rust 1.90 checks. The complete frozen-host suite from the preceding
+repair remains evidence on unchanged application/fixture inputs; it was not rerun
+in this test-only phase. The normal suite keeps both explicit newer-host diagnostics
+ignored, so an installed newer artifact is not a default prerequisite.
+
+The shared one-hour stage completed in **1,653.424 seconds**, including preparation,
+with its 120-second cleanup reserve, one-heavy-job rule, offline dependencies,
+20 GiB disk floor and 8 GiB sampled individual RSS guard. Observed peak individual
+RSS was **2,068.922 MiB**, and minimum sampled free disk was **97.002 GiB**.
+An initial private continuation-launcher syntax error occurred before any child
+work; its source and failure log remain alongside the corrected launcher. No
+product test, admission rule or resource bound was loosened. Every observed owned
+process exited naturally, with no forced cleanup or surviving observed descendant.
+
+Private evidence: `runs/pilot-current-followup-2026-11-15/qualification-readback.json`,
+the phase receipts, full gate logs and `focus-final-evidence{-followup}/`. These
+retain actual request bodies, exact loopback-received bodies and closed-file mode
+checks. Readback rechecks body identity, history shape, projection fields and all
+gate summaries.
+
+The test/record snapshot through `215abcd` is published to
+`experimental/context-ecosystem` with full fresh-clone readback of **400 tracked
+paths / 11,777,448 bytes**, file types and executable bits. Main remains `d94b013`.
+The scoped review is `publication-review.json` in this stage; its private publish
+receipt is `runs/storage-cleanup-2026-11-14/publication-current-followup.json`.
+After publication, only this stage's build/MSRV intermediates were retired:
+**8,440,840,192 → 465,211,392 allocated bytes** (7.86 GiB → 444 MiB), with seven
+hash-verified standalone binaries and system-only dependencies retained. All
+**85 existing evidence files** pass exact hash readback, excluding the active
+cleanup-driver logs and new receipt. No open/mapped cache file was found; 11,749
+generated files were removed. `cleanup-build-result.json` records the paths,
+hashes and scope. Other stores, model inputs, earlier evidence and unrelated work
+were preserved. APFS directory allocation is not additive physical reclamation.
+
+This qualifies current-artifact full-history tool continuation, native completion
+and parsing of the scripted responses. It does not grant current-host
+CaptureSession/Live admission, prove native transcript usage accounting, complete
+startup observation/transient modes or accept pilot-v2 task outcomes. Those
+requirements remain open. External-provider requests/spend are zero; owner signing
+credentials and paid/release execution remain gated.
+
+## Stateless native request repair — 2026-11-15
+
+**PASS at the selected local request and regression boundaries.** The qualification
+ran on 2026-11-14; its completed receipts were read back on 2026-11-15. Contract/test
+commit `50c571c` precedes the implementation in `98157db`. On the unchanged bridge,
+the explicit current-host regression is red: the actual request contains
+`thread: {type: "create"}` and fails `request_binding:beta_not_admitted`. The host
+still exits normally with its group gone. This is retained in
+`runs/pilot-stateless-host-2026-11-14/red-result.json` and `red-evidence/`.
+
+The embedded bridge now passes `statefulResponses: false` to the host-bundled
+delegate. It configures the native serializer; it does not remove serialized fields,
+rewrite headers, widen admission or add a second history owner. Upstream reference:
+commit `24439066040e006eb08da7b204f0ac41c79d2de9`,
+[`wantsAnthropicThreads`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/ai/src/providers/anthropic-threads.ts#L140),
+the [delegate call](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/ai/src/providers/anthropic.ts#L2262)
+and the [two-turn explicit-false test](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/ai/test/anthropic-message-threads.test.ts#L335).
+Those upstream sources were read and blob-verified, not executed. Foundry's test
+uses the actual pinned 18.18.1 executable, existing `Host::launch`, bridge/setup
+readback and unchanged request validator, then refuses locally and reaps the host.
+The ordinary suite keeps this newer-host diagnostic ignored unless explicitly
+selected with `CF_PILOT_CURRENT_OMP`; no newer installed host becomes a default
+test prerequisite or a v1 Live admission pin.
+
+On `98157db`, the same current-host test is green: its native request has no
+`thread` field and passes unchanged admission. Red/green command times, including
+offline compilation, are **92.031 / 25.827 seconds**. The complete nonignored
+frozen-host integration suite also passes: **33 passed, 0 failed, 3 ignored**,
+323.890 seconds including command overhead. The separate ignored current-host
+test was explicitly run above; the private pipeline/oracle tests were not rerun.
+Every selected host exited naturally, without forced cleanup or observed owned
+processes left behind. Private request bodies and metadata remain local.
+
+All eight `scripts/gates.sh` gates exit 0 on `98157db` in **883.465 seconds**:
+formatting, default Clippy/tests, pilot Clippy/unit tests and all three actual
+Rust 1.90 checks. Default tests: **1,319 passed, 0 failed, 35 ignored**, plus
+**21 recovery cases**. Pilot unit tests: **101 passed, 0 failed, 1 ignored**.
+Counts use the final summary of each Cargo harness, excluding nested child-test
+summaries. The original private wrapper reports failure solely because it applied
+`forbid_worker` to the full gate suite. Its 46 observed worker identities join to
+the passing fake-bundle fixtures in `tests/embed_worker.rs` and
+`tests/neural_retrieval.rs`, and fake package components in `tests/install.rs`.
+Those fixtures bind the fake executable's bytes/hash. The original failed wrapper
+receipt remains unchanged; `gates-readback.json` records the separate readback
+of all eight exit codes, logs and fixture identities. The private caller is corrected
+for future use. No product gate, resource limit or test assertion was changed, and
+the already completed gates were not rerun.
+
+The shared one-hour qualification completed in **1,503.608 seconds**, retaining
+its 120-second cleanup reserve and one-heavy-job rule. Peak sampled individual
+RSS was **2,047.625 MiB**; minimum sampled disk free was **292.856 GiB**, within
+the original 8 GiB / 20 GiB guards. Readback/publication does not extend or restart
+that completed experiment. Receipts and complete gate logs are under
+`runs/pilot-stateless-host-2026-11-14/`; the verified aggregate is
+`gates-readback.json`.
+
+The source/test/record snapshot through `7eda5ed` is published to
+`experimental/context-ecosystem`; fresh-clone readback verifies all **400 tracked
+paths / 11,753,701 bytes**, including file types and executable bits. Main remains
+`d94b013e3c638276f6afba49f80194776e294fbb`. The private receipt is
+`runs/storage-cleanup-2026-11-14/publication-stateless-host.json`; the scoped payload
+review is `runs/pilot-stateless-host-2026-11-14/publication-review.json`.
+
+Only after that publication/readback, this stage's generated build intermediates
+and MSRV cache were removed: **8,440,766,464 → 465,141,760 allocated bytes**
+(7.86 GiB → 444 MiB). Seven standalone binaries, including the qualified actual-host
+test, retain their exact hashes and have only system-library dependencies. All
+**61 pre-existing evidence files** in the stage pass byte-hash readback; the two
+active cleanup-driver logs and new cleanup receipt are outside that comparison.
+No open/mapped cache file was found. Cleanup deleted 11,749 generated files and
+removed only this stage's `build`/`msrv` intermediates; source, original failure/pass
+evidence, pinned host inputs, model stores and unrelated work remain. Exact private
+receipt: `runs/pilot-stateless-host-2026-11-14/cleanup-build-result.json`. Directory
+allocation changes do not establish additive physical reclamation on APFS.
+
+Frozen v1 contract/pin, frame protocol, request validator and Cargo inputs are
+unchanged. This qualifies the current artifact's first full-history request and
+the frozen-host regression; it does not newly qualify current-host response usage,
+tool continuations, complete startup observation, transient modes or
+CaptureSession/Live admission. Pilot v2/T006 remain open. External-provider spend
+is zero. Owner signing credentials, paid launch and release publication remain gated.
+
+## Current-host startup source feasibility — 2026-11-14
+
+**Source finding only; complete startup observation remains unqualified.** This
+continues 003 T006's existing v2 startup requirement against the current host's
+associated release source, rather than extrapolating the 18.13.2 inspection.
+The [v18.18.1 release metadata](https://api.github.com/repos/can1357/oh-my-pi/releases/tags/v18.18.1)
+lists macOS arm64 asset `722387514`, 220,595,344 bytes, with SHA-256
+`ce80099f10c5ea4367523767230cb5b920f30cc139b9cf8758c1cc4b2f1f9409`, matching the
+owned artifact used below. The [tag reference](https://api.github.com/repos/can1357/oh-my-pi/git/ref/tags/v18.18.1)
+resolves to commit `24439066040e006eb08da7b204f0ac41c79d2de9`. This establishes release
+association, not reproducible-build correspondence. Five fetched source files
+(530,012 bytes) pass exact Git-blob and SHA-256 readback in the private
+`runs/real-host-qualification-2026-11-14/current-source-feasibility/source-readback.json`.
+No additional host launch, model inference, provider request or upstream test ran.
+
+At that commit, [`ModelRegistry`'s constructor](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/config/model-registry.ts#L598)
+accepts an injected fetch for embedders and otherwise captures a wrapped global
+fetch. [`main` constructs it without that override](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/main.ts#L1995),
+before [loading the trusted extension](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/main.ts#L2502).
+Inference: replacing global fetch in the later Foundry bridge cannot retroactively
+observe that captured registry fetch. This is a concrete ordering limitation,
+not a repository-wide claim that no alternative hook exists.
+
+[`awaitInitialBackgroundRefresh`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/config/model-registry.ts#L994)
+can wait for a refresh that has not started yet. Its settlement still follows
+`refreshInBackground`, which swallows errors, and it does not acknowledge a durable
+inventory of every startup owner.
+[`withModelDiscoveryTimeout`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/config/model-provider-discovery.ts#L65)
+races its operation against a timer without passing cancellation; the separate
+[`withTimeoutSignal`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/src/config/model-discovery.ts#L90)
+also races a deadline while requesting cooperative abort. Inference: wrapper
+settlement alone cannot establish that all underlying work has stopped.
+The [registry test using an injected fetch](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/packages/coding-agent/test/model-registry.test.ts#L669)
+was read, not executed; it covers constructor injection/catalog refresh, not a
+complete shipped-CLI startup observer.
+
+Foundry's existing bridge/channel/journal remain the intended owners. An early
+observation/refusal seam, complete owner drainage and durable-prefix acknowledgment
+before Count/Messages admission are still proposed work, with no landed Rust
+implementation or runtime proof claimed. A new v2 host contract must bind that
+seam and the changed request shape; the frozen v1 pin and policy stay unchanged.
+The current handoff records these inputs alongside the closed retrieval experiment
+and separate paid/signing gates. Older planning text that called T010 acceptance
+and T004's trigger implementation unfinished is corrected to link current status.
+
+## Real-host no-provider qualification — 2026-11-14
+
+**Frozen host PASS; current-host acceptance HOLD.** On `8d7012f` (product source,
+tests and Cargo inputs still equal `ea33a2e`), the complete existing nonignored
+`pilot_capture` integration suite passed against the archived exact OMP 18.13.2
+artifact: **33 passed, 0 failed, 2 ignored**, 291.12 seconds in the test harness,
+322.370 seconds including offline compilation. The two existing private-input
+pipeline/oracle tests remained ignored as selected; their earlier evidence is not
+a fresh rerun. The suite uses owned numeric-loopback TLS fixtures and synthetic
+credentials, not an external provider.
+
+The owned OMP 18.18.1 artifact reached the actual embedded bridge, loaded its
+delegate, advertised the expected model/tools and passed all four setup RPCs and
+settings readback. One synthetic prompt produced a **12,895-byte actual serialized
+request**, which the unchanged `wire::validate_request` rejected with
+`request_binding:beta_not_admitted`. Its observed beta list adds
+`message-threads-2026-08-12` beyond the frozen allowlist. This is the first observed
+validator refusal; later request properties are not qualified by a short-circuiting
+rejection. The request was refused locally, with no Count/Messages transport
+constructed, and retained privately. The host exited normally, code 0, with empty
+stderr, no forced termination and its process group gone. The selected artifact's
+hash is unchanged. A separate closed-file walk passed 28 regular files, allowing
+0700 only for the exact current-version native extraction and 0600 for other files,
+with 0700 directories. This does not establish transient-file mode coverage.
+
+The shared 3,600-second stage finished in **447.097 seconds**, including an initial
+private-helper compile failure, its retained source/stderr/receipt, correction and
+retry under the same deadline. No product code changed. The 120-second cleanup
+reserve, one-heavy-job rule, 20 GiB disk floor and 8 GiB sampled individual-process
+RSS ceiling were retained. Maximum observed individual RSS was **1,840.97 MiB**;
+minimum sampled free disk was **321.12 GiB**. All observed owned processes were
+absent after normal completion; supervisor attribution is by PID/start identity,
+not a Darwin subreaper guarantee.
+
+Private receipts: `runs/real-host-qualification-2026-11-14/`, especially
+`final-readback.json`, `current-probe/result.json`, `current-probe-readback.json`
+and `native/003-frozen-host-suite.receipt.json`. New build intermediates were
+removed after hash/dependency readback of retained runnable binaries. Documentation
+link checks pass; existing full-gate evidence on unchanged product inputs remains
+the applicable source validation.
+
+V1's exact host pin, beta allowlist and native-path exception remain unchanged.
+This diagnostic does not admit the current installed host to CaptureSession/Live
+or select a new v2 pin. Complete early startup observation/barrier, transient modes,
+v2 task/arm qualification and actual task benefit remain open. External-provider
+calls/spend are zero; paid runs, signing and release remain gated.
+
+## T004 publication and current-host inventory — 2026-11-14
+
+The owner-approved four commits through `876a3a1` are published to
+`experimental/context-ecosystem`. All 22 Git commands succeeded in 6.506 seconds;
+fresh-clone readback verified every tracked file, type and executable bit:
+**400 paths / 11,717,655 bytes**. Main remained
+`d94b013e3c638276f6afba49f80194776e294fbb`. The local receipt is
+`runs/t004-structured-publication-2026-11-13/publication-publish-2oqm4wal/result.json`.
+No tag, release or workflow dispatch occurred.
+
+On resuming real-host no-provider qualification, an owned private copy of the
+installed OMP executable matches SHA-256
+`ce80099f10c5ea4367523767230cb5b920f30cc139b9cf8758c1cc4b2f1f9409`
+(220,595,344 bytes). A fresh-HOME, cleared-environment, network-denied
+`sandbox-exec` invocation returned `omp/18.18.1`, exit 0, in 1.688 seconds with
+zero stderr bytes. The installed source file was unchanged. This identifies the
+artifact at runtime; it does not establish source/build correspondence, bridge
+compatibility or current-host CaptureSession admission. V1's exact 18.13.2 pin
+is preserved. The owner then prioritized publication and storage cleanup before
+either planned native qualification test started. Inputs and the owned host copy
+remain available for that continuation; no provider call or signing occurred.
+
+## Storage cleanup — 2026-11-14
+
+The owner explicitly selected cleanup of Foundry `target`, `runs` and
+`~/VSC_DEV/datasets`, with source/record publication first. Initial allocated sizes
+from `du -k`: target 188,039,184 KiB, runs 16,005,864 KiB and datasets
+278,523,048 KiB. Build output is reproducible; uniquely pinned executables needed
+by existing evidence must remain outside the build cache. Two Rust IDE helper
+processes currently map a small set of target/debug proc-macro libraries; preserve
+those files and the helpers. Completed dataset/run copies may be removed only
+after verifying their retained canonical duplicate or archive. Preserve canonical
+profiles/model bundles/weights, current prepared masters, task/oracle originals,
+private question sets, raw outcome evidence and recovery material. Cleanup does
+not authorize publishing private data or paid/signing work.
+
+**PASS at the selected cleanup/readback boundary.** Source and records were pushed
+first as `35ee382`; a fresh clone verified all 400 tracked paths, bytes, file types
+and executable bits. Main remained `d94b013`. Local publication receipt:
+`runs/storage-cleanup-2026-11-14/publication-before-cleanup.json`.
+
+| Allocated directory size (`du`, GiB) | Before | After qualification cleanup |
+| --- | ---: | ---: |
+| `target` | 179.3 | 0.086 |
+| `runs` | 15.3 | 7.3 |
+| Foundry datasets | 265.6 | 32.3 |
+
+The filesystem reported **349,170,487,296 bytes free (325.2 GiB)** at final
+readback. APFS shared blocks and deferred freeing mean directory reductions are
+not additive physical reclamation. The remaining target files were mapped by two
+live IDE helpers; neither helper was stopped. Needed standalone Foundry executables
+were retained and hash-checked outside the build cache, without inferring their
+source commit from their former paths.
+
+Read-only redb inspection checked 81 completed experiment stores. Derived payloads
+in 73 stores were removed only after exact source identity and retained
+compiler/knowledge/boundary row comparisons, with empty user-record tables and no
+unknown nonempty tables. Five older unique stores were copied before modification
+and compacted with standard redb into private offline source/fact snapshots.
+Exactly seven named derived semantic tables were discarded; every other table's
+keys, values, types and row counts passed logical readback. These snapshots are
+not serving stores. Real redb controls preserve live memory, task, feedback and
+multimap rows and reject mutation of original paths. Current prepared Rust/Bun
+masters and the remaining canonical pipeline store stay available.
+
+Cleanup also removed **124** inactive `search.quarantine-*` directories and **27**
+closed-run copies of the same extracted native library, retaining one exact
+hash-verified library copy. Current model/tokenizer/worker pins, both selected host
+artifacts, frozen Foundry and retained continuation binaries pass hash readback.
+T004's closed packet remains exact. Surviving full-pipeline manifest files also
+pass byte readback; every missing file is accounted for as an intentionally retired
+cache or deduplicated library. Raw questions, requests, responses, traces, original
+task/oracle inputs, recovery material and user records were preserved.
+
+Private receipts and the eight-family retention map are in
+`runs/storage-cleanup-2026-11-14/{result,protected-readback,retention-index}.json`.
+The post-qualification sizes above are in `final-storage.json`. A further unused
+legacy dataset build cache was removed after retaining its standalone executable;
+native qualification and inspector build intermediates were also retired while
+keeping runnable binaries. Cleanup results through `8d7012f` are published with
+full fresh-clone readback (`publication-after-cleanup.json` in the same directory).
+Older complete-bundle manifests are **historical pre-cleanup snapshots**, not claims
+that retired working caches remain present or were archived byte-for-byte. No
+provider call, signing, training, model download or private-data publication occurred.
+Product source/Cargo inputs are unchanged; documentation links are the applicable
+public check. The host qualification above used a fresh stated deadline after
+cleanup, not the expired preparation window.
+
+## Structured task assertions 008 T004 — 2026-11-13
+
+**PASS at the selected local structured assertion boundaries.** The owner selected explicit
+structured assertions under the current no-model rule. Contract/test commit
+`969964c` precedes implementation. The retained test fails on the original parser
+because it rejects the new fields (7.677 seconds). Its initial receipt qualifier
+looked for a panic in stdout; offline readback qualified the existing stderr
+diagnostic without rerunning or discarding the first receipt.
+
+The existing task row now stores bounded exact single-valued assertions. Review
+compares explicit proposed facts, reports conflicting observation/hypothesis/decision
+values or violated requirement/constraint relations, and retains silence for
+unmatched or satisfying assertions. Keys carry caller scope/environment identity;
+there is no prose interpretation, model, new table/index or background loop.
+Text and assertion-array digests remain distinct. Assertions survive folded views,
+restart and export, appear within mandatory task-view budgets, and bind promotion
+attribution without becoming project-memory rules. Existing freshness, CAS,
+supersession, protected entries and complete-original review caps remain enforced.
+
+Final focused command: `cargo test --locked --offline --test task_context --test
+task_retrieval --test task_evidence -- --nocapture`, under the existing native
+supervisor on the owner's Mac: **63 passed / 0 failed / 1 ignored**, 18.858 seconds.
+This includes actual CLI/opt-in MCP catalog and complete response parity, atomic
+batch refusal without revision consumption, forced-exit commit/rollback recovery,
+corrupted-assertion digest refusal, stale-link silence, exact values/scopes,
+fold/select/supersede/restart and mandatory delivery caps. A preceding focused run
+also passes (34.813 seconds); the final run includes the later parity/role checks.
+Logs and native resource/lifecycle receipts are local under
+`runs/t004-structured-2026-11-13/`. No provider or model call ran.
+
+The first full-gate attempt on `a795512` passed formatting but Clippy refused a
+test-only `length + 1 <= 512` expression. It was stopped with all observed owned
+processes reaped; the original partial run remains in `gates/`. The equivalent
+`length < 512` correction precedes a fresh complete gate run; no production rule
+or acceptance bound changes.
+
+All eight gates pass on corrected commit `ea33a2e` in **785.196 seconds**: default
+**1,319 passed / 0 failed / 35 ignored**, pilot-feature unit suite **101/0/1**, and
+**21 recovery checks** counted separately. Nested child-test summaries are excluded.
+The MSRV stages use the actual Rust 1.90.0 binaries and macOS 26.5 SDK. The native
+supervisor records natural exit, no forced cleanup, no observed owned process left
+and sampled individual RSS within the selected 8 GiB bound. The local qualifier
+also retains its first metadata-formatting failure (tuples versus JSON arrays); the
+corrected readback changes no runtime result and reruns no tests.
+
+The operator guide includes the assertion format and a review example. The existing
+unfunded pilot v2 contract now maps all six task-context capabilities to the
+comparisons they need; bundled outcomes cannot independently accept every
+component. That preparation selects no extra run, sample, threshold, budget,
+credential or host configuration.
+
+The local evidence bundle is closed with two complete readbacks: **66 files / 18
+directories / 1,576,514 bytes**, private file/directory modes 0600/0700, and a
+verified Git source bundle. Manifest SHA-256:
+`d4be2f2872b65f56985689d4a66325d44226a5635fbfd204839826440720c9e7`.
+`runs/t004-structured-2026-11-13/evidence-readback.json` is the receipt. The original
+bundle-tip error (a raw commit range exposed no named bundle ref) and corrected
+pinned-HEAD construction remain in the packet. Later publication receipts belong
+in a separate directory; this closed packet must not be edited. This establishes
+local integrity, without claiming off-machine backup or authenticated recovery.
+
+Real-host intervention quality, task benefit and pilot v2/T006 remain unfunded and
+unaccepted; this does not establish source-retrieval improvement or release acceptance.
+
+## Approved final wrap-up publication — 2026-11-13
+
+The owner approved the exact fifteen-commit snapshot through `966cdf7`, replacing
+the older pending seven-commit request. The non-force push to
+`dwbimstr/context-foundry:experimental/context-ecosystem` passed, followed by a full
+fresh-clone readback: **400 tracked paths / 11,677,115 bytes**, identical contents,
+file types and executable bits. All 22 Git commands succeeded in **6.900 seconds**.
+Experimental resolves to `966cdf7056e8ea4f29d7cec9a1dd6084e556c3b9`;
+main remains `d94b013e3c638276f6afba49f80194776e294fbb`. No release, tag or
+hosted-workflow dispatch occurred. Private evidence and rejected prototype branches
+are excluded. The earlier approval through `69ce9f8` was already fulfilled.
+
+Local receipt: `runs/wrapup-final-publication-2026-11-13/publication-publish-i55sq6h8/result.json`.
+The owner also chose explicit structured assertions for 008 T004 under its existing
+no-model rule. Its contract and failing consumer test precede implementation;
+implementation and task-outcome acceptance are not established by this publication.
+
+## T005 sealed final pair no promotion — 2026-11-13
+
+**Final guard failed; retain the baseline.** The sole eligible fixed candidate
+`74b0b26` / `279b8873…` completed its one final trace-off pair on all 400 sealed
+questions (200 Rust, 200 Bun) on the owner's Mac. The original one-candidate
+confidence, per-corpus quality, latency, RSS, validity and cap guards are unchanged.
+No sample increase, threshold relaxation, new variant or query retry occurred.
+Implementation received aggregate reports only; questions, labels, responses and
+per-case final outcomes remain private to the mechanical custodian. The set is
+now consumed and cannot be reused as fresh tuning/selection evidence.
+
+| Final set | Questions | Located, baseline → candidate | Located gains / losses | Verbatim bodies | Body gains / losses |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Rust | 200 | 60 → 63 | 3 / 0 | 55 → 59 | 4 / 0 |
+| Bun | 200 | 102 → 103 | 3 / 2 | 98 → 98 | 3 / 3 |
+| Total | 400 | 162 → 166 | 6 / 2 | 153 → 157 | 7 / 3 |
+
+The observed located gain is one percentage point, but the original equal-weight
+per-corpus confidence lower bound is **−2.8454 percentage points**, rather than
+strictly positive. The exact one-sided McNemar p-value is **37/256 = 0.14453125**,
+so that prerequisite also fails. Both per-corpus located/body nonloss guards pass.
+The unchanged hash-pinned statistical implementation uses the original four
+one-sided 1/80 tails and strict dyadic decision before display rounding; its
+binomial/cluster assumptions retain their original model-based limits. Mean
+delivered tokens are 2,023.59 → 2,024.24, reported, not gated. All 800 response,
+source and wire observations validate; every response meets the 2,048-token and
+existing serialized MCP byte caps. There are no missing, duplicate, retried,
+refused or error cases and no selective exclusions.
+
+| Corpus owner wall boundary | Baseline seconds | Candidate seconds | Allowed candidate seconds | Result |
+| --- | ---: | ---: | ---: | --- |
+| Rust | 18.222 | 22.595 | 24.777 | pass |
+| Bun | 22.488 | 31.145 | 30.110 | **fail** |
+
+These are the selected full-owner launch/pin/load/query/shutdown/reap intervals,
+not per-request latency or a causal overhead estimate. Execution order remains
+baseline Rust/Bun, then candidate Rust/Bun; cache/order/thermal effects are not
+controlled. The complete native pair finishes naturally in 123.261 seconds under
+the original 3,600-second outer bound, 240-second final identity/validation reserve,
+120-second cleanup reserve, one-heavy-job rule, 20 GiB free-space floor and 8 GiB
+sampled individual RSS ceiling. Original/master/profile/source/input pins and the
+complete 79-file sealed packet pass unchanged readbacks. Four actual owners and
+their workers are observed reaped. No external-provider spend occurred; worker
+presence does not establish query-model call/input-token counts or host billing.
+
+**RSS postprocessing correction, original report preserved.** The first final
+report incorrectly took its per-corpus maximum from one-second JSONL point logs,
+although the native supervisor updates complete identity-bound per-PID maxima at
+every polling iteration. That understated baseline Rust memory and produced an
+unqualified RSS failure. An offline audit of the already-recorded complete native
+summaries makes no new inference/query and changes no threshold. Actual owner
+windows are naturally reaped and disjoint; every other observed phase process's
+maximum is below both corpus owners' complete maxima. Thus those owner maxima are
+the exact per-corpus all-owned **observed** maxima, without estimating missing data.
+Both original relative RSS guards pass: Rust **2,228.53 → 2,705.41 MiB**, Bun
+**1,213.88 → 1,204.42 MiB**. One raced cleanup-`rm` lookup remains explicitly
+unknown, not zero RSS; required actual owner/worker samples are positive. Six
+synthetic audit tests check sparse/full maxima, domination, overlap and missing
+measurements. The authoritative correction is
+`runs/t005-heldout-final-2026-11-13/resource-audit.json`; the original report and
+all native logs remain retained. Sampled maxima establish neither continuous
+peaks nor GPU/machine-wide memory bounds. Confidence and Bun latency independently
+fail, so the RSS correction cannot change the no-promotion decision.
+
+The final apparatus passed 35 native synthetic source/wire/resource/transport
+checks before packet payload access. Read-only replay of all 776 retained
+development replies verifies 11,820 source frames and every positive located/body
+claim. An initial diagnostic parser error used Python's Unicode line splitting
+instead of Foundry's LF coordinates; it is preserved and corrected before final
+execution, without changing the frozen evidence scorer. Full final source hashes,
+literal target witnesses, exact response/wire bytes and all 400 row identities
+are checked before the unchanged arithmetic adapter receives qualified rows.
+
+This closes the third/final development variant and sole final pair without
+promotion. The candidate remains outside active source and publication; no retrieval
+rule is enabled from it. T005's broader quality goal remains unaccepted. No fourth
+variant, consumed-set tuning or second final pair is selected; any later work needs
+a new bounded selection and unexposed acceptance evidence. Source, executable,
+closed development bundle, final private artifacts and correction receipts are
+retained under `runs/t005-header-candidate-2026-11-13/`,
+`runs/t005-heldout-final-2026-11-13/` and their named owned dataset roots. The
+[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+The complete final bundle then passes two full snapshot readbacks: **807 files /
+7,112,164,903 bytes** across two roots, manifest
+`f11ec99734cb5167346f8e1cd627310e592c609a29334fea66c8b30678ad7969`.
+Its `evidence-readback.json` is final; the local bundle is immutable and remains
+private. This establishes local integrity, not encrypted restoration or off-machine
+retention.
+
+## T005 kept-body prefix development qualification — 2026-11-13
+
+**Positive development result; final acceptance remains open.** One fixed third
+and final development variant was selected in writing before implementation:
+after a current independently scored Body location survives the ordinary cut,
+offer its structural owner's declaration prefix and nearest named ancestor's
+prefix. Each quotes at most 512 exact UTF-8 source bytes through the name's line.
+Both use the existing exact deduplication, four-per-file and 32-unit cut, so they
+can displace later candidates. Original Body spans and input ranks stay intact.
+Prefixes are source-derived context, explicitly not independently embedded or
+lexical hits. Search, lexical/no-profile/fallback, anchors and composed-task recursion
+exclude the option. The source-local syntax forest is cached once per file in the
+existing semantic owner; no model, recipe, store, worker or public-format change.
+
+The candidate is clean isolated source `74b0b26`, executable `279b8873…`, selected
+with `--experimental-semantic-headers`. It remains outside the active checkout.
+The fixed local Gemma/units7/profile, baseline `60aff102…`, frozen 388-question G2,
+2,048-token and existing byte caps remain. Development multiplicity is K = 3
+across all three variants in this checkpoint; the earlier negative K = 1 records
+remain historical. No fourth variant or algorithm/size/ordering tuning is selected.
+
+| G2 set | Questions | Located, baseline → candidate | Verbatim bodies | Located gains / losses | Body gains / losses |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Rust | 197 | 52 → 60 | 47 → 56 | 8 / 0 | 10 / 1 |
+| Bun | 191 | 117 → 124 | 107 → 115 | 8 / 1 | 8 / 0 |
+| Total | 388 | 169 → 184 | 154 → 171 | 16 / 1 | 18 / 1 |
+
+The exact one-sided paired p-value is 18/131,072 = 0.000137329, below 0.05/3.
+The unchanged `scripts/g2.sh compare` exits 0 at K = 3 and agrees with the strict
+validator. Mean delivered tokens are 2,022.925 → 2,023.665, reported, not gated.
+All 776 responses/wires/traces are valid and dense at their pinned revisions.
+Context lineage is checked occurrence by occurrence against a kept original Body,
+with exact source identity, input key/rank, role, ordinary cut replay and an
+explicit `passage_independently_embedded:false` marker. Candidate policy markers are workspace-bound.
+They record 2,037 offered / 1,481 kept prefixes across the two corpora. Original
+stores, profile, binaries, source and selected helper/input pins pass full readback.
+
+All 10,432 G1 raw cases complete (10,431 scored under the original Bun exclusion),
+and all three frozen aggregate guards pass. Bun and qualified retain every
+correctness/body outcome. Checker loses two pass-at-one cases and one pass-within-
+four case; body has one gain and one loss. **Both newly lost cases are reviewed
+and counted.** One candidate first reply lacks the expected declaration but a
+third-call retrieve recovers it. The other lacks the expected source/body and
+retrieves a same-name declaration from a different file without recovery. Retained
+trace-off replies establish these outcomes, not a stage-specific causal diagnosis.
+No case, threshold or candidate change follows this review. The private review
+receipt is `runs/t005-header-candidate-2026-11-13/g1-loss-review-receipt.json`.
+
+The first physical frozen-G2-query native CLI call matches each arm's saved MCP
+text exactly: baseline 1,991 tokens and candidate 2,022. Only the candidate emits
+its policy marker, with three prefixes offered. This verifies the actual CLI/MCP boundary, not broader task benefit or host billing.
+Nine focused tests pass: five source-owner tests and four consumer tests for real
+parsed Body windows, freshness, caps, excluded routes and actual stdio MCP forwarding.
+Disabling expansion fails the intended consumer test on an isolated package-cleaned
+target. The first consumer failures are retained: the fixture's approximate window
+omitted its intended Body, and its bare-word query was not an admitted anchor.
+The corrected fixture includes all prepared keys in the actual window and explicitly
+resolves its named anchor; no algorithm was changed after first implementation.
+
+All eight local gates pass on `74b0b26` in 767.344 seconds: default **1,321 passed,
+0 failed, 35 ignored**; pilot **101 passed, 0 failed, 1 ignored** (nested child
+summaries excluded). The isolated release build takes 59.507 seconds. The fixed G2
+pair takes 133.213 seconds, G1 752.472 seconds, and CLI parity 18.229
+seconds. G2/G1/CLI helpers pass 70/18/15 synthetic checks; initial helper fixture
+failures and later explicit helper hash/CLI-head bindings are retained separately.
+
+The unchanged 7,200-second development stage has a 120-second cleanup reserve,
+one heavy job, 20 GiB free-space floor and 8 GiB sampled individual RSS ceiling.
+Native owners/workers finish naturally and are observed absent; spend is zero.
+Sampled memory does not establish true peaks, GPU/global pressure or provider usage.
+Private source bundle, executable, logs, failures and owned store copies remain in
+`runs/t005-header-candidate-2026-11-13/` and its named dataset roots.
+
+The fresh sealed 400-case set is still **unqueried and unexposed**. Development
+G2 and G1 qualify this sole fixed candidate for preparing the one final trace-off
+pair. That pair must retain every original confidence, per-corpus located/body,
+latency, resource, validity and cap guard; the original statistical supplement is
+unchanged. The final harness is being qualified without heldout payload access.
+The development evidence bundle then passes two complete snapshot readbacks:
+4,140 files / 37,924,367,103 bytes across four roots, manifest
+`aa37ef9236e20cccbf5b274606c0cb01276391d90e25a057e373e971f479a7df`.
+The unchanged development stage closes at 4,676.185 seconds, within its original
+bounds; the bundle is immutable after `evidence-readback.json`. Final-harness work
+has a separate private run and does not amend the closed development evidence.
+
+T005 is not accepted, the candidate is not enabled/integrated/published, and the
+[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+
+## T005 exact body-input reconstruction — 2026-11-13
+
+**PASS for input/provenance reconstruction.** The private probe uses the existing
+Rust body fitter and verified production tokenizer, with the unchanged units7
+hierarchy recipe, 512-token card cap, 64-token context and function digest. A
+transparent `TokenCount` recorder preserves the tokenizer's fitting reuse; it
+records only selected input keys. No embedding, ANN or store API is invoked.
+
+The selection includes all 30 same-file/no-covering-candidate misses from the
+preceding census and all 169 successful controls: 199 cases across 188 frozen
+source files. The fitter emits 9,839 body-recipe cards. Every selected Body
+location matches its retained **input key and exact source span**, accounting for
+983 location occurrences across the cases. Sources are hash-checked before and
+after fitting; the tokenizer/profile and product-source readbacks are unchanged.
+This establishes actual rendered input bytes, rather than inferring them from a
+nearby span or decoding normalized token IDs.
+
+Six misses, three Rust and three Bun, have their complete target header in the
+matched input context and a scored body span inside the target's parsed unit,
+while the span excludes the target name. Two additionally retain the exact whole
+declaration line. Thirteen misses contain the name somewhere in context, but
+that weaker string observation does not establish declaration ownership. Two of
+the 30 have no selected Body location. Successful controls remain explicit:
+35 have some body hit whose own-context header is outside its scored span, so
+this property is not by itself a failure predictor.
+
+This supports investigating delivery of actual contextual headers while preserving
+independently scored body evidence. It does not select a materialization rule,
+prove that a header would survive the current caps/packer, establish a G2 gain,
+or alter a recipe, index, ranking, limit or default. Exact source coordinates,
+unchanged body/validity guards, real consumers and the frozen quality/runtime gates
+remain necessary before any candidate promotion. The fresh holdout is unqueried;
+the closed compact and fragment-order experiments remain closed.
+
+Four synthetic helper checks verify transparent token streams/fitting delegation,
+selective capture and strict template/source framing. The first private helper
+build fails on SHA-2 hex formatting and `ProviderError` conversion; its source,
+pins and native receipt are retained. The compile-only repair leaves fitting,
+data and guards unchanged. On the separately owned, package-cleaned target, build
+passes in 2.278 seconds, helper checks in 0.987 seconds and the sole reconstruction
+probe in 28.454 seconds. The original 1,800-second stage, 120-second cleanup
+reserve, one-heavy-job rule, four Cargo jobs, offline build, 20 GiB disk floor
+and 8 GiB sampled per-process RSS ceiling are retained. All observed processes
+exit naturally and are absent; no model worker is observed and spend is zero.
+
+The helper is an untracked example in an isolated source worktree. No product
+code changed, no new full Rust gate run or retrieval score is claimed, and no
+private source/context payload is added to Git. The helper source, original
+compile failure, fixed source, native receipts, exact contexts and aggregate
+remain private in `runs/t005-input-reconstruction-2026-11-13/`. The
+[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+
+## T005 retained candidate-coverage census — 2026-11-13
+
+**PASS for the read-only diagnostic.** All 388 retained baseline outcomes and
+complete response hashes match the latest baseline pair exactly. The census reads
+126,614,198 trace bytes and freshly verifies all 330 target source files
+(8,748,136 bytes). It reuses the existing 169 located / 154 complete-body results;
+no new retrieval, model, store query or source-program execution occurs.
+
+Every trace exposes all 64 dense hits. The maximum expanded provenance is only
+215 locations, versus the 4,096-location bound; no request truncates provenance.
+There is no observed provenance-cap loss to repair by increasing that bound.
+Of the 58 primary `file_only_unit_absent` misses, **27** have eligible dense
+locations elsewhere in the target file and **31** reach it only through lexical
+candidates. Neither group offers a source unit/document containing the target
+name. All 33 primary file-absent cases remain absent from both offered lanes.
+
+Across all 219 misses, the strict eligible-document/unit census finds 95 without
+a target-name-covering candidate. Four already had `lexical_parent_only` paths in
+the earlier refinement, while the coarse histogram classified their later parent
+cap/cut event. Their delivered outcomes and the frozen scorer are unchanged.
+Coarse categories and overlapping observed paths remain separate evidence.
+All 169 successful controls have a current dense span covering the target name.
+
+Among the 27 primary misses with same-file dense locations, six nearest spans
+are within five source lines; 21 are farther away. Five of the nearby spans begin
+after the target. Readback of all five shows three inside the target/its child
+declaration and two in distinct neighboring declarations. Proximity alone does
+not establish ownership or justify a neighbor-expansion candidate. These are
+source observations, not demonstrated recoveries.
+
+The existing [body renderer](../src/neural/partition/body.rs) prepends bounded
+parent/own-header context to the embedding input, while
+[dense-only delivery](../src/store/semantic_search.rs) renders the scored span.
+This code relationship motivates checking exact rendered inputs against retained
+input keys before any new coverage proposal. The traces contain neither those
+input bytes nor their context coordinates, so they do not establish that a
+particular omitted declaration was represented. No candidate, recipe change,
+filtered ANN lane or neighborhood policy is selected here. The closed compact
+and fragment-order families remain closed, and the fresh holdout stays untouched.
+
+Eleven synthetic boundary checks pass, including eligible versus discarded
+lexical documents, source identity, stale locations, half-open name ranges,
+provenance counts, rank bounds and nonfinite distances. Native supervision records
+0.260 seconds for checks and 1.599 seconds for analysis, natural exits, no observed
+workers, and unchanged selected inputs/source. The selected stage is 900 seconds,
+120 per process, 60 for cleanup, one job, a 20 GiB disk floor and 1 GiB sampled
+per-process RSS ceiling. No paid request or new Rust gate run is claimed.
+Private cases, source excerpts, pins and receipts remain in
+`runs/t005-coverage-diagnostic-2026-11-13/`; the
+[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+
+## T005 fragment-order candidate no promotion — 2026-11-13
+
+**Valid negative; keep the baseline.** A separate K = 1 ordering family was
+selected in writing before code or measurement. The default-off candidate stably
+moves only validated dense `ContainerFragment` locations behind other dense
+locations for ordinary unanchored context. It retains every candidate and both
+within-group orders, then uses unchanged lexical append, exact deduplication,
+four-per-file/32-unit cuts, materialization and 2,048-token packing. Search,
+lexical/no-profile/fallback, anchored and composed-task behavior are excluded;
+composition's recursive preliminary context explicitly opts out too. No model,
+representation recipe, similarity score, source identity or cap changes.
+
+The frozen 388-question G2 pair ran once on the owner's Mac with the fixed local
+Gemma/function/units7 profile, baseline `60aff102…` and candidate `d91619c6…`
+from clean local source `ac81777`. Both arms use fresh owned store copies; original
+masters are only read as raw bytes for full manifests. All 776 traces are valid
+and dense at the selected revisions; candidate traces carry exactly one bounded
+ordering-policy event. Complete wire, source, score, cap and input readbacks pass.
+The unchanged `scripts/g2.sh compare` returns the expected **keep-off exit 1**,
+matching the strict validator. This is a quality failure, not invalid evidence.
+
+| G2 set | Questions | Located, baseline → candidate | Verbatim bodies | Located gains / losses | One-sided p |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Rust | 197 | 52 → 54 | 47 → 49 | 2 / 0 | 0.25 |
+| Bun | 191 | 117 → 118 | 107 → 107 | 1 / 0 | 0.5 |
+| Total | 388 | 169 → 172 | 154 → 156 | 3 / 0 | 0.125 |
+
+Mean delivered tokens are 2,022.925 → 2,022.072, reported rather than gated.
+The three definition gains do not meet the frozen p < 0.05/K rule, despite no
+located/body losses. No threshold, variant or retry is selected from these results.
+The fresh sealed 400-question holdout remains unqueried and unexposed.
+
+The required G1 comparison against the retained current semantic arm completes
+all 10,432 raw cases (10,431 scored under the existing single Bun exclusion).
+All three frozen aggregate guards pass. Bun and qualified have no correctness/body
+gains or losses; checker gains three pass-at-one, two pass-within-four and two body
+cases, with no losses. The complete per-case review census finds **zero newly lost
+cases**; changed response/token observations remain recorded separately. This is
+not contemporaneous paired latency or provider-cost evidence. Native first-frozen-
+G2-query CLI checks match each arm's saved MCP text exactly; both deliver 1,991
+tokens, and only the candidate emits its policy event, with one fragment observed.
+This two-call parity check does not establish broader task benefit.
+
+Five focused consumer tests pass on isolated, package-cleaned Cargo targets:
+stable grouping and unchanged tails/caps/forms, stale-source refusal, excluded
+admission paths, real stdio MCP forwarding, and composed-task exclusion. The
+ordering-disabled mutant and the version without composition opt-out each fail
+their intended assertion. A shared-target attempt produced the wrong failure and
+is unqualified; a later wrapper expected four tests after the fifth was added. Both attempts are
+retained, and acceptance uses fresh isolated receipts. Synthetic helper checks
+pass: G2 61, G1 18 and CLI 15. One initial G2 fixture failure is retained separately.
+
+All eight local gates pass on candidate `ac81777` in 788.442 seconds: default
+**1,317 passed, 0 failed, 35 ignored**; pilot **101 passed, 0 failed, 1 ignored**.
+Nested child-test summaries are excluded from totals. The isolated release build
+passes in 61.492 seconds; G2 completes in 138.446 seconds, G1 in 740.599 seconds,
+and native CLI parity in 18.342 seconds. The original shared 7,200-second stage,
+120-second cleanup reserve, one-heavy-job rule, 20 GiB free-space floor and 8 GiB
+sampled per-process RSS ceiling are unchanged; phase maxima are build 600, gates
+1,800, G2 3,600, G1 2,400 and parity 300 seconds. All observed owners/workers exit
+naturally and are absent after cleanup; selected inputs and originals remain unchanged, and external-provider spend is zero.
+Sampled RSS does not establish true-peak, GPU or global-pressure bounds.
+
+The candidate stayed in its isolated local worktree and is **not integrated or
+published**; the active checkout has no fragment-deferral flag or ranking change.
+Its source commits, binary, source bundle, native receipts, failed attempts and
+private raw evidence are retained in `runs/t005-fragment-candidate-2026-11-13/`
+and its named owned dataset directories. This K = 1 experiment is closed without
+promotion. T005 remains unaccepted at its broader retrieval goal; the
+[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+
+## Approved experimental publication and evidence closure — 2026-11-13
+
+The owner explicitly approved the seven reviewed commits through `69ce9f8`.
+That exact snapshot is pushed to `experimental/context-ecosystem`; the native
+publisher's remote checks and fresh-clone readback pass for all **400 tracked
+files / 11,626,239 bytes**, including file kinds and executable bits. Main remains
+`d94b013` during the operation. Later local worker/census/ordering work is excluded,
+no release or hosted workflow is dispatched, and no private evidence, model,
+holdout, credential or backup is published. The publisher exits naturally in
+65.917 seconds and reaps all 22 Git commands. Receipt:
+`runs/pilot-full-pipeline-2026-11-13/publication-publish-_70t2603/result.json`.
+
+Both older private evidence bundles then pass final full snapshot readback:
+semantic permissions, **98 files / 3,468,151 bytes**, manifest
+`1412820004e3af8df53be02f279815cba6cf79d7db25d7f3f51fffe5e1d9b8e7`;
+full pipeline, **1,201 files / 3,079,437,587 bytes**, manifest
+`b0de1d700be98607e21a5443f3fe0f678de73cf7e5d53fa3e47a97a8fb9a1aea`.
+These totals cover the complete retained bundles, including publication evidence,
+not just their earlier runtime outputs. Their `evidence-readback.json` receipts
+are finalized; neither authenticated encrypted restoration nor off-machine
+retention is newly established. Newer local commits need their own publication
+intent; this receipt does not authorize a larger payload. Current status remains
+with the [handoff](resume-context-ecosystem.md#current-status--2026-11-06).
+
+## T005 actual same-file admission pressure — 2026-11-13
+
+**PASS for the retained-event inspection.** All 388 cap-census results are
+unchanged, and every one of the 149,178 placement occurrences pairs exactly with
+its actual eligible dense-then-lexical occurrence. Duplicate ranges with different
+representation tags are kept distinct at that join. The record retains the four
+actual same-file occupants beside every target-covering per-file refusal before
+global saturation: 21 misses and 26 successful controls.
+
+Four body units already occupy the slots in 14 of those misses. A refused body
+has a parent/file occupant in only one miss, versus six successful controls;
+broadly demoting parents or files is therefore not selected from this evidence.
+Container-fragment occupants appear in six misses and four controls; five misses
+and one control additionally have an actual body refusal. Two misses have four
+fragment occupants. Fresh source/span readbacks show closing delimiters and
+container-opening headers in those eight spans. Role classification is retained
+metadata, not a newly executed parser or a claim about embedding meaning.
+
+These observations support investigating structural-fragment ordering separately
+from broad body priority. They predict neither recovered definitions nor preserved
+bodies, and do not select or evaluate a candidate. The prior 169 located and 154
+verbatim-body outcomes remain earlier evidence, not a new retrieval score. The
+sealed holdout is unused.
+
+The first synthetic duplicate fixture used a different range and correctly hit
+the occurrence-identity guard before trace analysis. That failed attempt and its
+inputs are retained. Correcting only the fixture yields **14 passing checks** in
+0.260 seconds; the analyzer then exits naturally in 2.487 seconds. All selected
+inputs and source bytes are unchanged, all processes are reaped, and no workers
+are observed. The original 900-second stage, 120 seconds per process, 60-second
+cleanup reserve and 1 GiB sampled RSS ceiling remain; no extension is used.
+
+Only dated records and links change. No model, retrieval/scorer, store API,
+source-program execution, provider access or spend occurs. No new Rust gate run
+is claimed. Private receipts, exact occupant identities and the failed fixture
+are retained in `runs/t005-file-pressure-2026-11-13/`; the
+[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+
+## T005 retained cap-decision census — 2026-11-13
+
+**PASS for the read-only diagnostic, with one correction to earlier attribution.**
+All 149,178 placement verdicts in the retained 388-query baseline replay exactly:
+deduplication, four-per-file accounting and the global 32-unit cut have zero
+mismatches. The census verifies 126,614,198 trace bytes and freshly checks all
+330 target source files (8,748,136 bytes) against the frozen source identities.
+It reuses the prior verified outcomes; it runs no model, retrieval, scorer or store
+API and establishes no new retrieval score. The recorded 169 located definitions
+and 154 verbatim bodies are unchanged. Placement source bytes through `7f93fa1`
+match the published restored baseline.
+
+No eligible target-name-covering tier-1 lexical document appears in these traces.
+A tier-1-first candidate therefore has no demonstrated route to recover these
+G2 misses. Tier-2 candidates and dense ranges remain separate observations.
+
+The per-file counter advances even for units refused by an already-full global
+window. A later `per_file_cap` flag does not establish that four admitted units
+from that file displaced the target. For the 219 baseline misses, the observed
+target-range refusal sets are:
+
+| Corpus | Per-file refusal before global full | After global full | Both sets | Union |
+|---|---:|---:|---:|---:|
+| Rust | 12 | 19 | 4 | 27 |
+| Bun | 9 | 9 | 1 | 17 |
+| Total | 21 | 28 | 5 | 44 |
+
+These are overlapping paths, not exclusive causes or predicted recoveries.
+Across all questions the corresponding counts are 47 before, 51 after, eight in
+both and 90 in the union. Global-limit attribution matches all 388 prior cases.
+
+One Bun miss corrects the earlier per-file classification: an eligible lexical
+document did not cover the target name; a later covering document of that same
+large unit had already been discarded as a duplicate. The older refiner joined
+the discarded document to the eligible unit's later cap refusal. Requiring the
+actual eligible document removes that flag, changing the earlier per-file totals
+from 91 to 90 questions and from 45 to 44 misses. Original reports and the failed
+cross-check assumption are retained. A synthetic reproducer demonstrates the
+older attribution and its exclusion by the new census. No response, outcome,
+source, runtime cap or prior receipt is rewritten.
+
+Eight boundary/refusal checks pass in 0.248 seconds; the separately qualified
+duplicate-document reproducer passes in 0.246 seconds. The complete census exits
+naturally in 1.976 seconds; all three processes are reaped, no workers are observed
+and selected inputs are unchanged. The stage retains a 900-second total bound,
+120 seconds per process and a 60-second cleanup reserve, with a 1 GiB sampled
+process RSS ceiling. Samples do not establish the true peak.
+
+No new candidate is selected. Before an ordering family, inspect the actual earlier
+same-file admitted units for refusals before global saturation, with successful
+controls; cap histograms alone do not justify a repair. The fresh sealed holdout
+remains unused. No spend, model search, provider access, source-program execution
+or production change occurs. Private evidence is in
+`runs/t005-cap-census-2026-11-13/`. Only records change, so link/diff checks apply;
+the previous Rust gates are not presented as a new run. The
+[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+
+## Worker scratch creation defaults — 2026-11-13
+
+**PASS for the selected direct-launch creation defaults.** The
+shared 009/013 pre-exec setup now sets umask 0077 only in the forked worker child.
+Ordinary scratch writers cannot inherit a permissive caller mask. The existing
+launcher, descriptor handling, resource limits and cleanup owners remain; no
+parent mask or preexisting object is changed.
+
+The retained red on `a1a2d9d` completes an actual fake-worker embedding and observes
+its phase/request files while the producer is live. Under caller masks 0000 and
+0022, the files are 0666 and 0644; both children are reaped and the caller witnesses
+retain their original modes. The command naturally exits 101 in 25.094 seconds.
+The private wrapper then references a nonexistent receipt field; its original
+failure is preserved. A separate readback validates the expected red and existing
+cleanup fields, and the wrapper is corrected without rewriting that receipt.
+The repaired focused test on `4f28854` passes in 18.171 seconds with both files
+0600 under both masks and unchanged caller witnesses.
+
+The first native attempt fails in 9.535 seconds because the pinned production
+worker rejects the test-only phase-file hook before inference. It is retained as
+a failed prerequisite attempt, with all selected inputs and scratch unchanged.
+The next test uses the same pinned worker's existing native write probe under
+`supervisor::child_setup`, while a normally launched model worker owns its run.
+The probe creates one byte in a fresh scratch file; a normal real embedding call
+also completes. Probe coverage is separate from inference-internal phase writes.
+On committed candidate `dd4d34b33b4275bec9edc03a880114ca9c76b3d3`, both caller-mask
+cases pass in 16.695 seconds: the named probe files are 0600, caller witnesses stay
+0666/0644, both model workers are reaped, and two observed native worker identities
+are absent. The owned scratch runs are removed. Worker/profile/model pins are
+unchanged. Sampled worker
+RSS peaks at 768,589,824 bytes; samples do not establish the true peak.
+
+All eight gates pass on committed `dd4d34b` in 771.404 seconds: **1,312 passed,
+0 failed, 35 ignored** in the default suite; **101 passed, 0 failed, 1 ignored**
+in the pilot outer suite; 21 recovery checks separately. Nested child summaries
+are excluded. The final fake-worker regression runs again in those gates; the
+ignored native check passes separately. Cargo inputs, model/worker artifacts,
+profile identities, pilot request construction and frozen v1 pins are unchanged.
+All observed processes are gone; selected input bytes/modes and the prior scratch
+inventory/sibling metadata match their before/after readbacks.
+
+The stage uses a 3,600-second shared bound, a 120-second cleanup reserve, a 20 GiB
+disk floor and an 8 GiB sampled RSS ceiling per observed process, with one heavy
+job at a time. No paid request, provider credential, training, download, worker rebuild,
+host change or holdout query occurs. A mask constrains default creation; explicit
+creation modes, later chmod and every transient library output are not qualified
+by these named writes. Closed producer-tree checks remain separate. Pilot v2/T006,
+current installed-host compatibility, complete startup observation and signed
+package acceptance remain open. Private receipts and failed attempts are retained
+in `runs/worker-scratch-permissions-2026-11-13/`; the
+[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+
+## Private full pipeline and preview archival — 2026-11-13
+
+**PASS for the frozen-host, no-provider apparatus regression.** The full private
+pipeline now passes on repair `b959b707eb0c498b67f34356538ac79211af782d`, with the
+existing task, outcome, counter and request assertions intact. This exercises
+actual local Gemma preparation, the pinned host, capture/journal handoff and the
+contained compiler/oracle. Model replies are scripted through an owned loopback
+TLS fixture with a synthetic credential. This is neither another paid coding trial
+nor evidence of retrieval benefit; the original paid-v1 results and dispositions
+are unchanged. Pilot v2/T006 and release remain unaccepted.
+
+The earlier supplied-path mismatch is resolved for this run by finding the exact
+frozen Foundry executable in retained Cargo release artifacts. A new private copy
+matches SHA-256 `9dcbec8fdfff79d491410c82ab6e3ea922d3c19d5c9397f9d231fc08713c8614`
+(100,278,224 bytes). A new input manifest points to that copy; the original file,
+artifact and frozen pins are preserved. The host remains the exact archived
+`38c36452…` artifact. The currently installed host hashes to `ce80099f…`, so current
+installed-host compatibility is still unqualified.
+
+**A real consumer failure is retained.** The first fresh regression on `d6bce4c`
+exited 101 after 100.920 seconds: all four real view materializations and nine
+previews completed, but capture admission refused `private_artifact_not_private`.
+The previews retained valid 0700 native modules outside the active capture-run
+exception. Ordinary isolation-root admission correctly requires those closed trees
+to be data. No input pin, mode check, expected result or request assertion was
+weakened to obtain a pass.
+
+`render_binding` now confirms the host group is gone, validates its newly owned
+preview tree, and archives only its exact native-module copies as 0600 data via
+checked descriptors. Shared inodes, wrong modes and unknown executables refuse.
+Bytes are preserved; file and parent are synced; the closed tree passes ordinary
+data validation, and `preview_archived` is appended before returning the binding.
+Active capture and checker exceptions are unchanged. Partial or failed archival
+does not produce a successful binding. Historical artifacts are not normalized.
+
+Four focused checks pass for bytes/modes, shutdown-before-change, hard-link refusal
+and wrong-mode/unknown-executable refusal. The fresh full regression passes in
+142.119 seconds: the probe seals, its journal prefix survives the checked handoff,
+and all eight coding slots seal. The actual checker produces the expected
+**scripted controls A 0/4, B 4/4**. There are 13 fixture generations, 13 Count calls
+and 13 Messages attempts (26 fixture HTTP attempts), with no outstanding
+reservations. Fixture ledger values are not provider charges. Eight embedding
+workers are observed and absent after natural completion; no owned processes remain.
+All selected input bytes/modes and the prior scratch inventory/sibling metadata
+match their readbacks.
+
+All nine archived native copies match the bytes from the retained failed run;
+their modes change from 0700 to 0600. Each preview journal ends with
+`preview_archived`; the capture journal ends with `finished` and eight slot seals.
+A double readback verifies 493 directories at 0700 and 710 files, 1,984,937,844
+bytes: 693 data files at 0600, nine capture-native and eight checker executables
+at their declared 0700 paths. The report is archived by the test, not the
+production CLI writer. This is no power-loss or transient-scratch-mode claim.
+
+All eight gates pass on committed `b959b70` in 759.343 seconds: **1,311 passed,
+0 failed, 34 ignored** in the default suite; **101 passed, 0 failed, 1 ignored**
+in the pilot outer suite; 21 recovery checks separately. Nested child summaries
+are not added to the outer count. Four archival unit tests and the ignored full
+pipeline also passed separately. The v1 contract/policy/pins, Cargo inputs, host
+bridge and request-content construction are unchanged.
+
+The stage retained its original 3,600-second total, 120-second cleanup reserve,
+20 GiB disk floor and 8 GiB sampled owned-process RSS ceiling. Each full/gate phase
+had at most 1,800 seconds within the shared deadline; no extension was used. No
+paid request, provider credential, training, download, host installation or new
+model search occurred. Current installed-host compatibility, complete startup
+observation, transient worker scratch-file modes and v2's declared task/arm/host
+qualification remain open. Private receipts and the original failure are retained
+in `runs/pilot-full-pipeline-2026-11-13/`; the
+[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+
+## Pilot semantic-producer permissions — 2026-11-13
+
+**PASS at the closed semantic-output boundary.** The existing bounded launcher
+passes a real local-Gemma producer check on the owner's Mac. Test addition
+`00b2806` and receipt-label clarification `e08aaf5` add one ignored test in the
+existing apparatus module; every non-test byte of that module matches `d4109c4`.
+The capture owner, Cargo inputs, frozen v1 policy/pins and production paths are
+unchanged. No retrieval-quality change or new public interface is claimed.
+
+The test invokes production `run_bounded` with the retained current release
+Foundry (`60aff102…`), the frozen default profile (`cd3a5326…`), existing Gemma
+worker (`b0f7e020…`), BF16 model and tokenizer. A fresh PilotRoot holds public
+synthetic Rust/Markdown sources. Real indexing, semantic preparation and context
+delivery complete: all five eligible units are embedded and searchable, and the
+context stays within 512 tokens. `PilotRoot::open` validates produced trees after
+each command. The parent starts and finishes with umask 0022; children receive
+0077 through the actual launcher.
+
+The negative control disables that child-mask operation and exits 101 at the
+intended post-index privacy assertion, before any embedding worker runs. Source
+is restored. The fresh green exits zero in 40.030 seconds including compilation;
+two real workers are observed and absent after natural exit. All selected input
+hashes and synthetic source bytes match their readbacks. The scratch entry
+inventory and prior-sibling metadata match before and after. A separate double
+readback verifies **16 directories at 0700 and 23 regular files at 0600**,
+1,081,444 bytes total. These are closed output trees; transient worker scratch
+file modes are not qualified. Sampled worker RSS peaks at 757,989,376 bytes;
+this is not a continuous peak, GPU measurement or wider-workload limit.
+
+All eight gates pass on committed `e08aaf549253e7a0bca94cba5086ec1e22f60bd7`
+in 765.327 seconds: default suite **1,311 passed, 0 failed, 34 ignored**;
+pilot unit suite **97 passed, 0 failed, 1 ignored**; 21 recovery checks pass
+separately. The new ignored test passes separately with explicit local inputs.
+Default and actual Rust 1.90 checks both pass with SDK 26.5. The supervisor exits
+naturally without owned processes left; input and scratch-inventory readbacks
+also pass after the gates.
+
+Bounds were selected before implementation/execution: 3,600 seconds total with
+a 120-second cleanup reserve, 20 GiB disk floor and 8 GiB sampled owned-process
+RSS ceiling; 600 seconds for the producer, with 60/180/90-second command limits,
+and 1,800 seconds for the gates within that stage. No paid request, provider
+credential, training or download is involved. Local call/token economics do not
+follow from the positive embedded-unit count.
+
+Historical preflight; the later [full-pipeline regression](#private-full-pipeline-and-preview-archival--2026-11-13)
+uses a recovered exact artifact without changing the original input file or pins.
+
+**The unchanged private full pipeline was not admitted in this slice.** Its supplied
+evidence-input file names mutable `target/release/foundry`: those bytes are now
+`60aff102…`, while the frozen v1 apparatus requires `9dcbec8f…`. The preflight
+mismatch is retained; the pipeline was not launched and no pin was relaxed.
+This is not a global artifact-absence claim. Current installed-host compatibility,
+complete startup-network observation, the broader private pipeline, pilot v2/T006
+and release remain open. Private protocol, control, producer, gate and readback
+receipts are in `runs/pilot-semantic-permissions-2026-11-13/`; the
+[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+
+## T005 compact candidate: no promotion — 2026-11-11
+
+**Reject the selected K=1 compact preference and preserve the current baseline.**
+Candidate `0de75ff` (binary SHA-256
+`67b8d6426acc9dfcd7e37445230c69d71a24e3faaa23dc3e78d62cacefee8f5e`)
+passed all eight local gates in 772.810 seconds: 1,317 default-suite tests passed,
+0 failed, 34 ignored; the separate pilot unit suite passed 97 tests. Both toolchains
+and the opt-in pilot checks exited zero on the unchanged committed source. The
+release build passed. This establishes implementation correctness, not quality.
+
+The unchanged `scripts/g2.sh` ran one baseline/candidate pair against the pinned
+current Gemma profile and fresh copies of the prepared units7 masters. Both arms
+captured diagnostics; the previously qualified off/on baseline establishes trace
+parity separately. All 388 questions per arm have valid wire, score, source-identity
+and dense-readiness accounting, with the original 2,048-token cap.
+
+| G2 corpus | Located baseline → candidate | Located gains / losses | Verbatim bodies baseline → candidate | Body gains / losses |
+|---|---:|---:|---:|---:|
+| Rust (197) | 52 → 53 | +1 / −0 | 47 → 33 | +1 / −15 |
+| bun (191) | 117 → 121 | +4 / −0 | 107 → 79 | +2 / −30 |
+| Total (388) | 169 → 174 | +5 / −0 | 154 → 112 | +3 / −45 |
+
+Exact one-sided McNemar p = 0.03125, but **42 fewer verbatim bodies fail the
+conjunctive enable rule**. The unchanged comparator exits 1, `KEEP OFF`, agreeing
+with the stricter validator. Mean delivered tokens are 2,022.925 → 2,022.461 and are
+reported only. The pair completed in 114.376 seconds; all 21 native commands exited
+naturally and were reaped. Original/prepared-master/input readbacks and corpus/repo
+identity checks pass. Sampled peak individual RSS was 3,049,750,528 bytes; 34 raced
+samples were missed. This is neither a latency distribution nor a true continuous
+memory peak or provider/host cost measurement.
+
+The required current-semantic G1 comparison then completed in 677.573 seconds.
+All three unchanged frozen guards exit zero over 10,432 raw tasks, 10,431 scored
+after the existing one-task exclusion. First-call success, success within four calls
+and verbatim-body success are identical in each group: **zero gains and zero losses**,
+so there are no newly lost cases to review. Twenty-seven task records differ in
+usage fields, including one fewer checker call: total calls are 14,056 → 14,055,
+and delivered tokens are 13,206,239 → 13,205,241.
+All 31 native commands exit naturally, with complete retained-reference/source/store
+readbacks and an empty owned scratch directory. No per-query embedding count or
+host-consumption claim follows from those token records.
+
+A separate fixed-row CLI check passes in 16.984 seconds. It selected physical row
+zero of the frozen G2 file before launch, used two fresh store copies, and required
+literal same-arm CLI/MCP response-byte equality. Both outputs have 1,991 tokens;
+the candidate trace records one actual allocation preference, versus zero in the
+baseline. Both owners and workers were observed and naturally reaped; all eight
+native commands and final input/master/scratch checks pass. This proves the launch
+path, not another quality result.
+
+The runtime flag and packing preference were removed after these observations;
+the candidate commit, binary, control failures and private evidence are retained.
+Source, tests, Cargo inputs and build scripts return exactly to the previously
+gated `c399c1e` state; a fresh run of all 22 ordinary response tests also passes.
+Formatting and link checks pass. The earlier full gates remain applicable to the
+identical restored runtime/test/build inputs; they are not represented as a second
+fresh eight-gate run. No alternative fraction, additional candidate or final held-out
+query was tried. The sealed 400-question set stays unused and private. This closes
+the selected one-variant evaluation with no promotion; it does not accept the broader
+T005 quality goal. A new repair requires a new bounded selection.
+
+Retirement commit `d9e0f04` rebuilt offline in 58.098 seconds. Its release binary
+is byte-for-byte identical to the retained baseline (SHA-256
+`60aff1025ba6515caa70b0854f233a1d2e2b4f8f83cfed290f143626e8c14011`).
+Both `context --help` and `mcp --help` exit zero without the compact flag. The
+build exited zero and was reaped; tracked inputs and the retained candidate binary
+are unchanged. This restores the measured baseline executable; it is not another
+G1/G2 or native acceptance run. The build and readback receipt is retained in
+`runs/t005-restored-baseline-2026-11-11/`.
+
+Private receipts: `runs/t005-packing-candidate-2026-11-11/`,
+`runs/t005-compact-g2-2026-11-11/`, `runs/t005-compact-g1-2026-11-11/` and
+`runs/t005-compact-cli-2026-11-11/`. G2 runtime receipt SHA-256:
+`bbb06ebf5bc27ed250a4605bc5de6fbf08013ca0be1091fd1ef1605deef52451`;
+G1 runtime receipt SHA-256:
+`f9ff337583e4f54efa22e211f7408a4a646ca69667bc9ef1211ba349199669aa`.
+These were local, no-spend measurements; signed-package and task/economic acceptance
+remain separate. The [handoff](resume-context-ecosystem.md#current-status--2026-11-06)
+owns current status.
+
+## T005 sealed holdout encrypted retention — 2026-11-11
+
+The new sealed holdout has a local encrypted archive in
+`~/VSC_DEV/backups/foundry-t005-heldout-20261111/`, using the owner's selected
+`~/.ssh/id_ed25519.pub`. All three tar/zstd/age pipeline exits are zero. Complete
+source/clone byte-and-mode manifests match before and after, the private staging
+copy is removed, and all five ciphertext/recovery-file checksum entries pass a fresh
+readback. Archive size: 10,216,691 bytes; SHA-256:
+`9b8e900bf01169d171476c8d06de9934e4106ea22b1ffe8029af3f1745a0b6de`.
+
+The job was bounded at 300 seconds with a 20 GiB free-space floor and no network
+or model/provider calls. It read only the selected public recovery key. The packet
+was handled as opaque bytes; no fresh questions, labels or rationale were exposed
+to implementation. Header syntax and ciphertext integrity are verified;
+authenticated decryption/restoration and off-machine copying remain owner tasks.
+Private receipts are in `runs/t005-holdout-backup-2026-11-11/`.
+
+## T005 default-off compact preference implementation — 2026-11-11
+
+Historical candidate `0de75ff`; the subsequent
+[no-promotion result](#t005-compact-candidate-no-promotion--2026-11-11) records its removal.
+
+The single variant selected in `7c5776d` is implemented behind the default-off
+`--experimental-compact-context` flag on CLI context and the MCP owner. The shared
+response packer owns the preference after normal candidate selection/root merging;
+there is no store, recipe, model, schema, candidate-order or cap change. The selected
+[contract](../specs/001-source-state-recovery/contracts/context-v2.md#experimental-compact-preference--009-t005)
+keeps the one-eighth soft share and ordinary-ladder fallback fixed.
+
+Six focused tests pass: four renderer fixtures, a real CLI/stdio-MCP flag matrix on
+lexical input, and single/multi-root MCP owners using the existing concept embedding
+fixture. They check actual semantic eligibility, default-byte parity, exact delivered
+source, allocation reasons, later-body delivery, duplicate compact-form fallback,
+token and serialized-byte refusal accounting, and lexical-only secondary-root parity.
+The fixture provider establishes delivery plumbing, not Gemma quality. Positive
+production CLI semantic delivery still requires the native runtime comparison.
+
+Two mutation controls fail at their intended assertions: disabling the preference
+loses the later body; disabling speculative source coverage duplicates an excerpt
+and suppresses its richer parent. Both are restored before the fresh six-test pass.
+An earlier control attempt hit an SDK linker error before tests; those logs remain
+unqualified and preserved. The corrected checks explicitly use macOS SDK 26.5 and
+verify the assertion failure, not merely exit 101.
+
+`cargo check --offline`, formatting and diff checks pass. The focused command is
+`cargo test --offline --test response --test mcp --test neural_retrieval compact_`.
+Private logs, control patches and the frozen selection are retained in
+`runs/t005-packing-candidate-2026-11-11/`. Full local gates and the unchanged G1/G2
+comparisons remain to run. The fresh held-out set is still sealed; no candidate
+quality result, default enablement, promotion or T005 acceptance is claimed.
+
+## T005 fresh holdout seal and evaluation guards — 2026-11-11
+
+**The fresh holdout is sealed before candidate implementation or tuning:** exactly
+400 questions, 200 each over the pinned Rust and bun corpora. Four isolated authors
+used the frozen module partitions and candidate order. Four separate in-session
+checkers reviewed every answer against source and plausible alternatives, retaining
+1,176 source-inspection records and 95 same-identity wording repairs. All 400 pass;
+no answer identity was replaced. This is not an independent or cross-lab review.
+The author ledgers retain 257 ordered skips, 408 wording attempts (8 failed), and
+7 inspection-only quota stops, with no inspected candidate left without a disposition.
+
+The final set has no duplicate normalized question text or overlap with the selected
+historical exclusions: G2/F4 answers, one recorded retired answer, and retained old
+wordings. The original three-per-file/six-per-module limits hold. The unchanged
+`build.py -o` and full `verify.py`, without `--partial`, both pass. All original
+verifier rules run, including six literal-bearing-unit mutations.
+
+**A receipt-wrapper failure is retained.** The first wrapper expected the historical
+G2 set's 46 self-tests, although its original builder and verifier both exited zero.
+The unchanged verifier runs 37 fixed checks plus a data-dependent five-gram sample:
+388 questions exercise nine samples; 400 exercise eight. The correct receipt is
+therefore **45/45**, not 46/46. The corrected wrapper had already repeated the
+mechanical check before the instruction to reuse its outputs arrived. Both actual
+attempts exited naturally and were reaped, with identical engine logs and question
+bytes. The original failure, script and logs remain intact. An offline receipt-parser
+qualification passes 12 cases, including 11 rejection controls. Final qualification
+took 260.565 seconds from the original 600-second mechanical-stage start; no question
+or original-harness change, coverage waiver or retrieval rerun occurred.
+
+Question SHA-256: `78b46d7cc8ba50282728419246043a0626db545ba9b3e56ae71473ad1d44e5bd`
+(137,837 bytes). Metadata-only qualified seal SHA-256:
+`71ee60e304938d1d0534151a30d6a508154ee3b94db2149cee42124ea5f2ae0c`.
+After all eight author/checker children and the custodian were interrupted, an opaque
+copy to a new private datasets directory passed complete byte/mode readback:
+79 files, 45,344,937 bytes, source unchanged, process exit zero and reaped.
+Transport-manifest SHA-256:
+`48614417bd96c64cfd36494f24b9f6c15c82cfe5dd392604c4c790bda796f841`.
+Implementation received only metadata; questions, labels, source rationales and
+per-case outcomes remain private. The copy is local retention, not an authenticated
+encrypted restore or off-machine backup.
+
+**Evaluation statistics and outer guards are selected before evaluation.** K = 1,
+with the fixed 200/200 sample. The lower bound averages the two corpus-specific
+differences between an exact binomial lower bound for gains and upper bound for
+losses. Four one-sided tails at 0.0125 give a conservative 95% model-based bound by
+Bonferroni; this is a derivation from the
+[NIST binomial limits](https://itl.nist.gov/div898/software/dataplot/refman2/auxillar/exacbino.htm)
+and [Bonferroni inequality](https://www.itl.nist.gov/div898/handbook/prc/section4/prc473.htm),
+not a claim that NIST endorses this experiment. Within-corpus binomial/independence
+assumptions are not established by authoring: source clustering and curation limit
+population inference. The dyadic arithmetic rounds outward and decides positivity
+before display rounding; ten synthetic tests pass. The strict count adapter passes
+five additional synthetic tests, including invalid token types/ranges, duplicate or
+missing IDs, inconsistent body scores and invalid receipt bindings. These fixtures
+do not qualify actual wire, source, runtime or promotion evidence.
+
+The fixed sample gives 0.25 percentage-point overall resolution. Numerical planning
+under gain/loss probabilities 0.15/0.05 in both corpora gives a 54.20% chance of
+clearing the gain-bound and observed located guards; 0.25/0.10 gives 82.60%. These
+are imposed-model calculations, exclude the other gates, and are not actual
+candidate power or a justification to increase the sample after results.
+
+The selected final pair keeps tracing off and runs baseline then candidate, Rust
+then bun within each arm, once. Promotion still requires a positive lower bound,
+exact one-sided McNemar p < 0.05, observed located and verbatim-body nonregression
+in **each** corpus, valid complete accounting, the same 2,048-token/byte caps, all
+unchanged G1/G2 gates, and review of new G1 losses. Mean tokens remain reported only.
+For each corpus, complete MCP-owner elapsed time must be at most
+1.25 × paired baseline + 2 seconds; sampled peak individual RSS at most
+1.20 × baseline + 256 MiB and at most 8 GiB absolutely. The existing development
+worker limit remains 4 GiB. This does not accept the installed 3 GiB profile.
+There must be at least 20 GiB free, at most 40 GiB allocated growth, and one heavy
+job. The whole pair is bounded at 3,600 seconds, reserving 240 seconds for final
+readback and 120 for cleanup; each owner has a 600-second cap and 30-second cleanup.
+Natural reaping and verifiable required measurements remain mandatory. Raced RSS
+samples are reported; sampled peaks are not continuous maxima. These are observed
+one-pair operating limits, not causal overhead or per-request cold/warm latency.
+
+Private receipts, selected guards and synthetic helper qualifications are retained
+in `runs/t005-holdout-preparation-2026-11-11/`. No retrieval/model-worker/provider
+experiment or store API was invoked for authoring, checking or sealing. The exact
+candidate algorithm and its executable manifests still need to be frozen. No
+candidate, held-out retrieval result, quality promotion or T005 acceptance is claimed.
+
+## T005 fresh holdout authoring selection — 2026-11-11
+
+The completed diagnostic review is published as `cf2923c`; its private evidence
+snapshot passed full readback (39 files, 3,343,063 bytes; manifest SHA-256
+`5b52e78a41a2488733709464bc7635e4ef1ebda23105269215bd5632ab658036`).
+No usable unused holdout is designated by the checked records. The old 48-question
+archive was declared lost; F4's 300 questions were already evaluated. Neither is a
+fresh T005 holdout.
+
+Before any fresh question drafting, the new authoring protocol selects **400
+questions, 200 per corpus**, at the existing source pins. This exceeds the unchanged
+verifier's 180-per-corpus/360-total floors; it is not yet a power claim. One candidate
+family may change packing allocation over already placed units, holding Gemma,
+representation, selection, ordering, placement and delivery limits fixed. The exact
+algorithm, sample-size/power rationale, paired confidence statistic, multiplicity,
+per-corpus and latency/resource guards must be frozen before tuning/evaluation.
+
+Authors work in fresh contexts without retrieval outputs, traces or candidate
+design, using disjoint modules and deterministic candidate order. Historical G2/F4
+answers and duplicate question text are excluded. Every visited candidate and skip
+reason is retained; the original limits of three questions per file and six per
+module remain. A separate label-side checker inspects every accepted answer and
+plausible alternatives. The unchanged builder and full verifier, including all
+self-tests, remain mandatory. This is an in-session source quality check, not an
+independent review gate. Only metadata reaches implementation; questions, labels,
+source excerpts, responses and case outcomes stay private.
+
+The selected authoring/checking bound is three hours, followed by at most ten
+minutes for mechanical validation and two minutes for cleanup. There are no paid
+provider calls, retrieval calls or store opens, and at most one heavy job. Failure
+to reach the exact counts with valid identity, leakage and answer-quality checks
+retains the partial evidence and stops tuning/evaluation; no floor is silently
+lowered. The private selection is in
+`runs/t005-holdout-preparation-2026-11-11/authoring-selection.json`. No set is sealed,
+candidate implemented, improvement measured or T005 acceptance claimed here.
+
+## T005 complete loss review and refined trace attribution — 2026-11-11
+
+**All 52 newly lost G1 tasks have been reviewed**, taking the union of first-call,
+four-call and verbatim-body losses: 50 checker tasks and 2 bun tasks. The unchanged
+qualified set has no losses. Full result and decompressed response hashes bind the
+review to the [current G1 comparison](#t005-current-semantic-g1-comparison--2026-11-11).
+Checker expectations are bound through the frozen occurrence metadata and task-ID
+rule. The two bun expectations are explicitly reconstructed from accepted baseline
+verbatim bytes, locators and the frozen generator's ID rule; they are not presented
+as separately serialized labels or a fresh source/compiler-graph export.
+
+The checker review observes 26 tasks with the expected file absent from delivered
+units, 8 with the file returned but the required definition line omitted, 13 with
+insufficient distinct usage files, 1 with the definition visible but its verbatim
+body lost, and 2 recovered only after the first call. Both bun losses omit the
+expected file from every returned unit. All reviewed outcomes agree with the
+retained scorer. The checker comparison's valid error replies are all
+`symbol_not_found`; among its reviewed loss cases, two new reference calls return
+that error. Neither that histogram nor a `semantic:ready` response header proves
+an earlier cause. G1 has no retrieval traces, so candidate generation, ordering,
+cap and packing explanations remain unobserved for these cases.
+
+**Offline G2 refinement accounts for all 388 retained cases using complete target
+name ranges and frozen/current source hashes.** It verifies 330 distinct target
+files and separates lexical document ranges from enclosing units, source inputs
+from whole-file outlines, and exact placement/materialization/packing paths.
+Twelve synthetic boundary tests pass. Missing joins remain unknown by contract;
+none is missing in this retained run. This reuses validated delivery scores and
+does not rescore, run retrieval, call a model or open a store.
+
+The 219 misses have these sets of observed loss paths:
+
+| Observed path set | Rust | bun | Total |
+| --- | --- | --- | --- |
+| Target file absent from the returned selection window | 24 | 9 | 33 |
+| File seen, no source document/unit covering the complete target name | 47 | 15 | 62 |
+| Global placement limit | 29 | 17 | 46 |
+| Per-file placement cap | 24 | 13 | 37 |
+| Both placement limits | 0 | 2 | 2 |
+| Token-budget packing drop | 12 | 12 | 24 |
+| Token-budget packing drop and global placement limit | 6 | 3 | 9 |
+| Token-budget packing drop and per-file placement cap | 2 | 3 | 5 |
+| Token-budget packing drop and both placement limits | 1 | 0 | 1 |
+
+These are sets of observations, not exclusive causes or predicted repair gains.
+Four cases move from the initial coarse placement category to noncovering lexical
+documents: their enclosing units covered the name, but the recorded documents did
+not. The original coarse records remain intact. Of 169 successful deliveries, 79
+also have a cut or drop on another candidate path; counting such events as failed
+queries would overstate loss. All 39 misses retaining a non-outline source range
+covering the full target name at packing input have an explicit token-budget drop;
+15 also have placement losses on other candidates. No name-losing materialization
+excerpt is observed among the 208 cases with materialized target ranges.
+
+Eight deterministic examples, the first two IDs from each original coarse miss
+group, were followed through their exact trace/output and target-source bytes.
+All eight are bun, so they are illustrations rather than a representative sample.
+Two show an available dense source range retained through materialization, followed
+by a token-budget drop of its signature form after earlier verbatim selections.
+The **selected hypothesis for the next bounded contract is packing allocation**:
+spending less of the allowance on early full bodies may leave room for existing
+compact forms of later already-placed definitions. Keep the model, recipe, ANN
+window, selection, placement, source checks, forms and caps fixed. No concrete
+variant is selected or evaluated here. Rejected-form costs and counterfactual
+allocations are unavailable; body regression remains a material risk. Absence from
+a bounded retrieval window does not establish missing behavioral meaning or justify
+an embedding/ranking replacement. Fresh held-out pre-registration and the existing
+G1/G2, body, cap and resource gates remain required before any promotion.
+
+The first offline analyzer produced complete results, but its outer process sampler
+was sandbox-denied after launch; direct child exit/reaping was not recorded. That
+failed supervision and the command-absence check remain preserved. A separately
+selected native recheck of the unchanged analyzer then exited naturally in
+**1.944 s**, with matching input pins, unchanged analyzer source, no observed
+remaining owned process or model worker, and exactly identical case bytes. Reports differ only in elapsed
+time and self-reported RSS. Bounds were 240 seconds including 120 for cleanup,
+1 GiB sampled RSS and USD 0 spend. This repeats only offline analysis, not the
+model/harness run, and does not retroactively repair the first lifecycle receipt.
+The private review and both analysis attempts are retained in
+`runs/t005-diagnostic-review-2026-11-11/`. T005 remains unaccepted; no product code,
+ranking policy or profile enablement changed.
+
+## T005 current semantic G1 comparison — 2026-11-11
+
+**All three frozen G1 aggregate guards pass; the current semantic profile still
+loses cases against the current no-profile implementation.** On `e5e0516`, one full
+semantic run per set used the archived `f19d353` normal binary and current units7
+masters. The no-profile side reuses the accepted T010 **candidate** runs, whose
+result bytes and decompressed response hashes match before and after pairing.
+Their starting whole-store manifests match the lineage of the prepared masters.
+Compiler preservation through semantic-only preparation is a source-boundary
+inference over that verified lineage, not a fresh compiler-table equality export.
+
+| Set | Scored tasks | Pass on first call, no-profile → semantic | Pass within four calls, no-profile → semantic | Verbatim bodies, no-profile → semantic |
+| --- | --- | --- | --- | --- |
+| bun | 999 | 971 → 969 (+0/−2) | 976 → 974 (+0/−2) | 572 → 570 (+0/−2) |
+| checker | 6,881 | 3,741 → 3,706 (+6/−41) | 3,868 → 3,831 (+10/−47) | 2,526 → 2,495 (+4/−35) |
+| qualified | 2,551 | 2,315 → 2,315 (+0/−0) | 2,334 → 2,334 (+0/−0) | 1,750 → 1,750 (+0/−0) |
+| Total | 10,431 | 7,027 → 6,990 (+6/−43) | 7,178 → 7,139 (+10/−49) | 4,848 → 4,815 (+4/−37) |
+
+Body accounting applies to the 6,881 definition tasks. The frozen scorer's one
+external-only bun usage exclusion is unchanged: 10,432 raw tasks become 10,431
+scored tasks. No task is otherwise missing, duplicated, retried or excluded as an
+apparatus error. The new runs contain 14,056 terminal tool calls, against 14,284 in
+the retained no-profile runs. Their 950 valid tool-error replies (928 checker,
+22 qualified) remain in scoring, against 999 in the reference; they are not silently
+dropped or treated as measurement failures. Every recorded reply stays within its
+frozen tool allowance. Scored tool-text tokens total 13,206,239 against 13,309,894;
+these are not provider input, host consumption or cost savings.
+
+The unchanged `g1score.py` supplies paired outcomes. Separate unmasked
+`g1compare.py` calls use its fixed historical Foundry/grep references and all exit 0.
+Those aggregate passes do not erase the newly lost current-comparison cases or
+create a zero-individual-loss rule. The
+[complete loss review](#t005-complete-loss-review-and-refined-trace-attribution--2026-11-11)
+retains all of them. This is a baseline diagnostic, not a new quality promotion.
+
+The new owner wrapper preserves bytes and records actual owner exit, complete
+request/response IDs, tool arguments, text and error bits. Its checks account for
+each new run's complete transport against its frozen harness records. Historical
+no-profile artifacts do not acquire retroactive full-wire proof. G1 tracing stays
+off, so per-query semantic decisions and complete provider-call counters are not
+available; an observed worker alone does not prove which requests called it.
+Twelve synthetic transport/accounting tests pass. The separately pinned
+[G2 pair](#t005-current-g2-baseline-and-trace-parity--2026-11-11) supplies the live
+dense-serving and trace-parity evidence.
+
+The stage completed in **677.230 s**, with semantic group phases of 74.907 s for
+bun, 389.097 s for checker and 149.290 s for qualified. These are current instrumented
+run times, not a timing comparison with the retained reference. All 30 native
+commands exited naturally, with no forced cleanup or observed owned descendants
+remaining. One embedding worker was observed in each group. Original and immutable
+master manifests, retained results and selected artifact/helper/input hashes match
+on readback. Root's final checks confirm unchanged repository/corpus HEADs and
+tracked files, unchanged existing scratch sibling metadata and an empty new scratch
+child. No original store was opened through Foundry.
+
+The preselected envelope was 3,600 seconds, with 120 each for final readback and
+cleanup; group ceilings were 360/1,200/600 seconds, one heavy job and USD 0 spend.
+Bounds: 20 GiB free space, 40 GiB apparent growth and 8 GiB sampled individual RSS.
+Observed owned-process RSS peak: 3,167,977,472 B; driver: 215,302,144 B;
+apparent growth: 19,669,063,201 B; minimum free space: 259,895,570,432 B;
+35 missed process samples. Sampling does not establish transient/GPU peaks.
+Private evidence remains in `runs/t005-g1-baseline-2026-11-11/` and
+`datasets/context-foundry-t005-g1-z1wa3aqv.noindex`; runtime receipt SHA-256
+`a0a3f10a1930e1b6d72b62d87fcc1694d79f0ccfb710d43ff75f690da12a85dd`.
+No ranking variant, installed-package acceptance, paid trial or T005 acceptance is
+established by this run.
+
+## T005 current G2 baseline and trace parity — 2026-11-11
+
+**The single traced/untraced baseline pair is valid.** On `28567ed`, the unchanged
+`scripts/g2.sh run` executed the frozen 388 questions once with tracing off and
+once with tracing on. Both arms used the archived normal `f19d353` binary
+(SHA-256 `60aff1025ba6515caa70b0854f233a1d2e2b4f8f83cfed290f143626e8c14011`),
+the accepted Gemma hierarchy profile and fresh query copies of the
+[prepared units7 masters](#t005-units7-baseline-preparation--2026-11-11).
+The [fresh corpus capture](#t005-corpus-identity-and-diagnostic-helper-checks--2026-11-11)
+is separately pinned. No ranking variant or retrieval-code change was selected.
+
+All **388 traced decisions are dense at the pinned source revisions**, with zero
+off, fallback, missing or malformed decisions. Both arms have exactly the expected
+197 Rust and 191 bun IDs, with no missing/duplicate/retried/refused/error rows and
+every response within 2,048 tokens. Complete raw protocol stdout, parsed envelopes,
+delivered text and frozen result rows match exactly between arms. The offline
+validator accounts for every trace and reports no unknown rows or global errors.
+
+| Corpus | Queries | Located definitions | Verbatim bodies | Mean delivered tokens |
+| --- | --- | --- | --- | --- |
+| Rust | 197 | 52 | 47 | 2,020.924 |
+| bun | 191 | 117 | 107 | 2,024.990 |
+| Total | 388 | 169 | 154 | 2,022.925 |
+
+Both arms have these same scores. They are a fresh baseline measurement, not an
+improvement over a candidate or retroactive evidence for the historical 249 misses.
+The current 219 misses partition by first observed stage as follows:
+
+| Recorded boundary | Queries |
+| --- | --- |
+| Expected file absent from selection events | 33 |
+| Expected file present, target-covering unit absent from selection events | 58 |
+| Target-covering placement events all rejected, with duplicate/limit/per-file-cap outcomes | 89 |
+| Target-covering unit reaches packing input, but the frozen scorer does not verify the definition in the delivered response | 39 |
+| Unknown | 0 |
+
+These are initial observed boundaries, not established causes. The private
+per-query records retain exact placement outcomes and ranks. The subsequent
+[refinement and case review](#t005-complete-loss-review-and-refined-trace-attribution--2026-11-11)
+distinguishes enclosing units from source documents and retains overlapping paths;
+these initial counts alone select no representation or ranking replacement.
+
+The untraced script phase took **37.651 s** and the traced phase **38.607 s**, a
+0.956-second difference in this one sequential pair. Those phase times include
+store-copy, wrapper and harness work; they do not establish a latency distribution
+or isolate tracing as the cause of the difference. The whole bounded stage took
+**103.950 s**. All 19 native commands exited naturally, with no forced cleanup or
+observed owned processes remaining. Two embedding workers were independently
+observed in each arm, with native memory samples. Query embedding-call and input-token
+scalars are not exposed by this apparatus; 776 validated context responses and the
+frozen delivered-token counts do not establish provider or host consumption.
+
+Original and retained master byte/metadata manifests match before and after.
+Binary, model, tokenizer, worker, helper, instrument and profile pins match on
+readback; strict worker signature verification passes. The copied profile changes
+only its private scratch child, which finishes empty; existing scratch sibling
+metadata is unchanged. The selected HEAD and tracked files remain unchanged.
+The qualified wrapper/validator sources were unchanged; 13 additional pure synthetic
+checks passed for the separate full-dense readiness expectation. An observed off
+decision would require review under existing anchor admission, not establish a
+product defect by itself.
+
+Selected bounds: 3,600 seconds total, 120 reserved for cleanup, 240 for offline
+validation, 1,300 per script phase, 600 per owner plus its 30-second cleanup grace,
+one heavy job and USD 0 spend. Resource bounds were 20 GiB free space, 40 GiB
+observed apparent growth and 8 GiB sampled individual RSS. Observed peaks:
+3,087,745,024 B owned-process RSS, 210,780,160 B driver RSS and 12,562,913,761 B
+apparent growth; minimum free space 261,389,533,184 B; 30 missed process samples.
+These observations do not establish true transient/GPU peaks or an atomic source
+snapshot. Private evidence is in `runs/t005-baseline-pair-2026-11-11/` and
+`datasets/context-foundry-t005-baseline-2026-11-11-9ptm180p.noindex`.
+The runtime receipt SHA-256 is
+`d7e5afb1e46f065d91facec98b1c9da6e0b9e919152789239f1a15c970956b26`.
+T005 remains unaccepted; no quality promotion, installed-package acceptance or
+paid-provider result is claimed.
+
+## T005 corpus identity and diagnostic helper checks — 2026-11-11
+
+**The current admitted corpora match the frozen parser manifests.** A separate
+600-second, no-model stage used the archived parser candidate from `68ed776`
+(SHA-256 `9853f8afebd457bd694362c6d92f829976a195e4285d85263994d33000d4bcf8`)
+to capture each corpus into a new owned store and source bundle. It did not open
+an original G2 store. The command's complete production admission and reconstructed
+source-byte checks pass; new manifests exactly match the frozen ordered path,
+SHA-256, length and language-override records:
+
+| Corpus | Sources | Source bytes | Manifest SHA-256 |
+| --- | --- | --- | --- |
+| Rust | 60,739 | 177,769,746 | `2b36b53aef11ee64ef0b9cf6cba2110192efc0a15039a33948e96e6c3e3a1542` |
+| bun | 8,436 | 99,926,130 | `f855b1b80c316cbac73efd0e3a5712868bea54c92dfe45fb12a24cd50187b5ab` |
+
+Binding checks rehash all 59,387 unique Rust and 8,346 unique bun source blobs,
+then repeat the complete bundle readback. Frozen input bytes and metadata match
+before and after. Both corpus HEADs match their frozen commits and tracked files
+are clean on both observations. Git excludes untracked files; the fresh capture,
+rather than that Git check, establishes the complete admitted-set comparison.
+This is separate fresh-store evidence, not a row-by-row export of the prepared
+semantic store or an atomic filesystem snapshot under concurrent edits.
+
+Rust capture took 108.489 s and bun 18.803 s; the stage completed in **135.983 s**.
+All 10 native commands exited naturally, with no observed model workers or owned
+processes remaining. Bounds: 120 seconds for cleanup, one heavy job, USD 0 spend,
+300/120-second native capture ceilings with 270/90-second internal budgets,
+20 GiB free-space and apparent-growth bounds, and 8 GiB sampled individual RSS.
+Observed RSS peak: 1,269,481,472 B; minimum free space: 262,207,369,216 B;
+apparent growth: 1,337,574,430 B; 10 missed process samples and three disappearing
+temporary entries during growth observations. These are sampled observations.
+Private stores and bundles remain under the new
+`datasets/context-foundry-t005-corpus-freshness-a9rz0a1k.noindex` directory;
+receipts and pins are in `runs/t005-corpus-identity-2026-11-11/`.
+
+**Diagnostic helper checks are synthetic qualification only.** The private stdout
+wrapper and offline validator first passed 25 tests. A narrow subsequent correction
+validates supplied source identities, half-open ranges and stage-specific outcomes
+before assigning an observed pipeline stage; malformed evidence remains unknown.
+It also removes the inference that a locator's range proves visible definition
+content. The final helper passes **34 tests in 1.954 s** (2.219 s including native
+supervision), with unchanged source pins and no observed remaining owned processes.
+The wrapper itself is byte-identical between these versions. Raw logs and both
+source versions are retained in `runs/t005-trace-qualification-2026-11-11/`.
+
+Tests exercise exact forwarding under backpressure, unchanged stdin, output/line
+limits, refusal, deadline cleanup and malformed/missing trace or identity rejection.
+Transport fixtures substitute a synthetic manifest in test-process memory; they do
+not qualify real manifest admission, model calls, source freshness or the full
+388-question accounting. Each check has a separately selected 180-second envelope,
+60-second test limit and 120-second cleanup reserve. No private questions, real
+stores, model or provider were used by these checks.
+
+The frozen G2 harness can retry a busy/deadline response; zero retries is a later
+run-validity condition, not a guarantee made by the transparent wrapper. The
+qualified helper preserves exact text and full parsed envelopes, checks complete
+request/notification accounting and records raw stdout equality separately.
+Delivered-token counts come from the frozen harness; the offline validator does
+not recount them or infer host/provider consumption. Actual G2 parity, trace
+completeness, current scores and T005 acceptance remain to establish.
+
+## T005 units7 baseline preparation — 2026-11-11
+
+**Both owned copies pass current units7 metadata readiness; no query-quality
+result is claimed.** Following the
+[obsolete-recipe preflight](#t005-current-baseline-identity-preflight--2026-11-11),
+a separately selected 3,600-second stage on `6831dbb` prepared fresh retained
+copies of the singleton masters. It used the same archived `f19d353` normal
+binary, accepted Gemma hierarchy profile and existing development worker. Only
+the copied profile's scratch path changed, to a new private child inside the
+worker's existing signed grant. Model, tokenizer, worker, original profile and
+binary hashes match before and after; strict worker signature verification passes.
+The bundle was not changed or re-signed.
+
+| Corpus | Sources / revision | Current eligible, cached and searchable units | Unique ANN entries | Prepare elapsed |
+| --- | --- | --- | --- | --- |
+| bun | 8,436 | 191,161 | 183,311 | 168.725 s |
+| Rust | 60,739 | 685,623 | 624,325 | 684.782 s |
+
+Each command reports `partial:false`, a published index, stopped state and no
+stop/publication reason. Subsequent full audits report complete partition coverage,
+no unpartitioned or missing units, no corrupt/legacy/orphan cache entries and an
+available generation. Source counts, revisions and workspace identities remain
+unchanged. The recipe is
+`hierarchy-v1+overview4+context2+kinds2+units7:512+parent64+tokenizers 0.23.2 onig`,
+dimension 768, with unchanged function digest
+`01dcfe577222256b4e08f9783e973fddb80240be53fe96c7454a6956c100e912`.
+Unique ANN entries deduplicate exact inputs; they need not equal eligible units.
+
+Both preparations report **0 document calls, 0 embedded units and 0 input tokens**;
+cached vectors were reused. Run work counters revisit sources/units and are not
+corpus totals. This proves no current query capability or quality result, and the
+new generation cannot inherit an old G2 score. No model worker was observed.
+
+The whole stage completed in **879.817 s**. All 22 native commands exited naturally,
+with no observed owned processes remaining. Original stores were never opened
+through Foundry and their complete before/after byte and metadata manifests match.
+Complete final manifests pin both prepared copies, including their generation
+files. Existing scratch sibling metadata is unchanged and the new scratch child
+is empty. The copies remain in the new owned directory
+`datasets/context-foundry-t005-units7-2026-11-11-sa2l0xjn.noindex` for the diagnostic.
+
+Selected limits: one heavy job, USD 0 spend, 120 seconds reserved for cleanup,
+another 120 seconds for final audits, at most 900 seconds for bun and 2,400 for Rust,
+4 GiB cache per store, 20 GiB free-space floor, 40 GiB observed apparent-growth
+ceiling and 8 GiB sampled individual-process RSS ceiling. Observed owned-process
+RSS peak: 4,160,634,880 B; driver: 205,766,656 B; minimum free space:
+264,595,890,176 B; apparent growth: 7,103,069,537 B; 22 owned-process samples missed.
+Sampled values do not establish transient or GPU peaks. A separate lightweight
+synthetic trace-helper check ran for 2.434 seconds during Rust preparation; no
+comparative preparation-performance claim is made.
+
+Private evidence is under `runs/t005-units7-preparation-2026-11-11/`, including the
+preselected bounds, exact commands, reports, audits, artifact readbacks and complete
+store manifests. This stage performed no repair-index, cache purge, download,
+query, provider request or workspace-program execution. Current corpus contents
+and full traced/untraced response parity still require verification. Stable store
+metadata is not a fresh row-by-row source-table equality proof. T005 remains
+unaccepted; no ranking variant is selected.
+
+## T005 current-baseline identity preflight — 2026-11-11
+
+**Metadata preflight passed; semantic query readiness is not established.** On
+`5bef761`, the archived normal binary from `f19d353` (SHA-256
+`60aff1025ba6515caa70b0854f233a1d2e2b4f8f83cfed290f143626e8c14011`)
+opened only verified disposable copies of the T010 singleton Rust and bun masters.
+Normal runtime, build and dependency files are unchanged since that binary's
+source commit; intervening runtime changes are confined to the pilot feature.
+This is not a claim that the binary was rebuilt at the current documentation head.
+
+Both ordinary indexes report ready, complete scans, no pending sources and no
+parse failures: 60,739 Rust sources and 8,436 bun sources, at source schema 12.
+Both semantic progress reports are stale. Full audits refuse their recorded
+`hierarchy-v1+overview4+context2+kinds2+units6:512+parent64+tokenizers 0.23.2 onig`
+recipe with `unit_schema_obsolete`; every source is unpartitioned for the current
+recipe and no current semantic generation is available. Retained caches contain
+624,325 and 183,311 entries respectively, with zero corrupt entries observed.
+The audit's zero missing units accompanies zero eligible current units; it does
+not mean complete coverage. Recorded provider-ready observations and bootstrap
+usage are historical, not calls or readiness established by this preflight.
+
+Opaque byte checks pin the profile, 388-question instrument, G1/G2 harnesses,
+counter, binary and Cargo lock. Corpus HEADs match their frozen commits. Corpus
+working-tree contents, model/worker artifact bytes, current local-model capability,
+full response parity and retrieval quality remain unchecked at this stage.
+The original profile and both original stores were never opened through Foundry.
+Complete original file-byte and metadata manifests match before and after each
+attempt; all quarantines, caches, scratch and failed copies remain retained.
+
+**Copy failures and bounded continuation.** The first attempt stopped before a
+store open because `cp -c -R` inherited group 0 instead of 20. Its retry with
+`cp -c -p -R` preserved modes but still changed the group of 322 regular files.
+Both failures remain recorded; the retry used the original absolute deadline and
+closed at 431.670 s elapsed (10.570 s in the retry itself). A tiny owned fixture
+then verified descriptor-bound group preservation without changing bytes, mode
+or inode. A separately selected 600-second continuation applies that correction
+only to fresh copies and requires exact byte, kind, mode, UID and GID identity
+before opening them. It completed in 16.033 s, with all 13 native commands exiting
+naturally, no observed model workers and no observed owned processes remaining.
+
+Both selections reserve 120 seconds for cleanup, keep one heavy job, a 20 GiB
+free-space floor, 20 GiB apparent-growth ceiling, 8 GiB sampled individual-process
+RSS ceiling and USD 0 spend. The successful continuation observed 1,434,107,904 B
+peak owned-process RSS, 203,358,208 B driver RSS, 266,857,476,096 B minimum free
+space and 7,102,255,589 B apparent growth; 13 owned-process samples were missed.
+Sampling does not establish transient or GPU peaks. No model, query, preparation,
+repair, provider request or source program ran.
+
+Private evidence is retained under `runs/t005-baseline-preflight-2026-11-11/`,
+including both failed attempts, copy fixture, selected bounds, raw status/audits,
+input pins and complete original readbacks. The next runtime dependency is a
+separately bounded local `semantic prepare` on new owned copies for units7,
+followed by current identity, coverage and query checks; no ranking variant is
+selected. [T005](../specs/009-optional-semantic-retrieval/spec.md#t005--diagnose-and-improve-anchorless-evidence-retrieval)
+remains unaccepted. Fresh traces cannot retroactively explain historical misses.
+
+## Pilot private-output permissions and terminal publication — 2026-11-11
+
+**Qualified at the selected local boundaries on `c399c1e`.** The
+[existing v2 requirement](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#required-v1-gap-repairs-and-qualification)
+now enforces exact 0700 owned directories and 0600 private files, including special
+bits. Descriptor-relative checks preserve ownership, type and inode identity;
+one logical pass shares 16,384 inspected entries, depth 64 and 8 MiB of OS-path
+bytes, including both inventory and validation. Child launchers set umask 0077
+without changing their caller. Existing wrong-mode objects are refused, not repaired.
+
+Checks run before count/Messages and after producers. A privacy failure after a
+count retains that observation, releases only its reservation and prevents Messages.
+Post-send failures retain observed usage and halted slot capture/closure while
+refusing unsafe readback. CLI success additionally requires actual exclusive,
+durable seal/report persistence and successful finalization; terminal journals
+are not reopened to hide sidecar failure.
+
+The only declared 0700 executables are checker `out/check` and pinned OMP 18.13.2's
+`home/.omp/natives/18.13.2/pi_natives.darwin-arm64.node`, limited to the declared
+run's `hosts/<host>` or fixed `runs/<run>/hosts/<host>` layout. No workspace/store
+or arbitrary-suffix exception exists. This records the observed extraction and
+checks metadata; it adds no per-request native-content hash or host re-pin.
+The archived host remains `38c3645283ceba06f66462830ae15f27270cc7f84575e40a4c6bd68452a63d0f`.
+Frozen v1 contract, policy module and apparatus pins are byte-identical.
+
+**Final focused checks.** Counts are passed / failed / ignored; nested isolated
+children are not added to outer counts.
+
+| Boundary | Counts | Elapsed |
+| --- | --- | --- |
+| Pilot units | 97 / 0 / 0 | 34.886 s |
+| CLI units | 6 / 0 / 0 | 17.342 s |
+| Four lexical stores / process reopen | 1 / 0 / 0 | 6.805 s |
+| Complete pinned-host fixture suite | 33 / 0 / 2 | 279.922 s |
+| Actual compiler/oracle producer | 1 / 0 / 0 | 3.664 s |
+
+The host suite uses the same production code but predates the ignored producer's
+test-only container-mode correction; it is not an identical full test-source claim.
+That producer was separately rerun on the final source. Safe readback confirms
+private checker artifacts, expected completion/binary bindings, and an ordinary
+compile-error candidate exiting 1 without executing an oracle. The four stores
+are actual current CLI lexical stores, not semantic-worker qualification.
+
+**All 15 selected controls executed unchanged failing assertions and restored
+exact source:** mode, component-links, creation-dir-mode, creation-file-mode,
+child-mask-bounded, child-mask-checker, parent-mask, host-mask, path-byte-budget,
+send-count, send-messages, post-host-closure, cli-report, cli-probe-persist and
+checker-mode. Each inner test returned 101 with its runtime marker and no compile
+failure. `control-boundaries.json` preserves the precise reached assertion and
+unreached checks. In particular, send-count failed the generations-length assertion;
+it is **not an observed extra-HTTP proof**. Send-messages reached a fixture-path
+mismatch without disclosing its exact vector. Host-mask reached non-completion,
+not a zero-HTTP assertion. Creation controls failed prerequisites before metadata
+assertions; checker-mode reached only its successful-step receipt branch.
+Parent-mask affects only the isolated caller. CLI probe persistence uses the real
+finished fixture-probe receipt; post-host-closure directly exposes lost returned
+capture, not independently observed later closure rows.
+
+**Failures retained:** 8 earlier unexpected-exit commands remain in safe
+metadata, including missing test metadata/permission imports, restrictive-mask
+creation, APFS filename setup, CLI fixtures and the first full-host suite.
+macOS refused O_EVTONLY on mode 000: exclusive mkdir now uses nonfollowing stat,
+fchmodat, then opened-inode comparison and child/parent sync. APFS rejected invalid
+UTF8 filenames; the raw-byte test directly charges an OsString and separately
+walks an accepted multibyte filename. Two synthetic Live fixtures moved auxiliary
+Verification probes to separate owned environments. The RLIMIT_FSIZE child uses
+pipes for libtest reporting. The ignored producer's newly owned 0755 container
+was corrected to 0700 after readback and rerun. These fixture corrections preserve the production guards.
+
+**Separate bounded phases.** The original 3,600-second stage closed after
+2931.612 s **unqualified because full gates were absent**;
+its deadline was not extended. A separately selected 1,800-second gate-only
+continuation tested the same committed candidate. All eight actual gate exits are
+0 (fmt, clippy, tests, pilot clippy/tests and three Rust 1.90 gates), completing in
+614.765 s; continuation elapsed is
+625.829 s, within its original deadline. Default tests:
+1311 passed, 0 failed, 34 ignored;
+recovery: 21 checks; pilot outer: 97 passed,
+0 failed, 0 ignored, with
+1 intact nested summary. Two child summaries interleave with parallel test output
+in both the gate and final focused logs; each log retains three child 1/0/0 count
+fragments plus the outer 97/0/0. The original parser mismatch is preserved and
+explained in `nested-summary-inspection.json`; children are never added to outer
+totals. Rust/Cargo 1.97.1 and 1.90.0 use SDK 26.5.
+
+Both phases retain 120 seconds for cleanup, one heavy job, a 20 GiB free-space floor,
+8 GiB sampled individual-process ceiling and USD 0 spend. Focused sampled RSS/free
+minimum: 2,192,277,504 /
+266,261,848,064 bytes, with
+225 missed samples; gates:
+1,418,739,712 / 263,419,609,088 bytes, with 1382 misses. Receipts report natural exit,
+no forced cleanup and no observed owned identities remaining. These are sampled
+observations, not true peaks or GPU/global-memory guarantees.
+
+No real provider request, real credential, original private full-pipeline rerun,
+semantic-worker output acceptance or current-installed-host qualification is
+claimed. Startup-network completeness, arbitrary same-user race protection,
+deterministic fchmod/fsync fault injection and power-loss durability remain
+unproved. Pilot v2 stays unfunded/unfrozen; T006 and task-context outcomes remain open.
+Private receipts remain under `runs/pilot-private-permissions-2026-11-11/`:
+`commit-pin.json`, `stage-closure.json`, safe command/control metadata, readbacks,
+`control-boundaries.json`, and `gate-continuation/{protocol,gates-result,safe-gate-metadata}.json`.
+
+## Parser bundle and complete unit comparison — 2026-11-11
+
+Owner decision 21 is implemented in `68ed776`: tree-sitter-scala 0.26.2 →
+0.26.4, tree-sitter-powershell 0.26.4 → 0.26.6 and pulldown-cmark 0.13.5 →
+0.13.6 move together. **Accepted after all eight local gates passed on this commit.**
+The final lock changes only those three package blocks. Resolution initially
+rewrote unrelated bindgen/syn and tempfile/getrandom edges; those rewrites were
+restored, with the intermediate lock and exact comparison retained.
+
+**Complete input/output comparison: PASS.** Baseline `7f1c0d3` and candidate
+`68ed776` used the same Rust 1.97.1 compiler and snapshot helper, and the same
+captured bytes for every production-admitted source in both pinned G2 corpus
+roots plus all 23 frozen fixture files. Fresh owned scratch indexing established
+admission; neither git-tracked files alone nor answer paths selected the inputs.
+The snapshots retain complete ordered syntax forests, effective delivery units,
+index documents, imports/calls, coverage and parse-stop/fallback results. Source
+identity and build provenance are bound separately. Exact JSONL comparison
+ignores no output fields; all three sets are byte-identical, with zero changed
+sources and zero stopped parses in either arm.
+
+| Input | Sources | Admitted bytes | Identical snapshot SHA-256 |
+| --- | ---: | ---: | --- |
+| Rust `b940084d7eb6a299eb4bfeb8e34901bc051e7ac4` | 60,739 | 177,769,746 | `6922b248d5fd38f6fb5857574ca67843279fb5cb552477afaf818061f590a9e1` |
+| bun `5b8d5b8a15ab1711597584aadbdc112c55befed1` | 8,436 | 99,926,130 | `c505eccbc9791e0a7fee9a2af7e8f3cddcd667ba390b883b2b04bdc85df54567` |
+| Frozen parser fixtures | 23 | 218,058 | `4285ead755493c89c997fe8d6618bf35ef5f2ae62e7a181624f4ae9b48fd87d4` |
+
+Raw and effective units in both G2 corpora are unchanged, so the owner's
+conditional fresh 388-question G2 run is **not triggered**. This is no new G2
+score, retrieval-quality result or coding-task benefit. It does not establish
+equivalence on unmeasured inputs.
+
+**Migration remains explicit.** The selected bundle advances derived search
+schema 8 → 9 and `SOURCE_UNIT_SCHEMA` 6 → 7 even though these measured bytes are
+unchanged: the dependency/grammar identity changes beyond this finite comparison.
+Authoritative store schema 12 and semantic generation schema 6 stay fixed.
+Under the [existing repair contract](../specs/001-source-state-recovery/contracts/context-v2.md#parser-bundle--2026-11-11),
+old indexes require explicit `repair-index`; authoritative sources, hashes,
+revisions, memories and tasks remain. Old semantic partitions/state/generation
+metadata remain inspectable history, never current. Explicit `semantic prepare`
+refits every source under units7, including zero-unit sources, reusing only exact
+cached model inputs. Ordinary open/status does not repair or republish old state.
+No original measurement store was opened, repaired or semantically migrated by
+the corpus comparison; migration checks use test stores.
+
+**Executed local checks.** The 58 syntax tests and one test each for recipe
+eligibility, search repair, retained semantic-state migration and changed-range
+refitting all pass: 62 tests, zero failures, in five focused commands on `68ed776`.
+Baseline preparation took 323.33 s; candidate build/snapshot/comparison took
+210.83 s; focused checks took 54.79 s. These phases perform different work and
+are elapsed receipts, not a performance comparison. Each arm's eight native
+phases and all five focused commands exited 0 naturally, with no forced cleanup
+or observed owned process remaining. No provider/model calls, training or corpus
+code execution occurred.
+
+**Clock correction.** The initial shared deadline passed Python 3.9
+`time.monotonic()` values across processes on this Mac, where their origins
+differed; that shared guard was ineffective for the focused phase. Its local
+900-second cap remained effective, and the actual 54.79-second run finished
+before the originally selected UTC end, `2026-11-11T17:11:46.981248Z`. Subsequent
+candidate/gate admission uses the shared `CLOCK_MONOTONIC` clock, preserving
+that original end without an extension. This correction does not retroactively
+claim that the earlier shared guard enforced the bound.
+
+**Full local gates: PASS on `68ed776`.** All eight stages exit 0: fmt,
+clippy, default tests, pilot clippy/tests, actual Rust 1.90 check/clippy and
+Rust 1.90 pilot check. The default suite has 1,307 passed, zero failed and
+34 ignored; the custom recovery binary adds 21 passing crash checks, and the
+pilot unit suite has 62 passed. The four watch tests finish in 26.97 s.
+The complete gate run takes 738.89 s, exits naturally, requests no cleanup signal
+and leaves no observed owned process. Both Rust 1.97.1 and 1.90 use SDK 26.5.
+The sampled maximum among owned roots/descendants is 2,135,736,320 bytes RSS
+(includes compilers), with 1,475 missed process samples; this is not a true peak.
+The observed free-space minimum is 276,552,712,192 bytes, above the 20 GiB floor;
+no sampled process crosses 8 GiB. These are development gates, not signed-package
+acceptance or actual-host pilot qualification.
+
+**Upstream source inspected, not upstream tests executed.** Scala 0.26.4
+(`8c0b6d44bfd66bf7bc9a1fc15084ef17cef2f97e`) changes declaration/layout ownership
+in `grammar.js::_function_declaration`/`_function_constructor` and scanner
+`scan_impl`; its packaged `bindings/rust/lib.rs:53::test_can_load_grammar` was
+inspected. PowerShell 0.26.6 (`65ea6919e816a7ac142acec7ee72757f89db8439`)
+changes `grammar.js::command_parameter`/`_command_argument` and
+`src/scanner.c::scan_bare_dashes`; its corresponding Rust binding test at line 54
+was inspected. Neither grammar crate packages its upstream grammar corpus tests.
+Cmark 0.13.6 (`014b61d38d235f382935bb676bab872b7680afa2`) changes
+`src/parse.rs::handle_wikilink`; `tests/suite/wikilinks.rs::wikilinks_test_15`
+was inspected. Foundry's [`markdown_sections`](../src/syntax/markdown.rs) uses
+`Parser::new` with wikilinks off. Foundry owns bounded syntax units/import hints
+under 001 T008, not upstream editor queries or compiler-proven relationships.
+These references explain the selected risk; the measured comparison supplies
+the output evidence. No upstream performance or security improvement is claimed.
+
+Private evidence: `runs/parser-bump-2026-11-11/` contains
+`baseline-receipts/final-receipt.json`, `candidate-receipts/final-receipt.json`,
+their native command receipts, `focused/result.json`, `candidate-clock.json`,
+`lock-diff.json`, `lock-after-resolution.toml` and `upstream-inspection/NOTES.md`.
+Complete captured inputs and snapshots remain in the owned parser baseline and
+candidate `.noindex` directories. The selection/inspection documents' earlier
+"not started"/"not run" labels remain preparation history; they are not substitutes
+for these later executed receipts or the completed full-gate receipt.
+
+## Encrypted evidence backups — 2026-11-11
+
+Owner decisions 7/30 are complete at the selected local-disk boundary. Five
+archives are built under `~/VSC_DEV/backups/foundry-20261111-retry1`, totaling
+1,225,156,744 encrypted bytes. The owner selected `~/.ssh/id_ed25519.pub` and
+retains its private key; the pinned recipient fingerprint is
+`SHA256:nsuaEpeRmr4BvJH1gfJkqkPuoiAz9uaQFmkLlL0rzsQ`. No private key was read.
+The owner still handles off-machine copying and authenticated recovery.
+
+| Archive | Source directory under `datasets/` | Ciphertext SHA-256 |
+| --- | --- | --- |
+| `01.tar.zst.age` | `context-foundry-g2` | `e81cfbcb320b280eacc9d370b9b89d335a8cc8cdd45740f4a5059a6fac78122d` |
+| `02.tar.zst.age` | `context-foundry-f4` | `bd7688af71838712d09fe0b87b15ddc3ae86eaf3197f577ad658872085f82ff0` |
+| `03.tar.zst.age` | `context-foundry-g2-harness` | `6a7155a79f7873177518361182f40523a2222e8dcd705d6a3878e1a6785c91fc` |
+| `04.tar.zst.age` | `context-foundry-citymap` | `bfbdfd33cc9784ba0f6fc83a5af49b47bbd78a6b08f535bcbdf9075b179f7133` |
+| `05.tar.zst.age` | `context-foundry-task-validation` | `d9468d818e3ac20bfde7018930d0601317c7fd929c69ecc45ce35bf2e753748e` |
+
+The native-supervised job passed in 20.66 s within the declared 1,800 s budget
+and 20 GiB free-disk floor. Each source received a complete non-following
+byte/type/mode/symlink manifest. Per-file APFS clones matched those manifests
+before and after the archive stream, and the originals matched again at the end.
+All 15 BSDtar/zstd/age pipeline exits were zero. There was no plaintext tar at rest;
+file-level manifests and source mappings are inside encryption. Ciphertext files
+were fsynced, freshly hashed, header-inspected and published without overwriting.
+A separate `shasum -a 256 -c SHA256SUMS` readback passed for all five archives and
+four recovery sidecars/helpers. The checksum list's own SHA-256 is
+`40edae75f9e9b7852e34717391594196224444852c4c84ce74f5bce9f4b4cc32`.
+The supervisor recorded natural exit, no forced cleanup and no owned process
+remaining. Only this job's staging copies were removed; original data is retained.
+
+The first preflight failed before any dataset read: `diskutil info` was given the
+staging subdirectory rather than its containing mount point. Its failed receipt
+and empty destination remain. The corrected driver queries the observed APFS
+mount point and checks its device against staging, then uses fresh work/output
+names. No source, recipient, archive rule or resource bound changed.
+
+Age 1.3.2's official macOS arm64 archive and executable were checksum-verified;
+no tool was installed system-wide. Nine synthetic manifest rejection checks and a
+small APFS/BSDtar restore check passed, including executable/read-only modes and
+symlinks. Those are apparatus checks, not decryption of the real archives.
+**Authenticated decryption/restoration and an off-machine copy are unexecuted.**
+The backup preserves file bytes, types, modes and symlink targets; ACLs, xattrs,
+resource forks, flags, ownership, timestamps, sparse layout and hardlink topology
+are not claimed. These are per-file clones with repeated manifest checks, not an
+atomic volume snapshot or a live-database consistency proof. No paid calls ran.
+
+The private apparatus, original/corrected protocols, failed/successful native
+receipts and complete manifests are retained in `runs/backups-2026-11-11/`.
+[Build, checksum and owner-only recovery commands](resume.md#encrypted-backups)
+travel with the existing resume instructions. Pilot evidence stays retained until
+T006 is accepted, retired or superseded.
+
+## Tantivy 0.27 store compatibility and G1 neutrality — 2026-11-11
+
+Owner decision 22 (2026-11-06, “Apply only if neutral”) selects one dependency
+candidate: Tantivy 0.26.2 → 0.27.0. Candidate `292976929836a65ad8aecc5a82f205209903fda2`
+changes only Cargo.toml and Cargo.lock; no Foundry API adaptation was required.
+Default features remain off; `mmap` and `lz4-compression` remain selected.
+No Foundry ranking, parser, corpus, scoring or schema change is included.
+
+**Pins.** The measured baseline is `f5afd2b9a71acdf1956aca9a6da48f7dacfde7f7`
+(Tantivy 0.26.2), binary SHA-256
+`767910da6960905cc788634297521d043ccb6f294d7a18245126494f866e1389`.
+The candidate binary SHA-256 is
+`874ee3c79624f6e14e442877ecd6ea1b07dd12e765604353e684138f116729ef`.
+The exact 0.27.0 crate archive is
+`ad1ebacf6bc124b741ffbfb088f9835cb55e1e2ff57e182e9219e3efa1377b97`;
+its declared Rust floor is 1.88. The selection named source commit `fef81c6`;
+`f5afd2b` is its documentation-only successor and is the actual frozen baseline.
+
+**Executed on the owner's Mac, with no spend.** Each arm opened its own APFS clone
+of the preexisting 0.26.2 store. All six opening/post-query status pairs matched the frozen
+ready/complete/zero-pending state; no repair or indexing command ran.
+Rust's store had 60,739 sources at `b940084d7eb6a299eb4bfeb8e34901bc051e7ac4`;
+oh-my-pi had 8,436 at `5b8d5b8a15ab1711597584aadbdc112c55befed1`.
+Full original-store manifests and corpus pins remained unchanged. Original stores
+were not opened. Store schema 12, search schema 8, source-unit schema 6 and semantic
+generation 6 remain unchanged; this is compatibility at the tested lexical-store
+boundary, not a semantic preparation or release acceptance run.
+
+| Full G1 group | Tasks per arm | Response records per arm | Unmasked guards | Paired bytes |
+| --- | ---: | ---: | --- | --- |
+| bun | 1,000 | 1,029 | PASS in both arms | Identical |
+| checker | 6,881 | 10,476 | PASS in both arms | Identical |
+| qualified | 2,551 | 2,779 | PASS in both arms | Identical |
+| Total | 10,432 | 14,284 | All pass | Identical |
+
+The frozen runner/scorer used SAMPLE 1/1 and one shard; the comparator did not mask
+its exit. Complete result JSONL and decompressed response JSONL matched literally,
+including identities, arguments, evidence and order; no normalization was used.
+Gzip container timestamps were excluded. Nine synthetic comparator checks passed,
+including rejection of missing/truncated/duplicate or mismatched records.
+
+The predeclared comparison bound was 3,600 s, with a 20 GiB disk floor and an 8 GiB
+sampled Foundry-owner RSS ceiling. The run completed in 1,297.74 s. All 27 native
+phase receipts passed with natural exit, no forced cleanup and no owned process
+remaining. Peak sampled owner RSS was 567,296,000 bytes; minimum observed free disk
+was 293,290,606,592 bytes. Seven owner samples missed processes that had already
+exited. These are sampled observations, not true process/GPU peaks or hard resource
+limits. No provider/model calls, training or corpus-code execution occurred.
+No quality or performance improvement is claimed; G2 was not rerun for this neutral
+maintenance candidate.
+
+**Upstream inspection, separately from execution.** Exact Tantivy 0.27.0 source:
+`src/lib.rs:240` (`INDEX_FORMAT_VERSION = 7`, oldest supported 4);
+`src/compat_tests.rs:42` / `:53` (`test_format_6`, `test_format_7`);
+`src/query/const_score_query.rs:42` (`ConstScoreQuery::weight`, child scoring disabled)
+and `:192` (`test_const_score_query_disables_child_scoring`). Those upstream tests
+were inspected, not executed. Same format numbers were a hypothesis, not the
+compatibility proof above. `src/directory/mmap_directory/mod.rs:310–318`
+(`ReleaseLockFile::drop`) still relies on descriptor closure; the separate Foundry
+inherited-lock containment repair remains in both arms. These references inform
+001's existing derived-index owner and decision 22; no upstream ownership or
+new source schema is imported.
+
+**Local gates: PASS on `2929769`.** All eight stages exited 0 in 791.38 s:
+formatting, Clippy, default tests, pilot-feature Clippy and unit tests, and actual
+Rust 1.90 check/Clippy/pilot check. The default suite passed 1,307 tests, with zero
+failures and 34 ignored; all 21 custom child-process recovery checks also passed.
+The separate pilot unit gate passed 62 tests. All four watcher tests passed in
+27.30 s. Rust/Cargo 1.97.1, Rust 1.90.0 and the macOS 26.5 SDK were used on the
+owner's M5 Max, with the tracked candidate clean. The 1,800 s gate deadline,
+20 GiB disk floor and 8 GiB sampled owner RSS ceiling were respected. The supervisor
+recorded natural exit, no forced cleanup and no owned process remaining.
+
+Decision 22 is accepted for the experimental line. This does not accept T010
+default promotion or constitute a release, signed-package or semantic-quality result.
+
+Private protocols, binaries, status/identity reports and command receipts remain in
+`runs/tantivy-neutral-2026-11-11/`; complete private query outputs and clones remain
+in `datasets/context-foundry-tantivy-027-2026-11-11.noindex/`.
+Protocol SHA-256: `ab19377fd3270edeabfaac8a68ae19d6777a3e3a1cb01ced9021ef38b2c07ab9`.
+Driver SHA-256: `4a7296be6993cfab29fdc92a439df0e6e558dc504fefdf7d32e4bd16896f4ab7`.
+Key receipts: `measurement/result.json`, `measurement/{bun,checker,qualified}-identity.json`,
+`measurement/commands/`, `binary-{baseline,candidate}.json`, `source-inspection.json`,
+`dependency-diff.json`, `comparator-checks.json`, `gates-result.json` and `gates-supervisor/000-full-gates.receipt.json`.
+The earlier source-inspection/README “unexecuted” statuses are preparation history;
+the measurement/result receipt supplies the later executed result.
+
+## Derived writer contention after fork — 2026-11-11
+
+The retained-cleanup gates on `85369dd` completed all eight stages in 795.88 s:
+seven exited 0, but the default test gate exited 101. Its totals were 1,304 passed,
+one failed and 34 ignored; the separate pilot unit gate passed all 62 tests.
+`policy::the_cli_keeps_output_identical_without_a_policy_and_reports_it` failed
+at its first plain CLI context call with Tantivy `LockBusy`, incorrectly reported
+as `repair_required`. All observed owned processes exited naturally, without
+forced cleanup. This failed run is retained and does not count as acceptance.
+
+The existing `d72f3bb` field-order repair is present: redb ownership outlives the
+parent's search-writer teardown. A separate real-process witness identifies a
+remaining lifetime mismatch. Tantivy 0.26.2's `ReleaseLockFile::drop`
+(`src/directory/mmap_directory/mod.rs`) releases its BSD flock only by closing its
+file; its `src/directory/tests.rs::test_lock_non_blocking` and `test_lock_blocking`
+cover same-process/thread lock release, not this inherited-descriptor boundary.
+Those upstream tests were inspected, not rerun. redb 4.4.0's optimized file backend
+explicitly unlocks in `release_all_locks`/`unlock_whole_file`. A child held between
+fork and exec retains the inherited Tantivy descriptor. After the parent drops
+its Engine, a new Engine acquires redb but reports `repair_required/LockBusy`;
+releasing and reaping the child restores `ready` and the original search result,
+without repair. The native supervisor recorded natural exit and no remaining
+owned child. This establishes the mechanism; the original policy-test failure
+did not instrument its fork interval, so that specific occurrence is not causally
+attributed beyond the matching lock symptom.
+
+The repair preserves the typed lock error. After acquiring redb ownership, open
+retries only the derived writer's `LockBusy`, bounded to one second. Persistent
+contention returns `store_busy`; corruption and schema mismatches still require
+explicit repair. Competing redb owners are refused immediately. No lock is stolen,
+index rebuilt or source record changed. This local containment avoids a dependency
+fork or a new process-coordination layer; it does not change Tantivy's lock lifetime.
+
+Both new tests in `tests/store_lock.rs` fail before the repair and pass after it
+(2 passed in 1.23 s). The first uses real forked descriptors and releases the child
+only after the actual lock attempt fails; the second holds a real Tantivy writer,
+requires bounded `store_busy`, unchanged index metadata and a ready reopen with
+the original source revision/result. A native focused run passed all 88 core,
+22 policy and two lock tests in 87.82 s, including the original failing policy case;
+it exited naturally with no observed owned processes left. In-session review added
+a deadline check before starting any retry, so an expired wait cannot start another
+reader construction; both lock regressions passed again after that correction.
+
+**Fresh full gates: PASS on `fef81c64f75b41ce5379174d82fa1b3e4888b461`.** All eight
+stages exited 0 in 741.87 s: formatting, Clippy, default tests, pilot-feature Clippy
+and unit tests, and Rust 1.90 check/Clippy/pilot check. The default suite passed
+1,307 tests with zero failures and 34 ignored; all 21 named child-process recovery
+checks also passed. The separate pilot unit gate passed 62 tests. The watcher file
+passed all four tests in 26.52 s. This used Rust/Cargo 1.97.1, actual Rust 1.90.0
+binaries and the macOS 26.5 SDK on the owner's M5 Max. The tracked tree was clean.
+The 1,800 s outer deadline, 20 GiB disk floor and 8 GiB sampled Foundry-owner RSS
+ceiling were unchanged. The supervisor exited naturally, without forced cleanup,
+and found no owned processes remaining. No paid provider, training or hosted CI ran.
+
+This accepts the retained semantic isolation, supervisor repair and store-lock
+containment at their tested boundaries. It does **not** qualify T010's rejected
+default-promotion candidate. Private evidence, including the pre-repair executable,
+red/green logs, final gate receipt and a 340-file SHA-256 evidence snapshot, is in
+`runs/store-lock-2026-11-11/`; the original
+gate logs and receipt remain in `runs/t010-lexical-2026-11-11/gates-retained*`.
+
+## Pilot startup-network source feasibility — 2026-11-11
+
+**Source feasibility finding; startup-network qualification remains open.** Owning
+requirement: 003 T006's [existing v2 startup row](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#required-v1-gap-repairs-and-qualification).
+Capture denied startup attempts with destination/classification before any paid
+request and disallow unobserved routes. This in-session source inspection neither
+implements that outcome nor establishes runtime coverage or OS-denial causality.
+
+The official [v18.13.2 release metadata](https://api.github.com/repos/can1357/oh-my-pi/releases/tags/v18.13.2)
+associates `omp-darwin-arm64` asset `682434495` (217,260,176 bytes) with
+[asset SHA-256](https://api.github.com/repos/can1357/oh-my-pi/releases/assets/682434495)
+`38c3645283ceba06f66462830ae15f27270cc7f84575e40a4c6bd68452a63d0f`, exactly the frozen host pin.
+The [tag reference](https://api.github.com/repos/can1357/oh-my-pi/git/ref/tags/v18.13.2)
+resolves to immutable source commit `e996e1c7ac476f60e02b8ed9764cf30fa8c00a8e`;
+all source/test links below use that commit. Release metadata reports `immutable:false`.
+This establishes release association, not reproducible-build/source-to-artifact
+correspondence. No artifact was downloaded/rehashed, built or executed in this inspection.
+
+| Inspected source owner | Finding and implication |
+| --- | --- |
+| [`ModelRegistry` constructor](https://github.com/can1357/oh-my-pi/blob/e996e1c7ac476f60e02b8ed9764cf30fa8c00a8e/packages/coding-agent/src/config/model-registry.ts#L518), [trusted-extension load](https://github.com/can1357/oh-my-pi/blob/e996e1c7ac476f60e02b8ed9764cf30fa8c00a8e/packages/coding-agent/src/main.ts#L2450) | Private fetch is captured before the extension factory; a later global-fetch wrapper cannot cover it. |
+| [`prewarmModelConnection`](https://github.com/can1357/oh-my-pi/blob/e996e1c7ac476f60e02b8ed9764cf30fa8c00a8e/packages/ai/src/providers/connection-prewarm.ts#L28), [`sendCoworkRequest`](https://github.com/can1357/oh-my-pi/blob/e996e1c7ac476f60e02b8ed9764cf30fa8c00a8e/packages/ai/src/providers/cowork-fetch.ts#L185), [SDK startup](https://github.com/can1357/oh-my-pi/blob/e996e1c7ac476f60e02b8ed9764cf30fa8c00a8e/packages/coding-agent/src/sdk.ts#L2177) | Official Anthropic prewarm can use direct Node HTTPS; startup discards its promise. The inference relay and registry await do not cover it. |
+| [`ExtensionAPI.pi`](https://github.com/can1357/oh-my-pi/blob/e996e1c7ac476f60e02b8ed9764cf30fa8c00a8e/packages/coding-agent/src/extensibility/extensions/types.ts#L1720) / [`registerLogSink`](https://github.com/can1357/oh-my-pi/blob/e996e1c7ac476f60e02b8ed9764cf30fa8c00a8e/packages/utils/src/logger.ts#L28), [`awaitBackgroundRefresh`](https://github.com/can1357/oh-my-pi/blob/e996e1c7ac476f60e02b8ed9764cf30fa8c00a8e/packages/coding-agent/src/config/model-registry.ts#L615) | Useful partial diagnostics/current registry settlement; neither supplies every attempt, prior events or a complete startup barrier. |
+| [Discovery fallback](https://github.com/can1357/oh-my-pi/blob/e996e1c7ac476f60e02b8ed9764cf30fa8c00a8e/packages/coding-agent/src/config/model-discovery.ts#L604), [silent metadata](https://github.com/can1357/oh-my-pi/blob/e996e1c7ac476f60e02b8ed9764cf30fa8c00a8e/packages/catalog/src/provider-models/openai-compat.ts#L4378), [timeout wrapper](https://github.com/can1357/oh-my-pi/blob/e996e1c7ac476f60e02b8ed9764cf30fa8c00a8e/packages/coding-agent/src/config/model-discovery.ts#L79) | Provider warnings can omit fallback/metadata destinations; wrapper timeout can settle while fetch ignores abort. Quiet logs or registry settlement cannot certify a complete inventory. |
+
+Relevant upstream tests were **read, not run**: [prewarm injected-fetch HEAD](https://github.com/can1357/oh-my-pi/blob/e996e1c7ac476f60e02b8ed9764cf30fa8c00a8e/packages/ai/test/connection-prewarm.test.ts#L50),
+[awaited/coalesced discovery](https://github.com/can1357/oh-my-pi/blob/e996e1c7ac476f60e02b8ed9764cf30fa8c00a8e/packages/coding-agent/test/model-discovery.test.ts#L239),
+[8080→9931 fallback](https://github.com/can1357/oh-my-pi/blob/e996e1c7ac476f60e02b8ed9764cf30fa8c00a8e/packages/coding-agent/test/model-discovery.test.ts#L1635)
+and [fetch ignoring abort](https://github.com/can1357/oh-my-pi/blob/e996e1c7ac476f60e02b8ed9764cf30fa8c00a8e/packages/coding-agent/test/model-discovery.test.ts#L1764).
+These test sources support the individual behavior boundaries; they do not prove a
+compiled host exposes the injected logger singleton or complete startup observation.
+
+Foundry's [bridge Ready](../src/pilot_capture/bridge.ts), inference-only [`FetchBegin`](../src/pilot_capture/protocol.rs)
+and [`Host::launch` sandbox policy](../src/pilot_capture/host.rs) do
+not supply that guarantee. Preserve the frozen inference routes and reuse the
+owned bridge/channel and durable journal if a complete early host seam is built.
+Concrete missing seam: inject observation/refusal before `ModelRegistry` captures
+fetch, retain/await prewarm and every other allowed startup owner, then acknowledge
+the complete durable observation prefix before count/messages admission. Prove
+non-bypass coverage and failure/cleanup at the actual host boundary; a logger sink,
+late fetch hook or quiet timer alone is insufficient. No host re-pin is selected.
+
+Private `runs/pilot-private-permissions-2026-11-11/startup-source-plan.md` and
+`startup-local-interface-plan.md` retain module/blob identities and Foundry interface pointers;
+no host launch, test, provider call, private-input read or runtime acceptance is
+claimed here. Possible source destinations are not a measured inventory. Host
+ENOTFOUND/EPERM text is not independent OS-denial proof. This is a narrow source
+finding, not a repository-wide absence claim; T006 and pilot v2 remain unaccepted.
+
+## Pilot checker provenance and retained diagnostics — 2026-11-11
+
+**PASS at the selected local checker boundary.** Pilot v2/T006 remain unfunded and unaccepted.
+Production `351f638dce5cc2aa245653ad969df2357b6eed87` follows `ac0850cba7409bdb13914461a07ac645c1266bad`;
+final gate candidate `1f434cae92bd48e60f5dad0b235b8a3ca637e59f` changes only the declared test cleanup conditional.
+Exact frozen policy/pins modules and v1 contract are unchanged. Required metadata
+`bounded-pilot-v1-check-v2` binds exact sanitized environment/SBPL, fresh executable observations
+and complete private stderr files/lengths/digests. Legacy fields receive no defaults. Capped partial
+capture faults halt; complete nonzero checks remain ordinary Fail. One deadline covers process/readers.
+
+| Original focused command | Passed / failed / ignored | Actual / expected exit | Seconds | Evidence |
+| --- | ---: | ---: | ---: | --- |
+| `green-actual-producer` | 1/0/0 | 0/0 | 4.257 | green |
+| `green-actual-producer-final` | 1/0/0 | 0/0 | 4.123 | green |
+| `green-full-host-suite` | 22/8/2 | 101/0 | 221.768 | retained failure |
+| `green-full-host-suite-retry` | 30/0/2 | 0/0 | 250.458 | green |
+| `green-unit` | 76/1/0 | 101/0 | 35.005 | retained failure |
+| `green-unit-final` | 77/0/0 | 0/0 | 34.359 | green |
+| `green-unit-retry` | 77/0/0 | 0/0 | 34.999 | green |
+| `red-compiler` | 0/1/0 | 101/101 | 30.388 | expected red |
+| `red-environment` | 0/1/0 | 101/101 | 31.871 | expected red |
+| `red-kind` | 0/1/0 | 101/101 | 31.563 | expected red |
+| `red-oracle-executable` | 0/1/0 | 101/101 | 31.821 | expected red |
+| `red-pipe-deadline` | 0/1/0 | 101/101 | 35.320 | expected red |
+| `red-producer-environment` | 0/1/0 | 101/101 | 17.787 | expected red |
+| `red-profile` | 0/1/0 | 101/101 | 33.822 | expected red |
+| `red-special-mode` | 0/1/0 | 101/101 | 30.699 | expected red |
+| `red-stderr-cap` | 0/1/0 | 101/101 | 31.218 | expected red |
+| `red-stderr-file` | 0/1/0 | 101/101 | 31.087 | expected red |
+| `red-stderr-read` | 0/1/0 | 101/101 | 31.284 | expected red |
+
+Initial unit failure passed deadline/group cleanup but retained 15-byte stderr with a complete
+filename after cleanup EOF; stopped-group output is now conservatively partial, with assertions unchanged.
+Initial host failures reached unadapted fixture roots (0755 versus 0700), before intended assertions;
+eight fresh-directory sites now establish 0700, with production/assertions unchanged. Both failures remain.
+All eleven selected reds reach assertions, restore exact source and precede final greens. The pipe
+control gets err() None before its later two-second assertion; producer-environment completes four
+zero-exit steps then rejects the emptied receipt map, before the negative phase. Neither proves a
+child-environment syscall trace or compiler replacement. Expected-red success is not acceptance.
+Consumer/file, owned-process and actual compiler/oracle evidence remain distinct. The producer uses
+fresh owned five-file copies; final readback retains 34 regular private files. Four positive steps exit zero;
+one new compile-error step exits 1 without a checker. Complete stderr: 0/0/457/0 positive / 230
+negative bytes, all 0600, with the public negative marker. Exact environment/profile/digest metadata matches.
+Private diagnostic inspection found no unexpected error headers; raw diagnostics remain private.
+Inputs retain original candidate bytes/mode/mtime/inode, oracle/historical stdout bytes, owned bytes/modes
+and compiler pin. Original oracle mode was not compared; no new stdout length is claimed. The full host
+file ignores actual-producer/private-full-pipeline tests; actual producer is separately selected. No calibration rerun.
+
+Original gates on `351f638` FAILED: only pilot-clippy exit 101 (two collapsible_if findings in
+test cleanup); seven exits zero. Tests 1,311/0/34, 21 recovery checks, 77 pilot pass. Gates 619.161 s;
+original stage closed failed at 1941.598/2,400 s, with no extension. A separate 1,800-second
+lint continuation preserves exact reverse-replacement equality, production prefix, other three source files
+and all assertions. No new focused run was required; the fresh pilot-unit gate exercises cleanup again.
+Fresh eight gates PASS in 638.859 s; default 1311/0/34, pilot 77/0/0
+passed/failed/ignored plus 21 recovery checks. Continuation shared time 755.163/1,800 s.
+Both stages retain 120-second cleanup reserves, one heavy job and $0 spend; Rust/Cargo 1.97.1 and
+actual 1.90.0 use SDK 26.5. Every observed command exits naturally, without forced cleanup or owned survivors.
+Focused sampled individual RSS max 2,146,254,848 B, free min 268,272,418,816 B,
+109 misses. Original gates: RSS 1,407,909,888 B, free 265,131,134,976 B, 1415 misses;
+continuation: RSS 2,114,453,504 B, free 265,360,961,536 B, 1387 misses. Bounds held; not true peaks.
+
+Private owner: `runs/pilot-checker-provenance-2026-11-11/`, including immutable original pins/results,
+safe command/readback/control metadata, both corrections and `lint-continuation/` protocol/equivalence/gates.
+Prehash/exec remains non-atomic; dynamic libraries/sysroot, compiler-version preflight bounds,
+broader permissions and startup-network capture remain open.
+No current-host/provider compatibility, private full-pipeline/agent/economics or pilot-v2/T006 acceptance follows.
+
+## Pilot checker completion and artifact binding — 2026-11-11
+
+**PASS at the selected local checker boundary.** Pilot v2/T006 remain unfunded and unaccepted.
+Candidate `85479736a55c3b6982e88adb2a4b8a013a062b5f` follows `13c0a63e1e8282986d50444632e13ffc27a6b9db`; frozen v1 policy/history are unchanged.
+The existing consumer requires the pinned completion digest and exact compile/executed-image
+lineage. Complete observed nonzero results remain ordinary Fail; incomplete provenance halts.
+The producer hashes the exact copied oracle bytes, refuses read-error-as-EOF capture, and routes
+capture/receipt-write/sealing errors through the existing halt, keeping later slots unstarted.
+
+| Retained focused command | Passed / failed / ignored | Actual / expected exit | Seconds | Disposition |
+| --- | ---: | ---: | ---: | --- |
+| `green-actual-producer` | 1 / 0 / 0 | 0 / 0 | 4.108 | green pass |
+| `green-consumer` | 4 / 0 / 1 | 0 / 0 | 66.552 | green pass |
+| `green-full-host-suite` | 29 / 0 / 2 | 0 / 0 | 242.703 | green pass |
+| `green-helpers` | no test summary | 101 / 0 | 9.798 | retained other outcome; inspect metadata/log |
+| `green-helpers-final` | 2 / 0 / 0 | 0 / 0 | 31.625 | green pass |
+| `green-helpers-retry` | 2 / 0 / 0 | 0 / 0 | 31.787 | green pass |
+| `red-actual-producer` | 0 / 1 / 0 | 101 / 101 | 1.346 | expected-red failure witness |
+| `red-check-halt` | 0 / 1 / 0 | 101 / 101 | 32.517 | expected-red failure witness |
+| `red-consumer` | 1 / 3 / 1 | 101 / 101 | 44.974 | expected-red failure witness |
+| `red-pipe` | 0 / 1 / 0 | 101 / 101 | 31.849 | expected-red failure witness |
+
+Expected-red `passed:true` matches a failure witness, not implementation acceptance. Actual
+assertion metadata and exact restored-source controls remain with each command. Tests run on
+retained working-tree patches; all eight gates below bind the final committed candidate.
+The first `green-helpers` command failed compilation before tests: its unqualified `json!`
+was corrected to `serde_json::json!` in test code only; production was unchanged and the failure is retained.
+The pipe red accepts a prefix hash; the halt red fails on None versus check_output_unbound at its
+first producer-error case, before its receipt-write branch. Final green exercises both helper branches.
+Synthetic consumer receipts use inert artifact identities and do not execute the private oracle.
+The actual producer executes the fixed local compiler/oracle on new owned copies of the five
+SHA256SUMS-verified files and fresh outputs. It uses no host/model/provider or original calibration harness.
+Its baseline red completes four zero-exit steps and checks completion before finding no oracle_run
+executed-image artifact. Green separately passes the positive chain and a new owned compile-error case.
+That negative producer phase is an observed nonzero receipt; ordinary Fail consumption is tested separately.
+Readback retains 29 private green artifacts and proves five original files unchanged in bytes/mode/
+mtime/inode, owned input bytes/mode 0600 and compiler pin unchanged. Original oracle and historical
+stdout bytes are unchanged; original oracle mode was not compared.
+The serial synthetic-host file is distinct; both the private full pipeline and actual-producer test
+remain ignored there. Actual producer execution is only its separately selected ignored-test command.
+
+**All eight gates pass** in 616.327 s; default tests 1,311/0/34 passed/failed/ignored,
+21 custom recovery checks pass separately, and pilot units 66/0/0. Rust/Cargo 1.97.1 and
+actual Rust/Cargo 1.90.0 use macOS SDK 26.5. Every retained command exits naturally, without
+forced cleanup or observed owned processes remaining. Shared elapsed: 1529.531/2,400 s;
+no extension, 120-second cleanup reserve and spend $0. Each producer recipe retains its 60-second bound.
+Focused sampled individual RSS maximum 2,165,719,040 B; minimum free
+270,814,244,864 B; 74 missed samples. Gates: 1,401,208,832 B RSS,
+267,521,388,544 B free, 1,381 misses. Bounds held; these are not true peaks or aggregate/GPU memory.
+
+Expected successful stdout SHA-256: `aac03c0ded8403eb8bd3ca53e9880313cde11fa658db4fc7444d737eef33127d`.
+Its 106-byte length is historical input metadata; the new receipt records a digest, not a byte counter.
+Oracle SHA-256: `f5ac14d370d852090c49ead61e23f4d9185eed491b33b123ba6e6ff2dec09bb9`.
+Private owners: `runs/pilot-oracle-completion-2026-11-11/` protocol, owned-input/commit pins,
+all focused receipts/control metadata, `producer-red-readback.json`, `producer-readback.json`,
+`input-final-readback.json`, `helper-compile-correction.json`,
+`gates-result.json` and gate logs. Raw private source/oracle/output bytes stay outside Git.
+
+No current installed-host/provider compatibility, private full-pipeline/agent/economics acceptance,
+power-loss durability or retrieval gain is claimed. Environment/sandbox/compiler receipt expansion,
+retained stderr bytes and permissions remain separate gaps; broader v2 freeze requirements stay open.
+
+## Pilot authority and run-path binding — 2026-11-11
+
+**PASS at the selected local no-provider boundary.** Pilot v2/T006 remain unfunded and unaccepted.
+Authority code `87fe845a3e4612996f14370a2dfc6e2a8732cb2b` follows base `bd9ecbf19f6ca529aa51d17c2fa923e88a76def0`.
+Test-only continuation `4c659f72f3d5bb9ade51e4502dc9fe986d0dc79b` changes only `tests/store_lock.rs`; the four authority-source hashes remain exact.
+Launch metadata `bounded-pilot-v1-launch-v2` requires canonical `run_dir` and explicit
+`manifests --run-dir`; the unchanged authority shape binds that root through the manifest digest.
+Existing synced `admitted`/`coding_handoff` records bind the digest of validated authority bytes, scope
+and actual root before a runnable session returns; Verification records null authority.
+Legacy unbound metadata and unbound Live probe history refuse without rewriting historical evidence.
+
+| Retained command | Passed / failed / ignored | Actual / expected exit | Seconds | Disposition |
+| --- | ---: | ---: | ---: | --- |
+| `green-authority` | 9 / 0 / 0 | 0 / 0 | 96.354 | green pass |
+| `green-chain-final` | 2 / 0 / 0 | 0 / 0 | 34.223 | green pass |
+| `green-full-host-suite` | 25 / 0 / 1 | 0 / 0 | 195.484 | green pass |
+| `green-restore-cli` | 2 / 0 / 0 | 0 / 0 | 13.949 | green pass |
+| `green-seal-binding` | 1 / 0 / 0 | 0 / 0 | 18.535 | green pass |
+| `red-baseline-authority` | 2 / 7 / 0 | 101 / 101 | 80.778 | expected-red failure witness |
+| `red-coding-chain` | 0 / 1 / 0 | 101 / 101 | 30.368 | expected-red failure witness |
+| `red-probe-chain` | 0 / 1 / 0 | 101 / 101 | 21.798 | expected-red failure witness |
+| `red-seal-binding` | 0 / 1 / 0 | 101 / 101 | 18.174 | expected-red failure witness |
+| `fixture-continuation/green-store-lock` | 2 / 0 / 0 | 0 / 0 | 4.442 | green pass |
+| `fixture-continuation/mechanism-witness` | 1 / 0 / 0 | 0 / 0 | 6.226 | green pass |
+
+Expected-red `passed:true` only means the declared failure occurred. Actual panic/assertion
+excerpts and every command identity/lifecycle are retained in the private collection and logs.
+Baseline chain-positive tests stopped at new-format rejection; those are not causal chain witnesses.
+`red-probe-chain` and `red-coding-chain` omit only their producer fields, retain format/path
+validation, and restore all four selected source hashes. Their exact failing assertions remain recorded.
+The probe control fails on null admitted authority; the coding control reaches handoff and fails
+on null run path. Its later authority assertion was not reached, so it is not an authority-specific red.
+The seal-binding red stops at the first missing-authority case; it does not independently witness
+all later invalid-binding branches. The unchanged final green tests exercise their full assertions.
+Focused runs retain their actual working-tree HEAD/patch identity; gate receipts bind their respective commits.
+The ignored private-evidence pipeline was adapted before execution (`fixture-correction.txt`),
+including its earlier manifest-bound path refusal; it was never run or qualified.
+
+**First gates FAILED on `87fe845`:** seven exits 0, default test 101. The store-lock test failed
+at direct Tantivy writer setup (`tests/store_lock.rs:120`, `LockBusy`), before `Engine::open_existing`.
+Default totals: 1,310/1/34 passed/failed/ignored; 21 recovery checks and 64 pilot units pass.
+It took 634.366 s; original shared stage 1354.647/1,800 s concluded failed without extension.
+Its sampled individual RSS was 2,079,424,512 B, minimum free 267,518,402,560 B, with 1,413 missed samples.
+The separate two-store witness shows held-child `LockBusy` becoming writer-acquired after reap,
+while the other owner stays ready; it demonstrates a mechanism, not the original concurrent schedule.
+The continuation adds one shared Mutex as the first local in both tests. Strip-equality confirms
+unchanged original bodies/assertions and removal of the temporary witness; product lock policy is unchanged.
+This applies the [prior descriptor-lifetime finding](#derived-writer-contention-after-fork--2026-11-11) to fixture isolation (Tantivy 0.27 `directory::mmap_directory::ReleaseLockFile::drop`).
+
+**Fresh continuation gates pass** in 584.887 s: fmt, Clippy, default tests, pilot Clippy/tests,
+actual Rust 1.90 check/Clippy and pilot check. Rust/Cargo 1.97.1 and 1.90.0 use macOS SDK 26.5.
+Default totals: 1,311 passed, 0 failed, 34 ignored; 21 custom recovery checks pass separately.
+Pilot unit totals: 64 passed, 0 failed, 0 ignored. All retained commands exit naturally,
+with no forced cleanup or observed owned process remaining. The separate continuation completes in
+724.857 s of its own 1,800 s, with no extension and spend $0; the original failure remains unchanged.
+Focused sampled individual RSS maximum: 2,110,259,200 B;
+minimum free disk: 271,239,192,576 B; missed memory samples: 76.
+Gates: 859,127,808 B sampled individual RSS, 267,593,863,168 B minimum free,
+1,338 missed samples. The 8 GiB process/20 GiB disk bounds held; these are not true peaks or aggregate/GPU memory.
+
+Private evidence: `runs/pilot-authority-path-2026-11-11/`: `protocol.json`, `commit-pin.json`,
+`candidate-hashes.json`, all `focused/*/result.json` with named stdout/stderr/native receipts,
+`red-*-chain-control.json`, `fixture-correction.txt`, the failed `gates-result.json` and `stage-disposition.json`.
+Fresh continuation owners are `fixture-continuation/{protocol,commit-pin,gates-result,fixture-isolation-check}.json`, its focused receipts and gates logs.
+Both pins/receipts bind unchanged authority sources, frozen policy/contract and host; the original failed receipt is hash-preserved.
+Archived host SHA-256: `38c3645283ceba06f66462830ae15f27270cc7f84575e40a4c6bd68452a63d0f`.
+
+This is metadata revision 2 under frozen v1 policy, not new pilot authorization. No current installed
+host or provider compatibility, actual Live-compatible probe history, private oracle outcomes,
+power-loss/hostile-filesystem campaign, retrieval gain or real-agent/economics benefit is claimed.
+Other apparatus and pilot task/sample/arm/launch prerequisites retain their existing status.
+
+## Pilot workspace restoration and halt persistence — 2026-11-11
+
+**PASS at the selected local no-provider repair boundary.** Focused red/green,
+serial pinned-host checks and all eight local gates pass. This does not accept
+pilot v2 or 003 T006. The selected combined repair
+starts from `ff75a5fdb74b8b77a06637cc42919fa8a52f7ec5`, after the separate accepted
+[credential-refusal repair](#pilot-credential-refusal-durability--2026-11-11).
+The completed focused/host checks below ran on retained working-tree patches over
+that base. The exact combined sources are now committed as
+`e320614f2aca7376f481d140b40d6dc78f73a79f`; all eight gates pass on that
+commit. The retained working-patch checks and committed gate run are distinct
+evidence; private source preparation is not substituted for either.
+003 T006 and pilot v2 remain unfunded, unfrozen and unaccepted.
+
+**Selected repair.** Workspace restoration failures in the existing
+`apparatus::run_probe` and `run_coding` enter the same monotonic session halt that
+blocks subsequent slots. With healthy journal persistence, the existing finalizer
+retains the terminal halt and `not_started` rows. Probe's post-admission CLI function
+finishes the failed session, prints its existing receipt and returns exit 2. A
+halted coding run retains its descriptive report and returns exit 1. No next host
+is launched at the failed restore boundary; prior slot cleanup continues to use
+the existing owner. The focused tests below exercise these selected behaviors.
+
+The original private restore patch alone could hide a halt append failure:
+`Inner::enter_halt` discarded that persistence error, and a later successful
+`finish` could append `finished` and return a receipt. The selected amendment
+retains the first append error in the existing `Inner` owner. `finish` drops its
+transport and returns that error before any new finished record or success receipt,
+even if the journal becomes writable again. The original causal halt still blocks
+admission. If capture persistence fails, partial existing evidence remains; the
+repair does not manufacture completed rows or a durable success report. The CLI
+reports the persistence refusal. There is no new journal/schema, retry, recovery
+policy or process manager.
+
+**Written selection and bounds.** The selected source packet is
+`runs/pilot-v2-2026-11-11/restore-halt-draft/journal-amendment/`; its combined patch
+supersedes the original private restore-only candidate. Both packets and their
+static preparation history remain retained. Their README/pins use source base
+`7f5ba75`; the later execution protocol names the accepted record head `ff75a5f`
+and pins the actual source bytes. Preparation statements such as “not executed”
+remain historical and do not substitute for runtime results.
+
+`runs/pilot-restore-halt-2026-11-11/protocol.json` declares one heavy job, spend $0,
+one shared 1,800-second stage with 120 seconds reserved for cleanup, a 20 GiB
+free-disk floor and 8 GiB sampled per-owned-process RSS bound. Focused commands are
+capped at 180 seconds and the full host file at 600 seconds, further constrained
+by the remaining shared deadline. All eight gates must run on the final committed
+candidate within the declared allowance; an incomplete run remains incomplete.
+
+The real-file unit test constructs the existing session/journal over private
+temporary files with no transport, host, credential or live admission. Its healthy
+control requires `admitted`, `halt`, `finished`, an unstarted probe row and matching
+receipt digest. Its negative control fails the halt append, clears that injection
+so a later append could succeed, and requires finalization to return
+`Persistence/journal_append_failed` without changing the journal. It also checks
+that a later fault cannot replace the original halt. This is deterministic
+real-owner/file evidence, not a power-loss, partial-write or fsync-failure campaign.
+
+The binary tests call the exact post-admission CLI functions using Verification
+mode and owned synthetic TLS fixtures. They reuse the prior run's read-only archived
+OMP artifact through compile-time `CF_PILOT_TEST_OMP`, with required SHA-256
+`38c3645283ceba06f66462830ae15f27270cc7f84575e40a4c6bd68452a63d0f`.
+The installed host remains untouched. The probe cases select empty seed inventory
+and changed seed bytes; the coding case performs a local fixture probe/handoff,
+then fails restoration before unavailable downstream inputs or any oracle are used.
+It must retain the original probe counters, journal prefix and fixture-request count,
+with every coding row unstarted and no correctness result or completed pair.
+These do not qualify process-argument/live-front-door admission, actual-provider
+compatibility, private evidence, oracle execution or the current installed host.
+
+**Completed focused receipts.** All seven commands record base HEAD `ff75a5f` with
+their retained working-tree patches. Expected-red exit 101 is a failure witness;
+the result's `passed:true` means it matched that expected failure, not that the
+implementation passed. Times below are command-receipt elapsed time, including
+setup/build overhead, rather than just the Rust test duration.
+
+| Command under `focused/` | Tests passed / failed / ignored | Exit | Elapsed seconds |
+| --- | ---: | ---: | ---: |
+| `red-restore-cli` | 0 / 2 / 0 | 101, expected | 25.436 |
+| `red-halt-persistence` | 0 / 1 / 0 | 101, expected | 32.901 |
+| `green-halt-persistence` | 1 / 0 / 0 | 0 | 32.271 |
+| `green-restore-cli` | 2 / 0 / 0 | 0 | 14.163 |
+| `red-cli-only` | 0 / 2 / 0 | 101, expected | 11.118 |
+| `green-restore-cli-final` | 2 / 0 / 0 | 0 | 14.629 |
+| `green-full-host-suite` | 17 / 0 / 1 | 0 | 142.952 |
+
+The original CLI red run found an absent probe halt and coding exit 2 instead of
+the required retained-report exit 1. The halt-persistence counterfactual failed at
+`unwrap_err()`: after the halt append failed and injection was cleared, `finish`
+returned a successful `CaptureReceipt` with two journal records. The setup's
+`admitted` and later `finished` record omitted the terminal halt. The restored
+amendment passes the unchanged real-file unit: a later writable journal does not
+erase the retained persistence error or permit a new success receipt.
+
+The first green CLI run passes both restoration cases. The separate CLI-only
+counterfactual keeps repaired halt/apparatus behavior but restores the old CLI
+handling. It fails both unchanged tests: coding returns exit 0 instead of 1, and
+the probe journal's last record is `halt` instead of `finished`. All three selected
+production source hashes were restored before the final green CLI run, which
+passes both tests again. These controls separately exercise session halting,
+truthful persistence finalization and CLI failure classification.
+
+The complete serial pinned-host fixture file passed with 17 tests, no failures
+and one ignored test in 142.951550541 command seconds. It uses the exact archived
+pin and `--test-threads=1`. The ignored
+`full_pilot_pipeline_qualifies_without_provider` requires private evidence roots;
+that evidence-backed pipeline was not run or qualified here. This serial elapsed
+time is a run receipt, not a performance comparison with a prior parallel run.
+
+All seven completed commands exit naturally, with no forced cleanup or observed
+owned process remaining. Their largest sampled individual owned-process RSS is
+2,138,996,736 bytes; minimum sampled free disk is 272,238,710,784 bytes; 34 owned-
+process memory samples were missed. The 8 GiB process bound and 20 GiB free-disk
+floor hold for these commands. These are sampled observations, not true peaks,
+aggregate process memory or GPU memory. Every completed result records spend $0.
+
+**Full gates: PASS on `e320614`.** All eight named stages exit 0 in 604.639
+seconds: formatting, Clippy, default tests, pilot-feature Clippy and unit
+tests, actual Rust 1.90 check/Clippy and the Rust 1.90 pilot check. The default
+suite reports 1,311 passed, 0 failed and 34 ignored; 21 custom recovery
+checks pass separately. The pilot unit gate reports 63 passed, 0 failed and 0
+ignored. Rust/Cargo 1.97.1 and actual Rust/Cargo 1.90.0 use macOS SDK 26.5.
+The opt-in binary regressions retain their separate focused evidence.
+
+The gate command exits naturally, with no forced cleanup or observed owned
+process remaining. Its largest sampled individual owned-process RSS is
+1,396,670,464 bytes, with 1,360 missed owned-process memory samples;
+minimum free disk is 268,764,352,512 bytes. These are sampled process
+measurements, not true peaks, aggregate memory or GPU memory. The recorded
+resource bounds held. The completed shared stage occupied 1241.485 seconds of
+the original 1,800-second bound, with no extension. The result records unchanged
+source, frozen v1 contract and pinned host; the commit pin retains the unchanged
+policy prefix. Spend is $0. All red/counterfactual failures remain retained.
+The final owners are `gates-result.json`, `gates/` and
+`gates-supervisor/000-full-gates.receipt.json` in the private run directory.
+
+The existing healthy-probe finish-error classification and report-write failure
+classification remain outside this selected restore/halt-capture repair, as the
+private packet states. These checks do not qualify every capture-persistence
+failure, arbitrary journal corruption or recovery policy.
+
+Private evidence owner: `runs/pilot-restore-halt-2026-11-11/`, including each
+`focused/{red-restore-cli,red-halt-persistence,green-halt-persistence,green-restore-cli,red-cli-only,green-restore-cli-final,green-full-host-suite}/result.json`
+and its named command receipt/stdout/stderr, plus the retained command patches.
+`commit-pin.json` binds the exact final source hashes and records
+`policy_prefix_unchanged:true`; `gates-protocol.json` names the committed gate run.
+Selected combined
+patch SHA-256:
+`4384cb21562235b36ab23b44853129ab6bb192bec6f1f592bc73cf947dbbc9a2`.
+The protocol and completed commit pin agree on the final source SHA-256 values:
+
+- `src/pilot_capture.rs`: `b8395f43f3a4fd3662902eea171229c2e5eeb501a5933d4699adadcb2d0e0737`.
+- `src/pilot_capture/apparatus.rs`: `ea2ba430bad448d2f9b12f2a96a37313f549c9e8a0a20a6092519563952ab058`.
+- `src/bin/foundry_pilot_capture.rs`: `b063d09cf4e63f62f5f69a9f9bcd033df695ebf4252be2c82a196ecc9160ab95`.
+
+The commit pin verifies these exact selected sources in `e320614` and the unchanged
+policy prefix. The frozen v1 contract's recorded SHA-256 is
+`1a00758ffdafbfa18a59dd69e0b9912ef8beca9f7010f375bab8e553c554502d`.
+No corpus, owner credential/private key or actual provider is selected. Other v1
+gap rows, harder held-out tasks, sample/power analysis, arm readiness and costed
+owner authorization retain their existing status.
+
+## Pilot credential-refusal durability — 2026-11-11
+
+**PASS at the selected local repair boundary.** Focused red/green checks, the
+pinned-host file and all eight gates pass. This is one no-provider
+repair of the disclosed credential-after-claim failure path, based on
+`031989862defcb4602cd32fb7567cd072a9af39a`. It does not accept 003 T006, freeze or
+fund pilot v2, certify the current installed host, or repair the other v1 gaps.
+The repaired source/tests are now committed as
+`7f5ba75c9810a18f1acbc741afb5642cf5c869fc`; all eight gates passed on that commit.
+T010's preceding publication is recorded separately in private
+`runs/t010-singleton-2026-11-11/publication.json`; its acceptance is unchanged.
+
+**Preflight refusal, retained.** The installed `/Users/satishlomte/.local/bin/omp`
+was refused before testing: SHA-256
+`ce80099f10c5ea4367523767230cb5b920f30cc139b9cf8758c1cc4b2f1f9409`
+did not match the required frozen host
+`38c3645283ceba06f66462830ae15f27270cc7f84575e40a4c6bd68452a63d0f`.
+The shell continued after the failed preflight assertion and applied only the test
+patch; that patch was retained and exactly reversed without executing tests or the
+host. No production patch was applied in that refused attempt. Its receipt records
+zero provider requests and spend $0; it is not a successful test run.
+
+The exact pinned artifact was then found at
+`~/.local/bin/omp.1794156108095.11575.0.bak` (217,260,176 bytes) and copied into the
+owned run's `bin/omp`. The integration test now accepts the compile-time
+`CF_PILOT_TEST_OMP` path override while retaining its installed-path default and
+strict frozen SHA-256 check. This selects an exact archived artifact for the local
+fixture tests; it does not install or certify the current installed host. Frozen v1 policy and
+contract bytes are unchanged.
+
+**Qualified implementation.** Existing `CaptureSession::open`
+and `open_after_probe` create or reopen the existing journal after branch admission
+and before admitted credential loading. A refusal after the durable claim appends
+`halt` with `phase:credential_admission`, the fault class and stable code, never the
+credential. The consumed claim remains consumed. The existing journal's append
+failure is returned as a persistence fault rather than claiming a durable refusal.
+The selected handoff ordering admits the branch before journal access, verifies
+Live's cited journal before consuming fresh authority, and permits appends only
+after the claim. The journal format/chain and existing session owners are reused.
+
+The revised private source plan is
+`runs/pilot-v2-2026-11-11/credential-refusal-ordering-draft/`; the earlier ordering
+draft remains at its sibling `credential-refusal-draft/`. Their revision history
+is source preparation, not runtime evidence. The earlier fabricated cross-mode
+Live case establishes mode refusal only. The subsequently declared
+`additional-live-guard.json` extends the existing Live admission test with a
+valid-shaped synthetic coding manifest, authority and cited seal pointing at an
+owned terminal journal. It retains the original deadline and repair rule. Its
+local branch-ordering evidence is recorded below; no actual Live-compatible probe
+history, provider compatibility or owner credential is supplied by this fixture.
+
+**Declared run.** `runs/pilot-credential-refusal-2026-11-11/protocol.json` freezes
+one heavy job at a time, a shared 1,800-second stage with 120 seconds reserved for
+cleanup, 20 GiB free-disk floor, an 8 GiB sampled per-owned-process RSS bound and
+spend $0. Only owned synthetic credentials and local TLS fixtures are selected.
+No owner credential/private-key file is read and no actual provider call is
+selected. A local fixture request is not a provider call; refusal tests must show
+no additional fixture transmission across the refusal boundary.
+
+**Completed focused evidence.** All nine commands ran on retained working-tree
+patches over `031989862defcb4602cd32fb7567cd072a9af39a`; the repair was uncommitted
+when they ran. Their command records bind `CF_PILOT_TEST_OMP` to the owned archived
+artifact. Expected-red exit 101 is a failure witness, not an implementation pass;
+the step result's `passed:true` means that its expected failure was observed.
+
+| Command under `focused/` | Tests passed / failed / ignored | Exit | Receipt elapsed seconds |
+| --- | ---: | ---: | ---: |
+| `red-credential-refusal` | 0 / 2 / 0 | 101, expected | 30.955 |
+| `red-live-gates` | 0 / 1 / 0 | 101, expected | 10.635 |
+| `green-credential-refusal` | 2 / 0 / 0 | 0 | 32.107 |
+| `green-live-gates` | 1 / 0 / 0 | 0 | 16.223 |
+| `green-handoff` | 1 / 0 / 0 | 0 | 14.846 |
+| `green-full-host-suite` | 17 / 0 / 1 | 0 | 19.832 |
+| `red-live-terminal` | 0 / 1 / 0 | 101, expected | 40.710 |
+| `green-live-terminal` | 1 / 0 / 0 | 0 | 39.356 |
+| `green-full-host-suite-final` | 17 / 0 / 1 | 0 | 26.649 |
+
+The two new red tests failed at the intended boundaries: the fresh refusal lacked
+`claim.json`, and the coding refusal kept 17 journal records where the terminal
+record required 18. The existing Live admission test failed because the consumed
+authority's refused run lacked its own claim. After the selected repair, the same
+cases pass: claims remain consumed, the refusal is chained without credential
+bytes, refusal sends no additional local fixture request, and injected append
+failure returns the persistence fault. The positive probe/handoff passes its
+initial `admitted` ordering and unchanged sealed-prefix assertions.
+
+**Additional synthetic Live ordering guard: red/green PASS.** The counterfactual
+temporarily restored only the old `open_after_probe` method, retaining the
+fresh-open repair so the extended assertion was reached. It failed exactly there:
+`credential_missing` was returned instead of `probe_seal_not_journaled`. The fault
+assertion failed before the subsequent claim-absence assertion, so that run did
+not directly report whether the old path left a fresh claim; no such runtime
+observation is claimed. The exact repaired source was restored with SHA-256
+`596f8cb316c00e7ddd2d09f87ab0c7fe3028e02828f547dd6dbe9fc2d3197d79`.
+
+The unchanged extended test's valid-shaped synthetic Live coding admission passes
+validation, then rejects the terminal journal with `probe_seal_not_journaled`
+before the missing-credential fault. It asserts no new coding-authority claim file,
+a byte-identical terminal journal and zero additional local fixture requests.
+This establishes the selected synthetic branch
+ordering, while its relabeled verification-derived seal does not establish an
+actual Live-compatible probe history. The final complete pinned-artifact test
+file also passed after this extension.
+
+The complete non-ignored pinned-host file passes. Its one ignored case is
+`full_pilot_pipeline_qualifies_without_provider`, which requires private pilot
+evidence roots and was not selected or executed. These results do not qualify that
+full evidence-backed pipeline. The totals above come from Rust summaries; elapsed
+times come from the command receipts and include command setup/build overhead.
+
+All nine commands exited naturally with no forced cleanup or observed owned process
+remaining. Across these completed receipts, the largest sampled individual owned
+process RSS was 3,116,990,464 bytes, minimum sampled free disk was 271,579,947,008
+bytes, and 76 owned-process memory samples were missed. The sampled 8 GiB process
+bound and 20 GiB free-disk floor held for these commands. These are sampled maxima,
+not true peaks, aggregate process memory or GPU/global memory. Every completed
+result records spend $0. No provider-transmission conclusion is inferred from exit
+status alone; the refusal tests' owned fixture assertions establish their stated
+local transmission boundary.
+
+**Committed-candidate gates: PASS.** All eight named stages exit 0 on `7f5ba75`
+in 741.560 seconds. The default suite reports 1,311 passed,
+0 failed and 34 ignored, with 21 additional passing custom recovery
+checks. The pilot unit gate reports 62 passed, 0 failed and 0 ignored.
+The toolchains are Rust/Cargo 1.97.1 and actual Rust/Cargo 1.90.0 with macOS SDK 26.5.
+The gate command exits naturally, with no forced cleanup or observed owned process
+remaining. Its largest sampled individual owned-process RSS is
+2,060,304,384 bytes, with 1,430 missed memory samples;
+minimum sampled free disk is 268,721,946,624 bytes. These are sampled process bounds,
+not true peaks or GPU/global-memory measurements.
+
+The completed shared stage takes 1579.356 seconds of its original 1,800-second
+bound, including the added synthetic Live guard; the deadline was not extended.
+Source identity, the exact owned host and frozen v1 contract are unchanged across
+the gate run. `commit-pin.json` also binds the unchanged policy prefix and focused
+patches. The selected repair is complete at these local boundaries; the original
+preflight refusal, red failures and counterfactual remain evidence, not green runs.
+Final owners: `gates-result.json`, `gates-supervisor/000-full-gates.receipt.json`,
+the eight gate logs and toolchain logs. No provider spend occurred.
+
+Private evidence: `runs/pilot-credential-refusal-2026-11-11/`, including
+`preflight-refusal.json`, `local-backup-host-pins.json`, `unexecuted-red-test.patch`,
+`protocol.json`, `additional-live-guard.json`, `commit-pin.json`,
+`gates-protocol.json`, the owned host, retained per-command patches, and each completed
+`focused/{red-credential-refusal,red-live-gates,green-credential-refusal,green-live-gates,green-handoff,green-full-host-suite}/result.json`
+and `focused/{red-live-terminal,green-live-terminal,green-full-host-suite-final}/result.json`
+with its named command receipt/stdout/stderr.
+Source plan pins: implementation patch
+`9a7dd2b9767e20d332d079b456c5c16f969339fd584cd507613d855055c7ab31`;
+red-test patch
+`cea56c02387c6447ad4b7d38717acf369fadc843e5ab8877f16e461cd7c35f1e`.
+These are the selected draft patch pins; the compiled host-path override is an
+additional recorded integration-harness amendment. The final commit pin includes
+the extended test SHA-256
+`f971715fa0e89b1ffce7365fdbe099f5e8e025ae52521bfe11f5827190a546c9`,
+the restored source SHA-256 above and `policy_prefix_unchanged:true`.
+The recorded unchanged v1 contract SHA-256 is
+`1a00758ffdafbfa18a59dd69e0b9912ef8beca9f7010f375bab8e553c554502d`.
+
+The unfunded [pilot v2 draft](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md)
+and 003 T006 remain open. Startup network-denial journaling, checker environment/
+sandbox/compiler binding, retained compile stderr, coding-authority chain/path
+binding, private-artifact modes, workspace-restore halts and `seal_slot` completion
+binding retain their existing requirements and status. This repair supplies no
+harder held-out task set, powered sample, arm-readiness proof, paid authority or
+provider-economics result.
+
+## T010 singleton qualification — 2026-11-11
+
+**PASS: T010 is accepted at its written lexical retrieval scope.** The actual-default
+singleton candidate passes the frozen G1/G2 measurement and the corrected full
+neural file plus all eight gates under the declared test-only continuation.
+Lexical behavioral selection defaults on with explicit opt-out. The first full
+gates on `f19d353` failed and remain recorded below; the earlier default candidate's
+failed economics guard and all of its receipts remain in
+[the first-attempt record](#t010-lexical-default--2026-11-11).
+
+The second candidate was selected before its tests. It is implementation commit
+`029b95281c4f8e2c38f1575d1f3aaaa7b0a9a839`, followed only by the option-comment
+correction `f19d35325d4f34f74b208eed816d328de569b9d0`. The complete isolated trial
+already contains the proposed default in the library, CLI context and MCP owner,
+with bare-flag compatibility and `--experimental-behavior-context=false` opt-out.
+That actual default was committed and built before broad measurement; the candidate
+MCP arguments contain no enabling flag. No ranking/default code change after the
+frozen measurements is part of this candidate.
+
+The accepted comparison baseline is parser/Tantivy code `68ed776` (record-only head
+`1b4cf0e`), with behavior selection off by default. Baseline binary SHA-256:
+`8b6b55d7dd7013cdebc9c6e3dec701c58ad2c6929857fc05e828c1ac0cb0e0ae`.
+Final candidate binary SHA-256:
+`60aff1025ba6515caa70b0854f233a1d2e2b4f8f83cfed290f143626e8c14011`.
+The source/search/unit/semantic-generation schemas remain 12/9/7/6. This retrieval
+repair does not change the parser bundle, persistent schema or semantic recipe.
+
+**Selected repair.** Eligible anchorless lexical prose may retain exact-run priority
+only when the complete existing restricted Count reports one indexed definition
+document. Stopwords and suppressed incidental descriptors stay excluded; no role,
+case or qualifier shortcut is added to the count. This is per-index uniqueness,
+not compiler or global-root identity. Ambiguous common-word definitions keep the
+existing prose ranking. Long prose candidates use the existing indexed-document
+bounds at both cross-tier deduplication and final admission, including tier 1, so
+promotion does not erase a later disjoint body match. The two-passage admission,
+source freshness, candidate/delivery caps and response budgets remain. Ordinary
+search and non-prose selection retain their rules. Any supplied dense window,
+including partial/empty, still suppresses the flag's effects; named fallback remains
+lexical. No new model call, scoring weight, corpus-specific exception or threshold
+variant is selected.
+
+**Focused red/green evidence.** Before the production repair, the frozen real-Engine
+singleton-delivery regression failed at the final packed-body assertion, with the
+other fourteen selected prose tests passing. The enabled economics boundary also
+failed its unchanged expected-unit assertion. Both expected-red commands exited
+101; these are retained failure witnesses, not passing implementation gates.
+After the repair, all 92 core tests and both active economics tests passed (one
+measurement report ignored); the four selected semantic-isolation tests passed.
+The economics harness now runs the same six frozen questions through default and
+explicit-enabled MCP owners. Its fixture bytes, markers, parser, body-identity
+checks, assertions and 2,048-token cap are unchanged. This is a harness extension,
+not a claim that the test file was untouched.
+
+The initial actual-default boundary run failed two legacy ordinary-control arms:
+`prose_diversity_backfills_independent_same_file_evidence_without_hiding_neighbors`
+and `prose_plural_acronyms_match_the_acronym_without_changing_symbol_requests`.
+Their default calls had become enabled under the proposed default; their explicit
+experimental assertions passed. Only those ordinary calls were changed to explicit
+`experimental_behavior:false`. Assertions, fixture source, caps and ranking stayed
+unchanged, and the original focused deadline was not extended. The failed attempt
+is retained. The complete corrected run passed 92 core, two active economics and
+93 MCP tests; the default-on semantic-isolation run passed its four selected tests.
+This exercises actual default, bare enabling flag, explicit opt-out and CLI/MCP
+parity at the tested boundary. Focused all-target Clippy also passed.
+
+The focused commands above ran on retained working-tree patches over `1b4cf0e`
+before the candidate commit; their logs preserve that distinction. After committing
+`f19d353` and building the final binary, the exact-default release-binary mixed
+fixture run passed: complete required method support was 0/6 for the accepted
+baseline and 6/6 for the candidate, all twelve locator/unknown-intent controls were
+identical, and every cap held. The same mixed protocol was used without new tasks
+or ground truth. These synthetic cases establish their stated retrieval outcomes,
+not representative coding-task benefit. Each inspected focused-command receipt
+recorded natural exit, no forced cleanup and no observed owned process remaining.
+The completed broad-run lifecycle and resource receipts are recorded below;
+the completed full-gates failure is retained separately below.
+
+**Frozen family and bounds.** K=2 covers the previous lexical/default candidate and
+this singleton candidate in the continuing promotion decision. The prior K=1
+G1/G2 result remains historical evidence; its failed default gate does not erase
+that attempt. The rule is exact one-sided McNemar p < 0.025, no net loss of verbatim
+bodies and every response within 2,048 tokens; mean tokens are reported only.
+This is repeated use of a frozen set, not a newly untouched holdout or a claim that
+all historical retrieval development was covered by two comparisons. No variant
+is authorized after measured failure.
+
+One heavy job runs at a time with no spend or provider work. The selected phase
+budgets are 1,800 seconds for builds/focused checks, 3,600 seconds for measurement
+and 1,800 seconds for full gates, with a 120-second cleanup reserve, 20 GiB free-disk
+floor and 30 GiB observed growth ceiling. The broad runner uses an 8 GiB aggregate
+sampled owned-process RSS cap, stricter than the selected per-process cap. Only
+owned copies of the pinned stores may be opened; source corpora and originals stay
+read-only. The fresh baseline/candidate comparison uses compatible parser-derived
+units, and no semantic preparation, training or corpus-code execution is selected.
+
+| Required evidence | Baseline | Actual-default candidate | Verdict |
+| --- | ---: | ---: | --- |
+| Full G1 checker / qualified / bun tasks | 6,881 / 2,551 / 1,000 | Same | All three groups pass in both arms |
+| G1 complete response records | 14,284 | 14,284 | Complete result, uncompressed response and source-identity hashes match in every group |
+| G2 located definitions, 388 questions | 0 | 10 | +10 / −0; exact one-sided McNemar p = 0.000977 < 0.025, K = 2 |
+| G2 verbatim definition bodies | 0 | 8 | +8 / −0; no net loss |
+| G2 mean delivered tokens | 2,023.2 | 2,023.0 | Reported only; all 388 responses in each arm stay within 2,048 |
+| All eight local gates on `f19d353` | — | FAILED | Seven exits 0; default test gate exits 101 with two neural-suite failures |
+| Corrected full neural file and all eight gates on test-only continuation | — | PASS | Full file passes on the retained patch; all eight gates exit 0 on `8e88a35` |
+| Final default-promotion/T010 disposition | — | ACCEPTED | Lexical default on, explicit opt-out; supplied dense windows and semantic model admission unchanged |
+
+G1 totals are 10,432 tasks per arm; checker, qualified and bun respectively have
+10,476, 2,779 and 1,029 response records per arm. Complete-file hashes compare the
+uncompressed response bytes, not gzip container bytes or normalized text. The G2
+split is Rust 0 → 4 located / 0 → 3 bodies on 197 questions, and bun 0 → 6 located /
+0 → 5 bodies on 191. The literal unchanged `scripts/g2.sh compare` returns ENABLE
+for this measurement. Overall acceptance additionally rests on the completed
+test-only gate continuation below; the failed local run is not relabeled.
+The first attempt's 13 located definitions and 10 bodies remain in its historical
+record with its failed default guard. This run establishes improvement over the
+declared current baseline, not superiority over that earlier candidate.
+
+**Measurement lifecycle and retained inputs: PASS.** All 33 phases exited naturally
+in 1,449.296 seconds, with no forced cleanup and no observed owned process remaining.
+The tracked candidate stayed clean at `f19d353` before and after; the pinned source
+corpora retained their heads and tracked bytes. Full original source-store manifests
+and both repaired master inputs remained unchanged. The measured layout retains
+three owned copies per corpus: one repaired lexical master shared by both G2 arms,
+and the G1 baseline/candidate pair. The Rust G1 pair serves checker and qualified.
+The literal frozen `scripts/g2.sh` creates and removes its own transient query
+copies; those query copies are not retained. Complete query outputs and the named
+retained stores remain private.
+
+Peak sampled aggregate RSS for the driver and observed owned processes was
+1,779,056,640 bytes, with 44 missed owned-process memory samples. This is a sampled
+lower bound on a true aggregate process peak, with shared mappings potentially
+counted repeatedly; it is not a GPU/global-memory measurement. Minimum free disk was
+274,779,361,280 bytes and maximum observed allocated bytes were 26,950,246,400.
+The recorded 8 GiB aggregate RSS, 20 GiB free-disk and 30 GiB allocation bounds held.
+The completed receipt records no resume/additional variant, native lifecycle complete
+and spend $0. These conclusions belong to this measurement, not a claim that the
+subsequent full gates passed.
+
+**First full gates: FAILED; retained separately from the passing continuation.**
+All eight stages completed on `f19d353` in 781.6757805 seconds. Formatting, Clippy,
+pilot-feature Clippy, pilot unit tests, actual Rust 1.90 check/Clippy and the Rust
+1.90 pilot check exited 0; the default test stage exited 101. The default suite
+reported 1,309 passed, two failed and 34 ignored. Its 21 custom recovery checks
+passed separately. The pilot unit gate passed all 62 tests. The failing neural
+suite itself reported 94 passed, two failed and one ignored:
+
+- `neural_candidates_crowded_by_other_evidence_are_still_delivered_in_budget`,
+  assertion at `tests/neural_retrieval.rs:1984`.
+- `without_a_usable_profile_cli_and_mcp_answers_are_the_plain_baseline_byte_for_byte`,
+  assertion at `tests/neural_retrieval.rs:5277`.
+
+The receipt records unchanged candidate source and unchanged measurement binary.
+It used Rust/Cargo 1.97.1, actual Rust/Cargo 1.90.0 and the macOS 26.5 SDK. The outer
+gate command exited naturally with no requested signals, forced cleanup or observed
+owned process remaining; the supervisor's process-exit status is not the verdict
+for the individual Rust test stage. `gates-result.json` correctly reports passed=false.
+The gate receipt's sampled owned-process RSS peak was 2,069,790,720 bytes with
+1,452 missed owned-process memory samples; minimum free disk was 270,781,730,816
+bytes. These are sampled process measurements, not true peaks or GPU/global memory.
+The 1,800-second stage limit and recorded resource bounds held. Test worker
+subprocesses were observed during this full suite; the measurement's no-worker
+scope must not be copied onto the gate run.
+
+**Confirmed fixture diagnosis; test-only continuation: PASS.** The two failing
+comparisons selected different behavior-option modes. The no-profile MCP helper
+explicitly selected false while CLI/default comparison owners inherited true;
+the mismatch was present before fallback. The crowding fixture compared a newly
+prose baseline with intentionally ordinary dense selection and failed before its
+delivery assertions. These are the confirmed fixture-option causes of the retained
+failures, not evidence that the delivery assertions passed.
+
+Only `tests/neural_retrieval.rs` changed: the crowding test's local baseline now
+sets `ContextOptions.experimental_behavior=false`, without changing the shared
+baseline helper, and `owner_with` inherits `ContextOptions::default`. All assertions,
+queries, fixture bytes and caps are preserved. Production source, ranking/default
+behavior and the frozen G1/G2 measured binary/receipts are unchanged.
+
+A separately declared 1,800-second shared continuation covers the full neural file
+and all eight gates, with a 120-second cleanup reserve, 20 GiB free-disk floor,
+8 GiB sampled owned-process RSS bound, one heavy job and spend $0. It does not
+extend or relabel the failed run. Protocol:
+`gate-fixture-continuation/protocol.json`; base `f19d353`, recorded production-source
+tree `b3bd8925e3e9ef289fe6ed1028285f291fbeb919`, and the same final measured binary
+SHA-256 above. The corrected full neural file passed on the retained test-only
+working-tree patch over `f19d353`: 96 passed, 0 failed, 1 ignored, in 44.409 seconds.
+The patch was then committed as `8e88a3599e7dee4675a207ac919aaa049faf9980`.
+Its only changed path from `f19d353` is `tests/neural_retrieval.rs`; the
+production-source tree and retained measured binary are unchanged. The full
+eight-gate continuation on `8e88a35` passed in 578.644 seconds,
+with formatting, Clippy, default tests, pilot-feature Clippy, pilot unit tests,
+actual Rust 1.90 check/Clippy and the Rust 1.90 pilot check all exiting 0.
+The default suite reported 1,311 passed, 0 failed and 34 ignored,
+plus 21 passing custom recovery checks. The pilot gate reported
+62 passed, 0 failed and 0 ignored. It used Rust/Cargo 1.97.1,
+actual Rust/Cargo 1.90.0 and the macOS 26.5 SDK. The completed shared stage
+occupied 680.205 seconds of its declared 1,800-second bound.
+
+Both commands exited naturally, with no forced cleanup or observed owned
+process remaining. The full-gate receipt records a maximum sampled individual
+owned-process RSS of 884,113,408 bytes, 1,375 missed owned-process
+memory samples and minimum free disk of 270,720,831,488 bytes. The corrected
+neural command separately recorded 625,229,824 bytes of sampled owned-process RSS,
+7 missed memory samples and 274,152,775,680 bytes minimum free disk.
+These sampled process maxima are not true peaks, aggregate process memory or
+GPU/global-memory measurements. The recorded resource bounds held; spend was
+$0. This successful continuation does not alter the failed gate receipt or
+rerun/tune the frozen retrieval measurement. A matching documentation
+consistency correction removes the obsolete semantic-prose exception from
+the context contract; it describes the already-tested dense-window exclusion
+and adds no runtime rule.
+
+No semantic-quality gain, real-agent benefit, provider savings, signed-package
+acceptance or release publication is established by this record. Git publication
+is a separate action from release publication.
+
+Private evidence: `runs/t010-singleton-2026-11-11/` and
+`datasets/context-foundry-t010-singleton-2026-11-11.noindex/`. Key focused owners are
+`selection.json`, `frozen-test-source-pin.json`, `focused/{red-prose,red-economics,green-core-economics,default-boundaries,default-boundaries-corrected,default-dense-isolation,final-default-mixed}/`,
+`default-boundaries-correction.json`, `candidate-binary.json`, `candidate-source-check.md`
+and `default-mixed/mixed-fixture/result.json`. Completed measurement owners are
+`measurement/result.json`, `measurement-summary.json`, `g1-cross-arm.json` and
+`measurement/commands/032-g2-compare-k2.stdout.txt`. The failed full-gate owners are
+`gates-result.json`, `gates/test.log`, `gates/pilot-test.log`, the two toolchain logs
+and `gates-supervisor/000-full-gates.receipt.json`. The completed continuation owners
+are `gate-fixture-continuation/{protocol,commit-pin,gates-protocol,gates-result}.json`,
+`gate-fixture-continuation/focused/corrected-neural-suite/`, the continuation
+`gates/` logs and its `gates-supervisor/000-full-gates.receipt.json`. The narrow in-session source check
+found no functional mismatch to the fixed rule; its one stale option comment was
+corrected in `f19d353`. That check was not independent certification or runtime proof.
+
+The input-freeze receipt passed without opening original stores. Recorded protocol
+SHA-256: `cc313a8bec1b79b5d77954956c2e71696af71bb028c24482037a4e06fad6d1bc`;
+recorded measurement-driver SHA-256:
+`2a64efdad550b98987d1f5b341820b6c875f6e2e14380595eba1e042d7b80cd1`.
+Selected-rule SHA-256:
+`a39cb7d1fcef9961092d3b74eec71b57d6101fb2c60a998464fcf1ef88d0ba4e`.
+Mixed-protocol SHA-256:
+`e2f8da77eacc76666d5de98a1178c9312c1eade23cb5c49bdcef66bdceb0c7af`.
+Completed measurement-result SHA-256:
+`3e9c4faa52f80133fae5cae7ba8182239c69b69a4fd4ae6829da84d9093c38a7`.
+These identities and metrics are copied from completed small receipts, not newly
+hashed or recomputed from question/response bodies for this draft.
+
+## T010 lexical default — 2026-11-11
+
+**HOLD: default promotion failed a frozen local guard.** One
+fixed candidate, `ceca2d8`, removes the behavioral flag's semantic effects and keeps
+the existing lexical algorithm. No ranking was tuned from these results. The
+comparison ran on the owner's M5 Max against `a456c53`, with no provider calls,
+training or corpus-code execution. The default-switch candidate was tested through
+the library, CLI context and MCP owner, then withdrawn after the failure below.
+The flag remains **off by default**. Its semantic cleanup is retained: a supplied dense window, including
+partial/empty windows, ignores the option. Ordinary semantic admission is unchanged
+by the flag; named fallback remains lexical.
+
+| Frozen measurement | Baseline | Candidate | Verdict |
+| --- | ---: | ---: | --- |
+| G2 located definitions, 388 questions | 0 | 13 | +13 / −0; exact one-sided McNemar p = 0.000122, K = 1 |
+| G2 verbatim definition bodies | 0 | 10 | +10 / −0 |
+| G2 mean delivered tokens | 2,023.2 | 2,023.7 | Reported only; every response within 2,048 |
+| G1 checker / qualified / bun tasks | 6,881 / 2,551 / 1,000 | Same | All existing guards pass in both arms |
+| G1 complete response records | 14,284 | 14,284 | Byte-identical, including arguments, evidence and order; no normalization |
+| Fresh mixed-intent fixtures, complete method support | 0/6 | 6/6 | All twelve locator/unknown-intent controls identical; all caps pass |
+
+The G2 corpus split is Rust 0 → 3 located / 0 → 3 bodies, bun 0 → 10 / 0 → 7.
+These are absolute lexical results on the frozen identifier-free set, not the
+hierarchy semantic scores or a general retrieval-success rate. The six new
+synthetic mixed-intent cases and exact required spans were frozen before their
+first run (`mixed-protocol.json`, SHA-256
+`e2f8da77eacc76666d5de98a1178c9312c1eade23cb5c49bdcef66bdceb0c7af`). They supplement
+the existing ambiguity, stale support, graph, scope and budget fixtures; they are
+not representative coding tasks or a separate statistical promotion test. No
+real-agent benefit or provider savings is claimed.
+
+The predeclared measurement bound was one hour including setup and diagnosis,
+20 GiB free disk and 8 GiB sampled owner RSS. G1/G2 completed at 1,778.82 s; the
+mixed-intent check took another 5.17 s. Maximum sampled owner RSS was 578,224,128
+bytes; minimum free disk was 306,294,603,776 bytes. No embedding worker was observed.
+Samples are lower bounds on true process peaks, not GPU/global memory measurements.
+Both original stores retained identical full file-hash manifests; only owned copies
+were opened. Corpus heads and frozen harness/question/counter pins were checked.
+
+**Retained failures and local checks.** A new semantic-admission regression failed
+before the repair and passed after it. The first neural suite had obsolete semantic
+experiment expectations and sandbox-denied HTTP/watch fixtures; the native rerun
+passed 96 tests, with one ignored. Existing source identity, freshness and resource
+checks remain. The process-observation race and its red/green tests are recorded
+below; the fresh qualified baseline reproduced all 2,779 responses from the failed
+apparatus attempt. Default promotion exposed two core fixtures implicitly relying
+on the former default; that trial made their baseline calls explicitly set `false`,
+with assertions unchanged. The trial boundary suites passed all 88 core and 93 MCP tests,
+including library defaults, bare-flag compatibility, explicit opt-out and exact
+CLI/MCP parity. Default binary `aac40dd` reproduced all 388 G2 response records and
+result rows exactly; its SHA-256 is
+`2f15591cc93064a7b9cce91f36f6a1ee250b7e2e34f159f10a21640e32a624ad`.
+The first full gate attempt stopped after Clippy rejected a literal-boolean
+`assert_eq!` in a semantic regression. The assertion now uses `is_none()` without
+changing its condition. The supervisor's 60-second interrupt grace expired during
+the test suite, then bounded cleanup removed all observed owned processes. That
+partial run is retained and does not count as acceptance. The next full attempt
+passed formatting and Clippy but failed
+`economics::question_contexts_surface_their_expected_units`: “session allowance
+refund” did not deliver the independently frozen `fn refund(` marker at 2,048 tokens.
+The other five frozen subsystem questions pass in a separate CLI reproduction;
+the baseline passes all six. That gate attempt was also stopped and its observed
+owned processes were cleaned up. Neither partial run counts as acceptance.
+
+The untruncated trace shows the same fresh `Shared::refund` unit at bytes
+13,528–13,841 of the frozen `src/mcp.rs`: baseline selection/packing rank 0, delivered
+verbatim; the candidate disables exact-run promotion, keeps it at selection rank 18,
+then drops its signature at packing rank 23 for the token budget. This establishes
+ordering and packing loss, not missing recall. Scores and term contributions are
+not traced. The fixture's marker, source bytes, cap and assertions are unchanged.
+
+Candidate family 1 therefore **does not qualify for default promotion**, despite
+its G1/G2 results. No new ranking rule was tuned to the failed fixture. The
+default-switch code and its dependent test changes are withdrawn; semantic isolation,
+the direct admission regression and the native supervisor repair remain. T010 is
+not accepted. A future lexical repair needs a separately declared candidate and
+fresh local/frozen measurements. The first complete implementation-gate run on the
+retained cleanup failed the separate writer-lock case [recorded above](#derived-writer-contention-after-fork--2026-11-11).
+After its repair, all eight gates passed on `fef81c6`; default promotion stays held.
+
+Private protocols, binaries, complete outputs, failed receipts and resource samples
+are retained in `runs/t010-lexical-2026-11-11/` and
+`datasets/context-foundry-t010-2026-11-11.noindex`. The baseline binary SHA-256 is
+`c9e497a74e02fd8d12f2b16b6334fe5f442c40af511df81d8a0885b419806e94`; the measured
+explicit-flag candidate is
+`1fd668cff5bc2c564e1e43c54967a0aae63eddd5d1da330ea4c2f1ff64db250a`.
+
+## Wrap-up continuation — 2026-11-11
+
+The signed-package preflight found zero valid code-signing identities in the
+owner's current keychain search list (`security find-identity -v -p codesigning`,
+checked outside the execution sandbox). Source inspection also confirms two
+implementation prerequisites: `scripts/embed-worker-bundle.sh` signs ad hoc when
+called by the installer, and `src/neural/supervisor.rs` refuses normal admission
+without the development flag. A certificate alone would not complete row 4.
+Signing remains deferred until product readiness; no key was accessed, package
+installed, host setting changed or publication attempted. These are metadata and
+source findings, not signed-runtime acceptance.
+
+001 T010's fixed candidate and no-spend bounds were recorded before measurement in
+private `runs/t010-lexical-2026-11-11/protocol.json`; see the receipt above.
+
+The [pilot v2 draft](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md)
+records the selected comparison, task-context outcomes, capture/accounting boundary,
+v1 gap repairs and execution locks. It is deliberately not labeled frozen or
+powered: concrete held-out tasks, sample calculation, implemented arm matrix and
+costed launch schedule remain to be prepared. This is documentation work with no
+provider calls or credential access; v1's frozen bytes are unchanged.
+
+The G1 measurement supervisor initially refused the baseline qualified set after
+its wrapper exited 0: its process snapshot preceded the exit poll, so a descendant
+could finish between the two observations. The final identity check found none
+remaining, with no forced cleanup. `NativeFullCommand.run` now refreshes descendant
+liveness after observing owner exit. `python3 tests/native_supervisor.py` passes two
+real-process regressions: a forced snapshot/exit race and a genuinely live orphan
+that must still fail and be cleaned up. The race test fails against the prior
+script. This changes observation ordering, not the lifecycle acceptance rule.
+The failed receipt is retained; a fresh qualified baseline and the remaining G1
+sets passed with the same binaries/scoring and the original one-hour wall bound.
+
+## Native macOS acceptance — 2026-11-10
+
+**PASS at the owner's selected script scope, on `01a1152`.** The fresh retry ran
+all 33 stages of `scripts/native-macos-acceptance.py --generation --scale-calibration`
+successfully in 382.25 s on the physical M5 Max. This accepts the ad-hoc-signed
+development-device checks for 009 T008/T009 and 010 T002 under decisions 12/13;
+the signed release-candidate run and installed-package checks remain open.
+Only local inference and pinned public downloads were used: no paid provider,
+training or corpus-code execution. This was an in-session verification.
+
+**Retained failure and repair.**
+The first native run on `ec234b3` failed at the embedding-worker build. It ran
+`scripts/native-macos-acceptance.py --generation --scale-calibration` on the owner's
+M5 Max, with a two-hour outer budget, 20 GiB disk floor, ad-hoc signing and fresh
+`.noindex` work storage. Task-local launchers select the actual installed Rust 1.90
+binaries because the host's Cargo does not dispatch `+toolchain`; SDKROOT explicitly
+selects the same macOS 26.5 SDK as the gates. No host configuration changed.
+
+Before that build failure, both native CPU checks, both held-GGUF checks, all six
+synthetic lifecycle checks and a real Metal compute dispatch passed. The pinned
+public model/tokenizer downloads passed their hashes. No real embedding, generation
+or calibration ran in that attempt, so it did not accept the native checks. The outer
+supervisor observed normal exit, reaped its child and confirmed no owned descendants
+remained. Private evidence is under `datasets/context-foundry-native-2026-11-10/out`
+and this checkout's `runs/native-macos-2026-11-10/`.
+
+The compiler error is a concrete AST-type mismatch: `bindgen 0.73.2` resolved
+`syn 2.0.119`, while `prettyplease 0.3.0` uses `syn 3.0.6`. The `8600fc0` lock update
+had changed that bindgen edge from syn 3 to syn 2. `cargo update --offline -p bindgen
+--precise 0.73.2` restores the previous syn 3 edge; no package version, source,
+license, application code or default-build dependency changes. The one-edge repair
+is committed as `01a1152d463a09b48ee97ceb384dd19d80778b30`. The fresh retry below
+verifies it; the failed attempt is retained, not relabeled as passed.
+
+**Fresh retry, unchanged bounds and assertions.** Rust 1.90.0, macOS 26.5 SDK,
+the pinned llama.cpp `b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea`, Gemma BF16
+adapter 4 and Qwen 0.5B smoke artifact were built in new `.noindex` storage.
+Spotlight and host configuration were not changed. The 7,200 s outer deadline,
+20 GiB disk floor, script deadlines and 4 GiB embedding / 2 GiB generation ceilings
+were unchanged. The script itself is unchanged, SHA-256
+`6d7b1cd6cf5129005671b103dd81d828847f3976b300c334f957268247b239fc`.
+
+| Selected check | Observed result |
+| --- | --- |
+| CPU admission | Both native observation and actual pressure/pause/resume tests passed for semantic and generation lanes. |
+| Held models and synthetic lifecycle | Both held-GGUF tests and all six owner-death/resource-limit/forced-reap fixtures passed. |
+| Metal embedding | Real compute dispatch; five 768-dimensional vectors, including an 8,192-token input; observed worker gone and scratch empty. |
+| Owned Metal generation | Initial and changed source each generated one cited brief: 375/123 and 379/122 prompt/completion tokens. Current and restart/revert reuse each made zero calls and acquired no model resources; HTTP calls zero. Both workers were observed and gone. |
+| Fixed overview calibration | 128 sources, 128 distinct inputs/calls, 33,754 input tokens; 1.582 s supervised provider time, 13.968 s preparation, 19.839 s total test harness; unchanged replay made zero calls. |
+| Final lifecycle | Supervisor exited 0 naturally, without forced cleanup; no observed owned processes remained. Calibration worker reaped and scratch empty. |
+
+Calibration memory was sampled before/after each successful call: maximum observed
+physical footprint 321,734,072 bytes, excluding acquisition and between-sample peaks.
+The generation receipts observed at most 407,602,496 bytes physical footprint and
+617,201,664 bytes process GPU allocation, within their configured limits. Neither
+measurement is global GPU headroom or a combined-model residency result. The calibration
+uses the fixed public Rust/Go `overview-v1` sample; it is not a population-weighted
+estimate or completion of the 67,663-source corpus. Mac Rust hierarchy scale is
+accepted separately by the replay/change receipt below.
+
+**Evidence limits.** This run does not establish cross-host CPU/Metal numerical
+parity, real-model owner death under pressure, generator adversarial isolation,
+global GPU pressure, combined residency, thermal/battery policy, embedding eviction,
+retrieval/task utility, or signed installation. The generator remains an experimental
+smoke model, not the deferred 010 production provider/recipe selection. Existing
+default-feature gates on `65fd799` are reused: application code and their dependency
+graph are unchanged. The optional worker features were freshly built and exercised
+here; no hosted CI or release was run.
+
+Private retry evidence is in `datasets/context-foundry-native-2026-11-10-retry1/out`
+and this checkout's `runs/native-macos-2026-11-10-retry1/`. Both attempts retain
+the exact script/launcher, predeclared protocol, stage logs, process observations,
+final receipts and `SHA256SUMS`; no private artifacts are committed.
+
+| Retry evidence | SHA-256 |
+| --- | --- |
+| Protocol | `d99f7faf649905a549fb5d5f0678205f47a9b11bc72db945bb80c051423c79a3` |
+| Native result | `08826d4b0d859fc4470d079b7b49ec41942a4341761b94b71a2d1cf9e4760911` |
+| Metal receipt | `f9bca1279fcd778bed25be0ff7c684b30478503707d5c78c2f0cb53c92187687` |
+| Generation receipt | `d0b285aaabe6cd11da2bdc015e00c9e72a0a8f0879cc04f71c814bda0d6a5a4f` |
+| Calibration receipt | `836674dbd360bcad7ed4d5a5d329023a9027268338f5de9916ce8fef9ad931cb` |
+| Supervisor and acceptance result | `62896fc7d44070e3993d9fec13346a8b3ecf6cd43bc23ebeb0e18ebcd5ff3ce3` |
+| Evidence manifest | `73f1b01bafce96d2cc9ae274b7828d77a211673b1b631f7c07630582e3839972` |
+
+## Semantic scale replay and changed-input acceptance — 2026-11-10
+
+**PASS for 009 T006–T009 scale under decision 11.** The owner's M5 Max ran the
+existing complete Rust hierarchy store through replay, add/edit/revert/delete,
+full audits and actual dense serving. This accepts the selected Mac Rust scale
+boundary together with the preserved complete preparation; it does not accept
+retrieval quality, task benefit, Linux x86/the 67,663-source corpus, native device
+checks or signed installation.
+
+**Pins and bounds, declared before launch.** Code at `d52e903` (Rust sources unchanged
+from `65fd799`), Rust corpus `b940084d7eb6a299eb4bfeb8e34901bc051e7ac4`, release
+CLI SHA-256 `c9e497a74e02fd8d12f2b16b6334fe5f442c40af511df81d8a0885b419806e94`.
+The existing `repair-units6-9WjnwU/rust` store was APFS-cloned before opening;
+function `01dcfe57…`, `hierarchy-v1+overview4+context2+kinds2+units6:512+parent64+tokenizers 0.23.2 onig`,
+768 dimensions and the pinned Gemma BF16 Metal worker were unchanged. A unique
+scratch subdirectory stayed inside the signed development bundle's existing grant.
+Budget: 1,800 s total, 300 s per preparation, 4 GiB cache cap, 20 GiB disk reserve,
+sampled owner/tree RSS stops at 8/12 GiB, fewer than 64 embedded units per probe
+change. Only local inference; no paid provider, training or corpus-code execution.
+
+**Observed, 46 checks passed in 104.4 s.**
+
+| Phase | Wall time | Document calls / embedded units / input tokens |
+| --- | --- | --- |
+| Unchanged replay | 4.83 s | 0 / 0 / 0; no repartitioning |
+| Add one owned probe | 5.80 s preparation | 2 / 2 / 172; one partitioned source |
+| Edit that probe | 5.73 s preparation | 2 / 2 / 172; one partitioned source |
+| Revert to original probe bytes | 4.50 s preparation | 0 / 0 / 0; retained vectors reused |
+| Remove the probe | 4.82 s preparation | 0 / 0 / 0 |
+| Final unchanged replay | 4.50 s | 0 / 0 / 0; no repartitioning |
+
+Every preparation completed and published. Full audits returned to 60,739 sources,
+685,623 eligible/cached/searchable current units and 624,325 ANN entries, with zero
+unpartitioned sources, missing units or corrupt cache entries. The four new vectors
+remain cached (624,329 cache entries); source revision advances normally. Per-run
+selection counters revisit sources/units and are not corpus-size counts.
+The old edited handle was rejected as stale; new and reverted declaration bytes and
+hashes matched, and deletion removed the probe from search. The final real context
+request used dense serving (64 hits), delivered 1,996 tokens under 2,048, and all
+26 delivered citation hashes/ranges matched disk. This is a serving/freshness check,
+not a retrieval-quality comparison. Peak sampled RSS: owner 2.83 GiB, owned tree
+3.54 GiB; no global GPU/true-peak claim. Three workers were observed and absent at
+completion, scratch was empty, the probe was removed, and byte/hash manifests of
+both the original corpus and original store were unchanged.
+
+**Retained preparation failures.** The initial release build selected incompatible
+macOS 27 SDK stubs; explicitly selecting the gates' macOS 26.5 SDK completed the
+build. The first private driver run passed replay and add/preparation, then failed
+because it omitted CLI `retrieve --handle`. It removed its probe and verified both
+original manifests and worker cleanup. The corrected driver passed the entire
+sequence on a fresh store copy; no product code or acceptance threshold changed.
+The existing green Rust gates are reused, not rerun for these documentation changes.
+
+Private evidence: `runs/semantic-scale-2026-11-10/` in this checkout; `run-1` preserves
+the failed attempt, `run-2` the accepted run. The latter contains the exact driver,
+predeclared protocol, before manifests, raw reports, serving trace, process samples
+summarized per phase, final receipt and `SHA256SUMS`.
+
+| Evidence | SHA-256 |
+| --- | --- |
+| Protocol | `90b07a2749adc01101372e140970ee4dd369fb7cbd39a362002eaa9cba1a92d5` |
+| Driver | `0d85325d18978916f38cebd006e0746b87f99f0e480028aacb74452bcf570ff3` |
+| Result | `647b1f79250c8500162bf88cb7a8e7066a15c2b51c136800e13d8630540e5ded` |
+| Original-store manifest | `4afee773e03f633a86eb445bfd1bdc625281e99416c48b910c01b2965d1383e5` |
+
+## Native Mac watcher acceptance (001 T011) — 2026-11-10
+
+**PASS at the owner-selected native scope.** Self-review on the owner's Apple M5 Max,
+64 GiB Mac; no provider, model, corpus-code execution or paid call. The production
+stdio `mcp --watch` binary is `target/gates/debug/foundry`, built from code `65fd799`
+under Rust 1.97.1; source/tests/lockfile are unchanged at `eda1edf`. Its SHA-256 is
+`c4396172c3be1057ebbc5da3f82a485549476f294f5272b61ebdb4951286f201`.
+The existing eight-gate receipt below is reused, not rerun.
+
+**Inputs and count correction, established before launch.** The Rust 1.99.0 corpus
+is still pinned to `b940084d7eb6a299eb4bfeb8e34901bc051e7ac4`. The earlier
+"62,116-file" description is not the current inventory: Git has 62,035 entries
+(62,018 regular files, five symlinks and 12 submodule entries); the filesystem has
+62,023 file/symlink entries outside `.git` and `.context-foundry`. The run used an
+APFS copy, preserving relative paths, ignore rules and bytes, with a fresh store.
+No files were added to pad the corpus. Its manifest SHA-256 is
+`45c2f2111b8395a3389e230ebbe25c7743073aa27851b8dd149c26692bbecd56`.
+The complete admitted count, 60,739, matches the prior pinned-corpus record.
+
+**Predeclared decision and bounds.** This run decides T011's native watching
+acceptance, not semantic preparation or retrieval quality. Total wall budget 3,600 s;
+cold reconciliation 1,800 s; restart reconciliation 900 s; each edit phase 60 s;
+each MCP request 35 s; owner sampled RSS 8 GiB; free-disk floor 20 GiB; clean
+shutdown 15 s. A failed bound leaves T011 open. Search requests asked for 2,048
+tokens. The protocol was written and hashed before the full run; no acceptance
+threshold changed during it.
+
+| Check | Observed |
+| --- | --- |
+| Whole run | 697.9 s; 65 checks passed, none failed |
+| Cold reconciliation | 381.2 s after MCP initialization; 60,739 accepted, 75 excluded, 60,814 body reads; one full reconciliation, zero events/overflow/errors, no pending index work |
+| Foreground service | Status and search served during reconciliation; 313 tool calls over the run, p95 184.7 ms, maximum 1,161.2 ms |
+| Owner memory | Peak sampled RSS 541.8 MiB; all sampled disk reserves above the floor |
+| Idle operation | Two 120-second windows, before edits and after recovery; zero extra body reads in each |
+| Atomic edit | New bytes and hash delivered, old handle rejected as stale; one additional body read and no extra full reconciliation |
+| Burst, rename, delete | 64 files created, directory renamed, all probes deleted; each phase converged by the next two-second poll (2.04–2.05 s), with current paths and no deleted hits |
+| Abrupt restart | Only the owned MCP child killed; offline edit recovered in 27.5 s including reopening (22.6 s reconciliation); new declaration/hash delivered |
+| Cleanup and preservation | Both owned children reaped; clean final exit and store reopen; final admitted count restored; copied and original corpus manifests unchanged |
+
+The two-second polling interval is an observation bound, not measured event latency.
+RSS sampling is not a hard memory-enforcement proof. Foreground timings cover this
+serial status/search workload; no prior-version latency comparison, universal
+contention bound or economic benefit is claimed. Native scale did not inject queue
+overflow or ignore-policy changes; those remain covered by the existing synthetic
+contracts. The M3 Pro duplicate-read observation in F18 remains unresolved.
+T011 is accepted under decision 15. This does not accept semantic scale, the native
+model/device script, signed-package checks, or T006/real-host task outcomes.
+
+**Private evidence and reproduction.** In this checkout, all raw files remain ignored
+under `runs/t011-native-2026-11-10/`. `watch_run.py --out <fresh-absolute-directory>`
+runs the same no-provider driver against the pinned corpus; the binary is required
+at `target/gates/debug/foundry`. `rust-1/` contains the exact `harness.py`, protocol,
+corpus manifest, request/response log, statuses, latency samples, stderr, final receipt,
+response-byte/hash audit and `SHA256SUMS`. The fixture preflight passed before the
+Rust run. Its first two failures are retained: a 100-file fixture completed before
+observing contention, then a driver assertion incorrectly assumed lexical search
+returned only an exact name. Both were corrected before freezing the full-run driver;
+no product code changed.
+
+| Evidence | SHA-256 |
+| --- | --- |
+| Protocol | `1c6f09c13ad82e6638b69d93d75e9a431ae89a43ee7b629b39a024bbb2db7c06` |
+| Driver | `37ce2ee1ec3e2a2ab4b17ac46c1b0d1d5d34c6ab4aada92218a358645458bfca` |
+| Raw events | `fc40d8d78a5be5150ce7b2def67cf1cb4cf68cbe6dd137a82f8a34db22c67911` |
+| Result | `1e277cae7b7bf2def213a3654be029d58e8fd3a20dd36601599ab6819cc4edfa` |
+
+## Boundary scope acceptance (005 T005) — 2026-11-10
+
+Decision 16 (2026-11-06, "Accept at written scope") is fulfilled by the existing
+`65fd799` local gates receipt below. This is an in-session readback of recorded
+checks, not a new test run or independent review. The code, tests and lockfile at
+`eda1edf` are identical to `65fd799`.
+
+The preserved `test.log` contains 21 passing boundary tests and 24 passing task-evidence
+tests, including `composes_task_and_multiservice_evidence_with_exact_citations_and_no_duplicate_spans`,
+`ambiguous_relationships_are_exposed_and_missing_tests_remain_missing`, the real
+CLI/MCP delivery fixtures, source/configuration invalidation, interrupted publication,
+restart and watched maintenance. All eight local gates exit 0. Test-log SHA-256:
+`e97514d8c7c30cb64e9bc2159a760d46166d122d3b2599b12d6a14ad5cd664f3`.
+
+T005 is accepted at the written multi-service fixture scope and no longer blocks
+release. The five optional real-framework boundary tests and one CPython task-evidence
+test are ignored in that receipt; their older runtime records were not rerun here.
+Other frameworks, brokers, broader imports, cross-language identity and dynamic
+collectors remain named limitations. This acceptance does not establish 003 T009
+real-host outcomes, T006 benefit or release readiness.
+
+## Watcher test repair (F18) — 2026-11-10
+
+Self-review, on the owner's Mac (Apple M5 Max, 64 GiB). Private logs:
+`datasets/context-foundry-gates/f18-2026-11-10/` and
+`datasets/context-foundry-gates/65fd799-2026-11-10/`.
+
+**Observed before the change, at `07b7b1d`.** Three runs of
+`six_thousand_files_allow_foreground_calls_and_no_idle_body_rescans` passed in 103, 111
+and 122 seconds against the test's 180-second deadline; the two failures
+recorded on 2026-11-06 ran past it. In every run with a captured status the watcher
+reports `events` 0, `full_reconciliations` 1 and `source_reads` 6,000, so on this
+Mac the test does not reread sources: it is slow. A phase probe (temporary, not
+committed) put the walk at 60 s and the remaining index drain of 4,504 keys at 56 s.
+A 10-second `sample` of the owner during the walk found 73% of the watcher thread
+inside redb's durable commit, almost all of it in `File::sync_all`. The walk made
+one forced commit per file, and each eight-key index page made a search commit and a
+store commit: about 6,750 forced commits for 6,000 files.
+
+**Change, `65fd799`.** A watcher walk publishes the files it reads in atomic batches
+of at most four through the existing foreground batch commit, rechecking each file
+by name just before the commit, and a background index page holds 32 keys instead
+of eight. A single hinted path still commits alone. The test's assertions and
+deadline are unchanged; its read-count assertion now prints the watcher status.
+
+**Checked.**
+
+- The probed test at the change: walk and drain complete in 27 s, test 31 s.
+- `tests/watch.rs`, all four tests, five consecutive runs: 5 of 5 pass in 29–43 s,
+  each with `events` 0 and `source_reads` 6,000.
+- New unit test `a_walk_never_publishes_a_file_rewritten_after_its_read`: a file
+  rewritten between its read and its batch commit fails the walk and is never
+  published with the earlier bytes. With the recheck disabled the test fails.
+- Local gates on clean `65fd799` (20:47–21:05 UTC), Rust 1.97.1 and 1.90.0: all
+  eight gates exit 0; **1,315 passed, 0 failed, 34 ignored**; `pilot-test` 62
+  passed. The watch file took 50 s inside the full suite. Log SHA-256 prefixes:
+  Clippy `8ca4fb7d…`, test `e97514d8…`, pilot Clippy `5799c3ab…`, pilot tests
+  `7109aa4e…`, MSRV check `975eb1f3…`, MSRV Clippy `fd6e45c3…`, MSRV pilot check
+  `5b2a6c17…`.
+
+**Not established.** The 2026-10-17 symptom on the M3 Pro, 6,076–7,658 reads
+against 6,000, did not occur in any of these runs, so its late-hint hypothesis is
+neither confirmed nor repaired. No test measures foreground latency behind a
+32-key page or a four-file batch. Not run: CI (Actions unavailable), native macOS
+acceptance (F7) and the 62,116-file watch run that accepts 001 T011.
+
 ## Owner decisions — 2026-11-06
 
 After the pilot, an in-session sweep (self-review, not independent) searched the
@@ -17,19 +9421,19 @@ is work to do.
 | 10 | 009 signed-package checks (handoff row 4) | "Row 4 blocks release" | The first release ships signed semantic retrieval; a failing row 4 is fixed first. |
 | 14 | 010 real-model acceptance | "Defer 010 real-model acceptance" | The release no longer waits on 010's task utility; the code stays experimental and unadvertised. |
 | 20 | 003 T004 meter-only Z.ai gateway | "Release it separately" | CLI and MCP release without advertising it; it gets its own release once proven live. |
-| 16 | 005 T005 boundary relationships | "Accept at written scope" | Accepted once a local gates receipt exists (to do); other producers become named limitations. |
-| 11 | 009 T006–T009 scale | "Accept the Mac rust run" | The existing Mac hierarchy-v1 preparation of rust-lang/rust, plus a short replay and changed-input check (to do), accepts scale; F10/F11 retire; Linux x86 and the 67,663-source corpus are a named limitation. |
+| 16 | 005 T005 boundary relationships | "Accept at written scope" | Accepted using the `65fd799` local gates receipt ([2026-11-10](#boundary-scope-acceptance-005-t005--2026-11-10)); other producers remain named limitations. |
+| 11 | 009 T006–T009 scale | "Accept the Mac rust run" | Done: the existing Mac hierarchy-v1 preparation plus the [replay and changed-input check](#semantic-scale-replay-and-changed-input-acceptance--2026-11-10) accepts scale; F10/F11 retire; Linux x86 and the 67,663-source corpus are a named limitation. |
 | 12 | Device acceptance scope | "Script checks only" | What `scripts/native-macos-acceptance.py` checks decides; unbuilt GPU-pressure, residency, thermal/battery and eviction policies are named limitations. |
-| 13 | Native macOS acceptance (F7) | "Once now, unsigned" | One ad-hoc-signed run on the owner's Mac now (to do), repeated on the signed release candidate. |
-| 15 | 001 T011 watching | "Native Mac run on rust" | Fix F18 without loosening it, then run `mcp --watch` on the 62,116-file rust corpus against bounds stated in advance (to do). |
-| 9 | 001 T010 and `--experimental-behavior-context` | "Lexical-only, drop T006 gate" | T010's own local gates and the 2026-10-19 G2 rule decide; the flag's semantic-store effects are removed and it defaults on only where lexical results are served (code to do). |
+| 13 | Native macOS acceptance (F7) | "Once now, unsigned" | Done: the ad-hoc-signed run on the owner's Mac passed ([2026-11-10](#native-macos-acceptance--2026-11-10)); repeat on the signed release candidate. |
+| 15 | 001 T011 watching | "Native Mac run on rust" | Done: F18's deadline repair and the bounded native `mcp --watch` run on pinned rust-lang/rust passed ([2026-11-10](#native-mac-watcher-acceptance-001-t011--2026-11-10)); the receipt corrects the earlier file-count description. |
+| 9 | 001 T010 and `--experimental-behavior-context` | "Lexical-only, drop T006 gate" | Semantic effects remain removed. The fixed singleton candidate passes its required retrieval and local gates; lexical behavioral selection is accepted and defaults on with explicit opt-out ([receipt](#t010-singleton-qualification--2026-11-11)). The first failed default attempt remains recorded; no 003 T006 or semantic-quality acceptance is implied. |
 | 24 | Query-time parse cost (001 T006, 007) | "Accept as named limitation" | No code change; reopen only after a measured failure on a real corpus. |
 
 **T006 and task context**
 
 | # | Item | Owner's choice | Result |
 |---|---|---|---|
-| 1 | 003 T006 after bounded pilot v1 | "Draft pilot v2, unfunded" | A new frozen contract with several harder held-out tasks, a powered sample and the v1 gap fixes (to do); no spend until the owner authorizes a key, rights and a budget. |
+| 1 | 003 T006 after bounded pilot v1 | "Draft pilot v2, unfunded" | The [unfunded v2 draft](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md) records the design and v1 gap requirements; task/sample/launch inputs and apparatus repairs remain before freeze. No spend until the owner authorizes a key, rights and a budget. |
 | 8 | 003 T007–T009 and 008 T003–T005 | "Measure them in pilot v2" | Their outcome tasks join the T006 suite; 008 T004's semantic triggers get built; all six stay open until an authorized run passes. |
 | 17 | `pilot-capture` apparatus and its embedded TypeScript bridge | "Keep, with an exception" | A narrow architecture exception for embedded host-extension source in an opt-in feature; the local gates gained a `pilot-capture` step with the main merge (see below). |
 | 19 | F2 local 30B pair and F3 economics | "Retire F2; F3 to T006" | F2 is retired; F3's economics gate points to T006 and pilot v2. |
@@ -41,17 +9445,17 @@ is work to do.
 | 3 | Where the work runs | "Mac only, drop sandbox" | The owner's Mac (Apple M5 Max, 64 GiB) is the work host; cloud sessions remain a fallback; Linux-only jobs stay parked until the owner provides a Linux host. |
 | 6 | The 2026-10-11 sandbox and its resume archive | "Declare both lost" | Items that needed the archive are retired or resettled (F2, F6, F8, F10, F11). |
 | 18 | F6 frozen Rust/Go label sets | "Retire F6 as a gate" | G1, G2 and F4-style sealed sets are the only retrieval instruments. |
-| 7, 30 | Backups of the G2/F4/G1 sets and pilot evidence | "Encrypted off-machine copy", "Encrypted, on disk for now" | Encrypted, checksummed archives under `~/VSC_DEV/backups` (to do); the owner copies them off the Mac. Pilot evidence is kept until T006 is accepted, retired or superseded. |
+| 7, 30 | Backups of the G2/F4/G1 sets and pilot evidence | "Encrypted off-machine copy", "Encrypted, on disk for now" | Done on local disk: five encrypted archives and checksum readback pass ([receipt](#encrypted-evidence-backups--2026-11-11)). The owner copies them off the Mac and performs authenticated recovery. Pilot evidence is kept until T006 is accepted, retired or superseded. |
 | 4 | Pilot v1 API key | "Revoke it, delete the file" | Done: the local key file and its empty directory were deleted. The owner revokes the key in the Console. |
 
 **Dependencies**
 
 | # | Item | Owner's choice | Result |
 |---|---|---|---|
-| 2 | rustls 0.23.45 alerts, PR #49 and the main merge | "Bump rustls, then merge" | rustls 0.23.46 on experimental, one gates run, one PR to main merged by the owner with a merge commit (to do). |
+| 2 | rustls 0.23.45 alerts, PR #49 and the main merge | "Bump rustls, then merge" | rustls 0.23.46 on experimental, one gates run, one PR to main merged by the owner with a merge commit. Done: PR #52 merged as `d94b013` on 2026-11-07; alerts #9–#12 closed and PR #49 closed as superseded. |
 | 5 | zip 0.6.6 alerts via the optional tch worker | "Dismiss as unused" | Done: Dependabot alerts #13–#16 dismissed as not used, with a recheck if 013 is unfrozen or npz loading is added. |
-| 21 | tree-sitter-scala 0.26.4, tree-sitter-powershell 0.26.6, pulldown-cmark 0.13.6 | "One bump, gated on unit diff" | One schema bump after a unit diff on fixtures and both G2 corpora; G2 on the Mac only if G2-corpus units change (to do). |
-| 22 | Tantivy 0.27.0 (PR #47) | "Apply only if neutral" | Merged onto experimental only if existing stores open without repair and G1 lexical results are identical (to do). |
+| 21 | tree-sitter-scala 0.26.4, tree-sitter-powershell 0.26.6, pulldown-cmark 0.13.6 | "One bump, gated on unit diff" | Done on `68ed776`, with search schema 9 and units7. Complete fixture and both G2-corpus snapshots are identical; the conditional fresh G2 run is not triggered. Focused checks and all eight local gates pass ([receipt](#parser-bundle-and-complete-unit-comparison--2026-11-11)). |
+| 22 | Tantivy 0.27.0 (PR #47) | "Apply only if neutral" | Done: existing 0.26 stores open without repair, all G1 result/response bytes are identical, and all eight local gates pass on `2929769` ([receipt](#tantivy-027-store-compatibility-and-g1-neutrality--2026-11-11)). Accepted for experimental. |
 | 23 | tree-sitter-dart 0.3.0 (PR #48) | "Close; stay on 0.2.0" | Done: PR #48 closed with the reason. |
 
 **Retired, closed or kept**
@@ -115,6 +9519,10 @@ on clean trees; logs are private, under
   stays open ("Native Mac run on rust" requires fixing it first).
 - Not run: CI (Actions unavailable), native macOS acceptance (F7, to do) and the
   `pilot-capture` actual-host suite (not a gate).
+- Merged 2026-11-07: the owner asked for PR #52 to be merged, and it landed on `main`
+  as merge commit `d94b013` (parents `69c3bb0` and `98adfe5`; its tree equals
+  `98adfe5`). No workflow run started. Dependabot then closed alerts #9–#12, and
+  PR #49 was closed as superseded.
 
 One observation for the owner, with no change made: Dependabot pull requests
 still start hosted workflow runs on their own branches (for example on
@@ -2094,8 +11502,24 @@ the read-only permissions two gateway fault tests rely on, so those tests were
 rerun unprivileged. The 2026-10-16 Codex sandbox runs as uid 1000 and passes them
 directly.
 
+Since 2026-11-06 the script runs eight gates; the three pilot-capture gates are
+reported in the test cell. Rows from 2026-11-10 on ran on the owner's Mac with Rust
+1.97.1 and 1.90.0, with logs kept privately. The rows below list selected full
+eight-gate runs; other runs are in their dated records. The rounds from `3bd30be`
+to `85a63c3` reran only the four gates the pilot-capture feature affects and reused
+the default-feature receipts; they are not listed as full runs.
+
 | Commit | fmt | clippy 1.97 | test 1.97 | msrv-check | msrv-clippy |
 | --- | --- | --- | --- | --- | --- |
+| `455fa03` | 0 | 0 | 0: 1,321 passed, 35 ignored; pilot-capture gates 0, pilot units 132 passed, 1 ignored ([receipt](#local-gates-on-455fa03--2026-11-20)) | 0 | 0 |
+| `afa7b38` | 0 | 0 | 0: 1,321 passed, 35 ignored; pilot-capture gates 0, pilot units 132 passed, 1 ignored ([receipt](#local-gates-on-afa7b38--2026-11-20)) | 0 | 0 |
+| `f2cf6f3` | 0 | 0 | 0: 1,321 passed, 35 ignored; pilot-capture gates 0, pilot units 125 passed, 1 ignored ([receipt](#local-gates-on-f2cf6f3--2026-11-19)) | 0 | 0 |
+| `3bd30be` | 0 | 0 | 0: 1,319 passed, 35 ignored; pilot-capture gates 0, pilot units 102 passed, 1 ignored ([receipt](#native-startup-watchdog-and-promise-hook-limits--2026-11-15)) | 0 | 0 |
+| `98157db` | 0 | 0 | 0: 1,319 passed, 35 ignored; pilot-capture gates 0, pilot units 101 passed, 1 ignored ([receipt](#stateless-native-request-repair--2026-11-15)) | 0 | 0 |
+| `68ed776` | 0 | 0 | 0: 1,307 passed, 34 ignored; pilot-capture gates 0, pilot units 62 passed ([receipt](#parser-bundle-and-complete-unit-comparison--2026-11-11)) | 0 | 0 |
+| `2929769` | 0 | 0 | 0: 1,307 passed, 34 ignored; pilot-capture gates 0, pilot units 62 passed ([receipt](#tantivy-027-store-compatibility-and-g1-neutrality--2026-11-11)) | 0 | 0 |
+| `85369dd` | 0 | 0 | 101: 1,304 passed, 1 failed (Tantivy `LockBusy`), 34 ignored; pilot-capture gates 0 ([receipt](#derived-writer-contention-after-fork--2026-11-11)) | 0 | 0 |
+| `65fd799` | 0 | 0 | 0: 1,315 passed, 34 ignored; pilot-capture gates 0 ([receipt](#watcher-test-repair-f18--2026-11-10)) | 0 | 0 |
 | `854cf88` | 0 | 0 | 101: 1,312 passed, 2 timing failures (watcher F18, cancellation), 34 ignored; pilot-capture gates 0 ([receipt](#owner-decisions--2026-11-06)) | 0 | 0 |
 | `8600fc0` | 0 | 0 | 0: 1,314 passed, 34 ignored ([receipt](#owner-decisions--2026-11-06)) | 0 | 0 |
 | `16b1e39` | 0 | 0 | 0: 1,307 passed, 34 ignored ([dependency cleanup receipt and log digests](#dependency-and-branch-cleanup--2026-10-26)) | 0 | 0 |

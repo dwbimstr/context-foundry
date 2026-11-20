@@ -196,9 +196,14 @@ impl RawCall {
 
 impl RawStdio {
     async fn start(store: &Path, root: &Path) -> Self {
+        Self::start_with_flags(store, root, &[]).await
+    }
+
+    async fn start_with_flags(store: &Path, root: &Path, flags: &[&str]) -> Self {
         let mut command = tokio::process::Command::new(BIN);
         command
             .args(server_args(store, root))
+            .args(flags)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -543,42 +548,46 @@ async fn identifier_definitions_are_search_hit1_and_retrieve_whole_units() {
 #[tokio::test]
 async fn question_contexts_surface_their_expected_units() {
     let corpus = measured_corpus();
-    let mut server = RawStdio::start(&corpus.store, &corpus.root).await;
+    // Exercise the same frozen outcomes through both the default boundary and
+    // explicit lexical behavior; fixtures, assertions and budgets are identical.
+    for flags in [&[][..], &["--experimental-behavior-context"][..]] {
+        let mut server = RawStdio::start_with_flags(&corpus.store, &corpus.root, flags).await;
 
-    for (question, marker) in QUESTIONS {
-        let call = server
-            .call(
-                "context",
-                serde_json::json!({"query": question, "tokens": 2048}),
-            )
-            .await;
-        assert!(!call.is_error(), "`{question}` failed: {}", call.raw);
-        let text = call.text();
-        assert!(
-            count_tokens(&text) <= 2048,
-            "`{question}`: context stays within 2048 tokens"
-        );
-        let parsed = v2(&text);
-        assert_eq!(parsed.header[0], "foundry context");
-        assert!(
-            text.contains(marker),
-            "`{question}` does not surface its expected unit ({marker}):\n{text}"
-        );
-        // Every fenced verbatim body is exactly its handle's corpus bytes.
-        for item in &parsed.items {
-            if item.kind != context_foundry::testkit::V2Kind::Source
-                || item.form.is_some()
-                || item.handle.is_empty()
-            {
-                continue;
-            }
-            let range = HandleRef::parse(&item.handle).unwrap();
-            let file = corpus_bytes(&corpus.root, &range.path);
-            assert_eq!(
-                item.body.as_bytes(),
-                &file[range.start as usize..range.end as usize],
-                "`{question}`: a verbatim context body is exact corpus bytes"
+        for (question, marker) in QUESTIONS {
+            let call = server
+                .call(
+                    "context",
+                    serde_json::json!({"query": question, "tokens": 2048}),
+                )
+                .await;
+            assert!(!call.is_error(), "`{question}` failed: {}", call.raw);
+            let text = call.text();
+            assert!(
+                count_tokens(&text) <= 2048,
+                "`{question}`: context stays within 2048 tokens"
             );
+            let parsed = v2(&text);
+            assert_eq!(parsed.header[0], "foundry context");
+            assert!(
+                text.contains(marker),
+                "`{question}` does not surface its expected unit ({marker}):\n{text}"
+            );
+            // Every fenced verbatim body is exactly its handle's corpus bytes.
+            for item in &parsed.items {
+                if item.kind != context_foundry::testkit::V2Kind::Source
+                    || item.form.is_some()
+                    || item.handle.is_empty()
+                {
+                    continue;
+                }
+                let range = HandleRef::parse(&item.handle).unwrap();
+                let file = corpus_bytes(&corpus.root, &range.path);
+                assert_eq!(
+                    item.body.as_bytes(),
+                    &file[range.start as usize..range.end as usize],
+                    "`{question}`: a verbatim context body is exact corpus bytes"
+                );
+            }
         }
     }
 }

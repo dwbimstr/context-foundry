@@ -22,8 +22,10 @@ pub enum AdapterCommand {
         /// Write bounded retrieval diagnostics in a NEW private run directory.
         #[arg(long, value_name = "DIR")]
         retrieval_trace_dir: Option<PathBuf>,
-        /// Test behavioral support packing; default off pending retrieval/host gates.
-        #[arg(long)]
+        /// Select behavioral evidence for lexical context; disable with =false.
+        #[arg(long, action = clap::ArgAction::Set, num_args = 0..=1,
+              require_equals = true, default_missing_value = "true",
+              default_value_t = crate::store::DEFAULT_BEHAVIOR_CONTEXT)]
         experimental_behavior_context: bool,
         /// Enable explicit experimental task state and reversible views.
         #[arg(long)]

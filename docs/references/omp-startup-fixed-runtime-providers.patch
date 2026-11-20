@@ -1,0 +1,152 @@
+# Proposed source-host qualification patch; unapplied by Foundry.
+# oh-my-pi 24439066040e006eb08da7b204f0ac41c79d2de9, MIT.
+# Upstream license: https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/LICENSE
+# MIT License
+# 
+# Copyright (c) 2025 Mario Zechner
+# Copyright (c) 2025-2026 Can Bölük
+# Copyright (c) 2026 Stencil Labs, Inc.
+# 
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+# 
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+# 
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+diff --git a/packages/coding-agent/src/config/model-registry.ts b/packages/coding-agent/src/config/model-registry.ts
+index d74a901..acb602a 100644
+--- a/packages/coding-agent/src/config/model-registry.ts
++++ b/packages/coding-agent/src/config/model-registry.ts
+@@ -305,9 +305,14 @@ export type ResolvedRequestAuth =
+  */
+ export class ModelRegistry {
+ 	#startupDiscovery?: StartupDiscovery;
++	readonly #fixedStartupProviders: boolean;
+ 	#unsupportedStartupDiscovery = false;
+ 	#ownStartupDiscovery = <T>(operation: () => Promise<T>): Promise<T> =>
+ 		this.#startupDiscovery ? this.#startupDiscovery.own(operation) : operation();
++	assertStartupRuntimeProvidersExcluded(): void {
++		if (!this.#fixedStartupProviders || this.#runtimeModelManagers.size || this.#runtimeRegistrations.length)
++			throw new Error("Startup runtime provider inventory unqualified");
++	}
+ 	async retireStartupDiscovery(): Promise<StartupDiscoveryReceipt> {
+ 		if (!this.#startupDiscovery || this.#owner || this.#mirrorListeners.size)
+ 			throw new Error("Startup discovery owner unqualified");
+@@ -624,6 +629,7 @@ export class ModelRegistry {
+ 			 */
+ 			ignoreLocalModelConfig?: boolean;
+ 			ownStartupDiscovery?: boolean;
++			fixedStartupProviders?: boolean;
+ 			/** Settings source for availability and context-window policies. */
+ 			settings?: Settings;
+ 			/** Model discovery cache database. Defaults beside an explicit models config. */
+@@ -643,6 +649,9 @@ export class ModelRegistry {
+ 		},
+ 	) {
+ 		if (options?.ownStartupDiscovery && options.owner) throw new Error("Startup discovery mirrors unsupported");
++		this.#fixedStartupProviders = options?.fixedStartupProviders === true;
++		if (this.#fixedStartupProviders && !options?.ownStartupDiscovery)
++			throw new Error("Fixed startup providers require owned discovery");
+ 		if (options?.ownStartupDiscovery) this.#startupDiscovery = new StartupDiscovery();
+ 		this.#ignoreLocalModelConfig = options?.ignoreLocalModelConfig ?? false;
+ 		this.#owner = options?.owner;
+@@ -4011,6 +4020,10 @@ export class ModelRegistry {
+ 	 * If provider has oauth: registers OAuth provider for /login support.
+ 	 */
+ 	registerProvider(providerName: string, config: ProviderConfigInput, sourceId?: string): void {
++		if (this.#fixedStartupProviders) {
++			this.#unsupportedStartupDiscovery = true;
++			throw new Error("Fixed startup profile refuses runtime provider registration");
++		}
+ 		this.#startupDiscovery?.assertOpen();
+ 		if (this.#ignoreMirrorLocalChange("registerProvider")) return;
+ 		this.#runtimeChange({ kind: "register", name: providerName, config, sourceId }, () =>
+diff --git a/packages/coding-agent/src/main.ts b/packages/coding-agent/src/main.ts
+index 0838531..445c3b9 100644
+--- a/packages/coding-agent/src/main.ts
++++ b/packages/coding-agent/src/main.ts
+@@ -2079,6 +2079,7 @@ export async function runRootCommand(
+ 				new ModelRegistry(authStorage, undefined, {
+ 					settings: settingsInstance,
+ 					ownStartupDiscovery: parsedArgs.restrictTools === true,
++					fixedStartupProviders: parsedArgs.startupExtension === true,
+ 					...(startupCatalogFetch ? { fetch: startupCatalogFetch } : {}),
+ 				}),
+ 		);
+diff --git a/packages/coding-agent/src/sdk.ts b/packages/coding-agent/src/sdk.ts
+index 977b4d5..7e64e67 100644
+--- a/packages/coding-agent/src/sdk.ts
++++ b/packages/coding-agent/src/sdk.ts
+@@ -1127,7 +1127,8 @@ export async function retireRestrictedStartupCatalog(sessionManager: unknown, mo
+ 		registry !== modelRegistry
+ 	)
+ 		throw new Error("Restricted catalog owner identity mismatch");
+-	return await registry.retireStartupDiscovery();
++	registry.assertStartupRuntimeProvidersExcluded();
++	return Object.freeze({ ...(await registry.retireStartupDiscovery()), runtime_providers_excluded: true });
+ }
+ 
+ /** Retire the original CLI auth/settings link and exact settings persistence owner. */
+diff --git a/packages/coding-agent/test/startup-discovery-owner.test.ts b/packages/coding-agent/test/startup-discovery-owner.test.ts
+index 316bd61..ff95c1f 100644
+--- a/packages/coding-agent/test/startup-discovery-owner.test.ts
++++ b/packages/coding-agent/test/startup-discovery-owner.test.ts
+@@ -172,12 +172,13 @@ test("a detached catalog subscriber cannot retire the shared original payload",
+ 	expect(retired).toBe(true);
+ });
+ 
+-function fixture(owned = true) {
++function fixture(owned = true, fixedStartupProviders = false) {
+ 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "startup-registry-owner-")),
+ 		auth = createInMemoryAuthStorage();
+ 	let fetches = 0;
+ 	const registry = new ModelRegistry(auth, path.join(dir, "models.yml"), {
+ 		ownStartupDiscovery: owned,
++		fixedStartupProviders,
+ 		fetch: () => {
+ 			fetches++;
+ 			return Promise.reject(Error("synthetic transport refusal"));
+@@ -287,3 +288,31 @@ test("real registry closes admission while original provider work is still held"
+ 		f.close();
+ 	}
+ });
++
++test("fixed startup rejects runtime registration before a callback and keeps the fault", async () => {
++	const clean = fixture(true, true);
++	const refused = fixture(true, true);
++	try {
++		clean.registry.assertStartupRuntimeProvidersExcluded();
++		await expect(clean.registry.retireStartupDiscovery()).resolves.toMatchObject({ discovery_retired: true });
++		let callbacks = 0;
++		for (const id of ["anthropic", "startup-runtime-fixture"]) {
++			expect(() =>
++				refused.registry.registerProvider(id, {
++					fetchDynamicModels: async () => {
++						callbacks++;
++						return [];
++					},
++				}),
++			).toThrow("Fixed startup profile refuses runtime provider registration");
++		}
++		await refused.registry.refreshRuntimeProviders("online");
++		expect(callbacks).toBe(0);
++		expect(refused.fetches()).toBe(0);
++		refused.registry.assertStartupRuntimeProvidersExcluded();
++		await expect(refused.registry.retireStartupDiscovery()).rejects.toThrow("native owner unqualified");
++	} finally {
++		clean.close();
++		refused.close();
++	}
++});

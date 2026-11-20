@@ -442,7 +442,7 @@ impl Shared {
         let workspace_id = engine.workspace_id().unwrap_or_default();
         Self {
             trace_sink: None,
-            experimental_behavior_context: false,
+            experimental_behavior_context: crate::store::DEFAULT_BEHAVIOR_CONTEXT,
             engines: Arc::new(Mutex::new(vec![Some(engine)])),
             meta: Arc::new(vec![RootMeta {
                 alias: "primary".to_owned(),
@@ -1134,7 +1134,7 @@ fn roots_argument(args: &JsonObject) -> FResult<Option<Vec<String>>> {
 pub struct ServerOptions {
     /// Explicit opt-in; a new private directory, never an existing run.
     pub retrieval_trace_dir: Option<PathBuf>,
-    /// Default off until 001 T010's retrieval and real-host gates pass.
+    /// Lexical behavioral selection; the owner forwards its default or explicit opt-out.
     pub experimental_behavior_context: bool,
     pub store: PathBuf,
     pub root: PathBuf,

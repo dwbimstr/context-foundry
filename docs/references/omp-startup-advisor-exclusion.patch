@@ -1,0 +1,219 @@
+# Proposed source-host qualification patch; unapplied by Foundry.
+# oh-my-pi 24439066040e006eb08da7b204f0ac41c79d2de9, MIT.
+# Upstream license: https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/LICENSE
+# MIT License
+# 
+# Copyright (c) 2025 Mario Zechner
+# Copyright (c) 2025-2026 Can Bölük
+# Copyright (c) 2026 Stencil Labs, Inc.
+# 
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+# 
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+# 
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+diff --git a/packages/coding-agent/src/sdk.ts b/packages/coding-agent/src/sdk.ts
+index b89c40d..68afbe8 100644
+--- a/packages/coding-agent/src/sdk.ts
++++ b/packages/coding-agent/src/sdk.ts
+@@ -60,6 +60,7 @@ import { INTENT_FIELD } from "@oh-my-pi/pi-wire";
+ import { DEFAULT_FRAME_DATA_BYTES_BUDGET, frameDataBytesBudget } from "@oh-my-pi/snapcompact";
+ import {
+ 	discoverAdvisorConfigs,
++	type DiscoveredAdvisors,
+ 	discoverWatchdogFiles,
+ 	formatActiveRepoWatchdogPrompt,
+ 	formatAdvisorContextPrompt,
+@@ -1059,6 +1060,7 @@ export interface RestrictedStartupReceipt {
+ }
+ export interface SealedRestrictedStartupReceipt extends RestrictedStartupReceipt {
+ 	readonly credential_usage_joined: true;
++	readonly advisors_excluded: true;
+ }
+ let restrictedStarts = 0;
+ let restrictedSealed = false;
+@@ -1079,7 +1081,7 @@ let restrictedOwner:
+ 			loggingRetired?: true;
+ 			pluginRoots?: WeakRef<StartupPluginRootsOwner>;
+ 			extension?: WeakRef<StartupExtensionOwner>;
+-			receipt: SealedRestrictedStartupReceipt;
++			receipt: Omit<SealedRestrictedStartupReceipt, "advisors_excluded">;
+ 	  }
+ 	| undefined;
+ 
+@@ -1097,12 +1099,17 @@ export function sealRestrictedStartup(sessionManager: unknown, modelRegistry: un
+ 		owner.registry.deref() !== modelRegistry ||
+ 		owner.auth.deref() !== owner.registry.deref()?.authStorage ||
+ 		session.memoryEnabled ||
++		!owner.extension?.deref() ||
++		!session.startupAdvisorExcluded ||
++		session.isAdvisorEnabled() ||
++		session.isAdvisorActive() ||
++		session.getAdvisorAvailableToolNames().length !== 0 ||
+ 		JSON.stringify(session.getActiveToolNames().slice().sort()) !== JSON.stringify(owner.receipt.tool_names)
+ 	) {
+ 		throw new Error("Restricted startup owner identity or state mismatch");
+ 	}
+ 	restrictedSealed = true;
+-	return owner.receipt;
++	return Object.freeze({ ...owner.receipt, advisors_excluded: true });
+ }
+ 
+ /** Retire discovery only for the already sealed, exact restricted session. */
+@@ -2439,9 +2446,14 @@ async function createAgentSessionBody(
+ 	};
+ 	const activeRepoContextPromise = logger.time("resolveActiveRepoContext", resolveRepoContext, cwd);
+ 	activeRepoContextPromise.catch(() => {});
+-	const watchdogFilesPromise = logger.time("discoverWatchdogFiles", () => discoverWatchdogFiles(cwd, agentDir));
++	const advisorStartupDisabled = options.startupExtensionOwner !== undefined;
++	const watchdogFilesPromise = advisorStartupDisabled
++		? Promise.resolve([])
++		: logger.time("discoverWatchdogFiles", () => discoverWatchdogFiles(cwd, agentDir));
+ 	watchdogFilesPromise.catch(() => {});
+-	const advisorConfigsPromise = logger.time("discoverAdvisorConfigs", () => discoverAdvisorConfigs(cwd, agentDir));
++	const advisorConfigsPromise: Promise<DiscoveredAdvisors> = advisorStartupDisabled
++		? Promise.resolve({ advisors: [], sharedInstructions: undefined, warnings: [] })
++		: logger.time("discoverAdvisorConfigs", () => discoverAdvisorConfigs(cwd, agentDir));
+ 	advisorConfigsPromise.catch(() => {});
+ 	const promptTemplatesPromise = options.promptTemplates
+ 		? Promise.resolve(options.promptTemplates)
+@@ -5401,8 +5413,10 @@ async function createAgentSessionBody(
+ 			isToolActive: name => toolSession.isToolActive?.(name) === true,
+ 		};
+ 		const advisorToolBuilds: Array<Tool | null | Promise<Tool | null>> = [];
+-		for (const name in BUILTIN_TOOLS) {
+-			advisorToolBuilds.push(BUILTIN_TOOLS[name as keyof typeof BUILTIN_TOOLS](advisorToolSession));
++		if (!advisorStartupDisabled) {
++			for (const name in BUILTIN_TOOLS) {
++				advisorToolBuilds.push(BUILTIN_TOOLS[name as keyof typeof BUILTIN_TOOLS](advisorToolSession));
++			}
+ 		}
+ 		const built = await Promise.all(advisorToolBuilds);
+ 		// Wrapped like every registry tool: `ExtensionToolWrapper` is where the
+@@ -5553,14 +5567,19 @@ async function createAgentSessionBody(
+ 			providerSessionId: options.providerSessionId,
+ 			accountPoolScope,
+ 			providerPromptCacheKeySource,
++			advisorStartupDisabled,
+ 			advisorTools,
+ 			// Same per-call `grep` seam the primary bridge gets, built against the
+ 			// advisor's own tool session so a `pi_grep` frame's context width and
+ 			// match cap are honored there too.
+-			advisorCreateGrepTool: createBridgeGrepFactory(advisorToolSession, extensionRunner, advisorAgent),
++			advisorCreateGrepTool: advisorStartupDisabled
++				? undefined
++				: createBridgeGrepFactory(advisorToolSession, extensionRunner, advisorAgent),
+ 			// Same `replace`-mode requirement as the primary bridge; the advisor
+ 			// path gates it on the advisor's own `edit` grant.
+-			advisorCreateEditTool: () => createBridgeEditTool(advisorToolSession, extensionRunner, advisorAgent),
++			advisorCreateEditTool: advisorStartupDisabled
++				? undefined
++				: () => createBridgeEditTool(advisorToolSession, extensionRunner, advisorAgent),
+ 			// The advisor's bridge tools are wrapped for approval, but the wrapper
+ 			// reads the mode and per-tool policies only from the execute-time
+ 			// context — the primary bridge passes the same store.
+@@ -5642,7 +5661,7 @@ async function createAgentSessionBody(
+ 		// Backfill the resumed advisor spend without blocking startup: the scan
+ 		// runs after the session is live, so `--resume` no longer scales with the
+ 		// advisor transcript size (issue #9553).
+-		session.beginInitialAdvisorCostRestore();
++		if (!advisorStartupDisabled) session.beginInitialAdvisorCostRestore();
+ 		// Lines already seen follow the live context on their own (`getContextMessages`); a new session file starts over.
+ 		if (spotlightExperiment) session.registerSessionChangeCallback(() => spotlightExperiment.onSessionChange());
+ 		// Extension factories normally register tools before session construction,
+diff --git a/packages/coding-agent/src/session/agent-session-types.ts b/packages/coding-agent/src/session/agent-session-types.ts
+index 2aca773..79099f1 100644
+--- a/packages/coding-agent/src/session/agent-session-types.ts
++++ b/packages/coding-agent/src/session/agent-session-types.ts
+@@ -387,6 +387,8 @@ export interface AgentSessionConfig {
+ 	providerPromptCacheKeySource?: "explicit" | "fork";
+ 	/** Full advisor toolset built against an advisor-scoped tool session. */
+ 	advisorTools?: AgentTool[];
++	/** Disable advisor activation for the explicit restricted startup profile. */
++	advisorStartupDisabled?: boolean;
+ 	/**
+ 	 * Build a `grep` honoring a Cursor `pi_grep` frame's own context width and
+ 	 * match cap, against the advisor-scoped tool session. Without it an advisor
+diff --git a/packages/coding-agent/src/session/agent-session.ts b/packages/coding-agent/src/session/agent-session.ts
+index 3188c84..8c72a05 100644
+--- a/packages/coding-agent/src/session/agent-session.ts
++++ b/packages/coding-agent/src/session/agent-session.ts
+@@ -2839,6 +2839,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+ 		};
+ 		const sharedTransformProviderContext = config.transformProviderContext;
+ 		this.#advisors = new SessionAdvisors(advisorsHost, {
++			startupDisabled: config.advisorStartupDisabled,
+ 			enabled: cfgAdvisorEnabled.get(this.settings),
+ 			tools: config.advisorTools,
+ 			createGrepTool: config.advisorCreateGrepTool,
+@@ -15773,6 +15774,7 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+ 	 * settles.
+ 	 */
+ 	beginInitialAdvisorCostRestore(): void {
++		if (this.#advisors.startupDisabled) return;
+ 		let stale = false;
+ 		const unregisterSessionChange = this.registerSessionChangeCallback(() => {
+ 			stale = true;
+@@ -15815,6 +15817,11 @@ export class AgentSession implements SettingsScope, AgentViewSession {
+ 	): void {
+ 		this.#advisors.restoreInitialCost(costs, costsAtSnapshot, providersBySlug);
+ 	}
++	/** Whether the exact restricted startup session keeps advisor work disabled. */
++	get startupAdvisorExcluded(): boolean {
++		return this.#advisors.startupDisabled;
++	}
++
+ 	/** Return whether any active or configured advisor is running on an OAuth/subscription model. */
+ 	isAdvisorUsingSubscription(): boolean {
+ 		return this.#advisors.isUsingSubscription();
+diff --git a/packages/coding-agent/src/session/session-advisors.ts b/packages/coding-agent/src/session/session-advisors.ts
+index 47bc44e..2984e3e 100644
+--- a/packages/coding-agent/src/session/session-advisors.ts
++++ b/packages/coding-agent/src/session/session-advisors.ts
+@@ -423,6 +423,7 @@ export interface AdvisorCatchupOptions {
+ /** Inputs that configure the advisor roster owned by a session. */
+ export interface SessionAdvisorsOptions {
+ 	enabled: boolean;
++	startupDisabled?: boolean;
+ 	tools?: AgentTool[];
+ 	/**
+ 	 * Build a `grep` honoring a Cursor `pi_grep` frame's own context width and
+@@ -556,6 +557,7 @@ export interface AdvisorStatusOverviewEntry {
+ /** Owns advisor runtimes, delivery policy, context maintenance, and status reporting. */
+ export class SessionAdvisors {
+ 	readonly #host: SessionAdvisorsHost;
++	readonly startupDisabled: boolean;
+ 	#advisorEnabled: boolean;
+ 	#advisorTools: AgentTool[] | undefined;
+ 	#advisorCreateGrepTool: SessionAdvisorsOptions["createGrepTool"];
+@@ -629,7 +631,8 @@ export class SessionAdvisors {
+ 
+ 	constructor(host: SessionAdvisorsHost, options: SessionAdvisorsOptions) {
+ 		this.#host = host;
+-		this.#advisorEnabled = options.enabled;
++		this.startupDisabled = options.startupDisabled === true;
++		this.#advisorEnabled = !this.startupDisabled && options.enabled;
+ 		this.#advisorTools = options.tools;
+ 		this.#advisorCreateGrepTool = options.createGrepTool;
+ 		this.#advisorCreateEditTool = options.createEditTool;
+@@ -2776,6 +2779,7 @@ export class SessionAdvisors {
+ 	 * @returns true when the advisor is actively running after the call.
+ 	 */
+ 	setAdvisorEnabled(enabled: boolean): boolean {
++		if (this.startupDisabled) return false;
+ 		this.#advisorEnabled = enabled;
+ 		if (enabled) {
+ 			if (this.#advisors.length > 0 && !this.#advisorRuntimeMatchesCurrentConfig()) {

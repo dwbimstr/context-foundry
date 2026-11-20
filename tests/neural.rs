@@ -2458,18 +2458,36 @@ fn model_verification_is_not_started_below_the_publication_reserve() {
 
 #[test]
 fn artifact_verification_obeys_caller_cancellation() {
+    use context_foundry::fault::{self, Action};
     let mut env = Env::new(&[("a.md", &body(100))]);
     grow_weights(&env);
     let control = Control::unbounded();
     let flag = control.cancel_flag();
+    // Cancel only once the weights hash is observed in flight, so the test
+    // never races the run's earlier work (store open, tokenizer, partition
+    // compute and commit), whose bare checkpoints return a cancel as an
+    // error. The hook runs on the run's thread after verification admitted
+    // `model.gguf` and before its first chunk is read; the flag is still set
+    // from another thread, as a real caller's would be.
+    let (hashing, observed) = std::sync::mpsc::channel::<()>();
+    fault::arm(
+        context_foundry::neural::fault_names::ARTIFACT_HASH,
+        0,
+        Action::Call(Box::new(move |ctx| {
+            if ctx.detail.contains("model.gguf") {
+                let _ = hashing.send(());
+            }
+        })),
+    );
     let canceller = std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(400));
+        let in_flight = observed.recv().is_ok();
         flag.store(true, std::sync::atomic::Ordering::SeqCst);
+        in_flight
     });
     env.engine = None;
     let profile = env.profile.clone();
     let started = Instant::now();
-    let report = prepare::run(
+    let outcome = prepare::run(
         &env.store,
         &PrepareOptions {
             priority_paths: &[],
@@ -2481,9 +2499,15 @@ fn artifact_verification_obeys_caller_cancellation() {
             control: &control,
         },
         env.factory.acquire(),
-    )
-    .expect("a cancelled verification is a named stop");
-    canceller.join().unwrap();
+    );
+    // Disarming drops the hook's sender, so a run that never reached the
+    // weights ends the canceller's wait instead of hanging the test.
+    fault::disarm_all();
+    assert!(
+        canceller.join().unwrap(),
+        "the run ended before hashing the weights: {outcome:?}"
+    );
+    let report = outcome.expect("a cancelled verification is a named stop");
     assert!(
         started.elapsed() < Duration::from_secs(8),
         "cancellation did not reach verification"

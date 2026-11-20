@@ -154,8 +154,10 @@ refinement. The hierarchy index remains **partial** until every eligible body,
 parent and file input is covered; completing the first pass never claims full
 retrieval or completed inference. Partitions still fit all hierarchy inputs, and
 the second pass still has the full model obligation. This improves delivery order;
-automatic query-driven selective body preparation remains open. Address, body-only
-and overview-only preparation keep their existing order.
+automatic query-driven selective body preparation is a named limitation (owner,
+2026-11-19; re-entry trigger under
+[T009](#t009--use-model-owned-geometry-and-contextual-representations)). Address,
+body-only and overview-only preparation keep their existing order.
 
 Evidence-delivery continuation, 2026-10-11: experimental prose context can focus
 long overview/hierarchy candidates to an exact source passage of at most 1,536
@@ -217,9 +219,11 @@ restart/revert reuse apply. Switching to hierarchy-v1 expands the recipe and reu
 matching overview vectors. There is still one active source recipe: this is not a
 simultaneous coarse index with automatic query-triggered body preparation. “Complete”
 means complete for the selected recipe; a file vector does not represent every omitted
-body byte or establish complete retrieval. Comparative quality and selective
-mixed-granularity preparation remain open; full representative inference is a named
-limitation (scale decision under [T006](#t006--bound-and-parallelize-semantic-partition-computation)).
+body byte or establish complete retrieval. Comparative quality remains open, and
+selective mixed-granularity preparation is a named limitation (owner, 2026-11-19,
+[T009](#t009--use-model-owned-geometry-and-contextual-representations)); full
+representative inference is a named limitation (scale decision under
+[T006](#t006--bound-and-parallelize-semantic-partition-computation)).
 Owner decision, 2026-11-06, "Keep as the low-cost recipe": overview-v1 stays an opt-in
 recipe, the cheapest to prepare though it locates fewer G2 answers than cards or
 hierarchy, with no code change; native macOS acceptance keeps using it
@@ -228,6 +232,7 @@ hierarchy, with no code change; native macOS acceptance keeps using it
 Planning addition, 2026-10-09: [T005](#t005--diagnose-and-improve-anchorless-evidence-retrieval)
 is authorized for execution by the owner on 2026-10-09 under the [ecosystem plan](../../docs/context-ecosystem-plan.md).
 It does not change T001–T004 acceptance or semantic enablement/package restrictions.
+(T005 closed without promotion on 2026-11-19, "Close, no promotion"; see its status.)
 
 Experimental update, 2026-10-09: T006/T007 implement bounded parallel partitions and
 progressive bootstrap. The subsequent efficiency audit selects their CPU/startup
@@ -922,9 +927,13 @@ T003's, each passing only with that task's verification.
     and while IPC is blocked, then assert the worker disappears within 2 s; a separate
     test kills a worker that ignores TERM.
 
-    Named limitation: a worker stopped by SIGSTOP cannot exit itself. Package
-    acceptance therefore needs an OS-level guardian (a launch guardian or service
-    profile), which stays open with signing.
+    Named limitation: a worker stopped by SIGSTOP cannot exit itself, because its
+    watcher is a thread of the stopped process; it cannot end a worker that stays
+    stopped after its owner dies. Owner decision, 2026-11-19, "Named limitation": no
+    OS-level guardian is built, and package acceptance does not need one. This
+    supersedes the earlier wording here, under which package acceptance needed a launch
+    guardian or service profile. It re-enters when a stranded stopped worker is observed
+    ([record](../../docs/validation.md#owner-decisions--2026-11-19)).
   - *Resources.* Process count is `hard` (`RLIMIT_NPROC=0`). Memory is `supervised`:
     the supervisor polls the worker's physical footprint (`proc_pid_rusage`) every
     250 ms against a 3 GiB ceiling (D001 measured 1.82 GiB for 8 × 1024 tokens). A
@@ -1155,6 +1164,16 @@ T003's, each passing only with that task's verification.
     someone else put there, so nothing removes it automatically; the owner of the
     scratch root removes it by hand. That trades a leak for never removing a
     directory that was not validated.
+    *Default creation modes (2026-11-13):* the shared 009/013 pre-exec setup
+    sets umask 0077 in the forked child before exec. Direct launches cannot inherit
+    a permissive caller mask for ordinary scratch-file creation; the parent mask
+    and existing objects are unchanged. This adds no launcher or cleanup owner.
+    The live fake-worker phase/request writers and the pinned native worker's
+    existing write probe are the selected creation boundaries under caller masks
+    0000/0022; a normal native model call is checked separately in the same test.
+    A creation mask does not prevent an explicit later chmod or establish the modes
+    of every transient library file; closed producer-tree validation remains separate. See the
+    [qualification](../../docs/validation.md#worker-scratch-creation-defaults--2026-11-13).
   - *Foreground requests during store steps (D7).* Measured: on a 60,739-file store
     every context query during the first ~12 minutes of cold partitioning failed
     `busy`, because back-to-back partition steps and whole-generation rebuilds held
@@ -1325,12 +1344,55 @@ for this proof.
 
 ### T005 — Diagnose and improve anchorless evidence retrieval
 
-**Status:** authorized 2026-10-09 (owner: “go for 1 then 2 and onwards”); in progress, not accepted. T004's
+**Status:** authorized 2026-10-09 (owner: “go for 1 then 2 and onwards”); closed without
+promotion on 2026-11-19 (owner decision, "Close, no promotion"; see below). T004's
 selected Gemma profile and current implementation are the comparison baseline.
+The selected K=1 packing experiment completed on 2026-11-11 with **no promotion**:
+it failed G2 body preservation and was removed from active code. Its G1 comparison
+has no gained or lost cases. The fresh holdout was unused at that checkpoint. A later
+fixed third/final variant completed the sole 400-case final pair without promotion;
+the current checkpoint is closed and the broader quality goal is retained. Further
+work needs a new bounded selection and unexposed acceptance evidence. See the
+[dated result](../../docs/validation.md#t005-compact-candidate-no-promotion--2026-11-11).
+On 2026-11-18 the owner selected fresh-context authors for the next blind set.
+Use the same pinned corpora, unchanged builder and full verifier, 200 cases per
+corpus, disjoint whole-module author assignments and separate label-side checks.
+The custodian also excludes normalized question text and answer identities from
+the consumed 400-case set. The new set passed source-side review and the full
+verifier and is sealed. Implementation receives only seal metadata. A subsequent
+single placement variant used the existing lexical and dense windows and was
+rejected on development G2 for significance and body preservation. The active
+placement baseline stands and the new holdout is still unconsumed.
+See the [seal receipt](../../docs/validation.md#t005-new-blind-holdout-sealed--2026-11-18).
+The [development result](../../docs/validation.md#t005-bounded-lexical-placement-fails-development-gates--2026-11-18)
+records the exact variant, paired scores and failure disposition.
+Owner decision, 2026-11-19, "Analyze, then one more": the next step studies the
+recorded losses without touching the sealed 2026-11-18 holdout. One more bounded
+candidate is selected only if that analysis shows a plausible large gain; otherwise
+the work returns to the owner. The candidate checkpoint and every acceptance guard
+below are unchanged ([record](../../docs/validation.md#owner-decisions--2026-11-19)).
+Owner decision 17, 2026-11-19, "Close, no promotion": the
+[loss analysis](../../docs/validation.md#t005-loss-analysis--2026-11-19) found no
+bounded candidate with a plausible large gain, and T005 closes without promotion. Its
+outcome is five candidates: the four measured ones (compact preference, fragment
+order, kept-body declaration prefixes and lexical placement) and the analysed but
+unbuilt role-ordered placement estimate. The current retrieval baseline stays.
+Anchorless retrieval quality beyond that baseline is a named limitation, and T005 is
+no longer a release condition. The sealed 2026-11-18 holdout stays unopened, reserved
+for future work. The re-entry trigger is the implementer's proposal, which the owner
+may replace: a new candidate that shows at least about +30 net located definitions on
+development G2 before it may spend that holdout, or a change of embedding
+representation or query handling that the owner selects
+([record](../../docs/validation.md#owner-decisions--2026-11-19)). The checkpoints and
+acceptance guards below are kept as written.
 The original G2 verdict remains valid for its original question: gain over no profile.
 This task asks which current losses can be repaired at the same delivery budget.
+The [resumable handoff](../../docs/resume-context-ecosystem.md#current-status--2026-11-06)
+owns the current baseline, case-review disposition and selected repair hypothesis;
+the candidate checkpoint below remains required before promotion.
 
-**Implementation in progress:** `src/retrieval_trace.rs` owns opt-in request-local
+**Implementation (in progress until the 2026-11-19 closure; the trace code remains):**
+`src/retrieval_trace.rs` owns opt-in request-local
 diagnostics, shared through `Control` by the ordinary selection/final-read paths.
 `context --retrieval-trace-dir DIR` and `mcp --retrieval-trace-dir DIR` require a new
 run directory; existing paths, including symlinks, are refused. Unix directories are
@@ -1406,6 +1468,44 @@ labelled; they do not assign causes to the 249 historical G2 misses.
   - Deliver stage counts, examples, current-baseline G1 wins/losses and one selected
     repair hypothesis. If dominant losses remain unexplained, improve diagnostics
     before selecting an embedding or ranking replacement.
+  - The 2026-11-13 retained-event census replays the current cap rules, separates
+    per-file refusals before global saturation from later flags, and requires the
+    eligible lexical document rather than a discarded duplicate to witness a target.
+    It selects no new ranking candidate or score; inspect actual earlier admitted
+    same-file evidence before proposing an ordering repair. See the
+    [dated diagnostic](../../docs/validation.md#t005-retained-cap-decision-census--2026-11-13).
+    The subsequent [same-file inspection](../../docs/validation.md#t005-actual-same-file-admission-pressure--2026-11-13)
+    joins actual occurrences and four earlier occupants, including successful
+    controls; representation labels alone remain insufficient to claim a repair.
+    A later fixed K = 1 stable dense-fragment ordering variant was selected before
+    implementation and evaluated once at the unchanged guards. It passes local
+    behavior/gates, G1 and CLI/MCP parity but fails G2's significance prerequisite.
+    The experiment is closed without promotion, source integration or fresh-holdout
+    access; see the [dated disposition](../../docs/validation.md#t005-fragment-order-candidate-no-promotion--2026-11-13).
+    Broader T005 acceptance and all frozen quality requirements remain unchanged.
+    The subsequent [coverage census](../../docs/validation.md#t005-retained-candidate-coverage-census--2026-11-13)
+    separates eligible dense/lexical discovery from outlines and parent-only paths.
+    It selects no repair; represented-input and provenance evidence is still needed
+    before proposing a contextual-coverage change.
+    [Exact body-input reconstruction](../../docs/validation.md#t005-exact-body-input-reconstruction--2026-11-13)
+    subsequently verifies matched input context outside scored source spans. This
+    is diagnostic evidence, with no selected materialization rule or promotion;
+    independently scored body evidence and all existing guards remain required.
+    A subsequent fixed third/final kept-body declaration-prefix variant was selected
+    before implementation. It passes development G2 at K = 3, the existing G1 guards
+    with every newly lost case reviewed, focused tests, local gates and native CLI/MCP
+    parity. Source spans/input keys remain independent; optional structural prefixes
+    use ordinary caps and distinct source-context provenance. It remains isolated,
+    not promoted or integrated; the sole final evaluation retains the original sealed
+    set and all original statistical/runtime guards. See the
+    [dated qualification](../../docs/validation.md#t005-kept-body-prefix-development-qualification--2026-11-13).
+    The subsequent sole final trace-off pair fails its original confidence, paired
+    significance and Bun latency prerequisites; full native maxima pass the unchanged
+    RSS guards after a preserved offline postprocessing correction. No candidate is
+    promoted or integrated. This third/final variant and current checkpoint are closed;
+    the 400-case set is consumed once but remains unexposed to implementation. No fourth
+    variant, tuning on this set or second final pair is selected. See the
+    [final disposition](../../docs/validation.md#t005-sealed-final-pair-no-promotion--2026-11-13).
 - **Candidate checkpoint:**
   - Hold Gemma fixed and predeclare at most three variants targeting the demonstrated
     loss: representation, candidate coverage, ordering or packing. Keep other stages
@@ -1431,6 +1531,45 @@ labelled; they do not assign causes to the 249 historical G2 misses.
     replaces in this spec and the shared context contract; no parallel undocumented
     ranking path. Every newly lost current-baseline G1 case is reviewed and counted;
     passing historical guards alone does not erase those losses.
+- **Fresh holdout authoring selected, 2026-11-11.** Before tuning the single
+  packing-allocation candidate family, prepare 400 new questions (200 per corpus)
+  at the existing Rust/bun source pins. Exclude every G2 and F4 answer identity
+  and duplicate question text. Fresh-context authors receive disjoint whole modules,
+  walk the frozen SHA-256 candidate order, and retain every skip reason; keep the
+  original three-per-file and six-per-module limits. A separate label-side checker
+  checks every accepted answer against its source and plausible alternatives.
+  This is an in-session quality check, not independent review. Run the unchanged
+  builder and full verifier, including its self-tests, then seal hashes, counts,
+  tool/source pins and check summaries. Implementation receives no labels, questions,
+  responses or per-case outcomes. The private authoring selection and bounded
+  no-spend protocol are recorded in
+  [validation](../../docs/validation.md#t005-fresh-holdout-authoring-selection--2026-11-11).
+  The exact candidate algorithm, sample-size/power rationale, paired confidence
+  statistic and resource/latency supplement must be frozen before tuning/evaluation.
+  No new question set or candidate is accepted by this selection.
+  The authoring/checking/sealing checkpoint subsequently completed, and the
+  statistical and outer runtime guards are selected; see the
+  [dated seal receipt](../../docs/validation.md#t005-fresh-holdout-seal-and-evaluation-guards--2026-11-11)
+  and [current status owner](../../docs/resume-context-ecosystem.md#current-status--2026-11-06).
+  This does not accept a retrieval candidate.
+- **One packing variant selected, 2026-11-11.** After the fresh holdout was sealed
+  and its durable copy verified, select the default-off
+  [compact preference](../001-source-state-recovery/contracts/context-v2.md#experimental-compact-preference--009-t005):
+  one speculative existing compact rung for a large source unit when another unit
+  still waits, using one-eighth of the effective token allowance as a soft preference.
+  A failed or covered trial restores ordinary ladder behavior. This avoids a second
+  admission/upgrade pass and its additional coverage state. K = 1; the fraction is
+  fixed before candidate code or measurements. The selected trace outcome is
+  `shortened` / `allocation`, with `allocation_tokens` and no invented refusal;
+  an excerpt's parent identifies its wider source unit, not necessarily a failed trial.
+  All quality, body, validity and runtime gates above remain conjunctive. The local
+  implementation and focused fixtures are recorded in
+  [validation](../../docs/validation.md#t005-default-off-compact-preference-implementation--2026-11-11);
+  they establish no quality promotion or acceptance. Subsequent G2 evaluation
+  rejected this variant for body loss; the flag and implementation were removed,
+  while the candidate commit and binary remain retained. The final held-out set
+  was not queried because this prerequisite promotion gate already failed. The
+  [handoff](../../docs/resume-context-ecosystem.md#current-status--2026-11-06) owns status.
 - **Verification:** fixtures establish trace attribution for absent candidates,
   stale units, rank/cap exclusion and packing omission; invalid traces cannot certify
   coverage. Test the selected repair's relevant source/budget/cache invariants and run
@@ -1500,10 +1639,12 @@ linked above; it is not a new provider, corpus scan or default promotion.
 Owner decision, 2026-11-06, "Lexical-only, drop T006 gate": the
 [003 T006](../003-agent-retrieval-context/spec.md#t006--validate-retrieval-repairs-in-real-coding-tasks)
 agent-task gate no longer applies to this opt-in, and no real-agent benefit is claimed.
-Its effects on semantic stores are to be removed. Once 001 T010's own local gates and
-the 2026-10-19 G2 enable rule pass, it defaults on only where lexical results are
-served (code to do). Until that change lands, the semantic-store rules in this spec
-stay as written.
+The lexical-only change and default are implemented and accepted at T010's written
+scope ([receipt](../../docs/validation.md#t010-singleton-qualification--2026-11-11));
+see the [current status](../../docs/resume-context-ecosystem.md#current-status--2026-11-06).
+The semantic-store opt-in behavior described above is historical. Supplied dense
+windows and semantic model admission retain their ordinary behavior. This does
+not accept T005 or establish semantic-quality or real-agent benefit.
 
 Inspection of the public Rust losses also found three relevant rank-2 callables
 whose excerpts contained leading documentation but omitted the declaration. The
@@ -1527,12 +1668,13 @@ acceptance. The raw comparison and rejected patch are retained outside Git in th
 
 Status: implemented experimentally in the shared CLI/MCP pipeline; sandbox evidence
 is in [validation](../../docs/validation.md#large-repository-architecture-and-parallel-partitioning--2026-10-09).
-Bounded representative CPU progress is recorded in [current validation](../../docs/validation.md#retrieval-scale-and-host-economics--2026-10-11); complete repository throughput and task benefit remain unaccepted.
+Bounded representative CPU progress is recorded in [current validation](../../docs/validation.md#retrieval-scale-and-host-economics--2026-10-11); the selected Mac scale boundary is accepted below; task benefit remains unaccepted.
 Owner decision, 2026-11-06, "Accept the Mac rust run": T006–T009 scale acceptance cites
 the existing complete hierarchy-v1 preparation of rust-lang/rust (62,035 files) on the
 owner's Mac ([record](../../docs/validation.md#complete-hierarchy-on-rust--2026-10-21))
-plus a short replay and changed-input check on the owner's Mac, which is still to run;
-scale is not accepted until it passes. Linux x86 scale and the 67,663-source
+plus the completed replay and changed-input check on the owner's Mac
+([receipt](../../docs/validation.md#semantic-scale-replay-and-changed-input-acceptance--2026-11-10)). Scale is accepted
+at that boundary; device and signed-package acceptance remain separate. Linux x86 scale and the 67,663-source
 representative Rust+Go corpus are a named limitation, and the parked Linux calibration
 and full-overview runs (FOLLOWUP F10/F11) retire.
 
@@ -1566,9 +1708,16 @@ watching and LLM enrichment remain separate work in the revised ecosystem plan.
 
 ### T007 — Make semantic bootstrap useful before a complete corpus pass
 
-Selected 2026-10-09; progressive scheduling/publication implemented experimentally,
-with device tuning and real throughput still unverified. Scale acceptance follows the
-owner's 2026-11-06 decision under [T006](#t006--bound-and-parallelize-semantic-partition-computation).
+Selected 2026-10-09; progressive scheduling/publication implemented experimentally.
+Scale acceptance follows the owner's 2026-11-06 decision under
+[T006](#t006--bound-and-parallelize-semantic-partition-computation). Owner decision,
+2026-11-19, "Named limitation": device tuning (runtime evidence for reusable CPU pools,
+other model batch sizes and device-pressure admission) and real throughput stay
+unverified and are a named limitation, covered by "Script checks only" (owner,
+2026-11-06): device acceptance is what `scripts/native-macos-acceptance.py` checks. It
+re-enters on a measured throughput or device-pressure failure on a real corpus, or a
+new supported device class
+([record](../../docs/validation.md#owner-decisions--2026-11-19)).
 T006 removes CPU computation
 from serving and writer locks. Replace the whole-source partition and initial
 generation barriers with bounded waves of
@@ -1641,7 +1790,8 @@ requires it. [Usage and accounting](../../docs/experimental-context.md#progressi
 separate coverage from live/last-run stage counters. Existing token geometry, vector
 meaning, model ownership and foreground hysteresis remain unchanged. Reusable CPU
 pools, different model batches, device-pressure admission and 010 generation controls
-need their own runtime evidence; this increment does not claim them completed.
+need their own runtime evidence; this increment does not claim them completed. The
+first three are the named limitation in T007's status above; 010 owns its controls.
 
 ### T006/T007 follow-up — Remove repeated preparation and startup work
 
@@ -2073,12 +2223,19 @@ atomic publication and bounded compaction; USearch supplies ANN storage and sear
 
 ### T009 — Use model-owned geometry and contextual representations
 
-Implemented experimentally, 2026-10-10; real-device acceptance remains open. Owner
+Implemented experimentally, 2026-10-10; the selected development-device checks passed
+on the owner's Mac ([2026-11-10 receipt](../../docs/validation.md#native-macos-acceptance--2026-11-10)). Owner
 decision, 2026-11-06, "Script checks only": device acceptance for T008 and T009 is what
 `scripts/native-macos-acceptance.py` checks, with no new code. The unbuilt global GPU
 pressure, combined residency, thermal/battery and embedding-eviction policies are named
 limitations under [010 T002](../010-source-bound-derived-knowledge/spec.md#t002-shared-memory-admission--2026-10-10).
 Scale acceptance follows [T006](#t006--bound-and-parallelize-semantic-partition-computation).
+Owner decision, 2026-11-19: two representation questions are named limitations, with
+no work planned ([record](../../docs/validation.md#owner-decisions--2026-11-19)).
+Late chunking needs a different embedding backend, because the worker protocol carries
+pooled vectors only; it re-enters if the owner adopts a backend that exposes contextual
+token states. Selective (query-driven) body preparation re-enters on a measured
+preparation-time or coverage failure on a real corpus that it would prevent.
 The exact publisher contracts and their limits
 are in the [model-window audit](../../docs/context-ecosystem-plan.md#model-windows-and-chunk-representations).
 The selected EmbeddingGemma 2 advertises 8,192 tokens, while the legacy worker geometry has
@@ -2109,6 +2266,7 @@ Raising the card limit does not add multiline function bodies to that recipe.
   requires contextual token states and correct span pooling/projection/normalization;
   averaging existing chunk vectors does not implement it. Compare its recomputation
   and memory costs against independent body units before committing to that backend.
+  It is a named limitation since 2026-11-19 (status above).
 - Verify body-only edits, small versus oversized units, context-only edits, rename
   mapping, model/recipe migration, limits, batch parity and recoverable exact spans.
   Use sandbox fixtures first. Actual long-context quality, device throughput and
@@ -2176,7 +2334,8 @@ Profile switches rebuild partitions/publication without purging old vector rows;
 reversion reuses them. Existing partial coverage and freshness checks remain authoritative.
 No new table, worker, dependency, endpoint or representation-specific index is added.
 Long embedding inputs do not increase MCP evidence allowances. Late chunking still
-requires a different backend exposing contextual token states and is not implemented.
+requires a different backend exposing contextual token states and is not implemented;
+it is a named limitation (owner, 2026-11-19, T009 status above).
 
 Upstream reference for this task: llama.cpp
 [`b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea`](https://github.com/ggml-org/llama.cpp/tree/b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea),
@@ -2298,11 +2457,13 @@ The profile's optional `cpu` controls affinity/thread count and lifetime CPU sec
 (defaults: two threads, 3,600 seconds; maximum 64 threads / 86,400 seconds). These
 ceilings are not vector identity. All admission remains explicit through the existing
 development-isolation switch; this change does not claim release or signed-package
-acceptance. macOS compilation, Metal numerics, hardware resources and installed package
-checks require the deferred native runner. Owner decision, 2026-11-06, "Once now,
-unsigned": `scripts/native-macos-acceptance.py` runs once on the owner's Mac with ad-hoc
-signing (to do) and again on the signed release candidate; installed package checks
-still need the signed package. Linux worker/model results are recorded in
+acceptance. Owner decision, 2026-11-06, "Once now, unsigned":
+`scripts/native-macos-acceptance.py` runs once on the owner's Mac with ad-hoc signing
+and again on the signed release candidate. The development run passed
+[2026-11-10](../../docs/validation.md#native-macos-acceptance--2026-11-10), covering
+native compilation, CPU admission, Metal embedding and the selected lifecycle checks;
+it did not repeat cross-host numerical comparison. Installed-package checks and the
+signed-candidate run still need the signed package. Linux worker/model results are recorded in
 [validation](../../docs/validation.md).
 
 #### T009 independent representations — 2026-10-11

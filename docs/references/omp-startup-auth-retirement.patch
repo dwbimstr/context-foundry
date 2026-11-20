@@ -1,0 +1,337 @@
+# Proposed source-host qualification patch; unapplied by Foundry.
+# oh-my-pi 24439066040e006eb08da7b204f0ac41c79d2de9, MIT.
+# Requires omp-startup-connection-warmups.patch for the selected capture artifact.
+# Owner: 003 T006, bounded-pilot-v2 startup observation/admission contract.
+# Upstream license: https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/LICENSE
+# MIT License
+# 
+# Copyright (c) 2025 Mario Zechner
+# Copyright (c) 2025-2026 Can Bölük
+# Copyright (c) 2026 Stencil Labs, Inc.
+# 
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+# 
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+# 
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+--- a/packages/coding-agent/src/session/auth-broker-config.ts
++++ b/packages/coding-agent/src/session/auth-broker-config.ts
+@@ -151,14 +151,49 @@
+  * Changes apply in order (broker before policies within one change); a failing
+  * change is logged and leaves the current configuration active.
+  */
+-export function createAuthStorageSettingsSync(scope: ScopeLike, authStorage: AuthStorage): AuthStorageSettingsSync {
++export interface RetirableAuthStorageSettingsSync extends AuthStorageSettingsSync {
++	retire(): Promise<{ initial_resolver_joined: true; chain_joined: true }>;
++}
++let cliOwner:
++	| {
++			settings: Settings;
++			authStorage: AuthStorage;
++			sync: RetirableAuthStorageSettingsSync;
++			bound: boolean;
++			retiring: boolean;
++	  }
++	| undefined;
++let cliStarts = 0;
++
++/** Bind the CLI's original process-settings owner; no credential data is returned. */
++export function bindCliAuthStorageSettingsSync(settings: Settings) {
++	const owner = cliOwner;
++	if (!owner || cliStarts !== 1 || owner.settings !== settings || owner.bound)
++		throw new Error("CLI auth owner unavailable");
++	owner.bound = true;
++	return Object.freeze({
++		async retire(authStorage: AuthStorage) {
++			if (authStorage !== owner.authStorage || owner.retiring)
++				throw new Error("CLI auth owner identity or state mismatch");
++			owner.retiring = true;
++			return owner.sync.retire();
++		},
++	});
++}
++
++export function createAuthStorageSettingsSync(
++	scope: ScopeLike,
++	authStorage: AuthStorage,
++): RetirableAuthStorageSettingsSync {
+ 	const settings = "settings" in scope ? scope.settings : scope;
++	if (scope === settings && cliOwner?.bound) throw new Error("CLI auth owner already bound");
+ 	const agentDir = settings.getAgentDir();
+ 	const resolveOptions = { agentDir, configValueResolver: resolveConfigValue };
+ 	// Snapshot the connection `authStorage` was opened with, before any edit lands.
+-	let activeBroker: Promise<AuthBrokerClientConfig | null> = resolveAuthBrokerConfigShared(resolveOptions).catch(
+-		() => null,
+-	);
++	const initialBroker = resolveAuthBrokerConfigShared(resolveOptions);
++	let activeBroker: Promise<AuthBrokerClientConfig | null> = initialBroker.catch(() => null);
++	let retiring = false,
++		retired = false;
+ 	let pending: Promise<void> = Promise.resolve();
+ 
+ 	const applyPolicies = async () => {
+@@ -191,6 +226,7 @@
+ 	};
+ 
+ 	const stop = cfgAuthStorageSettings.listen(scope, (next, previous) => {
++		if (retired) throw new Error("Auth settings owner retired");
+ 		const brokerChanged = next.brokerUrl !== previous.brokerUrl || next.brokerToken !== previous.brokerToken;
+ 		const policiesChanged =
+ 			next.usageReservePct !== previous.usageReservePct ||
+@@ -201,7 +237,31 @@
+ 		});
+ 		return pending;
+ 	});
+-	return { settled: () => pending, stop };
++	const sync: RetirableAuthStorageSettingsSync = {
++		settled: () => pending,
++		stop,
++		async retire() {
++			if (retiring) throw new Error("Auth settings retirement already started");
++			retiring = true;
++			stop();
++			// A detached listener may already have a queued callback.
++			await new Promise<void>(resolve => setImmediate(resolve));
++			const last = pending;
++			const outcomes = await Promise.allSettled([initialBroker, activeBroker, last]);
++			retired = true;
++			if (pending !== last) throw new Error("Auth settings chain changed during retirement");
++			const failure = outcomes.find(outcome => outcome.status === "rejected");
++			if (failure?.status === "rejected") throw failure.reason;
++			return Object.freeze({ initial_resolver_joined: true, chain_joined: true });
++		},
++	};
++	// Main passes its Settings directly; session-owned links pass their scope.
++	// Saturation diagnoses ambiguous process owners without retaining history.
++	if (scope === settings) {
++		cliStarts = Math.min(2, cliStarts + 1);
++		cliOwner = { settings, authStorage, sync, bound: false, retiring: false };
++	}
++	return sync;
+ }
+ 
+ /**
+--- /dev/null
++++ b/packages/coding-agent/test/auth-settings-retirement.test.ts
+@@ -0,0 +1,208 @@
++import { afterEach, beforeEach, expect, mock, test } from "bun:test";
++import type { Settings } from "../src/config/settings";
++import type { AuthStorage } from "../src/session/auth-storage";
++let initial: Promise<null>;
++let policy: () => Promise<object>;
++let subscriptions: { callback: (next: any, previous: any) => Promise<void>; stopped: number }[];
++let calls: number;
++let warnings: string[];
++const local = (path: string) => new URL(path, import.meta.url).pathname;
++mock.module("@oh-my-pi/pi-ai/auth-broker", () => ({
++	AuthBrokerError: class extends Error {},
++	loadAuthAccountPolicyConfig: () => policy(),
++}));
++mock.module("@oh-my-pi/pi-ai/auth-broker/discover", () => ({
++	discoverAuthStorage: async () => {
++		throw new Error("unexpected discovery");
++	},
++	getAuthBrokerTokenFilePath: () => "/synthetic-token",
++	openAuthCredentialStore: async () => {
++		throw new Error("unexpected store open");
++	},
++	resolveAuthBrokerConfig: () => {
++		calls++;
++		return initial;
++	},
++}));
++mock.module("@oh-my-pi/pi-ai/error", () => ({ MissingApiKeyError: class extends Error {} }));
++mock.module("@oh-my-pi/pi-utils", () => ({
++	getAgentDir: () => "/synthetic-agent",
++	logger: {
++		warn(message: string) {
++			warnings.push(message);
++		},
++		info() {},
++	},
++}));
++mock.module(local("../src/config/registry.ts"), () => ({
++	combine: () => ({
++		listen(_scope: unknown, callback: any) {
++			const row = { callback, stopped: 0 };
++			subscriptions.push(row);
++			return () => {
++				row.stopped++;
++			};
++		},
++	}),
++}));
++mock.module(local("../src/config/resolve-config-value.ts"), () => ({ resolveConfigValue: async () => undefined }));
++mock.module(local("../src/config/settings.ts"), () => ({ Settings: class {} }));
++mock.module(local("../src/config/model-settings.ts"), () => ({
++	cfgAuthAccountPolicies: { get: () => ({}) },
++	cfgAuthBrokerToken: {},
++	cfgAuthBrokerUrl: {},
++}));
++mock.module(local("../src/session/settings.ts"), () => ({ cfgRetryUsageReservePct: { get: () => 10 } }));
++const { createAuthStorageSettingsSync, bindCliAuthStorageSettingsSync } =
++	await import("../src/session/auth-broker-config");
++const turn = () => new Promise<void>(resolve => setImmediate(resolve));
++function deferred<T>() {
++	let resolve!: (value: T) => void, reject!: (error: unknown) => void;
++	const promise = new Promise<T>((yes, no) => {
++		resolve = yes;
++		reject = no;
++	});
++	void promise.catch(() => {});
++	return { promise, resolve, reject };
++}
++function fixture() {
++	let effects = 0;
++	const settings = { getAgentDir: () => "/synthetic-agent", flush: async () => {} } as unknown as Settings;
++	const auth = {
++		setAccountPolicies: () => {
++			effects++;
++		},
++	} as unknown as AuthStorage;
++	const scope = { settings } as unknown as Parameters<typeof createAuthStorageSettingsSync>[0];
++	return { settings, auth, scope, effects: () => effects };
++}
++function observe<T>(work: Promise<T>) {
++	const state = { done: false };
++	const outcome = work.then(
++		value => {
++			state.done = true;
++			return { value, error: undefined };
++		},
++		error => {
++			state.done = true;
++			return { value: undefined, error };
++		},
++	);
++	return { state, outcome };
++}
++const previous = { brokerUrl: undefined, brokerToken: undefined, accountPolicies: {}, usageReservePct: 10 };
++const next = { ...previous, usageReservePct: 11 };
++beforeEach(() => {
++	initial = Promise.resolve(null);
++	policy = async () => ({});
++	subscriptions = [];
++	calls = 0;
++	warnings = [];
++});
++afterEach(() => {
++	expect(warnings).toEqual([]);
++});
++
++test("retirement joins the original initial resolver omitted by settled", async () => {
++	const pending = deferred<null>();
++	initial = pending.promise;
++	const f = fixture(),
++		sync = createAuthStorageSettingsSync(f.scope, f.auth);
++	await sync.settled();
++	const work = observe(sync.retire());
++	await turn();
++	expect(work.state.done).toBe(false);
++	expect(subscriptions[0].stopped).toBe(1);
++	pending.resolve(null);
++	expect((await work.outcome).value).toEqual({ initial_resolver_joined: true, chain_joined: true });
++	expect(calls).toBe(1);
++});
++
++test("the original rejected resolver is not hidden by its catch return", async () => {
++	const pending = deferred<null>(),
++		failure = new Error("synthetic resolver failure");
++	initial = pending.promise;
++	const f = fixture(),
++		sync = createAuthStorageSettingsSync(f.scope, f.auth),
++		work = observe(sync.retire());
++	await turn();
++	expect(work.state.done).toBe(false);
++	pending.reject(failure);
++	expect((await work.outcome).error).toBe(failure);
++});
++
++test("already delivered policy work completes before retirement", async () => {
++	const pending = deferred<object>();
++	policy = () => pending.promise;
++	const f = fixture(),
++		sync = createAuthStorageSettingsSync(f.scope, f.auth);
++	void subscriptions[0].callback(next, previous);
++	const work = observe(sync.retire());
++	await turn();
++	expect(work.state.done).toBe(false);
++	expect(f.effects()).toBe(0);
++	pending.resolve({});
++	expect((await work.outcome).error).toBeUndefined();
++	expect(f.effects()).toBe(1);
++});
++
++test("a callback already queued before stop is included", async () => {
++	const f = fixture(),
++		sync = createAuthStorageSettingsSync(f.scope, f.auth);
++	const callback = subscriptions[0].callback;
++	queueMicrotask(() => {
++		void callback(next, previous);
++	});
++	expect(await sync.retire()).toEqual({ initial_resolver_joined: true, chain_joined: true });
++	expect(f.effects()).toBe(1);
++	expect(subscriptions[0].stopped).toBe(1);
++	expect(() => callback(next, previous)).toThrow("retired");
++	expect(f.effects()).toBe(1);
++});
++
++test("a chain extended during the join cannot claim retirement", async () => {
++	const first = deferred<object>(),
++		second = deferred<object>();
++	let index = 0;
++	policy = () => [first, second][index++].promise;
++	const f = fixture(),
++		sync = createAuthStorageSettingsSync(f.scope, f.auth),
++		callback = subscriptions[0].callback;
++	void callback(next, previous);
++	const work = observe(sync.retire());
++	await turn();
++	expect(work.state.done).toBe(false);
++	const unexpected = callback(previous, next);
++	first.resolve({});
++	expect((await work.outcome).error.message).toContain("changed during retirement");
++	second.resolve({});
++	await unexpected;
++});
++
++test("retirement is one use, including while pending", async () => {
++	const pending = deferred<null>();
++	initial = pending.promise;
++	const f = fixture(),
++		sync = createAuthStorageSettingsSync(f.scope, f.auth),
++		work = sync.retire();
++	await expect(sync.retire()).rejects.toThrow("already started");
++	pending.resolve(null);
++	await work;
++	await expect(sync.retire()).rejects.toThrow("already started");
++});
++
++test("CLI binding uses the original scope and namespace exactly once", async () => {
++	const f = fixture(),
++		other = fixture();
++	expect(() => bindCliAuthStorageSettingsSync(f.settings)).toThrow("unavailable");
++	const sync = createAuthStorageSettingsSync(f.settings, f.auth);
++	expect(() => bindCliAuthStorageSettingsSync(other.settings)).toThrow("unavailable");
++	const owner = bindCliAuthStorageSettingsSync(f.settings);
++	expect(() => bindCliAuthStorageSettingsSync(f.settings)).toThrow("unavailable");
++	expect(() => createAuthStorageSettingsSync(f.settings, f.auth)).toThrow("already bound");
++	expect(calls).toBe(1);
++	await expect(owner.retire(other.auth)).rejects.toThrow("identity");
++	expect(await owner.retire(f.auth)).toEqual({ initial_resolver_joined: true, chain_joined: true });
++	await expect(owner.retire(f.auth)).rejects.toThrow("state");
++	await expect(sync.retire()).rejects.toThrow("already started");
++});

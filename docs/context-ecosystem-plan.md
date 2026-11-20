@@ -9,7 +9,9 @@ The first three tasks are **active, in progress**. The owner's subsequent instru
 authorizes experimental sandbox implementation of later milestones without waiting
 for measurements or gates. Their concrete contracts are refined in the owning specs.
 Existing acceptance, signing and
-release requirements remain in force; 013 remains frozen off.
+release requirements remain in force; 013 remains frozen off. (Owner decision,
+2026-11-19, "Close, no promotion": the first of the three, 009 T005, is closed without
+promotion; the [revised build order](#revised-build-order) records the outcome.)
 
 The product objective is **verified task completion with faithful evidence and user
 constraints, at an acceptable total cost and latency**. Foundry should find the
@@ -51,9 +53,13 @@ area summaries and independent knowledge acknowledgment in schema 10. Unchanged 
 skip source-body reads and model calls; changed children invalidate their ancestors.
 Opt-in continuous MCP maintenance, shared client admission and bounded derived context
 are now implemented. Owned local generation adds pinned artifact reuse, idle unload and
-per-worker CPU/RAM/Metal controls. Shared memory and Linux affinity/cgroup CPU admission are implemented; native macOS CPU pressure and Metal hardware
-acceptance remain open, through the native script's checks; global GPU pressure is a named
-limitation and real-model task utility is deferred (owner decisions, 2026-11-06). See [usage](experimental-context.md#owned-local-generation).
+per-worker CPU/RAM/Metal controls. Shared memory and Linux affinity/cgroup CPU
+admission are implemented. The native script's macOS CPU pressure and Metal checks
+passed in the ad-hoc-signed run on the owner's Mac on 2026-11-10
+([receipt](validation.md#native-macos-acceptance--2026-11-10)) and must be repeated on
+the signed release candidate; global GPU pressure is a named limitation and real-model
+task utility is deferred (owner decisions, 2026-11-06). See
+[usage](experimental-context.md#owned-local-generation).
 
 ## Architecture correction: useful context across 60,000–80,000 files
 
@@ -87,7 +93,9 @@ the preceding 1/8, with Foundry/Rust delivery retained), opt-in `overview-v1` fi
 preparation without exhaustive body fitting, bounded file-overview token fitting,
 requirement-to-observed-source traceability, reusable `usage economics` reporting and
 a native macOS CPU sampler. Broader inflection expansion was removed after Rust
-regressions. The sampler's portable logic is tested; native acceptance is still owed.
+regressions. The sampler's portable logic is tested; native acceptance was still owed
+on 2026-10-11 and passed on the owner's Mac on 2026-11-10
+([receipt](validation.md#native-macos-acceptance--2026-11-10)).
 These implemented increments do not close general retrieval, full real-model corpus
 coverage, free-form task benefit or complete economics.
 
@@ -106,18 +114,20 @@ of the broader acceptance work below.
 | Exact source and compiler graph | Versioned source, lexical search, 23-language extraction, exact citations, admitted roots and compiler references/doors: [store](../src/store.rs), [SCIP](../src/scip.rs), [graph tests](../tests/semantic.rs). | Compiler reference identity does not establish runtime call behavior or test execution. Cross-root queries do not create cross-root edges. |
 | Boundary relationships | `python-http-v7`: static FastAPI routes/imports/named package re-exports plus literal Flask routes and same-file Blueprints, dependency freshness and whole-proof delivery; real Flask/FastAPI checks: [producer](../src/boundary.rs), [tests](../tests/boundary.rs). | Further import/mount forms, more frameworks and brokers; since 2026-11-06 these are named limitations of 005 T005, not acceptance conditions. Dynamic/ambiguous/incomplete cases remain explicit. |
 | Task evidence | Requirements, source links, briefs, boundary/compiler neighbors and explicit source-hashed execution imports; caller/target/test proof fits atomically; bounded unresolved Rust/Python/Go/JavaScript/TypeScript callers and attributed/local Rust tests; actual Flask requests cover a dynamic callback and suppress stale observing tests: [composition](../src/task_evidence.rs), [runtime check](../tests/execution.rs). | More execution collectors/frameworks, cross-language callers and semantic requirement satisfaction. Explicit fresh requirement links now join observed target lines; overlap does not prove correctness. Producer reports do not establish complete coverage or execution attestation. |
-| Bootstrap and reuse | Bounded pools, progressive publication, changed-input queues, ANN deltas and reuse. Real Gemma passes the repeated-family 80k lifecycle; representative Rust phases establish partial preparation/reuse. The new pinned Rust/Go corpus contains 69,565 regular files and indexes 67,663 admitted sources in 219.8 s. All admitted sources fit across a retained partial phase and verified suffix continuation, producing 944,387 card locations and a 2.24–2.38 GiB raw-vector obligation. Real preparation/resume publishes 2,820 vectors, reusing all 2,678 cached inputs on resume; 67,631 sources remain unpartitioned: [results](validation.md#broader-evidence-and-representative-workload--2026-10-11).  The preceding overview inventory fits all 67,663 sources with 63,621 distinct inputs (186.39 MiB raw vectors); bounded real prepare/resume publishes 592 vectors, with 67,021 sources still unpartitioned. Current +overview3 fitting completes across verified phases: 60,735–65,959 distinct inputs, 177.93–193.24 MiB raw vectors; representative inference for this recipe remains open. | Complete model coverage and serving on unique-content 60–80k repositories, useful coverage, inference cost, sustained churn, reconciliation and compaction remain. Owner decision, 2026-11-06 ("Accept the Mac rust run"): 009 scale acceptance cites the complete rust-lang/rust hierarchy-v1 preparation on the owner's Mac plus a replay and changed-input check (to do); Linux x86 scale and the 67,663-source corpus are a named limitation. |
+| Bootstrap and reuse | Bounded pools, progressive publication, changed-input queues, ANN deltas and reuse. Real Gemma passes the repeated-family 80k lifecycle; representative Rust phases establish partial preparation/reuse. The new pinned Rust/Go corpus contains 69,565 regular files and indexes 67,663 admitted sources in 219.8 s. All admitted sources fit across a retained partial phase and verified suffix continuation, producing 944,387 card locations and a 2.24–2.38 GiB raw-vector obligation. Real preparation/resume publishes 2,820 vectors, reusing all 2,678 cached inputs on resume; 67,631 sources remain unpartitioned: [results](validation.md#broader-evidence-and-representative-workload--2026-10-11).  The preceding overview inventory fits all 67,663 sources with 63,621 distinct inputs (186.39 MiB raw vectors); bounded real prepare/resume publishes 592 vectors, with 67,021 sources still unpartitioned. Current +overview3 fitting completes across verified phases: 60,735–65,959 distinct inputs, 177.93–193.24 MiB raw vectors; representative inference for this recipe remains open. | Complete model coverage and serving on unique-content 60–80k repositories, useful coverage, inference cost, sustained churn, reconciliation and compaction remain. The owner-selected Mac Rust scale boundary is accepted with the [completed replay and changed-input check](validation.md#semantic-scale-replay-and-changed-input-acceptance--2026-11-10); the [resumable handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status. Linux x86 scale and the 67,663-source corpus remain named limitations. |
 | Continuous maintenance | Native primary-root watching, independent durable semantic/knowledge queues, explicit continuous scheduling and boundary refresh: [watcher](../src/watch.rs), [semantic driver](../src/neural/driver.rs), [knowledge maintenance](../src/knowledge/maintenance.rs), [watch tests](../tests/watch.rs). | Target-scale semantic/knowledge churn and platform robustness. Source watching alone starts no model; model lanes require explicit admission. |
 | Model-aware chunking | Opt-in overview-v1 prepares at most one file input without fitting body cards; bounded file fitting shares keys with the updated hierarchy recipe. Actual-token batching, exact body windows, opt-in independent parent/file vectors and source-bound area vectors. Normal Linux worker passes 8,192 tokens under 8 GiB; tokenizer parity and a portable CPU receipt pass: [hierarchy](../src/neural/partition/hierarchy.rs), [areas](../src/neural/area.rs), [worker](../src/bin/foundry_embed.rs). | Comparative representation/long-context quality, full-window cross-runtime parity and Mac/GPU acceptance. Areas currently have a 256-record bound; true late chunking remains unimplemented. |
 | LLM repository knowledge | Source-cited briefs and area summaries, HTTP/owned local generation, transactional completion reuse, changed-input/revert reuse and lineage invalidation: [knowledge](../src/knowledge.rs), [tests](../tests/knowledge.rs). | A useful model/recipe and demonstrated task benefit, generation throughput and amortized maintenance economics; the owner deferred this real-model acceptance on 2026-11-06. Existing Qwen runs establish lifecycle behavior, not useful repository understanding. |
-| Task/project memory | Explicit task state, reversible folds, original recovery, grounded review, promotion/correction/forgetting: [task context](../src/task_context.rs), [tests](../tests/task_context.rs). | Measured reduction in repeated failures/missed constraints and unnecessary interventions. By owner decision, 2026-11-06, semantic conflict detection (008 T004's semantic triggers: contradiction and constraint-violation detection) is to be built; semantic loop reasoning remains a conditional extension. |
+| Task/project memory | Explicit task state, reversible folds, original recovery, grounded review, promotion/correction/forgetting: [task context](../src/task_context.rs), [tests](../tests/task_context.rs). | Measured reduction in repeated failures/missed constraints and unnecessary interventions. By owner decision, 2026-11-06, semantic conflict detection (008 T004's semantic triggers: contradiction and constraint-violation detection) was to be built. On 2026-11-13 the owner selected explicit structured assertions under the no-model rule, and they were implemented locally ([record](validation.md#structured-task-assertions-008-t004--2026-11-13)): review compares caller-declared assertions and interprets no prose. Semantic loop reasoning remains a conditional extension. |
 | Host integration and accounting | Declared receipt-based task economics now counts failed attempts and separates amortization assumptions. Frozen and live task-view application through the existing MCP owner and Rust gateway, revision checks, final-request receipts, restart/revocation refusal; cached/uncached accounting and per-arm cache reset; installed OMP checks: [live resolution](../src/task_host/live.rs), [gateway tests](../tests/gateway.rs). | Broader matched free-form tasks with a capable tool-using model and complete usage. Ordinary MCP delivery does not prove host application. Broader view regions remain a conditional extension. |
-| Local resource controls | Per-worker CPU/RAM, shared memory admission, Linux affinity/cgroup hysteresis and idle generation eviction. Linux embedding now enforces seccomp, CPU/AS ceilings and owner death: [resources](../src/knowledge/local/resources.rs), [worker checks](../tests/embed_linux.rs). | Native macOS CPU observation/pressure acceptance (sampler code implemented; the native script checks it). Global GPU headroom, thermal/battery adaptation, optional embedding eviction and combined embedding-plus-generation residency are unbuilt and, by owner decision, 2026-11-06, named limitations rather than acceptance conditions. |
-| Retrieval quality and economics | Experimental prose coverage/proximity scoring, exact body/declaration excerpts and partial-coverage interleaving. Development delivery is 2/8 versus previous 1/8 on Foundry and 3/6 versus 0/6 on inspected Rust probes; eight additional public Rust questions deliver 5/8 versus legacy 0/8. A regressing passage reranker was removed. Two-passage selection, language-qualifier disambiguation and matching semantic admission preserve prior delivery; mixed-corpus Go now improves from prior 1/8 to 5/8, retaining all preceding Foundry/Rust deliveries. Broader inflection expansion was removed after Rust regressions. Frozen-source attribution and pinned real-host repair diagnostics: [attribution](../tests/retrieval_attribution.rs), [host tasks](../tests/gateway/host_task.rs). | Effective general anchorless repair and held-out acceptance. The parser patches pass but composed execution reaches its deadline with greater known usage. Both new upstream percent-decoder pairs fail, with public checks and with/without prompt caching. Broader representative quality and amortized total-cost improvement remain. |
+| Local resource controls | Per-worker CPU/RAM, shared memory admission, Linux affinity/cgroup hysteresis and idle generation eviction. Linux embedding now enforces seccomp, CPU/AS ceilings and owner death: [resources](../src/knowledge/local/resources.rs), [worker checks](../tests/embed_linux.rs). | Native macOS CPU observation/pressure acceptance on the signed release candidate; the native script's checks passed with ad-hoc signing on 2026-11-10 ([receipt](validation.md#native-macos-acceptance--2026-11-10)). Global GPU headroom, thermal/battery adaptation, optional embedding eviction and combined embedding-plus-generation residency are unbuilt and, by owner decision, 2026-11-06, named limitations rather than acceptance conditions. |
+| Retrieval quality and economics | Experimental prose coverage/proximity scoring, exact body/declaration excerpts and partial-coverage interleaving. Development delivery is 2/8 versus previous 1/8 on Foundry and 3/6 versus 0/6 on inspected Rust probes; eight additional public Rust questions deliver 5/8 versus legacy 0/8. A regressing passage reranker was removed. Two-passage selection, language-qualifier disambiguation and matching semantic admission preserve prior delivery; mixed-corpus Go now improves from prior 1/8 to 5/8, retaining all preceding Foundry/Rust deliveries. Broader inflection expansion was removed after Rust regressions. Frozen-source attribution and pinned real-host repair diagnostics: [attribution](../tests/retrieval_attribution.rs), [host tasks](../tests/gateway/host_task.rs). | Effective general anchorless repair and held-out acceptance; since 2026-11-19, when 009 T005 closed without promotion ("Close, no promotion"), anchorless quality beyond the current baseline is a named limitation, not an acceptance condition. The parser patches pass but composed execution reaches its deadline with greater known usage. Both new upstream percent-decoder pairs fail, with public checks and with/without prompt caching. Broader representative quality and amortized total-cost improvement remain. |
 
 The next implementation priority is a repair tied to observed retrieval losses, with
 model/runtime efficiency and broader evidence coverage following under their existing
-owners. The [pending inventory](#pending-work-inventory--2026-10-10) retains all open
+owners. (That repair was 009 T005, which the owner closed without promotion on
+2026-11-19, "Close, no promotion".) The
+[pending inventory](#pending-work-inventory--2026-10-10) retains all open
 work, including hardware acceptance and conditional extensions. Existing historical
 Gemma preparation times (112,549 cards in 1,256 s; 332,732 in 4,437 s) do not profile
 today's pipeline or establish its speedup. Process memory measurements are not whole-host RAM.
@@ -217,7 +227,7 @@ the E3 opportunity; the baseline rows are not a description of the updated imple
 | Vector publication | [index.rs](../src/neural/index.rs) rebuilds a complete USearch generation from current cached vectors/locations; geometric thresholds amortize cold publication. A mapping-only change can also rebuild ANN data. | Separate mapping changes from vector changes; bounded delta publication and compaction, with restart-safe generations. 009 T008. |
 | Foreground/resource policy | Every MCP tool call, including status, extends the two-input batch window for 60 seconds. Any pending watcher work denies semantic store steps. Worker context is fixed at 2,048 tokens, flash attention disabled, f32 KV, Metal offload. | Protect real foreground demand while preventing observation-induced throttling and starvation during sustained source work. Admit by CPU/bytes/tokens/device headroom; validate backend-specific kernel/precision changes. 001 T011 / 009 T007/T009. |
 | Status | [status.rs](../src/neural/status.rs) validates/hashes a generation, walks source partitions and performs a cache census; live bootstrap counters overlay that result. | Cheap versioned progress/coverage snapshots, with explicit audit/reconciliation and unknown/stale markers. Frequent progress polling must not scan all source/cache/index data. 009 T008. |
-| Enrichment | [knowledge.rs](../src/knowledge.rs) now generates a bounded selected plan through an explicit HTTP provider, reuses exact completions and publishes through [brief.rs](../src/brief.rs). Source/child changes suppress stale area ancestors immediately. | A bounded selected-set scan avoids a new reverse-dependency index. MCP continuous maintenance, shared client admission and owned local workers with per-worker limits are implemented; native macOS CPU pressure and Metal acceptance (the native script's checks, to run) and optional dense brief vectors remain 010 T002 work. Global GPU pressure is a named limitation and real-model task utility is deferred (owner decisions, 2026-11-06). |
+| Enrichment | [knowledge.rs](../src/knowledge.rs) now generates a bounded selected plan through an explicit HTTP provider, reuses exact completions and publishes through [brief.rs](../src/brief.rs). Source/child changes suppress stale area ancestors immediately. | A bounded selected-set scan avoids a new reverse-dependency index. MCP continuous maintenance, shared client admission and owned local workers with per-worker limits are implemented. The native script's macOS CPU pressure and Metal checks passed with ad-hoc signing on 2026-11-10 ([receipt](validation.md#native-macos-acceptance--2026-11-10)); their repeat on the signed release candidate and optional dense brief vectors remain 010 T002 work. Global GPU pressure is a named limitation and real-model task utility is deferred (owner decisions, 2026-11-06). |
 
 The watcher updates source and lexical state incrementally; immediate invalidation
 keeps stale semantic/brief evidence out. Invalidation alone does not schedule or
@@ -295,25 +305,28 @@ E4 body/parent inputs and model geometry are implemented experimentally; real-de
 acceptance remains. F implements CLI/MCP generation, continuous scheduling and shared
 client admission plus owned local generation with per-worker resource controls. Aggregate
 memory admission now shares embedding/generation ceilings and defers background work under
-host/container memory pressure, with opt-in Linux host CPU admission. Native CPU
-pressure and Metal acceptance remain, through the native script's checks; global GPU
-pressure became a named limitation and real-model task utility was deferred (owner
-decisions, 2026-11-06). G has an implemented experimental slice. By owner decision,
-2026-11-06, 005 T005 is accepted at its written scope once its local gates receipt
-exists (to do); broader frameworks, brokers and collectors are named limitations, and
+host/container memory pressure, with opt-in Linux host CPU admission. The native
+script's CPU pressure and Metal checks passed with ad-hoc signing on 2026-11-10
+([receipt](validation.md#native-macos-acceptance--2026-11-10)) and must be repeated on
+the signed release candidate; global GPU pressure became a named limitation and
+real-model task utility was deferred (owner decisions, 2026-11-06). G has an
+implemented experimental slice. By owner decision, 2026-11-06, 005 T005 is accepted
+at its written scope
+([receipt](validation.md#boundary-scope-acceptance-005-t005--2026-11-10)); broader
+frameworks, brokers and collectors are named limitations, and
 003 T009's host outcomes join pilot v2. Sandbox build/test authorization continues.
 
 | Order | Concrete increment | Owner/status |
 | --- | --- | --- |
 | A | Bounded parallel semantic partition computation outside serving/writer locks | 009 T006: implemented |
 | B | Source-bound structured brief import, lexical discovery and lifecycle | 010 T001: implemented; selective generation follows in F |
-| C | Opt-in native source watching and bounded reconciliation | 001 T011: implemented; platform/scale limits remain |
+| C | Opt-in native source watching and bounded reconciliation | 001 T011: accepted at the owner-selected native scope; see [current status](resume-context-ecosystem.md#current-status--2026-11-06) for remaining limits |
 | D | First semantic result before full partitioning, priorities and geometric publication | 009 T007: implemented; total throughput/maintenance unresolved |
 | E1 | Remove repeated cold/warm CPU and startup work | Semantic worker reuse, bounded tokenized-card handoff, lazy CLI acquisition, no-op chunk allocation avoidance, bounded initial ingestion and lexical worker reuse implemented. Verified artifact handoff, transactional counters/reconciliation and exact per-card fitting reuse implemented under 009 T006/T007; macOS model handoff and real-device throughput remain unexecuted here. |
 | E2 | Durable changed-work frontier, explicit continuous semantic maintenance, independent acknowledgments and cheap status | 009 T008 with 001 T011; implemented experimentally in schema 9; ordinary changed-input selection is bounded; ANN deltas follow in E3 |
 | E3 | Publish vector/location deltas and compact by bounded policy; a single edit must not rebuild the full ANN | 009 T008; ANN deltas, mapping-only publication, bounded compaction and crash recovery implemented. Warm affected-location, bounded location overlays, shared metadata and clean-restart publication reuse are implemented. Schema-12 changed-input restart now resumes a durable lookup and touches affected paths/keys. Required cold byte verification, full reconciliation and compaction remain corpus-sized; total affected-path cost is not claimed. |
 | E4 | Model-owned input/batch geometry, body-aware and selective parent representations, token-shaped device batches | 009 T009; opt-in body windows, bounded parent prefixes, versioned limits and actual-token batches implemented. Address profiles/caches preserved; hierarchy-v1 independent parent/file/area vectors implemented; real-model quality comparison remains |
-| F | Selective memoized LLM generation, dependency tracking, affected area rollups and indexed derived knowledge | 010 T002: explicit HTTP/CLI generation, transactional completion reuse, bounded transitive lineage and area freshness implemented in schema 10. Continuous MCP scheduling, shared client admission, owned local generation and opt-in shared memory admission are implemented. Linux host CPU admission is also implemented; native macOS CPU pressure and Metal acceptance use the native script's checks (to run). Global GPU pressure is a named limitation and real-model task utility is deferred (owner decisions, 2026-11-06). A bounded selected-set scan replaces a persistent reverse index for now. |
+| F | Selective memoized LLM generation, dependency tracking, affected area rollups and indexed derived knowledge | 010 T002: explicit HTTP/CLI generation, transactional completion reuse, bounded transitive lineage and area freshness implemented in schema 10. Continuous MCP scheduling, shared client admission, owned local generation and opt-in shared memory admission are implemented. Linux host CPU admission is also implemented; native macOS CPU pressure and Metal acceptance use the native script's checks, which passed with ad-hoc signing on 2026-11-10 ([receipt](validation.md#native-macos-acceptance--2026-11-10)) and must be repeated on the signed release candidate. Global GPU pressure is a named limitation and real-model task utility is deferred (owner decisions, 2026-11-06). A bounded selected-set scan replaces a persistent reverse index for now. |
 | G | Evidence-bearing boundary joins and task-oriented implementation/caller/test composition | 005 T005 / 003 T009: implemented experimentally. Static FastAPI/literal HTTP joins, changed-file publication, source/config freshness, ambiguity and primary-task composition under one allowance. Sandbox contract repair verified; 003 T009 host acceptance remains, and broader 005 producers are named limitations since 2026-11-06 (below). |
 
 Use work-count assertions in sandbox tests: unchanged replay sends zero embeddings;
@@ -327,31 +340,50 @@ measure device throughput. Observe actual CPU/device utilization, RAM, total tok
 first-result and full-build time when the target machine is available; historical
 wall times cannot identify which stage caused them.
 
-Previously selected work also remains open: 009 T005 anchorless miss repair beyond
-tracing; 001 T010 behavioral retrieval acceptance; 003 T006 broader real-host
-quality/economics acceptance of the implemented live working-view synchronization; 010 T002 model/resource acceptance;
-and 003 T009 real-host task acceptance. Owner decisions of 2026-11-06
-([validation](validation.md#owner-decisions--2026-11-06)) set how these close:
+Remaining acceptance and owner-dependent inputs are recorded in the
+[current handoff](resume-context-ecosystem.md#current-status--2026-11-06).
+They include 003 T006/T007–T009 real-host outcomes, and included 009 T005 anchorless
+quality until it closed on 2026-11-19 (below);
+001 T010's lexical retrieval scope is accepted, 010 real-model utility is deferred,
+and signed-package acceptance remains gated. Owner decisions of 2026-11-06
+([validation](validation.md#owner-decisions--2026-11-06)) and one of 2026-11-19
+([validation](validation.md#owner-decisions--2026-11-19)) set how these close:
 
-- **003 T006** ("Draft pilot v2, unfunded"). A new frozen pilot v2 contract with
-  several harder held-out tasks, a powered sample size and fixes for the v1 apparatus
-  gaps is to be drafted. Nothing is spent until the owner separately authorizes a
-  credential, rights and a costed budget.
+- **003 T006** ("Draft pilot v2, unfunded"). The pilot v2 contract is drafted but not
+  frozen ([draft](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md)).
+  The draft records the design: several harder held-out tasks, a powered sample size
+  and fixes for the v1 apparatus gaps. No task set or sample count is selected yet;
+  the task, sample and launch inputs and the apparatus repairs remain before freeze.
+  Nothing is spent until the owner separately authorizes a credential, rights and a
+  costed budget.
 - **003 T007–T009 and 008 T003–T005** ("Measure them in pilot v2"). Their outcome
-  tasks join the T006 suite and pilot v2, 008 T004's semantic triggers are to be built,
-  and all six stay open until an authorized run passes.
-- **001 T010** ("Lexical-only, drop T006 gate"). Its own local gates and the
-  2026-10-19 G2 rule decide `--experimental-behavior-context`, without the 003 T006
-  agent gate. The flag's effect on semantic stores is to be removed, and once the gates
-  pass it defaults on only where lexical results are served. No real-agent benefit is
-  claimed.
+  tasks join the T006 suite and pilot v2. T004's owner-selected structured assertion
+  triggers are implemented under the no-model rule; their current disposition is in
+  the [handoff](resume-context-ecosystem.md#current-status--2026-11-06).
+  All six outcome tasks stay open until an authorized run passes.
+- **001 T010** ("Lexical-only, drop T006 gate"). Its local gates and the
+  2026-10-19 G2 rule qualify the fixed singleton candidate. Lexical behavioral
+  selection is accepted and defaults on with explicit opt-out; supplied dense
+  windows and semantic model admission remain unaffected. The
+  [handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current
+  status and [validation](validation.md#t010-singleton-qualification--2026-11-11)
+  records the evidence. This does not accept 003 T006 or claim real-agent benefit.
 - **010 T002** ("Defer 010 real-model acceptance"; "Script checks only"). Real-model
   acceptance is deferred. Its device acceptance, like 009 T008/T009's, uses what
   `scripts/native-macos-acceptance.py` checks; unbuilt GPU-pressure, residency,
   thermal/battery and eviction policies are named limitations.
 - **005 T005** ("Accept at written scope"). The owner accepts it at its written scope;
-  acceptance is recorded once the local gates receipt exists (to do). Other frameworks,
+  acceptance is recorded ([receipt](validation.md#boundary-scope-acceptance-005-t005--2026-11-10)). Other frameworks,
   brokers, cross-language identity and dynamic collectors become named limitations.
+- **009 T005** ("Close, no promotion", 2026-11-19). The
+  [loss analysis](validation.md#t005-loss-analysis--2026-11-19) found no bounded
+  candidate with a plausible large gain, so T005 closes without promotion. Its four
+  measured candidates and the unbuilt role-ordered placement estimate are its outcome,
+  the current retrieval baseline stays, and anchorless quality beyond it becomes a
+  named limitation. T005 is no longer a release condition, and the sealed 2026-11-18
+  holdout stays unopened for future work; the
+  [spec](../specs/009-optional-semantic-retrieval/spec.md#t005--diagnose-and-improve-anchorless-evidence-retrieval)
+  gives the re-entry trigger.
 
 Experimental task state, recovery and reminders are implemented. Explicitly configured OMP gateway application
 is verified; ordinary MCP application and measured quality/economics remain unknown.
@@ -374,32 +406,34 @@ keeps the evidence. This inventory lists capabilities and remaining work. Rows t
 
 | Area | Implemented and verified | Remaining work |
 | --- | --- | --- |
-| Retrieval | File-first hierarchy, owner-prioritized competition with other current file bodies, coarse excerpts/acronyms, structural-fragment roles, bounded independent body scoring and coverage-independent interleaving, exact document/excerpt forms, owner-passage grouping, coverage-aware packing and candidate backfill. Semantic publication counts the exact JSON it writes and no longer refuses large repositories. The frozen G2 set runs through [`scripts/g2.sh`](../scripts/g2.sh), which also scores verbatim definition bodies. Complete hierarchy beats address cards on G2 (169 against 136 of 388). | Superseded 2026-10-22: the owner decision on promoting complete hierarchy (about twice the units and serving memory), the G1 gates for default promotion and the held-out acceptance ([FOLLOWUP](../FOLLOWUP.md) F4). Complete hierarchy became the default and F4 passed on 2026-10-22 ([validation](validation.md#f4-and-the-hierarchy-default--2026-10-22)). G2 losses by stage: target file never retrieved, file retrieved but not the target unit, unit cut by placement limits, and unit packed but omitted by the token packer. Breadth-first packing is rejected (it trades 95 verbatim bodies for 14 located names); experimental lexical passes G2 on lexical-only stores and, since 2026-11-06 ("Lexical-only, drop T006 gate"), awaits only 001 T010's own local gates, not the 003 T006 agent gate. |
-| Indexing and scale | Incremental watcher, cache/ANN publication, bounded resume plans, initial file views before refinement; current overview fitting across 67,663 distinct admitted sources. A separate 274-source Gemma 2 overview run completes in 298.563 s with zero-call unchanged replay. | Owner decision, 2026-11-06 ("Accept the Mac rust run"): 009 T006–T009 scale acceptance cites the complete hierarchy-v1 preparation of rust-lang/rust (62,035 files) on the owner's Mac plus a short replay and changed-input check there, still to run. The batch-one/eight calibration and full Linux driver ([FOLLOWUP](../FOLLOWUP.md) F10, F11), which needed `avx512_bf16` and the pinned public archives, are retired unrun; Linux x86 scale and complete real-model inference over the 67,663-source corpus become a named limitation. Overview completion must remain separate from exhaustive bodies and sustained churn. |
+| Retrieval | File-first hierarchy, owner-prioritized competition with other current file bodies, coarse excerpts/acronyms, structural-fragment roles, bounded independent body scoring and coverage-independent interleaving, exact document/excerpt forms, owner-passage grouping, coverage-aware packing and candidate backfill. Semantic publication counts the exact JSON it writes and no longer refuses large repositories. The frozen G2 set runs through [`scripts/g2.sh`](../scripts/g2.sh), which also scores verbatim definition bodies. Complete hierarchy beats address cards on G2 (169 against 136 of 388). | Superseded 2026-10-22: the owner decision on promoting complete hierarchy (about twice the units and serving memory), the G1 gates for default promotion and the held-out acceptance ([FOLLOWUP](../FOLLOWUP.md) F4). Complete hierarchy became the default and F4 passed on 2026-10-22 ([validation](validation.md#f4-and-the-hierarchy-default--2026-10-22)). G2 losses by stage: target file never retrieved, file retrieved but not the target unit, unit cut by placement limits, and unit packed but omitted by the token packer. Breadth-first packing is rejected (it trades 95 verbatim bodies for 14 located names); 001 T010's lexical singleton candidate is accepted at its written retrieval scope and defaults on with explicit opt-out ([current status](resume-context-ecosystem.md#current-status--2026-11-06), [evidence](validation.md#t010-singleton-qualification--2026-11-11)). Semantic quality and 003 T006 agent-task outcomes retain their own acceptance requirements. Owner decision, 2026-11-19, "Close, no promotion": 009 T005 closed without promotion, the current baseline stays, and anchorless quality beyond it is a named limitation. |
+| Indexing and scale | Incremental watcher, cache/ANN publication, bounded resume plans, initial file views before refinement; current overview fitting across 67,663 distinct admitted sources. A separate 274-source Gemma 2 overview run completes in 298.563 s with zero-call unchanged replay. | Current 009 T006–T009 scale acceptance is recorded in the [resumable handoff](resume-context-ecosystem.md#current-status--2026-11-06), with the [completed Mac Rust replay and changed-input receipt](validation.md#semantic-scale-replay-and-changed-input-acceptance--2026-11-10). The batch-one/eight calibration and full Linux driver ([FOLLOWUP](../FOLLOWUP.md) F10, F11), which needed `avx512_bf16` and the pinned public archives, are retired unrun; Linux x86 scale and complete real-model inference over the 67,663-source corpus become a named limitation. Overview completion must remain separate from exhaustive bodies and sustained churn. |
 | Representations and runtime | Independent body/parent/file/area vectors, exact-key reuse, production 8,192-token allocation correction, real CPU/Metal numerical parity. Body contexts keep the region's own declaration over budget (`+context2`); long overviews keep declaration documentation summaries and the file opening (`+overview4`), with no measured delivery change. | Representation/long-context quality, selective refinement outcomes and larger-area requirements. Late chunking remains a conditional backend extension, not an implemented feature. |
 | Evidence | Current call-name postings, conservative Python aliases, whole router dependency proofs and revision-bound execution snapshots; eight real framework/execution checks. Atomic proof/source allocation now retains both relevant fixture relationships where the old allocator delivered one; this is not observed task execution. | Broader collectors/frameworks and resolved cross-language callers, named limitations of 005 T005 since 2026-11-06; observed representative host outcomes, which 003 T009 awaits from pilot v2. Unsupported or dynamic cases remain incomplete; syntax is not observed execution. |
 | Host integration and economics | OMP body reads, native tool transport, frozen/live task views, protected-history application and request/cost receipts. Managed-runtime public repair passes both arms. Identical-source CLI delivery uses 25% fewer calls and 6.48% fewer tokens at a 512-token allowance. | Managed runtime lacks provider usage; tool-delivery savings do not establish task-cost benefit. Historical Qwen3-4B failures remain recorded. The private stronger-model protocol (F2) was retired on 2026-11-06 ("Retire F2; F3 to T006"): it needed the lost archive and a Linux host. Its economics gate (F3) now points to 003 T006 and pilot v2, and the local 30B cost comparison is dropped. Demonstrate representative completion and total-cost benefit, including failed/unknown attempts and bootstrap/maintenance. |
-| Watching | Foreground-release wakeup, release-before-wait protection and incomplete-scan restart handling. | CI 38178644843 at `e7a1b59` and CI 38205296934 at `1b5f0b1` passed the 6,000-file watcher on macOS and Ubuntu. On the owner's M3 Pro it now reads 6,076–7,658 sources instead of 6,000 in most runs, including unchanged `e9c5ca0`: a timing-dependent duplicate-read failure to diagnose (F18). Owner decision, 2026-11-06 ("Native Mac run on rust"): after F18 is fixed without loosening the test, 001 T011 is accepted only by an `mcp --watch` run on the 62,116-file rust corpus on the owner's Mac against bounds stated in advance, and stays open if that run fails. Neither step has happened. |
-| Native resources | Actual Apple Paravirtual Metal embedding, full 8,192-token input, owned generation, cleanup, 128-file publication/replay and CPU/Metal minimum cosine0.9999949405 pass. | Native CPU-pressure prerequisite failed at `bc10986`/`f75f14c` (idle 84–100%) but passed at `4dd9da9`/`4dab8e4` (idle 9%) on the same image. Run 38205301244's process snapshots show Spotlight indexing the job's own build output (`mds_stores`, `mds`, `mdworker_shared`; host idle 0–2%). With Spotlight stopped on the ephemeral runner, native run 38207948408 passes CPU policy (idle 2%, recovered 27%), Metal embedding and generation at unchanged thresholds. The capsule diagnostic patch (F8), already superseded, was retired with the lost archive on 2026-11-06. Owner decisions, 2026-11-06: device acceptance uses what `scripts/native-macos-acceptance.py` checks ("Script checks only"), so global GPU pressure, combined embedding-plus-generation residency, thermal/battery adaptation and embedding eviction become named limitations with re-entry conditions. One ad-hoc-signed run on the owner's Mac comes first and is repeated on the signed release candidate ("Once now, unsigned"); neither has run. Measured 41.254 tokens/s, and 41.584 with Spotlight stopped, rejects the proposed full Mac batch-one budget. |
+| Watching | Foreground-release wakeup, release-before-wait protection and incomplete-scan restart handling. | F18's M5 Max deadline failure is repaired without loosening the test, and the native run on pinned rust-lang/rust passed ([receipt](validation.md#native-mac-watcher-acceptance-001-t011--2026-11-10)). T011 is accepted at that scope. The earlier M3 Pro duplicate-read observation remains unresolved; no broader platform, 80,000-file or semantic-preparation claim follows. See [current status](resume-context-ecosystem.md#current-status--2026-11-06). |
+| Native resources | Actual Apple Paravirtual Metal embedding, full 8,192-token input, owned generation, cleanup, 128-file publication/replay and CPU/Metal minimum cosine0.9999949405 pass. | Native CPU-pressure prerequisite failed at `bc10986`/`f75f14c` (idle 84–100%) but passed at `4dd9da9`/`4dab8e4` (idle 9%) on the same image. Run 38205301244's process snapshots show Spotlight indexing the job's own build output (`mds_stores`, `mds`, `mdworker_shared`; host idle 0–2%). With Spotlight stopped on the ephemeral runner, native run 38207948408 passes CPU policy (idle 2%, recovered 27%), Metal embedding and generation at unchanged thresholds. The capsule diagnostic patch (F8), already superseded, was retired with the lost archive on 2026-11-06. Owner decisions, 2026-11-06: device acceptance uses what `scripts/native-macos-acceptance.py` checks ("Script checks only"), so global GPU pressure, combined embedding-plus-generation residency, thermal/battery adaptation and embedding eviction become named limitations with re-entry conditions. One ad-hoc-signed run on the owner's Mac comes first and is repeated on the signed release candidate ("Once now, unsigned"). The ad-hoc-signed run passed on 2026-11-10 ([receipt](validation.md#native-macos-acceptance--2026-11-10)); the run on the signed release candidate has not happened. Measured 41.254 tokens/s, and 41.584 with Spotlight stopped, rejects the proposed full Mac batch-one budget. |
 | Generated knowledge and memory | Source-bound generation, changed/restart/revert reuse, explicit task state, selective review and promotion/forgetting. | Useful model/recipe selection, deferred with 010's real-model acceptance on 2026-11-06; representative task/memory outcomes, which join pilot v2; unnecessary-intervention evaluation and amortized economics. Lifecycle correctness is not task benefit. |
-| Release and environment | Experimental branch commits preserve code, scripts and unfinished work. The private portable checkpoint that also held traces and caches was on the 2026-10-11 sandbox; the owner declared both lost on 2026-11-06 ("Declare both lost"). | Formal promotion/release gates and clean-host setup reproduction remain separate. No release or general completion claim is authorized by this checkpoint. The owner merged the experimental line into `main` on 2026-10-12 without accepting the open gates; that merge is not a release. Owner decisions, 2026-11-06, both to do: rustls moves to 0.23.46 on the experimental line, the local gates run once, and one owner-merged pull request carries the line to `main` ("Bump rustls, then merge"); encrypted, checksummed archives of the frozen G2 and F4 question sets, the G1/G2 apparatus and the pilot evidence are built on the Mac for the owner to copy off it ("Encrypted, on disk for now"). |
+| Release and environment | Experimental branch commits preserve code, scripts and unfinished work. The private portable checkpoint that also held traces and caches was on the 2026-10-11 sandbox; the owner declared both lost on 2026-11-06 ("Declare both lost"). | Formal promotion/release gates and clean-host setup reproduction remain separate. No release or general completion claim is authorized by this checkpoint. The owner merged the experimental line into `main` on 2026-10-12 without accepting the open gates; that merge is not a release. Owner decisions, 2026-11-06, both now carried out. "Bump rustls, then merge": rustls moved to 0.23.46 on the experimental line and pull request #52 carried the line to `main` as merge commit `d94b013` on 2026-11-07; the gate results for that merge are in the [decision record](validation.md#owner-decisions--2026-11-06). "Encrypted, on disk for now": five encrypted, checksummed archives of the frozen G2 and F4 question sets, the G1/G2 apparatus and the pilot evidence were built and checksum-verified on the Mac on 2026-11-11 ([receipt](validation.md#encrypted-evidence-backups--2026-11-11)); copying them off the Mac and authenticated restoration remain with the owner. |
 
 The budget/retrieval repair above is owner-authorized. The historical execution
 sequence below was **parked**, with blockers and resume commands in
 [FOLLOWUP.md](../FOLLOWUP.md); it is not an instruction to launch these jobs. Its
-steps as of 2026-11-06:
+steps as decided on 2026-11-06, with what has run since:
 
 1. Calibrate scheduling batches (F10): retired by owner decision, 2026-11-06; 009 scale
-   acceptance is to cite the Mac rust run plus a short replay and changed-input check
-   (to do).
+   acceptance cites the Mac rust run plus a replay and changed-input check, which
+   passed on 2026-11-10
+   ([receipt](validation.md#semantic-scale-replay-and-changed-input-acceptance--2026-11-10)).
 2. Complete full Linux overview inference (F11): retired the same way.
 3. Run the stronger host pair (F2): retired by owner decision, 2026-11-06; its
    economics gate (F3) moved to 003 T006.
 4. Evaluate explicitly frozen candidates on the sealed questions (F4): passed
    2026-10-22.
 5. Finish the remaining physical-device and package acceptance (F7): unparked by owner
-   decision, 2026-11-06, for one ad-hoc-signed run on the owner's Mac (to do), repeated
-   on the signed release candidate.
+   decision, 2026-11-06, for one ad-hoc-signed run on the owner's Mac, which passed on
+   2026-11-10 ([receipt](validation.md#native-macos-acceptance--2026-11-10)). The run
+   on the signed release candidate remains.
 
 The 2026-10-12 cloud session closed the CI check and the native CPU observation. A
 2026-10-14 cloud session measured the RRF candidate (F9); it stays reverted.
@@ -469,11 +503,11 @@ and what causes the 249 anchorless misses, remain measurement questions.
 
 | Order | User-visible outcome | Existing owner and work | Exit evidence |
 | --- | --- | --- | --- |
-| 1. Retrieve the required evidence | Behavioral and mixed symbol/behavior questions return useful implementation evidence within the requested budget. | [009 T005](../specs/009-optional-semantic-retrieval/spec.md#t005--diagnose-and-improve-anchorless-evidence-retrieval) diagnoses and repairs anchorless retrieval; [001 T010](../specs/001-source-state-recovery/spec.md#t010--retrieve-behavioral-evidence-for-a-named-symbol) repairs mixed intent. | Stage-attributed losses, paired improvement over current Gemma on fresh held-out cases, preserved source/budget invariants and G1 guards. |
+| 1. Retrieve the required evidence | Behavioral and mixed symbol/behavior questions return useful implementation evidence within the requested budget. | [009 T005](../specs/009-optional-semantic-retrieval/spec.md#t005--diagnose-and-improve-anchorless-evidence-retrieval) diagnoses and repairs anchorless retrieval; [001 T010](../specs/001-source-state-recovery/spec.md#t010--retrieve-behavioral-evidence-for-a-named-symbol) repairs mixed intent. 009 T005 closed without promotion on 2026-11-19 ("Close, no promotion"); anchorless quality beyond the current baseline is a named limitation. | Stage-attributed losses, paired improvement over current Gemma on fresh held-out cases, preserved source/budget invariants and G1 guards. |
 | 2. Improve actual coding tasks | Agents reach the right evidence and a verified patch with fewer unnecessary discovery steps. | [003 T006](../specs/003-agent-retrieval-context/spec.md#t006--validate-retrieval-repairs-in-real-coding-tasks) tests current versus repaired retrieval at the real host boundary. | Verified task outcomes, full-task usage and latency, visible failures, and an inspected host capability boundary for the next milestone. |
 | 3. Preserve task state and observations | A restart retains the user constraint, rejected approach, unresolved question and supporting observation. | Experimental 003 T007 delivery and 008 T003 explicitly scoped retained records; 001 continues to own source identity. | Atomic updates, conflict handling, bounded opt-in capture, exact retained-observation recovery, and no inferred root admission or training permission. |
 | 4. Edit and recover working context | The agent can fold a large observation, keep the task coherent, and recover exact details before acting. | Experimental 003 T007 / 008 T003 reversible views using source identities and milestone 3 records. | A real host applies an identified view revision; round-trip recovery, valid tool linkage, interrupted-commit/restart behavior and measured task economics pass. |
-| 5. Reactivate memory when it helps | Relevant constraints and failed attempts influence the next action without constant reminders. | Experimental 008 T004 exact-failure reminders. Its broader semantic triggers (contradiction and constraint-violation detection) were proposed; by owner decision, 2026-11-06, they are to be built. | Fewer repeated failures and missed obligations than passive memory on held-out tasks, with acceptable total cost and a measured unnecessary-intervention rate. |
+| 5. Reactivate memory when it helps | Relevant constraints and failed attempts influence the next action without constant reminders. | Experimental 008 T004 exact-failure reminders and the owner-selected explicit structured assertion comparisons under the no-model rule; see [current status](resume-context-ecosystem.md#current-status--2026-11-06). | Fewer repeated failures and missed obligations than passive memory on held-out tasks, with acceptable total cost and a measured unnecessary-intervention rate. |
 | 6. Grow reliable durable knowledge | Useful decisions survive across tasks, corrections supersede stale beliefs, and forgetting reaches retained derivatives. | Experimental 008 T004 explicit decision promotion and tracked-copy forgetting. Reactivated 010 owns source-derived repository knowledge under the revised build order above. | Capture/update/retrieve/use evaluated separately; scope, contradiction, export and forget behavior verified through the same lifecycle suite. |
 
 Milestone 1's diagnostic checkpoint unlocks its two repairs; they need not wait for
@@ -489,7 +523,8 @@ checks remain pending and never imply default promotion or release acceptance.
 The three linked task sections are the authoritative backlog and acceptance detail.
 Execute them in this order:
 
-1. **Freeze and explain the baseline — 009 T005 diagnostic checkpoint.** Pin the
+1. **Freeze and explain the baseline — 009 T005 diagnostic checkpoint.** Closed with
+   T005 on 2026-11-19 (note below). Pin the
    current binary, Gemma profile, corpora, prepared generations, harness and budgets.
    Inspect all 388 results, including the 139 successes. For each miss record the
    first observed loss: absent/ineligible unit, candidate retrieval, ordering/caps,
@@ -504,7 +539,8 @@ Execute them in this order:
    current graph evidence. Amend the existing packing contract explicitly; do not
    merely turn dense retrieval on for every anchored query.
 3. **Repair the largest demonstrated anchorless loss — 009 T005 candidate checkpoint.**
-   Choose one mechanism from the attribution: richer source-derived cards, candidate
+   Closed without promotion on 2026-11-19 (note below). Choose one mechanism from the
+   attribution: richer source-derived cards, candidate
    coverage, deterministic ordering, or packing. Hold the selected embedding model
    fixed. Evaluate at most three predeclared variants in the first tranche; use the
    simplest variant that clears the gate. Change a representation recipe only with
@@ -517,6 +553,16 @@ Execute them in this order:
    longer decides 001 T010's `--experimental-behavior-context`: its own local gates
    and the 2026-10-19 G2 rule do ("Lexical-only, drop T006 gate";
    [record](validation.md#owner-decisions--2026-11-06)).
+
+Owner decision, 2026-11-19, "Close, no promotion": steps 1 and 3, the two 009 T005
+checkpoints, close with T005, which closes without promotion. After the
+[loss analysis](validation.md#t005-loss-analysis--2026-11-19) found no bounded
+candidate with a plausible large gain, the four measured candidates (compact
+preference, fragment order, kept-body declaration prefixes and lexical placement) and
+the unbuilt role-ordered placement estimate are T005's outcome. The current retrieval
+baseline stays, anchorless quality beyond it is a named limitation, T005 is no longer
+a release condition, and the sealed 2026-11-18 holdout stays unopened for future work
+([record](validation.md#owner-decisions--2026-11-19)). The steps above stay as written.
 
 The exit artifact is a concise decision record: loss counts, chosen repair and
 rejected alternatives, changed contracts, paired results and regressions, runtime

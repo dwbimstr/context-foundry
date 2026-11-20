@@ -1,0 +1,230 @@
+# Proposed source-host qualification patch; unapplied by Foundry.
+# oh-my-pi 24439066040e006eb08da7b204f0ac41c79d2de9, MIT.
+# Upstream license: https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/LICENSE
+# MIT License
+# 
+# Copyright (c) 2025 Mario Zechner
+# Copyright (c) 2025-2026 Can Bölük
+# Copyright (c) 2026 Stencil Labs, Inc.
+# 
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+# 
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+# 
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+Experimental RPC retirement for the startup-only observation profile. Context Foundry does not apply this patch automatically.
+Upstream base: can1357/oh-my-pi@24439066040e006eb08da7b204f0ac41c79d2de9 (MIT).
+Apply after the previously qualified startup series through omp-startup-workspace-scan-exclusion.patch.
+Owners: CLI runRootCommand and runRpcMode, with the original RpcOutputWriter shutdown barrier and a one-use source receipt.
+Native controls cover original catalog and output completion, ordinary subscription, unexpected input, invalid flags, missing observer, and receipt identity.
+The profile excludes RPC dispatch and native Ready. It provides no startup admission, provider authority, or signing.
+diff --git a/packages/coding-agent/src/cli/args.ts b/packages/coding-agent/src/cli/args.ts
+--- a/packages/coding-agent/src/cli/args.ts
++++ b/packages/coding-agent/src/cli/args.ts
+@@ -89,6 +89,7 @@
+ 	startupNoLogging?: boolean;
+ 	startupPluginRoots?: boolean;
+ 	startupExtension?: boolean;
++	startupRpcObservation?: boolean;
+ 	noLsp?: boolean;
+ 	noPty?: boolean;
+ 	hooks?: string[];
+@@ -373,6 +374,8 @@
+ 			result.noSession = true;
+ 		} else if (arg === "--no-tools") {
+ 			result.noTools = true;
++		} else if (arg === "--startup-rpc-observation") {
++			result.startupRpcObservation = true;
+ 		} else if (arg === "--startup-extension") {
+ 			result.startupExtension = true;
+ 		} else if (arg === "--startup-plugin-roots") {
+diff --git a/packages/coding-agent/src/cli/flag-tables.ts b/packages/coding-agent/src/cli/flag-tables.ts
+--- a/packages/coding-agent/src/cli/flag-tables.ts
++++ b/packages/coding-agent/src/cli/flag-tables.ts
+@@ -362,6 +362,7 @@
+ 	"--startup-no-logging",
+ 	"--startup-plugin-roots",
+ 	"--startup-extension",
++	"--startup-rpc-observation",
+ 	"--no-lsp",
+ 	"--no-pty",
+ 	"--hide-thinking",
+diff --git a/packages/coding-agent/src/main.ts b/packages/coding-agent/src/main.ts
+--- a/packages/coding-agent/src/main.ts
++++ b/packages/coding-agent/src/main.ts
+@@ -1851,6 +1851,8 @@
+ 	rawArgs: string[],
+ 	deps: RunRootCommandDependencies = DEFAULT_RUN_ROOT_DEPENDENCIES,
+ ): Promise<void> {
++	if (parsed.startupRpcObservation && (!parsed.startupExtension || parsed.mode !== "rpc"))
++		throw new Error("--startup-rpc-observation requires --startup-extension and --mode rpc");
+ 	if (parsed.startupExtension && !parsed.restrictTools)
+ 		throw new Error("--startup-extension requires --restrict-tools");
+ 	if (parsed.startupPluginRoots && !parsed.restrictTools)
+@@ -2914,6 +2916,7 @@
+ 					subagentEventBus,
+ 					mcpManager,
+ 					input: rpcInput,
++					startupObservation: parsedArgs.startupRpcObservation,
+ 				});
+ 			} else if (isInteractive) {
+ 				const versionCheckPromise = checkForNewVersion(VERSION).catch(() => undefined);
+diff --git a/packages/coding-agent/src/modes/rpc/rpc-mode.ts b/packages/coding-agent/src/modes/rpc/rpc-mode.ts
+--- a/packages/coding-agent/src/modes/rpc/rpc-mode.ts
++++ b/packages/coding-agent/src/modes/rpc/rpc-mode.ts
+@@ -1374,12 +1374,50 @@
+ 	headless?: boolean;
+ 	subagentEventBus?: EventBus;
+ 	input?: ReadableStream<Uint8Array>;
++	/** Startup observation owns the initial catalog and permits no RPC input. */
++	startupObservation?: boolean;
+ 	/** Builds `live_start` sessions; defaults to the real {@link LiveSessionController}. */
+ 	createLiveSession?: RpcLiveSessionFactory;
+ 	/** Builds the native speech controller; tests may substitute the capture boundary. */
+ 	createDictationController?: RpcDictationControllerFactory;
+ 	/** The session's MCP manager, so `/mcp` builtins resolve and reconnect live servers. */
+ 	mcpManager?: MCPManager;
++}
++
++type StartupRpcReceipt = Readonly<{
++	initial_catalog_joined: true;
++	metadata_subscription_excluded: true;
++	output_drained: true;
++	dispatch_closed: true;
++}>;
++
++let startupRpcIssued = false;
++let pendingStartupRpcReceipt: StartupRpcReceipt | undefined;
++
++export function consumeStartupRpcReceipt(proof: unknown): StartupRpcReceipt {
++	const receipt = pendingStartupRpcReceipt;
++	if (!receipt || proof !== receipt) throw new Error("Invalid RPC startup receipt");
++	pendingStartupRpcReceipt = undefined;
++	return receipt;
++}
++
++function reportStartupRpcRetired(): void {
++	const notify = (globalThis as Record<symbol, unknown>)[Symbol.for("context-foundry.startup.rpc-retired.v1")];
++	if (startupRpcIssued || typeof notify !== "function") throw new Error("RPC startup observer unavailable");
++	startupRpcIssued = true;
++	const receipt: StartupRpcReceipt = Object.freeze({
++		initial_catalog_joined: true,
++		metadata_subscription_excluded: true,
++		output_drained: true,
++		dispatch_closed: true,
++	});
++	pendingStartupRpcReceipt = receipt;
++	try {
++		notify(receipt);
++		if (pendingStartupRpcReceipt) throw new Error("RPC startup receipt not consumed");
++	} finally {
++		pendingStartupRpcReceipt = undefined;
++	}
+ }
+ 
+ /**
+@@ -1390,6 +1428,7 @@
+ 	const {
+ 		setToolUIContext,
+ 		headless = false,
++		startupObservation = false,
+ 		subagentEventBus,
+ 		input = claimRpcInput(),
+ 		createLiveSession,
+@@ -1415,16 +1454,17 @@
+ 		dictationBridge?.dispose();
+ 		void session.dispose().finally(() => process.exit(1));
+ 	});
+-	outputWriter.write(
+-		frameEncoder.encodeFrames({
+-			type: "ready",
+-			protocolVersion: 1,
+-			supportedProtocolVersions: [1, 2],
+-			maxFrameBytes: MAX_RPC_FRAME_BYTES,
+-			maxReassembledFrameBytes: MAX_RPC_REASSEMBLED_BYTES,
+-			supportsBashExcludeFromContext: true,
+-		}),
+-	);
++	if (!startupObservation)
++		outputWriter.write(
++			frameEncoder.encodeFrames({
++				type: "ready",
++				protocolVersion: 1,
++				supportedProtocolVersions: [1, 2],
++				maxFrameBytes: MAX_RPC_FRAME_BYTES,
++				maxReassembledFrameBytes: MAX_RPC_REASSEMBLED_BYTES,
++				supportsBashExcludeFromContext: true,
++			}),
++		);
+ 	const output = (obj: RpcResponse | RpcExtensionUIRequest | object) => {
+ 		outputWriter.write(frameEncoder.encodeFrames(obj));
+ 		if (isRecord(obj) && obj.type === "response" && obj.command === "negotiate_protocol" && obj.success === true)
+@@ -1744,8 +1784,15 @@
+ 	};
+ 	// A transport error during startup must not be an unhandled rejection; the final await below still throws it.
+ 	// Input ending while startup still runs means no client is left to answer a dialog it awaits: reject them.
+-	const inputRead = readRpcInputFrames(input, receiveFrame, message => output(error(undefined, "parse", message)));
++	const rejectObservationInput = (): never => {
++		throw new Error("RPC input is unavailable during startup observation");
++	};
++	const inputRead = startupObservation
++		? readRpcInputFrames(input, rejectObservationInput, rejectObservationInput)
++		: readRpcInputFrames(input, receiveFrame, message => output(error(undefined, "parse", message)));
++	let inputFinished = false;
+ 	const rejectStartupDialogs = (): void => {
++		inputFinished = true;
+ 		if (heldFrames) pendingExtensionRequests.rejectAll("RPC client disconnected during startup");
+ 	};
+ 	inputRead.then(rejectStartupDialogs, rejectStartupDialogs);
+@@ -1881,9 +1928,11 @@
+ 	const emitAvailableCommandsUpdate = async () => {
+ 		output({ type: "available_commands_update", commands: await getAvailableCommands() });
+ 	};
+-	session.subscribeCommandMetadataChanged(() => {
+-		void emitAvailableCommandsUpdate();
+-	});
++	if (!startupObservation) {
++		session.subscribeCommandMetadataChanged(() => {
++			void emitAvailableCommandsUpdate();
++		});
++	}
+ 	await emitAvailableCommandsUpdate();
+ 
+ 	const inputGate = new RpcUserInputGate();
+@@ -2948,9 +2997,20 @@
+ 	// remains background-dispatched so abort_bash can overtake it. readRpcInputFrames reads line-by-line so a
+ 	// single malformed line is reported as an error frame and the loop keeps running instead of throwing out of
+ 	// the reader and killing the whole process (issue #5194).
+-	const held = heldFrames;
+-	heldFrames = undefined;
+-	for (const parsed of held) inputDispatcher.dispatch(parsed);
++	if (startupObservation) {
++		// The original catalog has finished. Join its actual writes and close
++		// this diagnostic output before attesting retirement on the private channel.
++		await outputWriter.close();
++		if (inputFinished) {
++			await inputRead;
++			throw new Error("RPC input closed before startup retirement");
++		}
++		reportStartupRpcRetired();
++	} else {
++		const held = heldFrames;
++		heldFrames = undefined;
++		for (const parsed of held) inputDispatcher.dispatch(parsed);
++	}
+ 	await inputRead;
+ 
+ 	// stdin closed — RPC client is gone. Fail pending side-channel requests

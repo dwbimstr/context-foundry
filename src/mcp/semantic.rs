@@ -25,17 +25,11 @@ fn semantic_anchored(
     path: Option<&str>,
     control: &Control,
     anchors: Option<&[crate::store::AnchorCandidate]>,
-    prose: bool,
 ) -> bool {
-    let anchored = |chosen: &[crate::store::AnchorCandidate]| {
-        chosen
-            .iter()
-            .any(|anchor| !prose || !crate::store::incidental_prose_anchor(query, anchor))
-    };
     match anchors {
-        Some(chosen) => anchored(chosen),
+        Some(chosen) => !chosen.is_empty(),
         None => crate::roots::select_anchors(&[engine], query, path, control)
-            .map_or(true, |chosen| anchored(&chosen)),
+            .map_or(true, |chosen| !chosen.is_empty()),
     }
 }
 
@@ -48,9 +42,8 @@ fn plan_semantic(
     path: Option<&str>,
     control: &Control,
     anchors: Option<&[crate::store::AnchorCandidate]>,
-    prose: bool,
 ) -> SemanticPlan {
-    if slot.is_none() || semantic_anchored(engine, query, path, control, anchors, prose) {
+    if slot.is_none() || semantic_anchored(engine, query, path, control, anchors) {
         return SemanticPlan::Off;
     }
     match slot {
@@ -82,7 +75,7 @@ pub fn search_primary(
     anchors: Option<&[crate::store::AnchorCandidate]>,
 ) -> FResult<crate::store::CandidateBatch> {
     #[cfg(feature = "semantic")]
-    match plan_semantic(slot, engine, query, path, control, anchors, false) {
+    match plan_semantic(slot, engine, query, path, control, anchors) {
         SemanticPlan::Off => {}
         SemanticPlan::Dense(window) => {
             return engine
@@ -117,16 +110,7 @@ pub fn context_primary_with_options(
     }
     let policy = requested.policy.filter(|policy| policy.routes());
     #[cfg(feature = "semantic")]
-    let plan = plan_semantic(
-        slot,
-        engine,
-        query,
-        None,
-        control,
-        requested.anchors,
-        requested.experimental_behavior
-            && crate::store::prose_context_query(query, strategy, policy.is_some()),
-    );
+    let plan = plan_semantic(slot, engine, query, None, control, requested.anchors);
     #[cfg(feature = "semantic")]
     if let Some(trace) = control.trace() {
         let state = match &plan {
@@ -250,25 +234,24 @@ impl Drop for CliSemanticSlot {
 
 /// A single CLI request can establish that it needs no model before opening
 /// artifacts or reserving/loading a worker. Resident MCP startup is unchanged.
-/// This shares the actual request's anchor/prose predicate; it is not a second
+/// This shares the actual request's anchor predicate; it is not a second
 /// routing heuristic. Query/index errors remain the baseline reader's concern.
 pub(crate) fn cli_semantic_slot(
     launch: Option<SemanticServing>,
     engine: &Engine,
     query: &str,
     path: Option<&str>,
-    prose: bool,
     control: &Control,
 ) -> FResult<CliSemanticSlot> {
     #[cfg(feature = "semantic")]
-    if launch.is_some() && semantic_anchored(engine, query, path, control, None, prose) {
+    if launch.is_some() && semantic_anchored(engine, query, path, control, None) {
         if let Some(trace) = control.trace() {
             trace.record(serde_json::json!({"stage":"semantic_startup", "state":"skipped", "reason":"anchor_or_baseline_error"}));
         }
         return Ok(CliSemanticSlot(None));
     }
     #[cfg(not(feature = "semantic"))]
-    let _ = (engine, query, path, prose, control);
+    let _ = (engine, query, path, control);
     semantic_slot(launch).map(CliSemanticSlot)
 }
 
@@ -418,13 +401,12 @@ mod tests {
         engine.refresh(&Control::unbounded()).unwrap();
         let profile = crate::testkit::write_semantic_profile(dir.path(), "preflight", |_| {});
         let acquisitions = Arc::new(AtomicUsize::new(0));
-        for (query, path, prose, skip) in [
-            ("call Named", None, false, true),
-            ("call `missing`", None, false, true),
-            ("convert a Go string", None, true, false),
-            ("convert a Go string", None, false, true),
-            ("latent conceptual behavior", None, true, false),
-            ("call Named", Some("elsewhere"), false, false),
+        for (query, path, skip) in [
+            ("call Named", None, true),
+            ("call `missing`", None, true),
+            ("convert a Go string", None, true),
+            ("latent conceptual behavior", None, false),
+            ("call Named", Some("elsewhere"), false),
         ] {
             let before = acquisitions.load(Ordering::SeqCst);
             let calls = acquisitions.clone();
@@ -435,16 +417,9 @@ mod tests {
                     Err(crate::neural::provider::ProviderError::Busy)
                 }),
             );
-            let slot = cli_semantic_slot(
-                Some(launch),
-                &engine,
-                query,
-                path,
-                prose,
-                &Control::unbounded(),
-            )
-            .unwrap();
-            assert_eq!(slot.is_none(), skip, "{query}, {path:?}, {prose}");
+            let slot = cli_semantic_slot(Some(launch), &engine, query, path, &Control::unbounded())
+                .unwrap();
+            assert_eq!(slot.is_none(), skip, "{query}, {path:?}");
             assert_eq!(
                 acquisitions.load(Ordering::SeqCst) - before,
                 usize::from(!skip)
@@ -455,7 +430,6 @@ mod tests {
             &engine,
             "`Named`",
             None,
-            false,
             &Control::unbounded(),
         )
         .unwrap();

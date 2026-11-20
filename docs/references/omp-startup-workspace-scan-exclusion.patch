@@ -1,0 +1,83 @@
+# Proposed source-host qualification patch; unapplied by Foundry.
+# oh-my-pi 24439066040e006eb08da7b204f0ac41c79d2de9, MIT.
+# Upstream license: https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/LICENSE
+# MIT License
+# 
+# Copyright (c) 2025 Mario Zechner
+# Copyright (c) 2025-2026 Can Bölük
+# Copyright (c) 2026 Stencil Labs, Inc.
+# 
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+# 
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+# 
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+diff --git a/packages/coding-agent/src/sdk.ts b/packages/coding-agent/src/sdk.ts
+--- a/packages/coding-agent/src/sdk.ts
++++ b/packages/coding-agent/src/sdk.ts
+@@ -2396,6 +2396,8 @@
+ 		agentsMdFiles: [],
+ 	};
+ 	const scanWorkspaceTree = (): Promise<WorkspaceTree> => {
++		if (options.startupExtensionOwner)
++			throw new Error("Workspace tree scanning is unavailable during restricted startup");
+ 		const scan = logger.time("buildWorkspaceTree", () =>
+ 			buildWorkspaceTree(cwd, { timeoutMs: STARTUP_SCAN_DEADLINE_MS }),
+ 		);
+diff --git a/packages/coding-agent/test/startup-workspace-exclusion.test.ts b/packages/coding-agent/test/startup-workspace-exclusion.test.ts
+new file mode 100644
+--- /dev/null
++++ b/packages/coding-agent/test/startup-workspace-exclusion.test.ts
+@@ -0,0 +1,39 @@
++import { expect, test } from "bun:test";
++import { AuthStorage } from "@oh-my-pi/pi-ai";
++import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
++import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
++import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
++import { ownStartupExtension } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/runner";
++import { createAgentSession } from "@oh-my-pi/pi-coding-agent/sdk";
++import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
++import { TempDir } from "@oh-my-pi/pi-utils";
++
++test("restricted startup refuses workspace scanning before a session can be returned", async () => {
++	using dir = TempDir.createSync("@omp-startup-workspace-");
++	const auth = await AuthStorage.create(dir.join("auth.db"));
++	const settings = Settings.isolated({ includeWorkspaceTree: true, "async.enabled": false });
++	const registry = new ModelRegistry(auth, dir.join("models.json"));
++	try {
++		await expect(
++			createAgentSession({
++				cwd: dir.path(),
++				agentDir: dir.path(),
++				modelRegistry: registry,
++				sessionManager: SessionManager.inMemory(dir.path()),
++				settings,
++				model: getBundledModel("openai", "gpt-4o-mini"),
++				disableExtensionDiscovery: true,
++				promptTemplates: [],
++				slashCommands: [],
++				enableMCP: false,
++				enableLsp: false,
++				toolNames: [],
++				restrictToolNames: true,
++				startupExtensionOwner: ownStartupExtension(),
++				skipPythonPreflight: true,
++			}),
++		).rejects.toThrow("Workspace tree scanning is unavailable during restricted startup");
++	} finally {
++		auth.close();
++	}
++});

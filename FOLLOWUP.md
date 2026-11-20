@@ -191,13 +191,14 @@ F6 is retired as a gate and F8 is retired.
   the `fe37eff3` baseline under the 2,048-token budget. Every earlier delivered span must
   survive.
 
-## F7. Native macOS acceptance beyond the CI runner (unparked for one run 2026-11-06)
+## F7. Native macOS acceptance beyond the CI runner (development run accepted 2026-11-10)
 
 - **Owner decisions, 2026-11-06:**
   - "Once now, unsigned": F7 is unparked for one run of
     `scripts/native-macos-acceptance.py` on the owner's Mac now, with ad-hoc signing,
-    for the first physical-device receipts (to do). The run is repeated on the signed
-    release candidate.
+    for the first physical-device receipts. That run passed on 2026-11-10
+    ([receipt](docs/validation.md#native-macos-acceptance--2026-11-10)); it is repeated
+    on the signed release candidate.
   - "Script checks only": device acceptance for 009 T008/T009 and 010 T002 is what the
     script checks. The unbuilt policies (global GPU pressure, combined embedding and
     generation residency, thermal/battery adaptation, embedding eviction) become named
@@ -209,10 +210,10 @@ F6 is retired as a gate and F8 is retired.
 - **Why blocked now:** only the signed run, which needs the owner's Developer ID signing
   identity. The owner's Mac is the work host, and GPU pressure and combined residency
   are named limitations.
-- **Required resource:** the owner's Mac for the unsigned run, and the owner's signing
-  identity for the signed release candidate.
+- **Required resource:** the owner's Mac and signing identity for the signed release
+  candidate. The unsigned development run is complete.
 - **Resume:**
-  1. On the Mac, run
+  1. Repeat on the signed release candidate, on the Mac:
      `python3 scripts/native-macos-acceptance.py --out /abs/new-out --work /abs/new-work.noindex --generation --scale-calibration`.
   2. Spotlight skips folders whose names end in `.noindex`. Spotlight indexing of build
      output caused the earlier CPU-pressure failures. Do not turn Spotlight off on a
@@ -345,7 +346,8 @@ F6 is retired as a gate and F8 is retired.
 - **Retired (owner, 2026-11-06, "Accept the Mac rust run"):** 009 T006–T009 scale
   acceptance now cites the existing complete hierarchy-v1 preparation of
   `rust-lang/rust` (62,035 files) on the owner's Mac, plus a short replay and
-  changed-input check on the Mac that is still to run. Linux x86 scale and the
+  changed-input check on the Mac that now passes
+  ([receipt](docs/validation.md#semantic-scale-replay-and-changed-input-acceptance--2026-11-10)). Linux x86 scale and the
   67,663-source representative corpus become a named limitation. The sandbox this entry
   waited for is lost (see the top). The rest of this entry is the parked protocol as it
   stood.
@@ -544,6 +546,16 @@ F6 is retired as a gate and F8 is retired.
 
 ## F14. God-module splits (audit 2026-10-13)
 
+- **Status (2026-11-19):** done. The last row, `src/learning.rs`, ran on the owner's
+  Mac as seven gated commits (`04bcd18` to `a66a056`): `state`, `run_policy`,
+  `feedback`, `strict`, `io`, `prep` and the read-back, merged into `prep` as planned.
+  The parent fell from 3,182 to 972 lines. Every move is verbatim apart from 7
+  `pub(super)` insertions, all in `prep`, against 9 planned: `check_floors` moved with
+  the read-back, where it needs no bump, and `OpenedDataset` stays in the parent,
+  because moving it would need two more bumps than planned. The tests, the eight
+  existing children and the public API pages are unchanged
+  ([receipt](docs/validation.md#learning-module-split-f14--2026-11-19)). No further
+  split is planned.
 - **Status (2026-10-14):** the owner stopped the refactor after PR #21 (merge
   `2bab612`, 16 verbatim splits with no visibility change), then resumed it for the
   planned visibility-change splits: planned bumps only, and park anything that needs
@@ -646,7 +658,7 @@ F6 is retired as a gate and F8 is retired.
 
   | File | Next splits (bumps) | Precondition or blocker |
   | --- | --- | --- |
-  | `src/learning.rs` | `state` with its tests (0), `run_policy` (0), `feedback` (0), `strict` and `io` (0), `prep` (2), `readback` (7 if merged with `prep`) | Needs a Mac. `serve`, `supervisor` and `worker` are `#[cfg(target_os = "macos")]`, so Linux gates do not compile the items they reach (`LearningPolicy`, `fail`); keep those in the root or re-export them. |
+  | `src/learning.rs` | `state` with its tests (0), `run_policy` (0), `feedback` (0), `strict` and `io` (0), `prep` (2), `readback` (7 if merged with `prep`) | Done 2026-11-19 with 7 bumps in all (status above). `serve`, `supervisor` and `worker` are `#[cfg(target_os = "macos")]`, so Linux gates do not compile the items they reach (`LearningPolicy`, `fail`); those stay in the root. |
 
   `src/neural/query.rs` keeps the dense index, the fallback and query tokenization, and
   `src/graph.rs` keeps `invalid`, `OccurrenceKind`, the storage key codec and the test
@@ -885,7 +897,14 @@ F6 is retired as a gate and F8 is retired.
 
 ## F18. The 6,000-file watcher test rereads sources on the owner's Mac (open 2026-10-17)
 
-- **Status:** open; it predates the 2026-10-17 changes. On the owner's M3 Pro,
+- **Status, 2026-11-10:** the failure seen on the M5 Max is fixed in `65fd799`; the
+  M3 Pro symptom below is not reproduced and stays open as an observation. On the
+  M5 Max the test never reread a source (`events` 0, 6,000 reads): it missed its
+  180-second deadline because a first reconciliation forced about 6,750 commits to
+  disk. Walks now commit in batches of four and index pages hold 32 keys; the test
+  passes in about 35 s with its assertions unchanged
+  ([receipt](docs/validation.md#watcher-test-repair-f18--2026-11-10)).
+- **Earlier symptom (2026-10-17):** it predates the 2026-10-17 changes. On the owner's M3 Pro,
   `six_thousand_files_allow_foreground_calls_and_no_idle_body_rescans`
   (`tests/watch.rs`) reports 6,076–7,658 source reads at its first idle state instead of
   6,000. Unchanged `e9c5ca0` failed in 2 of 3 runs and the working tree in 5 of 6 on
@@ -907,5 +926,9 @@ F6 is retired as a gate and F8 is retired.
   it, then run `mcp --watch` on the 62,116-file rust corpus on the owner's Mac against
   bounds stated before the run (about an hour, no spend). That run is the evidence for
   [001 T011](specs/001-source-state-recovery/spec.md#t011--maintain-the-admitted-workspace-from-filesystem-change-hints),
-  which stays open if it fails. Both steps are to do. The failures above were seen on
-  the M3 Pro; the owner's Mac now reports an Apple M5 Max with 64 GiB.
+  which stays open if it fails. The repair and native run are done
+  ([acceptance](docs/validation.md#native-mac-watcher-acceptance-001-t011--2026-11-10)). The receipt
+  corrects the 62,116-file description using the unchanged corpus pin and a fresh
+  manifest. The reread failures above were seen on the M3 Pro; the owner's Mac now
+  reports an Apple M5 Max with 64 GiB. The read-count assertion now prints the
+  watcher status, which is the distinguishing observation if the symptom returns.

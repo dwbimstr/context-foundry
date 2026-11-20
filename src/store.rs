@@ -153,7 +153,9 @@ pub(crate) const TIE_GROUP: usize = 4;
 pub(crate) const GROUP_FILES: usize = DOOR_FILES / TIE_GROUP;
 /// Approximate doors examine at most this many delivery units.
 const DOOR_WINDOW: usize = 256;
-/// The META value naming the current search index format. `"8"` (2026-10-26)
+/// The META value naming the current search index format. `"9"` (2026-11-11)
+/// takes Scala 0.26.4, PowerShell 0.26.6 and pulldown-cmark 0.13.6 together
+/// with source-unit schema 7. `"8"` (2026-10-26)
 /// re-indexes Markdown under pulldown-cmark 0.13.5, whose fixed
 /// list/indentation grammar changes some units; it moves in step with
 /// SOURCE_UNIT_SCHEMA. `"7"` enriched the source-level call-name postings
@@ -167,14 +169,15 @@ const DOOR_WINDOW: usize = 256;
 /// (its head) and the leading-run unit ranges (§ Unit forest).
 /// Semantic partitions independently name SOURCE_UNIT_SCHEMA; search-only
 /// posting changes do not refit or re-embed model inputs.
-pub(crate) const SEARCH_SCHEMA: &str = "8";
+pub(crate) const SEARCH_SCHEMA: &str = "9";
 /// The source-unit grammar version the semantic partition recipes pin
-/// (001's index version gate, applied to units). `"6"` (2026-10-26) is the
+/// (001's index version gate, applied to units). `"7"` (2026-11-11) is the
+/// combined Scala/PowerShell/Markdown parser bundle; `"6"` (2026-10-26) is the
 /// pulldown-cmark 0.13.5 Markdown grammar; `"5"` was the grammar through
 /// 0.13.4. A recipe under another unit grammar is retained history, never
 /// current: `semantic prepare` refits it and reuses only exact cached
 /// inputs.
-pub(crate) const SOURCE_UNIT_SCHEMA: &str = "6";
+pub(crate) const SOURCE_UNIT_SCHEMA: &str = "7";
 const SEARCH_SCHEMA_REASON: &str =
     "search_schema: search index format changed; run `foundry repair-index`";
 
@@ -491,7 +494,7 @@ pub enum RenderedForm {
 /// Ranking tiers: exact definitions (1), lexical hits (2), file outlines.
 pub const TIER_OUTLINE: u8 = 4;
 /// Experimental behavioral support: existing lexical candidates owned by the
-/// uniquely resolved type. Selected only by 001 T010's opt-in context policy.
+/// uniquely resolved type. Selected only by 001 T010's lexical context policy.
 pub const TIER_BEHAVIOR: u8 = 3;
 
 /// One ranked, already revalidated candidate (context-v2 § Candidate seam).
@@ -976,6 +979,9 @@ impl PreparedSource {
     pub(crate) fn new(path: String, body: String) -> FResult<Self> {
         let hash = admitted_source_hash(&path, &body)?;
         Ok(Self { path, body, hash })
+    }
+    pub(crate) fn path(&self) -> &str {
+        &self.path
     }
 }
 
@@ -1636,7 +1642,7 @@ impl RecordPlan {
 /// window, a configured 013 policy routing an `auto` strategy, and the
 /// anchors a multi-root owner chose over every serving root (007; `None`
 /// chooses them from this store's index).
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct ContextOptions<'a> {
     pub compose_evidence: bool,
     pub compact_evidence: bool,
@@ -1649,6 +1655,27 @@ pub struct ContextOptions<'a> {
     pub dense: Option<&'a crate::neural::query::DenseWindow>,
     pub policy: Option<&'a crate::policy::Policy>,
     pub anchors: Option<&'a [AnchorCandidate]>,
+}
+
+// One default shared by the library and both command-line entry points.
+pub(crate) const DEFAULT_BEHAVIOR_CONTEXT: bool = true;
+
+impl Default for ContextOptions<'_> {
+    fn default() -> Self {
+        Self {
+            compose_evidence: false,
+            compact_evidence: false,
+            boundary_config: None,
+            task: None,
+            memory: false,
+            briefs: false,
+            experimental_behavior: DEFAULT_BEHAVIOR_CONTEXT,
+            #[cfg(feature = "semantic")]
+            dense: None,
+            policy: None,
+            anchors: None,
+        }
+    }
 }
 
 /// The query's tokens for path detection: whitespace- and backtick-separated
@@ -1745,20 +1772,50 @@ fn search_handles(index: Index) -> tantivy::Result<SearchHandles> {
     })
 }
 
-fn open_search(dir: &Path) -> Result<SearchHandles, String> {
+fn open_search(dir: &Path) -> FResult<SearchHandles> {
     let index_dir = dir.join("search");
     if !index_dir.join("meta.json").is_file() {
-        return Err("derived index is missing".into());
+        return Err(FoundryError::RepairRequired(
+            "derived index is missing".into(),
+        ));
     }
     if index_dir.is_symlink() {
-        return Err("derived index path is a symlink".into());
+        return Err(FoundryError::RepairRequired(
+            "derived index path is a symlink".into(),
+        ));
     }
-    let index = Index::open_in_dir(&index_dir).map_err(|e| format!("derived index open: {e}"))?;
+    let repair = |e| FoundryError::RepairRequired(format!("derived index open: {e}"));
+    let index = Index::open_in_dir(&index_dir).map_err(repair)?;
     // The actual Tantivy field set must be schema v2.
     if index.schema() != search_schema() {
-        return Err(SEARCH_SCHEMA_REASON.into());
+        return Err(FoundryError::RepairRequired(SEARCH_SCHEMA_REASON.into()));
     }
-    search_handles(index).map_err(|e| format!("derived index open: {e}"))
+    // redb ownership is already exclusive. Tantivy 0.26/0.27 releases its
+    // flock by closing the descriptor, so a child between fork and exec can
+    // keep the old lock alive after redb explicitly unlocks. Bound this wait;
+    // persistent contention is busy, never evidence that an index is corrupt.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    let mut retry = false;
+    loop {
+        if retry && std::time::Instant::now() >= deadline {
+            return Err(FoundryError::StoreBusy);
+        }
+        match search_handles(index.clone()) {
+            Err(tantivy::TantivyError::LockFailure(
+                tantivy::directory::error::LockError::LockBusy,
+                _,
+            )) => {
+                retry = true;
+                fault!(SEARCH_WRITER_BUSY, None, None, "")?;
+                let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                if remaining.is_zero() {
+                    return Err(FoundryError::StoreBusy);
+                }
+                std::thread::sleep(remaining.min(std::time::Duration::from_millis(10)));
+            }
+            result => return result.map_err(repair),
+        }
+    }
 }
 
 /// How a source's search documents are built.
@@ -2197,7 +2254,7 @@ impl Candidate {
     }
 
     fn selection_unit(&self, prose: bool) -> placement::UnitRef<'_> {
-        if prose && self.tier == 2 && self.unit_end.saturating_sub(self.unit_start) > 1536 {
+        if prose && self.unit_end.saturating_sub(self.unit_start) > 1536 {
             (
                 self.path.as_str(),
                 self.start.max(self.unit_start),

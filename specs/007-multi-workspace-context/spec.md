@@ -159,8 +159,13 @@ daemon, watcher, or cross-root training or consent change is added.
   ([validation](../../docs/validation.md#token-economics-remainder--003-t005-and-007-t001-2026-10-04)).
 - Unavailable references are not retried within a session; restart the owner.
 - Labels are display-only and may collide; only `ws16` collisions are refused.
-- 009 semantic candidates and the 013 policy are unimplemented; when they land, their
-  owners state how they apply per root.
+- 009 semantic evidence and its background preparation, and the 013 routing policy
+  (frozen off since 2026-10-07), apply to the primary root only. A reference root
+  contributes no dense evidence and is answered lexically, as it would be without a
+  semantic profile. The header's `semantic:` or `route:` word ends with
+  `; primary root only` when other roots serve
+  ([context-v2, header segments amendment](../001-source-state-recovery/contracts/context-v2.md#header-line);
+  [009 T003, decision D3](../009-optional-semantic-retrieval/spec.md#t003--prepare-progressively-during-real-agent-use)).
 
 ## Tasks and acceptance
 

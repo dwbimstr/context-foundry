@@ -4,7 +4,8 @@ Status: T001 and T002 implemented locally 2026-10-04 and unreleased (see
 [validation](../../docs/validation.md)). T003–T005 are experimental and unaccepted.
 Owner decision, 2026-11-06, "Measure them in pilot v2": their acceptance bar stays,
 their outcome tasks join the [003 T006](../003-agent-retrieval-context/spec.md#t006--validate-retrieval-repairs-in-real-coding-tasks)
-task suite and pilot v2, and T004's semantic triggers are to be built. All three stay
+task suite and pilot v2. T004's owner-selected structured triggers are implemented
+locally under the no-model rule (2026-11-13); real-host outcomes remain open. All three stay
 open until an authorized run passes; pilot v2 is unfunded until the owner authorizes a
 key, rights and a budget ([record](../../docs/validation.md#owner-decisions--2026-11-06)).
 Depends: 001 authoritative ownership, repair and
@@ -296,9 +297,12 @@ the delivery boundary.
 ### T004 — Experimental grounded reminders and explicit promotion
 
 Status: exact-action and grounded path/finishing reminders are implemented locally on
-the experimental branch. Semantic triggers are still to be built, and pilot v2 is to
-measure agent outcomes (owner, 2026-11-06, Status above); T004 stays open until the
-triggers exist and an authorized run passes.
+the experimental branch. The owner selected explicit structured assertions under the
+existing no-model rule on 2026-11-13. The continuation below is implemented with
+real-store/CLI/MCP focused checks and all eight local gates passing on `ea33a2e`
+([receipt](../../docs/validation.md#structured-task-assertions-008-t004--2026-11-13)).
+Pilot v2 still owns measured agent outcomes, and T004 stays open until an authorized
+run passes.
 
 Build the next stages in the same task record, with no model or background loop.
 `advise {action_key,max_bytes}` returns only active rejected attempts whose optional
@@ -331,7 +335,7 @@ erase prior exports, backups or host/provider copies.
 Tests must exercise silence, exact-match advice, persistent dismissal, promotion and
 indexed retrieval, revision collision, stale source refusal, correction/forget
 conflicts, and abrupt exit before/after promotion commit. Broader contradiction or
-constraint-violation detection (the semantic triggers) is selected work to build, and
+constraint-violation detection uses the owner-selected structured contract below;
 pilot v2 is to measure real-host benefit (owner, 2026-11-06).
 
 
@@ -350,6 +354,53 @@ and view restoration may select them again. Protected task entries cannot be hid
 Focused tests cover relevance, silence, stale sources, bounds, revision/path refusal
 and CLI restart behavior. Measured unnecessary interventions and verified host outcomes
 remain pending; source-linked reminders are not semantic contradiction reasoning.
+
+T004 structured assertion continuation (owner, 2026-11-13): contradiction and
+constraint reminders compare explicit caller assertions, without interpreting prose.
+Keep the existing task row, CAS edits, source snapshot and bounded review operation.
+A separate rule store, solver, worker or model would add ownership without improving
+the selected literal comparison. This is task state, not a source retrieval ranking
+change or proof of real-host benefit.
+
+- An entry optionally carries `assertions`, at most sixteen
+  `{key,relation,value}` objects. Keys name caller-defined **single-valued** facts,
+  including scope/environment identity when relevant; they match
+  `[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}`. Values are nonblank UTF-8 strings of at most
+  512 bytes. Match keys and values exactly; do not normalize case, numbers, units,
+  aliases or prose. Duplicate keys within one entry/request refuse. Empty/missing
+  arrays preserve existing behavior; null, unknown fields/relations and oversized
+  inputs refuse before mutation.
+- `relation` is required: `equals` or `not_equals`. Observations, hypotheses and
+  decisions may assert `equals` only. Requirements and constraints may use either
+  relation. Other entry kinds cannot carry assertions. These are attributed caller
+  claims, not inferred facts or proof that a constraint is valid.
+- `review` optionally accepts up to sixteen proposed `assertions`, all `equals`.
+  For an active selected observation/hypothesis/decision, the same key with a
+  different value produces `assertion_conflict`. For a requirement/constraint,
+  a different value violates `equals`, and the same value violates `not_equals`;
+  either produces `constraint_violation`. Missing keys and satisfying values are
+  silent. Existing path/finishing reminders still apply independently. A matching
+  structured trigger takes precedence over a path/finishing trigger for that entry,
+  so it is delivered once, with every conflicting stored/proposed assertion.
+- Preserve freshness, revision/workspace checks, supersession, selection, protected
+  entries, eight complete originals, byte caps and omitted/stale counts. Folded
+  entries retain their assertions; no summary changes an asserted value. No review
+  writes state, certifies truth, blocks an action or claims host consumption.
+- Hash the exact canonical serialized assertion array separately from the existing
+  text digest. Validate both on every task decode. Include assertions and their
+  digest, only when nonempty, in inspect/peek/render and structured advice; rendered
+  task views retain them within the existing shared delivery budget. Existing rows
+  need no rewrite; missing fields decode as empty. Older readers refuse unfamiliar
+  task fields rather than silently discarding them. No new table or index is needed.
+  Export/forget and fault recovery retain the same transaction. Project-memory
+  promotion still copies decision prose and links; its attribution also binds the
+  assertion digest when present, without introducing task rules into memory search.
+- Verification: real store comparisons and silence; exact scope/value matching;
+  malformed/duplicate/oversized input rollback and revision preservation; source
+  staleness; fold/select/supersede/restart; digest corruption refusal; abrupt exit
+  before/after commit; real CLI/opt-in MCP parity and catalog; mandatory task-view
+  token/byte caps. Real-agent intervention quality and task outcomes remain open
+  for the separately authorized pilot v2.
 
 
 ### T005 — Recover evidence by content and compose task-aware retrieval
@@ -408,8 +459,9 @@ The existing Rust gateway applies it under the [adapter contract](../003-agent-r
 This avoids a new host extension runtime or store-owning service. Retained originals
 support expand/re-export/restart; packets and host history remain caller-owned and
 must be deleted separately after forgetting a task. Ordinary MCP application remains
-unknown. The following continuation implements live synchronization; broader
-host-region selection remains pending.
+unknown. The following continuation implements live synchronization. Applying a view
+through ordinary MCP and broader host-region selection are named limitations (owner,
+2026-11-19; see below).
 
 ### Live host continuation — 2026-10-10
 
@@ -419,7 +471,14 @@ Task edits require no file projection or second store owner. The gateway pins an
 explicit exported binding, resolves the current selected view for each request and
 refuses a revoked/unavailable binding. Folding stays caller-authored, original history
 stays recoverable, and a concurrent edit after resolution is outside that snapshot.
-Multiple host regions, automatic selection and real-provider task outcomes remain open.
+Real-provider task outcomes remain open for pilot v2 (Status above). Owner decision,
+2026-11-19: three task-view host extensions are named limitations, with no work
+planned: applying a view through ordinary MCP, broader or multiple host regions beyond
+the one tool result the gateway replaces, and automatic selection (the exported
+binding names that result explicitly today). They re-enter when a supported host
+acknowledges applying a view delivered through ordinary MCP, or when an authorized
+real-host run, such as pilot v2, fails because one explicitly named region could not
+carry the view ([record](../../docs/validation.md#owner-decisions--2026-11-19)).
 
 ### Freshness visibility on compact memory lines — 2026-10-25
 
