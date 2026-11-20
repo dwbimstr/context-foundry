@@ -1,5 +1,21 @@
 # Validation
 
+## Local gates on `455fa03` — 2026-11-20
+
+All eight gates exit 0 on `455fa03`, the head proposed for the merge to `main` (owner
+decision 21), on a clean tree on the owner's Mac (13:41–13:53 UTC), with Rust 1.97.1 and
+1.90.0 and the macOS 26.5 SDK. Since the [`afa7b38` receipt](#local-gates-on-afa7b38--2026-11-20)
+it adds the deferred startup notification round, the calibrated sample method and
+records. Default suite: **1,321 passed, 0 failed, 35 ignored**. Pilot-capture unit
+tests: **132 passed, 1 ignored**. Log SHA-256 prefixes: Clippy `e0e0b31e`, test
+`d3377713`, pilot Clippy `eebe3995`, pilot tests `b495357f`, MSRV check `53088c2b`,
+MSRV Clippy `4e46dc4c`, MSRV pilot check `07531acb`. Logs are private, under
+`datasets/context-foundry-gates/455fa03-2026-11-20/`. The pilot v2 power tool's 25
+Python tests also pass on this head.
+
+Not run: CI (Actions unavailable), the signed-package checks and the native script on a
+signed candidate, and live MCP hosts against rmcp 3.10.0.
+
 ## Calibrated paired sample-size method — 2026-11-20
 
 Owner decision 20 of 2026-11-20 ("Implement and test it") adds the variance-based
@@ -11495,6 +11511,7 @@ the default-feature receipts; they are not listed as full runs.
 
 | Commit | fmt | clippy 1.97 | test 1.97 | msrv-check | msrv-clippy |
 | --- | --- | --- | --- | --- | --- |
+| `455fa03` | 0 | 0 | 0: 1,321 passed, 35 ignored; pilot-capture gates 0, pilot units 132 passed, 1 ignored ([receipt](#local-gates-on-455fa03--2026-11-20)) | 0 | 0 |
 | `afa7b38` | 0 | 0 | 0: 1,321 passed, 35 ignored; pilot-capture gates 0, pilot units 132 passed, 1 ignored ([receipt](#local-gates-on-afa7b38--2026-11-20)) | 0 | 0 |
 | `f2cf6f3` | 0 | 0 | 0: 1,321 passed, 35 ignored; pilot-capture gates 0, pilot units 125 passed, 1 ignored ([receipt](#local-gates-on-f2cf6f3--2026-11-19)) | 0 | 0 |
 | `3bd30be` | 0 | 0 | 0: 1,319 passed, 35 ignored; pilot-capture gates 0, pilot units 102 passed, 1 ignored ([receipt](#native-startup-watchdog-and-promise-hook-limits--2026-11-15)) | 0 | 0 |
