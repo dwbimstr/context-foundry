@@ -374,3 +374,52 @@ of the 25. The private receipts were not opened for this check, so whether any o
 records a digest of the eleven files is not known. Step 4 of the
 [release checklist](release.md), which inspects the Git contents for licenses and
 notices, still applies before any release.
+
+**Added 2026-11-20.** A 26th patch,
+[omp-startup-extension-notifications.patch](references/omp-startup-extension-notifications.patch),
+carries the full upstream notice in the same header form
+([record](validation.md#deferred-startup-notifications-in-the-extension-runner--2026-11-20)).
+The counts above are for the 25 files at `85a63c3` and do not include it. Its hunks
+touch two files that earlier patches already touch, so the series still covers 50
+upstream paths.
+
+### Applied order
+
+The 26 patches form one series, each applying on top of the ones before it. The order
+below is the one the 2026-11-20 startup round's restore and build scripts use; it
+matches the commit that added each file. A check on copies of the 50 files the series
+touches reversed all 26 cleanly from 26 down to 1, reapplied them from 1 to 26, and
+reproduced the source the round built, matching every earlier round's retained files
+along the way. The base source the rounds start from already contains patches 1 and 2;
+that is an inference from the reversed state, and the fully reversed series was not
+compared with a pristine upstream `24439066` checkout. Digests are of the files as they
+are now, after the 2026-11-19 notice headers.
+
+| Order | Patch | SHA-256 | Added in |
+| ---: | --- | --- | --- |
+| 1 | `omp-startup-connection-warmups.patch` | `87cd31029848b30e07a78f1b694afe98ca18418950c5239f32234691e1342b52` | `bfa5eed` |
+| 2 | `omp-startup-auth-retirement.patch` | `1572ad74ef2aa50aa46ece6bd3efcc3eca5dd1c6ec25eb5f91b5b30cfdc445b4` | `9767d4e` |
+| 3 | `omp-startup-refusal.patch` | `63972535da7830d22ce87fbf6dd97692359afbdeabef4c8b0ed99be5607c5530` | `6f3b8a1` |
+| 4 | `omp-restricted-startup.patch` | `69a577ed4f476a3a8b23681a7f5d89d5559eedd022bed20460e7d76d99111051` | `bccd281` |
+| 5 | `omp-startup-discovery-retirement.patch` | `7af5c8aa3c96578b62718a5b8009028c6565dca0c07de682d9438ce9ac54ccd3` | `b8738ef` |
+| 6 | `omp-startup-settings-retirement.patch` | `8ecbe6e9c1441bef912aa60d46802624ec8abbd0c99d4342bd0f6a89fcf5ba69` | `a28b729` |
+| 7 | `omp-startup-empty-auth.patch` | `14712c04fd62ab04c7c7ef9bfbb071258b4d6ac89ee3a8ebb97fb287d4e19cfb` | `a0797d4` |
+| 8 | `omp-startup-presence-retirement.patch` | `f4a825a20935df8577ae7d1836e08533d3350c75dd44638a7e28ce6cf99ba41e` | `a916a4e` |
+| 9 | `omp-startup-telemetry-exclusion.patch` | `60012eeff06a95a6b9770bfa775289bdbc4f36cc6286e99c8b4f030f97da86cf` | `06e1a26` |
+| 10 | `omp-startup-marketplace-exclusion.patch` | `37d568ebc986c69827a75c2d2864349d56c89c246d0c03f9044c446710cd2e68` | `bdfd183` |
+| 11 | `omp-startup-logging-owner.patch` | `c0e11ea59d87ff4a488769385d05980588fdccaab47b7990c021e04937a00d86` | `d61c156` |
+| 12 | `omp-startup-plugin-roots-owner.patch` | `a1cd09125f05a838a42b5a3ffb4f1e90e7869f4416c9c548eff1c58f23f78e67` | `1d5a704` |
+| 13 | `omp-startup-extension-owner.patch` | `39c85ecb1ac659e61e4d46cc6eda3492fd35fcf20c3fe26c4ca27db4ee237f28` | `e41df2f` |
+| 14 | `omp-startup-managed-timer-exclusion.patch` | `c0ee27a10b70f20aedc93ab88f75525de627816ebfe3d0741b94b61897a0857e` | `f30c2ee` |
+| 15 | `omp-startup-workspace-scan-exclusion.patch` | `a6ac4ff9c6258f86227ff91bd32a6394a886e7723c6a14632df5c4459c898822` | `6b7bc4b` |
+| 16 | `omp-startup-rpc-observation.patch` | `817f456650046691ad4afb4b51030cd4ecb458760a85c24310bb4a745c613a02` | `463707d` |
+| 17 | `omp-startup-sdk-export.patch` | `1d369482695346cab7e0972299e1bdd30d25c1c79b623f9ede12c2ce2547553b` | `cca86fb` |
+| 18 | `omp-startup-catalog-spotlight.patch` | `c42a9028ce170cf5c5cba4d788b5d8de0efd64e0d228ea3c0948798182baeef0` | `756c742` |
+| 19 | `omp-startup-rpc-runtime-exclusion.patch` | `9f982ac9fd455602c400b1267f22f0c1227900e47565a97e9f5808e69a19ceb8` | `a9c1ce5` |
+| 20 | `omp-startup-advisor-exclusion.patch` | `3a07eb7dfbdfeee2cc934eab9a953b99b607829e4c7698ea87ffc24a67c9f003` | `32f29db` |
+| 21 | `omp-startup-prompt-exclusion.patch` | `5b34236040774f49839c96799178572965a7d334d73fbe4e26a8c2fc2eb8782a` | `7b9b6a0` |
+| 22 | `omp-startup-fixed-runtime-providers.patch` | `e6c6cd9a3a9296ae76721585bbd1714710b56715f8b4b05be3855fe80615051d` | `e66f542` |
+| 23 | `omp-startup-dap-idle-sweep.patch` | `b0e58e6b5809fac95fb17241c40dc70a92810e860629ad1efe6d115673e2e984` | `e3950d2` |
+| 24 | `omp-startup-fixed-discovery-plan.patch` | `2f7bb5cf5812ce8ba9460fd0c74c7b9c2d37caddf3847b3217194045eacf2556` | `ca87f29` |
+| 25 | `omp-startup-prompt-scheme-exclusion.patch` | `27192794bcaf198c6bf9f806ff71fe4aab9a0d01ae376011f79a951eb0144388` | `2336350` |
+| 26 | `omp-startup-extension-notifications.patch` | `0f25b99202ef77cb7a9413dc96da91bc848f9110eed53421cf032d7f6f2c9d4b` | `06a9714` |

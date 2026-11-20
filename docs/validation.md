@@ -1,5 +1,257 @@
 # Validation
 
+## Calibrated paired sample-size method — 2026-11-20
+
+Owner decision 20 of 2026-11-20 ("Implement and test it") adds the variance-based
+paired method of the pilot v2 sample proposal to `scripts/pilot-v2-power.py`, behind
+the input field `"method": "calibrated_paired"`. The conservative bound stays the
+default. All 15 inputs saved with the proposal give byte-identical output before and
+after, and the 17 existing tests are unchanged.
+
+- **Success safeguard:** Tango's score test for a paired difference of proportions,
+  with its critical value raised until its worst size over a 61-point grid of
+  discordance at the margin boundary is within the tail.
+- **Improvement:** the exact one-sided sign test, in exact integer and fraction
+  arithmetic.
+- **Power:** exact enumeration of every outcome; nothing is sampled. A `search` finds
+  the smallest balanced task count at which both endpoints reach the target.
+
+`python3 scripts/test_pilot_v2_power.py` runs 25 tests, all passing: the 17 existing
+ones and 8 new ones (grid size control, small hand-computed cases, power that rises
+with tasks, the proposal's figures, and refused inputs). Every result keeps
+`sensitivity_only_not_frozen`, `execution_authorized: false` and zero provider calls;
+refused inputs print only an error and exit 2.
+
+The implementation reproduces the proposal script's statistics to within 2.3e-12. Its
+size search differs where the proposal compared against the uncalibrated critical
+value: Design A at margin 0.20 needs 90 tasks rather than 96, Design C 110 rather than
+112 and 330 rather than 328 at margin 0.10, and some margin 0.10 cells of the
+smallest-count table rise by 4 to 8 tasks. The contract now notes these sizes.
+
+Not established: size control off the grid. A 3,001-point check over 84
+configurations found one case 3.2e-5 above the tail in relative terms (75 tasks,
+margin 0.15, tail 0.025), so the calibration is a grid check, not a proof. A very
+large search can also be refused partway on the tool's operation limit rather than
+returning "not found". An agent wrote the change and a second in-session agent
+reviewed it. Nothing is frozen; the design stays the owner's choice.
+
+## Deferred startup notifications in the extension runner — 2026-11-20
+
+This round covers one owner from the
+[startup inventory census](#startup-inventory-census--2026-11-20), rows 2 and 5. Before
+`session_start`, `runner.initialize` queues the extension runner's buffered
+`credential_disabled` and `mcp_notification` events as microtask flushes. Those flushes
+ran outside the startup-extension owner's receipt.
+
+The round staged on 2026-11-19 was not run. This round cloned its restored source and
+package cache and left the staged directory unchanged: its ten scripts and all 10,339
+source files still match their hashes. The base commit is `db6c0e4`. The round's work
+landed as `06a9714`, which carries the review fix-up's tests in the patch. An agent ran
+the round in its own worktree, and a second in-session agent reviewed it; the fix-up
+answered that review.
+
+### Native fixtures
+
+Each native case ran one of three bridges:
+
+- **Unmodified production bridge:** the normal and withhold-catalog cases.
+- **Spliced fixture:** the restricted credential and MCP cases. A test fixture was spliced
+  into the production bridge just before its `startupOwner!.bind(` call. The fixture
+  wraps `ExtensionRunner.prototype.initialize`, so the first `initialize` call emits one
+  synthetic event through `emitCredentialDisabled` or `emitMcpNotification`. The provider
+  or server name is made up. `initialize` runs after the runner is bound to the startup
+  owner, so the event is emitted after the bind and before `initialize`'s own body.
+- **Standalone fixture extension:** the ordinary-RPC cases loaded the same fixture as a
+  separate extension, not the bridge.
+
+No credential existed or was read. The Python driver played the startup parent: it
+durably refused both classified attempts, waited for `rpc_retired`, and closed the
+channel with `halted`, which is the parent's HOLD.
+
+| Cases | Red runs, host `a25ee967…ca25` | Green runs, host `28c61eff…5406` |
+| --- | --- | --- |
+| normal, withhold-catalog (unmodified bridge) | `be71a6535c9f4f156b888076fc2595582ffc56f4bc2f22cb14b1cad0b07f0896` | `ce9a7181c3082607d8f932293849a3246be7c0b87131d164bfadccacd03e44c7` |
+| credential, mcp (spliced fixture) | `bc754e66d4f8d09af26bfe071b45f73c2ddb776c6ce0d931cfe96f24f876e8ea` | `4b917db650e6b4e3865582d39f6f4158f066a1eae77c11177f8f6aa7218030be` |
+| ordinary-credential, ordinary-mcp (standalone fixture) | `ec2f65cbf6bc8b377aa6f51c3a868e8a2beef163c72c92b5a0ad98a33d5a8390` | `ec2f65cbf6bc8b377aa6f51c3a868e8a2beef163c72c92b5a0ad98a33d5a8390` |
+
+These are the per-case `bridge_sha256` values in `red-control-readback.json`,
+`red-final-readback.json`, `green-controls-readback.json`, `green-final-readback.json`
+and `cache-free-native-readback.json`. withhold-catalog ran only in the two final runs.
+
+### Red
+
+Red ran on the pinned startup host `a25ee967…ca25`.
+
+In both restricted cases (credential and MCP), the injected event reached a registered
+handler. The handler entered before, and settled after, the release file written at
+`rpc_retired`. Because `initialize` runs before `session_start`, the handler was
+therefore still pending when `extension_retired` attested `callbacks_joined`. That last
+step is inferred: the fixture trace and the channel share no clock or sequence. The
+channel still reached the usual 14-message sequence and HOLD. The receipt had five fields
+and none for these events.
+
+Ordinary RPC delivered both events and answered `get_state`.
+
+In the upstream regression `startup-extension-owner.test.ts`, the round's version failed
+2 of 9 tests on the pinned runner `ca3308af…da17`. The flush dispatched
+`credential_disabled` and `mcp_notification`, and the receipt had no exclusion fact.
+
+The review fix-up added two tests that buffer both events before the runner is bound:
+
+- One binds, initializes and runs `session_start`.
+- The other runs `session_start` without `initialize`.
+
+On `ca3308af…da17`, 4 of 11 tests failed: the round's two and the two new ones.
+
+- In the first new test, both buffered events reached the handler.
+- In the second, `session_start` attested a receipt while both buffers were still full.
+
+The Rust receipt test also failed first, with 131 passed and 1 failed, before
+`notifications_excluded` existed.
+
+### Fix
+
+The fix is the 26th reference patch, in the
+[order recorded in dependencies](dependencies.md#applied-order):
+[omp-startup-extension-notifications.patch](references/omp-startup-extension-notifications.patch),
+SHA-256 `0f25b99202ef77cb7a9413dc96da91bc848f9110eed53421cf032d7f6f2c9d4b`. It keeps the
+full MIT header. The round's first version was `da6f1f05…d323`. The fix-up changed only
+the test file's diff; the `runner.ts` hunks are byte-identical.
+
+When a runner is bound to the startup owner:
+
+- `emitCredentialDisabled` and `emitMcpNotification` return without buffering.
+- `initialize` drops whatever was buffered before the bind, without dispatching it.
+- `session_start` fails closed unless both buffers are empty.
+- The receipt adds `notifications_excluded: true`.
+
+The guard is `startupExtension?.runner?.deref() === this`, which stays true for the bound
+runner's whole life. So the refusal also covers notifications after `rpc_retired`, not
+only those before `extension_retired`. The admitting profile must either keep that, or
+end the guard at startup retirement under its own receipt.
+
+The refusal sits in the runner, so it holds whether authentication is empty or not.
+Excluding the SDK credential listener instead would have been safe only while
+authentication stays empty, and it would not cover the runner's own buffers. The bridge
+and `ChildMessage::ExtensionRetired` now require the fact, and the native startup test
+checks it in the journal.
+
+### What the tests show
+
+- **Emit after the bind is refused.** The native green restricted cases show it, and so
+  does the round's upstream test, which emits after the bind.
+- **Buffered events are dropped at `initialize`.** Only the new upstream drain test shows
+  it. With the `initialize` early return removed, only that test fails (10 pass, 1 fail).
+- **`session_start` fails closed while events remain buffered.** Only the new upstream
+  fail-closed test shows it. With the buffer check removed, only that test fails
+  (10 pass, 1 fail).
+- **No native run covers events buffered before the bind.** In the native fixture, the
+  emit lands after the bind.
+
+On the fixed runner `e04736ec…cfde`, 126 tests passed and 0 failed across the three files
+the round ran: `startup-extension-owner`, `extensions-runner` and
+`sdk-credential-disabled-bridge`. `oxfmt --check` and `oxlint` are clean on `runner.ts` and
+the test file. All upstream checks ran under network denial with the pinned Bun 1.4.4,
+after an offline frozen-lockfile install from the cloned package cache.
+
+### Host
+
+The host was rebuilt offline under network denial from the 10,339-file manifest. Two
+files changed, with Bun 1.4.4 (`0a2237cd…65cc`) and addon `ee0bf26f…900b` pinned. Its
+SHA-256 is `28c61efffbcc0806f6a7cab0721ea55c826b37decd39825aa5dfa7b1e2605406`, and
+`STARTUP_OBSERVATION_OMP_SHA256` now pins it. The bridge SHA-256 is
+`ce9a7181c3082607d8f932293849a3246be7c0b87131d164bfadccacd03e44c7`.
+
+The fix-up changed only the test file, so the host was not rebuilt or re-pinned. The
+host contains none of the test names, and its hash is unchanged.
+
+### Green
+
+In the restricted credential and MCP cases, the injection ran but no handler did. The
+same 14 messages reached HOLD, with `notifications_excluded` true. Ordinary RPC still
+delivered each event and answered `get_state`.
+
+The normal case and a withhold-catalog regression were unchanged; holding the catalog
+refusal still held retirement. The withhold-catalog case was added after the protocol was
+written. The command catalog matched the red normal run byte for byte (16,174 bytes).
+
+The five readbacks list 27 native process groups, and all were reaped with exit 0:
+
+| Readback | Groups |
+| --- | --- |
+| `red-control` | 5 |
+| `green-controls` | 5 |
+| `red-final` | 6 |
+| `green-final` | 6 |
+| `cache-free-native` (replay) | 5 |
+
+All ran under network denial, and the restricted ones also under `deny process-fork`.
+The native startup journal and the RPC input check ran as Cargo tests and are not in
+that count.
+
+### Gates
+
+The round's gates, all with the new host:
+
+- `cargo fmt --check`, pilot Clippy with `-D warnings` (rustc 1.97.1) and the Rust 1.90.0
+  pilot check.
+- 132 pilot unit tests passed, 0 failed and 1 ignored.
+- The 14-case native startup journal, whose normal run is the 18-row HOLD with a
+  16-record attested prefix.
+- The native RPC input check.
+
+The fix-up reran the affected gates, offline, at the commit that landed as `06a9714`,
+with `CARGO_TARGET_DIR=target/round`:
+
+- `cargo fmt --check`: passed.
+- `cargo clippy --locked --features pilot-capture --all-targets -- -D warnings`
+  (rustc 1.97.1): passed.
+- `cargo test --locked --features pilot-capture --lib pilot_capture`: 132 passed, 0 failed
+  and 1 ignored.
+- Rust 1.90.0 `cargo check --all-targets --locked --features pilot-capture`: passed.
+
+No Rust, bridge or host input changed in the fix-up, so it did not rerun the native cases.
+No default-feature code changed, so the default-feature gates were neither run nor reused.
+
+### Cleanup and size
+
+The round's cleanup removed its cloned source, the package cache and the two Cargo
+targets, which reduced allocation by 5,084,950,528 bytes (`cleanup-result.json`). Then:
+
+- The startup journal, the RPC input check and the five green cases passed again from the
+  retained binaries (`cache-free-replay.json`).
+- 27 extracted addon copies were removed after matching the pinned hash. That took the
+  round from 3,471,712,256 to 471,683,072 allocated bytes (`addon-cleanup.json`).
+- The round's last readback gave 471,830,528 bytes in 925 files. It is kept as
+  `file-readback-before-fixup.json`.
+
+The fix-up removed only its own caches, `fixup/scratch` and `target/round`, after
+hash-checking the host, the patch, the retained files and the round's receipts
+(`fixup/cleanup-result.json`). The refreshed `file-readback.json` gives 474,767,360
+allocated bytes in 1,006 files besides itself, inside a 0700 round directory.
+
+The round took about 19 minutes of its 150-minute deadline. It made zero provider calls
+and spent nothing. Private receipts are under
+`runs/pilot-startup-extension-notifications-2026-11-20/`, and the fix-up's are under its
+`fixup/` directory.
+
+### Not established
+
+- The injection used a test-only prototype hook. No native run exercised the real
+  sources: the `AuthStorage` disabled listener, or the MCP manager listener, which the
+  restricted profile does not construct.
+- No native run covers events buffered before the bind; only the upstream tests do.
+- Whether a credential can be disabled at all under empty authentication.
+- The SDK's credential notice (`emitNotice`) is unchanged and would still be RPC output
+  that the parent rejects.
+- Refused events are dropped without a count, for the bound runner's whole life. The
+  admission handoff must decide whether that is acceptable, and whether to keep the guard
+  or end it at startup retirement.
+- The 2026-11-19 omission control was not rerun, because its retained fixture binary
+  embeds the old host pin. The upstream type check was not run.
+- This was an in-session self-review, not an independent one.
+- The full inventory, durable acknowledgment and admission handoff remain on HOLD.
+
 ## Startup inventory census — 2026-11-20
 
 A read-only, in-session census of what remains before the pilot v2 startup inventory
@@ -299,8 +551,8 @@ pilot-capture gates and reused the default-feature receipts.
 ## Owner decisions — 2026-11-19
 
 A read-only sweep on 2026-11-19 listed 123 pending items at `85a63c3`. The owner
-answered sixteen open decisions, then a seventeenth after the T005 analysis, choosing
-the recommended option each time. Each row
+answered sixteen open decisions, then a seventeenth after the T005 analysis and four
+more on 2026-11-20 (rows 18-21), choosing the recommended option each time. Each row
 quotes the owner's choice; the last column is the result or where it is recorded.
 
 | # | Item | Owner's choice | Result |
@@ -322,6 +574,10 @@ quotes the owner's choice; the last column is the result or where it is recorded
 | 15 | Open items with no owner | All four selected | Named limitations: 003 T009 coverage gaps; 009 T009 late chunking and selective body preparation; 008 task-view host extensions; upstream presence-file cleanup and daemon shutdown on ordinary host exit. Recorded in specs 003, 008 and 009 and the pilot v2 draft. |
 | 16 | Backups beyond the 2026-11-11 batch | "Add those two" | Done: one more encrypted batch for the G2 run results and the 2026-11-13 T005 final bundle ([record](#second-encrypted-backup-batch--2026-11-19)). |
 | 17 | 009 T005 after the [loss analysis](#t005-loss-analysis--2026-11-19) | "Close, no promotion" | T005 closes without promotion: the measured candidates are its outcome, the current baseline stays, anchorless retrieval quality beyond it is a named limitation, and T005 is no longer a release condition. The 2026-11-18 holdout stays sealed for future work. |
+| 18 | Pilot v2 retrieval arms after 009 T005 closed (2026-11-20) | "Drop retrieval arms" | Pilot v2 tests task context only; the arms item and 003 T006's acceptance are amended so retrieval is no longer a v2 contrast. |
+| 19 | The host's implicit Apple on-device model provider in pilot v2 (2026-11-20) | "Disable in every arm" | Every v2 launch disables the `apple` provider; see the [crash diagnosis](#sandbox-profile-segmentation-fault-diagnosis--2026-11-20). |
+| 20 | Pilot v2 sample-size method (2026-11-20) | "Implement and test it" | The calibrated variance-based paired method is added to `scripts/pilot-v2-power.py` with tests and proposed for the freeze; nothing is frozen until the owner chooses the design. |
+| 21 | Merge of the experimental line to `main` (2026-11-20) | "Open the PR now" | A pull request from `experimental/context-ecosystem` to `main` is opened after the current startup round lands with a gates receipt; the owner merges it with a merge commit. |
 
 The owner chose named limitations in rows 7, 13, 14 and 15 without wording their
 re-entry triggers. The triggers written into the specs and the pilot v2 draft are

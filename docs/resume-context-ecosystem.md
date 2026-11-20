@@ -5,6 +5,19 @@
 Updated 2026-11-20. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
+- **Startup notification owner and pilot v2 decisions, 2026-11-20.** A no-provider
+  native round closes the extension runner's deferred credential and MCP
+  notifications: a runner bound to the startup owner refuses them, the receipt binds
+  `notifications_excluded`, and ordinary RPC still delivers them
+  ([record](validation.md#deferred-startup-notifications-in-the-extension-runner--2026-11-20)).
+  The new host is pinned; the 26 reference patches now have a recorded order
+  ([order](dependencies.md#applied-order)). The owner dropped pilot v2's retrieval
+  arms, disabled the host's Apple model provider in every arm, and had the
+  variance-based sample method implemented
+  ([decisions 18-20](validation.md#owner-decisions--2026-11-19),
+  [method](validation.md#calibrated-paired-sample-size-method--2026-11-20)). The
+  remaining inventory, acknowledgment and handoff stay on HOLD.
+
 - **Startup census and pilot v2 proposals, 2026-11-20.** A read-only census lists
   what remains before the pilot v2 startup inventory can be frozen, row by row, and
   estimates 9 to 15 more no-provider native rounds; the next is the re-staged round

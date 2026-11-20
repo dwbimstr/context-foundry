@@ -14,7 +14,11 @@ The owner's decisions of 2026-11-19 on host memory, `PI_PROXY_ANTHROPIC`, host
 identity, reference patches, private-output protection and presence cleanup are
 recorded where each topic is discussed
 ([record](../../../docs/validation.md#owner-decisions--2026-11-19)). They neither
-fund nor freeze this draft.
+fund nor freeze this draft. The same applies to the owner's decisions of 2026-11-20
+(rows 18–20 of that record): "Drop retrieval arms" (item 3), "Disable in every arm"
+for the host's implicit `apple` provider (item 5) and "Implement and test it" for the
+variance-based sample method
+([sample design proposal](#proposed-sample-and-statistical-design--2026-11-20)).
 
 ## Outcome and claim boundary
 
@@ -22,7 +26,9 @@ Measure verified coding outcomes on several harder, previously unused tasks,
 with evidence-discovery and complete-request economics. V1's single known repair,
 repeated four times, cannot provide that evidence. T010's lexical default is
 decided separately by its own local gates and G2; this pilot does not gate it or
-retroactively establish an agent benefit for it.
+retroactively establish an agent benefit for it. Owner decision, 2026-11-20, "Drop
+retrieval arms": pilot v2 tests task context only and measures no retrieval change
+(item 3).
 
 The shared task suite also measures 003 T007–T009 and 008 T003–T005. Local
 implementation tests remain necessary but cannot accept their host outcomes.
@@ -42,10 +48,21 @@ outcome. A bundled improvement cannot establish the effect of every component.
    constraint, rejected actions, conflicting observations, open obligations and
    recovery of folded evidence. Include cases where an intervention should remain
    silent. Define correct behavior before seeing model output.
-3. T006's selected retrieval comparison is current Foundry, mixed-intent repair,
-   anchorless repair and both repairs. Bind actual implemented configurations;
-   an unavailable repair is a readiness blocker, not an arm that can silently be
-   dropped. Reuse one baseline where the configurations and tasks permit it.
+3. Owner decision, 2026-11-20, "Drop retrieval arms"
+   ([record](../../../docs/validation.md#owner-decisions--2026-11-19)): pilot v2
+   tests task context only and has no retrieval arm or retrieval contrast,
+   confirmatory or descriptive. This replaces T006's earlier retrieval comparison of
+   current Foundry, mixed-intent repair, anchorless repair and both repairs. 009 T005
+   closed without promotion (decision 17, 2026-11-19), which left no anchorless repair
+   to bind, and 001 T010's mixed-intent repair is already current Foundry's default.
+   Every arm runs the same current Foundry retrieval configuration, with T010's
+   behavior selection on, pinned by digest; no treatment changes that configuration. The four
+   intents of item 2 stay as task strata and are reported per intent. T006's
+   acceptance is amended to match
+   ([T006](../spec.md#t006--validate-retrieval-repairs-in-real-coding-tasks)). Bind
+   actual implemented configurations; an unavailable configuration is a readiness
+   blocker, not an arm that can silently be dropped. Reuse one baseline where the
+   configurations and tasks permit it.
 4. For task context, compare the ordinary control, passive retained context and
    selective intervention. A capability-to-contrast matrix must identify which
    comparisons test each of the six tasks. 008 T004 now implements the owner's
@@ -64,6 +81,15 @@ outcome. A bundled improvement cannot establish the effect of every component.
    them. Other memory backends and auto-learn execution are out of scope. This
    covers the host's own memory, not Foundry's 008 task context that item 4
    compares.
+   Owner decision, 2026-11-20, "Disable in every arm"
+   ([record](../../../docs/validation.md#owner-decisions--2026-11-19)): every v2
+   launch disables the host's implicit `apple` provider, Apple's on-device model, by
+   listing it in the host's `disabledProviders`. The reason is the
+   [crash diagnosis](../../../docs/validation.md#sandbox-profile-segmentation-fault-diagnosis--2026-11-20)
+   of the 2026-11-15 settlement runs: all five segmentation faults under ad-hoc
+   sandbox profiles had one stack, in the host's check for that model, and their
+   sandbox cause is inferred, not confirmed. The owner chose this over binding the
+   check's availability result as a pinned startup input.
 6. Freeze randomized, balanced arm order within strata, its seed and all planned
    repetitions before outcomes. Never replace a failed, partial or inconvenient
    task. Retain every scheduled row, including unstarted rows after a halt.
@@ -89,9 +115,12 @@ The freeze must resolve shared controls and order without changing the named
 treatment, bind each contrast's concrete prompts/tools/flags and endpoint, and name
 which contrasts remain descriptive. Reusing a baseline does not make task blocks
 independent. All arms receive the same task instructions and initial facts except
-for their declared capability treatment. V2 still needs concrete tasks/oracles and
-rights, current-host qualification, available retrieval repairs, the selected
-statistical design and launch pins; this matrix supplies none of those approvals.
+for their declared capability treatment. Under owner decision 18 of 2026-11-20,
+"Drop retrieval arms" (item 3), the matrix has no retrieval row, and every row holds
+retrieval at the one current Foundry configuration; the "source candidate
+configuration" of the 003 T008 row is that configuration. V2 still needs concrete
+tasks/oracles and rights, current-host qualification, the selected statistical design
+and launch pins; this matrix supplies none of those approvals.
 
 ### Proposed arm and interface bindings — 2026-11-20
 
@@ -102,7 +131,9 @@ final sample; those remain the owner's. Paths are repository-relative. Line numb
 cite files at `afa7b38`; for this draft, they cite its text before the 2026-11-20
 proposals were inserted. It proposes content for these parts of this draft:
 
-- item 3, lines 45–48: bind the retrieval arms to implemented configurations;
+- item 3, lines 45–48: bind the retrieval arms to implemented configurations
+  (settled on 2026-11-20 by owner decision 18, "Drop retrieval arms": v2 has none;
+  see [Retrieval arms](#retrieval-arms-item-3));
 - item 4, lines 49–54, and the capability-to-contrast matrix, lines 71–94: bind each
   contrast's prompts, tools, flags and endpoint, and name which contrasts stay
   descriptive (lines 88–90);
@@ -218,6 +249,15 @@ it is `HOSTROOT/foundry-store`. `B` is the frozen `render` byte cap.
   (`src/pilot_capture/startup_memory.ts:18`, `:46-47`) loads in every v2 arm, not only
   in the owned qualifier (`src/pilot_capture/host.rs:49`). This covers the host's own
   memory; Foundry's 008 task context is a treatment here (lines 60–66).
+- **Implicit `apple` provider disabled in every arm (owner decision 19, 2026-11-20,
+  "Disable in every arm"; item 5).** Reason: the
+  [crash diagnosis](../../../docs/validation.md#sandbox-profile-segmentation-fault-diagnosis--2026-11-20).
+  The startup-observation and owned profiles already list `apple` in
+  `disabledProviders` (`QUALIFICATION_DISABLED_PROVIDERS`,
+  `src/pilot_capture/host.rs:156`). Ordinary capture, `CatalogProfile::HostDefault`,
+  writes no disabled list (`:558`) and still runs the check on macOS, so the v2
+  launch profile must add it. That is not implemented. The launch manifest would bind
+  the list and the config digest.
 - **`PI_PROXY_ANTHROPIC` unused (owner decision 10).** The host environment is
   cleared and rebuilt (`src/pilot_capture/host.rs:709`); `host_env` does not set it
   (`:477-507`). The manifest binds its absence.
@@ -228,7 +268,8 @@ it is `HOSTROOT/foundry-store`. `B` is the frozen `render` byte cap.
   under M; no `--include-memory` under S). No `--retrieval-trace-dir` in timed runs;
   attribution runs stay separate (`specs/003-agent-retrieval-context/spec.md:845-850`).
   `--experimental-behavior-context=true` is passed explicitly, so a later default change
-  cannot alter an arm, except in the descriptive pre-repair arms.
+  cannot alter an arm. The descriptive pre-repair arms that were the exception are
+  dropped (owner decision 18, below), so it is passed in every arm.
 - **Query `Q`.** One frozen query per task, hashed with the task inputs (item 1).
   Proposal: the task's issue text verbatim, at most 4,096 bytes, the MCP query limit
   (`src/mcp/tools.rs:400-406`), so S and M accept the same text.
@@ -252,15 +293,22 @@ it is `HOSTROOT/foundry-store`. `B` is the frozen `render` byte cap.
 
 | Arm | Binding | Exact Foundry configuration | Host tools in the final request | Exists today |
 | --- | --- | --- | --- | --- |
-| A0, host only | none | None. The slot holds a fixed neutral marker, `(none)`, under the same framing. | `read`, `edit` | yes |
+| A0, host only (dropped, decision 18) | none | None. The slot holds a fixed neutral marker, `(none)`, under the same framing. | `read`, `edit` | yes |
 | A1, lexical slot | S | `FOUNDRY --store STORE context "$Q" --tokens N --experimental-behavior-context=true` | `read`, `edit` | yes |
-| A1-off, pre-repair slot | S | A1 with `--experimental-behavior-context=false` | `read`, `edit` | yes |
+| A1-off, pre-repair slot (dropped, decision 18) | S | A1 with `--experimental-behavior-context=false` | `read`, `edit` | yes |
 | A2, separate task and source slot | S | The `render` output, then a `context` output; commands below | `read`, `edit` | yes, except the split rule |
 | A3, joint slot | S | `FOUNDRY --store STORE context "$Q" --task T --task-revision R --tokens N --experimental-behavior-context=true` | `read`, `edit` | yes |
 | A4, composed slot | S | A3 plus `--compose-evidence`, and `--boundary-config CFG` only for a task with a frozen indexed boundary configuration | `read`, `edit` | yes |
 | M0, ordinary Foundry tools | M | Server argv: `FOUNDRY --store HOSTROOT/foundry-store mcp --root WS --no-memory --experimental-behavior-context=true --budget HOSTROOT/foundry-budget.json` | `read`, `edit` and six Foundry tools: `search`, `context`, `retrieve`, `index`, `references`, `status` | no |
-| M0-off | M | M0 with `--experimental-behavior-context=false` | as M0 | no |
+| M0-off (dropped, decision 18) | M | M0 with `--experimental-behavior-context=false` | as M0 | no |
 | M1, task-context tools | M | M0 plus `--experimental-task-context` | as M0 plus `task_context` | no |
+
+Owner decision 18 of 2026-11-20, "Drop retrieval arms" (item 3), leaves only arms
+that a task-context contrast uses. A1-off and M0-off measure the pre-repair retrieval
+state, and A0 compares current Foundry retrieval with none, so all three serve only
+retrieval contrasts and are dropped. Their rows stay as the record of this proposal.
+A1 stays as item 4's ordinary control. No contrast below uses M0 as an arm; it
+remains M1's base configuration.
 
 A2's slot is made by two commands. First
 `printf '%s' '{"workspace_id":"W","task_id":"T","command":{"op":"render","max_bytes":B}}' | FOUNDRY --store STORE task-context`,
@@ -280,6 +328,12 @@ control the host request (AGENTS.md); the capture's admission limits do.
 
 #### Retrieval arms (item 3)
 
+**Settled, 2026-11-20.** Owner decision 18, "Drop retrieval arms"
+([record](../../../docs/validation.md#owner-decisions--2026-11-19)), removes all four
+arms below and every descriptive retrieval arm: v2 tests task context only (item 3).
+Current Foundry stays as the one retrieval configuration in every arm, not as an arm
+of its own. The table and consequence are kept as the analysis the decision answered.
+
 | Arm in item 3 | Binding | Proposed status |
 | --- | --- | --- |
 | Current Foundry | A1 under S, M0 under M | Exists under S. |
@@ -290,7 +344,9 @@ control the host request (AGENTS.md); the capture's admission limits do.
 Consequence: with today's interfaces T006's selected comparison has no retrieval
 change that v2 could accept. T010 is excluded by lines 23–25 and T005 closed without
 promotion. Unless the owner changes this, T006 stays open after v2. The owner's
-options for the two blocked arms are listed at the end.
+options for the two blocked arms are listed at the end. The owner has since changed
+it: with decision 18, T006's acceptance no longer asks v2 for a retrieval change
+([T006](../spec.md#t006--validate-retrieval-repairs-in-real-coding-tasks)).
 
 #### Task-context contrasts (matrix rows, lines 81–86)
 
@@ -314,13 +370,14 @@ with the same view also in the slot; it is also descriptive.
 
 #### Server and tool inventory for the startup row (line 1827)
 
-- **A0, A1, A1-off, A2, A3 and A4.** The host exposes exactly `read` and `edit`. No MCP
-  server is admitted, and the project source stays disabled
+- **A0, A1, A1-off, A2, A3 and A4** (A0 and A1-off dropped by decision 18, above).
+  The host exposes exactly `read` and `edit`. No MCP server is admitted, and the
+  project source stays disabled
   (`mcp.enableProjectConfig: false`, `src/pilot_capture/host.rs:557-566`). Foundry
   runs and exits before the host launches, so it adds no startup owner. The existing
   read/edit identity in `src/pilot_capture/startup.rs:252-266` applies unchanged.
-- **M0 and M0-off.** `read`, `edit` and the six Foundry tools, in the names and order
-  the pinned host actually serializes. In the first-class form they are request
+- **M0 and M0-off** (M0-off dropped by decision 18). `read`, `edit` and the six
+  Foundry tools, in the names and order the pinned host actually serializes. In the first-class form they are request
   `tools` entries named `mcp__context_foundry_<tool>` (fact 9). The device form would
   need `write`, which widens tool authority beyond item 5 and is not proposed.
   `references` returns no compiler references in any M arm, because no SCIP is
@@ -406,6 +463,10 @@ change the arm count and therefore the costed schedule.
    - (c) Defer v2's retrieval part until a T005 candidate meets its re-entry trigger
      (`specs/009-optional-semantic-retrieval/spec.md:1382-1386`); T006 stays open with
      no date.
+   - **Settled, 2026-11-20:** owner decision 18, "Drop retrieval arms", takes (a) and
+     extends it to every retrieval arm, which is option b of the sample design
+     proposal. T006 gets no retrieval contrast, confirmatory or descriptive, and its
+     acceptance is amended to match.
 3. **Confirmatory family.** Proposal: T009 (A3 versus A4), with T008 (A2 versus A3)
    only if the owner funds it; everything else descriptive. The draft's tool splits
    alpha across `2 × contrasts` (line 134). The required task count for the same bound
@@ -414,7 +475,8 @@ change the arm count and therefore the costed schedule.
    though the ladder shares arms. The sample design proposal below sizes other
    confirmatory families (its Designs A–C).
 4. **Optional arms.** A0 (no Foundry) and A1-off (pre-repair) are descriptive
-   references. Each adds one slot per task repetition.
+   references. Each adds one slot per task repetition. **Settled, 2026-11-20:** both
+   serve only retrieval contrasts, so decision 18 drops them.
 5. **Item 4's selective-intervention arm** has no binding today. Either amend v2 to two
    task-context arms, or fund M plus a review seam; that seam's design is itself
    unselected.
@@ -847,12 +909,16 @@ spend. R ≥ 2 observes variation within a task and costs proportionally more.
   item 2 still requires anchorless tasks, and every arm is measured on them. The
   [arm-binding proposal](#proposed-arm-and-interface-bindings--2026-11-20) (its choice 2) and the
   [sample design proposal](#proposed-sample-and-statistical-design--2026-11-20) (its options a–c) list
-  options.
+  options. **Settled, 2026-11-20:** owner decision 18, "Drop retrieval arms", amends
+  item 3 to a comparison without any retrieval arm, so T006's arm list no longer
+  blocks allocation. The cells' arm lists are the task-context arms alone.
 - **The mixed-intent arm.** 001 T010's lexical behavioral selection is on by default
   for lexical stores and changes nothing on stores that serve semantic results
   ([001 spec](../../001-source-state-recovery/spec.md), lines 571–581 and 671–674).
   Whether "current Foundry" and "mixed-intent repair" are distinct configurations is
-  for the freeze to bind by digest.
+  for the freeze to bind by digest. After decision 18 there is no mixed-intent arm:
+  current Foundry with the selection on is the one retrieval configuration, bound by
+  one digest in every arm.
 - **The apparatus.** The existing capture owner holds v1's per-task inputs as
   constants: `SLOT_ORDER`, `READ_SET`, `EDIT_SET`, `ORACLE_SHA256` and the
   `rustc`-only `CHECK_RECIPE` ([`pilot_capture.rs`](../../../src/pilot_capture.rs),
@@ -866,8 +932,9 @@ spend. R ≥ 2 observes variation within a task and costs proportionally more.
 - **Owner decisions of 2026-11-19.** Host memory and auto-learn off in every arm,
   `PI_PROXY_ANTHROPIC` unused, and host identity by digest plus pinned inputs
   ([decisions 9–12](../../../docs/validation.md#owner-decisions--2026-11-19)) are
-  launch-manifest values, not task fields. The record's only point of contact is
-  that `scope.tools` never admits host memory.
+  launch-manifest values, not task fields. So is decision 19 of 2026-11-20, the
+  implicit `apple` provider disabled in every launch (item 5). The record's only
+  point of contact is that `scope.tools` never admits host memory.
 
 #### G. Owner choices
 
@@ -1107,6 +1174,23 @@ It does not fill the cost and latency bounds (lines 213–214), the per-run gene
 cap (lines 277–279), task selection, oracles, rights records, launch pins or host
 qualification.
 
+**Owner decisions, 2026-11-20**
+([record](../../../docs/validation.md#owner-decisions--2026-11-19)). Decision 18,
+"Drop retrieval arms", selects option b of the retrieval question below: no
+retrieval arm. Designs B and C7 assume option a, so they are no longer candidates;
+they stay below for comparison. Decision 20, "Implement and test it": the calibrated
+variance-based paired method will be implemented in
+[`scripts/pilot-v2-power.py`](../../../scripts/pilot-v2-power.py) with tests and
+proposed for the freeze. It is now in the tool, behind `"method":
+"calibrated_paired"`, with exact enumeration and tests
+([record](../../../docs/validation.md#calibrated-paired-sample-size-method--2026-11-20)).
+The figures below came from the earlier uncommitted script, whose size search compared
+against the uncalibrated critical value. Under the implemented calibrated method,
+Design A at margin 0.20 needs 90 tasks, not 96; Design C 110, not 112, and 330 at margin
+0.10, not 328. Design A at margin 0.10 (264) and the powers quoted at 96 tasks are
+unchanged. Use the tool's output for any freeze. Nothing is frozen: the design, margin,
+alpha, planning target and the rest of the questions at the end stay the owner's.
+
 #### Terms used here
 
 - **Task block:** one sealed evaluation task with its paired runs in the arms of a
@@ -1126,13 +1210,20 @@ qualification.
   17:891–908). Its critical value is raised until its worst size on a 61-point grid of
   discordance at the margin boundary is within the tail. The improvement uses the
   exact one-sided sign test on discordant tasks. Task model, tails and scenarios are
-  the same as the tool's.
+  the same as the tool's. Under owner decision 20 it will be added to the repository
+  tool with tests (above).
 - **Planning scenario:** H2 below. Success has no true difference with 20 %
   discordance; discovery has net +0.20 (gain 0.25, loss 0.05).
 - **G:** the per-run cap on generation requests. It is not frozen for v2 (lines
   277–279); v1 froze 6 (`specs/003-agent-retrieval-context/contracts/bounded-pilot-v1.md:125`).
 
 #### What closing 009 T005 does to the arms — a question for the owner
+
+**Answered, 2026-11-20:** owner decision 18, "Drop retrieval arms"
+([record](../../../docs/validation.md#owner-decisions--2026-11-19)), chose option b.
+Item 3 and T006's acceptance are amended
+([T006](../spec.md#t006--validate-retrieval-repairs-in-real-coding-tasks)). The
+question is kept as it was put.
 
 Item 3 (lines 45–48) names four retrieval arms: current Foundry, the mixed-intent
 repair (001 T010), the anchorless repair (009 T005) and both repairs. It says an
@@ -1159,7 +1250,8 @@ assume option a with a confirmatory T010 contrast. None assumes option c. The
 [arm-binding proposal](#proposed-arm-and-interface-bindings--2026-11-20) poses the same question with
 different options (its choice 2), and the
 [task manifest proposal](#proposed-task-manifest-authoring-and-allocation--2026-11-20) notes that no
-allocation can be computed until it is settled (its section F).
+allocation can be computed until it is settled (its section F). With option b
+chosen, only Design A and Design C with k = 6 remain candidates.
 
 #### Hypothetical scenarios
 
@@ -1283,7 +1375,11 @@ Using this method is a freeze decision with work attached. The frozen analysis c
 would need it, with size and power tests like those in
 `scripts/test_pilot_v2_power.py`, and lines 127–137 and 197–205 would change. Until
 then the tool method is the only executable, deterministic calculation in the
-repository, and the variance-based figures cannot be reproduced from it.
+repository, and the variance-based figures cannot be reproduced from it. Owner
+decision 20 of 2026-11-20, "Implement and test it", added the method to
+`scripts/pilot-v2-power.py` with tests; see the note at the start of this subsection
+for the sizes that change. Using it in the frozen analysis remains part of the owner's
+design choice.
 
 A second, smaller lever is alpha spending. The tool spends 0.05/(2k) on each bound. If
 a contrast's only claim is its joint acceptance (both bounds together), the
@@ -1368,7 +1464,9 @@ raises k and needs far larger strata.
 - **Endpoints:** per run, verified success means the hidden oracle passes. The freeze
   sets one binary improvement endpoint per contrast before outcomes: complete
   supporting evidence in a model request for retrieval tasks, or the "necessary
-  evidence" column of the matrix (lines 79–86) for task-context contrasts.
+  evidence" column of the matrix (lines 79–86) for task-context contrasts. Retrieval
+  tasks belong only to Design B's and C7's retrieval stratum, which decision 18
+  removes.
 - **Failures and gaps:** an oracle failure, behavior failure, exhausted cap or
   resource-limited refusal is a valid failed run, as in v1
   (`specs/003-agent-retrieval-context/contracts/bounded-pilot-v1.md:190`, `:213`). A
@@ -1395,14 +1493,15 @@ per-intent results with denominators and every failed attempt (lines 222–223).
 
 - **Arms:** ordinary control O, passive retained context P and selective
   intervention S (lines 49–50), all on current Foundry at its defaults. Host memory and
-  auto-learn stay off in every arm (lines 60–66).
+  auto-learn stay off in every arm (lines 60–66), and so does the implicit `apple`
+  provider (owner decision 19, 2026-11-20; item 5).
 - **Bindings:** the [arm-binding proposal](#proposed-arm-and-interface-bindings--2026-11-20) maps O
   and P to its arms A1 and A3 and finds no binding today for S (its choice 5).
 - **Confirmatory contrasts:** C1, P vs O; C2, S vs P.
 - **Descriptive only:** S vs O, and all six capability rows of lines 79–86. No
   capability can be accepted, so all six stay open
   (`specs/003-agent-retrieval-context/spec.md:880`).
-- **Retrieval:** option b, no retrieval arm.
+- **Retrieval:** option b, no retrieval arm, as owner decision 18 selected.
 - **Strata:** 11 declared intent strata: the four retrieval intents of lines 40–41
   and the seven task-context situations of lines 41–44, including silence cases. Each
   stratum is a whole number of six-task order blocks. The
@@ -1415,6 +1514,8 @@ per-intent results with denominators and every failed attempt (lines 222–223).
 
 #### Design B — bundle plus a T010 contrast (k = 3)
 
+- **Status:** not a candidate after owner decision 18 of 2026-11-20, "Drop retrieval
+  arms", because its retrieval part needs option a. Kept for comparison.
 - **Task-context part:** Design A's three arms and two contrasts on a task-context
   suite with the seven situational strata.
 - **Retrieval part:** option a with a confirmatory contrast. A separate retrieval
@@ -1432,7 +1533,8 @@ per-intent results with denominators and every failed attempt (lines 222–223).
   T007, 008 T003, 003 T008, 008 T005, 008 T004 and 003 T009). Each stratum's tasks
   exercise its capability and run in the two configurations of its contrast. Silence
   cases (lines 43–44) belong to the 008 T004 stratum. Optional C7: Design B's retrieval
-  stratum as a seventh contrast (option a).
+  stratum as a seventh contrast (option a). C7 is not a candidate after owner decision
+  18; Design C with k = 6 remains one.
 - **What it gives:** each capability can be accepted or rejected on its own, which
   Designs A and B cannot do (lines 75–78).
 - **Bindings:** under the
@@ -1443,7 +1545,7 @@ per-intent results with denominators and every failed attempt (lines 222–223).
   owner amendment, before its six contrasts can all be confirmatory.
 - **Schedule:** runs = 12 × tasks per stratum, or 14 × with T010. The binding cost is
   task demand: 672 to 2,828 sealed tasks, each with an oracle and a rights record
-  (lines 36–37).
+  (lines 36–37); 672 to 2,376 without C7.
 - **Not computed:** a shared-ladder variant would run every task in seven cumulative
   arms, with each adjacent pair forming one contrast. It needs a sixth of the tasks
   but 7 runs per task, and it works only if every task exercises every capability;
@@ -1456,7 +1558,8 @@ a multiple of 6 for three-arm task-context parts, of 8 for Design B's four equal
 retrieval strata, and of 2 for Design C's two-arm strata.
 Planning power is success / discovery / joint lower bound in H2. For Design B with the
 variance-based method at margin 0.20, the first triple is the task-context part (102
-tasks) and the second the retrieval part (104 tasks).
+tasks) and the second the retrieval part (104 tasks). The B and C7 rows assume option
+a, which owner decision 18 did not select; they remain for comparison only.
 
 | Design | k | Method | Margin | Tasks per contrast | Sealed tasks | Runs | Generation requests, G = 6 / G = 24 | All provider HTTP attempts, G = 6 / G = 24 | Worst-case host hours | Planning power |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -1532,16 +1635,22 @@ What this table shows:
 
 1. **Retrieval arms after 009 T005's closure.** Choose option a, b or c above. Under
    option a, choose a confirmatory or a descriptive T010 contrast; a confirmatory
-   contrast needs an amendment to lines 23–25.
+   contrast needs an amendment to lines 23–25. **Answered, 2026-11-20:** option b
+   (owner decision 18, "Drop retrieval arms").
 2. **Confirmatory scope.** Choose Design A (task-context bundle, k = 2), Design B
    (bundle plus T010, k = 3) or Design C (six capabilities, k = 6, or 7 with T010).
-   Under A and B the six capabilities stay open.
+   Under A and B the six capabilities stay open. After decision 18 the choice is
+   between Design A and Design C with k = 6; it remains open.
 3. **Success margin.** 0.20 accepts a treatment that loses up to 20 points of verified
    success; under the variance-based method a true 10-point loss passes 29–40 % of the
    time. 0.10 needs about 2.9 times the tasks, and the tool method cannot reach it.
 4. **Analysis method.** Keep the tool's conservative bound, which needs about 3.5
    times the tasks at margin 0.20. Or have a variance-based paired method
    implemented, tested and frozen with the analysis code (lines 207, 219).
+   **Partly answered, 2026-11-20:** owner decision 20, "Implement and test it": the
+   calibrated method is implemented in `scripts/pilot-v2-power.py` with tests and
+   proposed for the freeze. Which method the frozen analysis uses is decided with the
+   design; nothing is frozen.
 5. **Alpha per bound.** Use 0.05/(2k), as the tool does, or 0.05/k under the
    intersection-union reading. The second needs about 10–15 % fewer tasks, and
    single-endpoint claims become descriptive.
@@ -1557,7 +1666,8 @@ What this table shows:
     and routes, which set the call counts, and the ratecard and budget that turn calls
     into spend.
 11. **Tasks, rights and key.** Decide on sourcing and task-data rights for between 96
-    and 2,828 sealed tasks, and on the provider key.
+    and 2,828 sealed tasks, and on the provider key. Without Designs B and C7 the
+    upper end is 2,376.
 
 **Author's suggestion, not a decision:** option b, Design A, and the variance-based
 method once it is implemented and tested, with R = 1 and descriptive per-intent
@@ -1569,7 +1679,11 @@ C2 needs the selective-intervention arm, which the
 today (its choice 5); until that arm exists or the owner amends item 4, only C1 can
 run. That proposal also suggests a different confirmatory family, 003 T009 with
 optional 003 T008 (its choice 3), which none of Designs A–C sizes. The owner may
-replace any part of this.
+replace any part of this. On 2026-11-20 the owner took option b (decision 18) and
+asked for the variance-based method to be implemented and tested (decision 20).
+With decision 18, T006's acceptance no longer has a retrieval half
+([T006](../spec.md#t006--validate-retrieval-repairs-in-real-coding-tasks)); the
+design, margin and the other questions above stay open.
 
 #### Reproducing the tool figures
 
@@ -1906,6 +2020,14 @@ runtime managers and non-fetch routes need separate coverage, so the setting
 cannot replace observation, drain or admission checks. Qualify actual generation
 requests/tool behavior/headroom under the selected profile, not only state readback.
 This is preparation, not a selected v2 execution profile or a v1 configuration edit.
+Owner decision, 2026-11-20, "Disable in every arm"
+([record](../../../docs/validation.md#owner-decisions--2026-11-19)): whatever list
+the freeze binds, every v2 launch's `disabledProviders` includes the implicit `apple`
+provider (item 5). Reason: the
+[crash diagnosis](../../../docs/validation.md#sandbox-profile-segmentation-fault-diagnosis--2026-11-20)
+found one stack in all five 2026-11-15 segmentation faults, in the host's check for
+Apple's on-device model, with their sandbox cause inferred, not confirmed; ordinary
+capture still runs that check on macOS.
 
 **Selected owned fixed-catalog qualification, 2026-11-15 — implemented and locally qualified.**
 Use the supported provider-registration API to own later catalog refreshes for the
@@ -3206,8 +3328,8 @@ facts and leaves these boundaries to qualify before the inventory can be frozen.
 | Startup area | Current diagnostic evidence | Remaining scope for the admitting profile |
 | --- | --- | --- |
 | Connection preparation | The original warm-up caller settles after the parent durably refuses the classified Anthropic HEAD route. | Establish before-I/O ownership for each enabled route and fail closed on unclassified transports. |
-| Tools, MCP, memory and credentials | The sealed identity reports fixed `edit` and `read`, MCP and memory exclusions, and joined credential-usage work. | Bind the final task tools and any admitted MCP integration to actual before-I/O controls. Keep `memory.backend` off and auto-learn disabled in every arm (owner decision, 2026-11-19, "Off in every arm"); other memory backends and auto-learn execution are out of scope. |
-| Catalog, settings and authentication | Source owner receipts cover selected discovery, settings callbacks and the empty authentication profile. The catalog GET is classified and refused before transport. The fixed registry closes runtime registration and binds Anthropic-only discovery eligibility. Native launch and late-change controls verify that the fixed set cannot expand. | Qualify the remaining enabled catalog transport and callbacks in the final profile. |
+| Tools, MCP, memory and credentials | The sealed identity reports fixed `edit` and `read`, MCP and memory exclusions, and joined credential-usage work. The extension receipt binds `notifications_excluded`. A runner bound to the startup owner refuses `credential_disabled` and `mcp_notification` before any handler runs. Native controls show this for an event emitted after the bind. Upstream tests show two more cases: events buffered before the bind are dropped at `initialize` without dispatch, and `session_start` fails closed while any stay buffered. Ordinary RPC still delivers both events ([record](../../../docs/validation.md#deferred-startup-notifications-in-the-extension-runner--2026-11-20)). | Bind the final task tools and any admitted MCP integration to actual before-I/O controls. The refusal lasts as long as the bound runner, not only until startup retires. The admitting profile must either keep it or end it at startup retirement under its own receipt, and must decide whether refused notifications may be dropped. No native run yet covers an event buffered before the bind. Keep `memory.backend` off and auto-learn disabled in every arm (owner decision, 2026-11-19, "Off in every arm"); other memory backends and auto-learn execution are out of scope. |
+| Catalog, settings and authentication | Source owner receipts cover selected discovery, settings callbacks and the empty authentication profile. The catalog GET is classified and refused before transport. The fixed registry closes runtime registration and binds Anthropic-only discovery eligibility. Native launch and late-change controls verify that the fixed set cannot expand. | Qualify the remaining enabled catalog transport and callbacks in the final profile. Keep the implicit `apple` provider disabled in every arm (owner decision, 2026-11-20, "Disable in every arm"). |
 | Presence, telemetry, marketplace and logging | The selected owners close or exclude their own work and record the original joins. | Review enabled update and output paths outside these selected owners. Named limitation with no work planned ([owner decision, 2026-11-19](../../../docs/validation.md#owner-decisions--2026-11-19)): an ordinary non-pilot host RPC exit leaves its presence file ([record](../../../docs/validation.md#original-daemon-presence-candidate--2026-11-16)), and daemon-server shutdown is unexamined. Both are upstream host questions, out of scope for Foundry. Re-entry trigger: a pilot profile that depends on ordinary RPC exit cleanup or a daemon server, or a leftover presence file observed to affect a Foundry run. |
 | Plugin roots and first-party extension | The diagnostic reports plugin-root retirement and the original extension dispatch join. It excludes managed timers and the selected workspace scan. Native controls cover the exact bridge graph read and the loader's awaited factory. | Check work started by enabled transitive loads, including native timers, discovery and callbacks. |
 | Advisors | The candidate excludes advisor discovery, tool construction, restore and activation in the explicit profile. The existing restricted-session receipt records the exclusion. Native controls exercised ordinary RPC and a late activation and restore attempt. | Preserve the disposition in the final admitting profile. |
@@ -3240,6 +3362,8 @@ special credential-dependent descriptors and catalog-only providers.
 `#discoverWithModelManagerStartupBody` constructs the selected manager and owns
 its refresh deadline. The restricted launch currently uses an Anthropic
 configuration with empty authentication and a disabled-provider list.
+That list already names the implicit `apple` provider, which owner decision 19 of
+2026-11-20 keeps disabled in every v2 launch (item 5).
 The [baseline eligibility controls](../../../docs/validation.md#built-in-model-manager-eligibility-during-startup--2026-11-18)
 show that a provider's public discovery status can stay idle when its manager
 runs. The [fixed-profile controls](../../../docs/validation.md#fixed-discovery-provider-inventory-at-startup--2026-11-19)
@@ -3611,7 +3735,9 @@ block each value is equal across arms (lines 55–59). "Task set" means the valu
 cannot be chosen until the tasks, oracles and arm matrix are fixed. With 009 T005
 closed without promotion (owner decision 17, 2026-11-19), the anchorless arm has
 no promoted repair to bind (lines 45–48). That affects the arm count, so it
-affects the whole-run and envelope rows.
+affects the whole-run and envelope rows. Owner decision 18 of 2026-11-20, "Drop
+retrieval arms", settles this: v2 has no retrieval arm, so the arm count is that of
+the task-context arms the freeze selects.
 
 | Bound | What the freeze must state | Needs task set | Existing evidence | Proposed way to choose |
 | --- | --- | --- | --- | --- |

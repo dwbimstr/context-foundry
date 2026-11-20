@@ -730,6 +730,8 @@ v1's local key file was deleted on 2026-11-06. The same day the owner moved the
 economics gate (FOLLOWUP F3) to T006 and pilot v2, retired the local 30B comparison
 (F2) with no spend, and added task-context outcomes to this suite (Experiment below).
 See the [decision record](../../docs/validation.md#owner-decisions--2026-11-06).
+Owner decision, 2026-11-20, "Drop retrieval arms": pilot v2 tests task context only,
+and T006's acceptance below is amended so that v2 carries no retrieval contrast.
 
 **Bounded pilot v1 run, 2026-11-06:** gates 2, 3 and 5 were met with the owner's
 credential, workspace identity, rights approval and scoped probe and coding
@@ -841,7 +843,8 @@ Foundry builds, reads or applies them
    `--experimental-behavior-context=false`; this gate no longer decides the flag, as
    Acceptance below records.)
    The current anchorless repair is unselected, so do not invent its ablation result
-   or claim the combined milestone has passed.
+   or claim the combined milestone has passed. Owner decision 18 of 2026-11-20 removed
+   this control/candidate pair from pilot v2 (Acceptance below).
 3. For attribution runs, append `--retrieval-trace-dir <new-private-directory>` to
    each owner launch; use a distinct new directory per process, and capture stderr.
    Match request IDs/session IDs and context-query hashes to the harness's frozen
@@ -854,8 +857,10 @@ Foundry builds, reads or applies them
    inconclusive, keep the default unchanged and repair the identified cause.
 
 - **Depends:** 001 T010 and 009 T005 supply the candidate retrieval changes; T003/T005
-  supply the existing host integration and economics boundary. Baseline collection,
-  public fixture design and host capability inspection can start before the repairs.
+  supply the existing host integration and economics boundary. Since owner decision
+  18 of 2026-11-20 neither supplies a pilot v2 arm: T010 is on in every arm, and T005
+  closed without promotion. Baseline collection, public fixture design and host
+  capability inspection can start before the repairs.
 - **Scope:** existing CLI/MCP/host adapters and the T005 real-host runbook. Use a
   dedicated explicitly configured host profile. Planning assumption: inspect OMP
   first because it has a measured integration; selecting it does not establish
@@ -867,7 +872,11 @@ Foundry builds, reads or applies them
     Separate pilot/development tasks from held-out evaluation tasks. Preserve failed
     and invalid runs and include their paid attempts in cost totals.
   - Compare current Foundry, mixed-intent repair alone, anchorless repair alone and
-    both repairs. Repeated paired runs account for model variability. Before final
+    both repairs. Owner decision, 2026-11-20, "Drop retrieval arms": pilot v2 no
+    longer makes this comparison. Every v2 arm runs the same current Foundry retrieval
+    configuration (the [draft](contracts/bounded-pilot-v2.md)'s item 3), and its arms
+    are the task-context arms of the draft's item 4. The four intents above stay
+    as task strata. Repeated paired runs account for model variability. Before final
     runs, freeze sample-size rationale, total spend/time ceiling, stop rules,
     task-success noninferiority margin, required improvement and cost/latency limits.
     Do not choose those limits after reading candidate outcomes. This is one shared
@@ -883,12 +892,26 @@ Foundry builds, reads or applies them
     latency and complete available provider usage under the economics contract.
     Separate Foundry delivery from evidence actually included in a model request.
     Unknown consumption/usage remains unknown, not a zero or a savings claim.
-- **Acceptance:** the selected retrieval change preserves verified task success
-  within the preregistered margin and improves the declared evidence/discovery
-  outcome within the declared total-cost/latency bounds. Report paired uncertainty,
-  per-intent regressions and absolute success. An underpowered or incomplete run
-  cannot promote the default or establish dollar savings. Retain the baseline if
-  the outcome gate fails, even if G2 improved. Owner decision, 2026-11-06,
+- **Acceptance:** Owner decision, 2026-11-20, "Drop retrieval arms"
+  ([record](../../docs/validation.md#owner-decisions--2026-11-19)): pilot v2 carries
+  no retrieval contrast. This replaces the earlier requirement that "the selected
+  retrieval change" pass this gate. No retrieval change is selected: 001 T010 is
+  decided by its own gates (below), and 009 T005 closed without promotion (decision
+  17, 2026-11-19). T006 keeps its name and anchor, but through v2 it accepts,
+  promotes or rejects no retrieval change. What T006 now has to show: pilot v2
+  frozen, owner-authorized and run with complete capture and a valid oracle verdict
+  on every scheduled row; every arm on the same current Foundry retrieval
+  configuration, pinned by digest; and every confirmatory task-context contrast that
+  the freeze declares preserves verified task success within the preregistered
+  margin and improves the declared evidence/discovery outcome within the declared
+  total-cost/latency bounds. A v2 with no confirmatory contrast is descriptive and
+  leaves T006 open. Report paired uncertainty, per-intent regressions, including the
+  four intent strata of the Experiment, and absolute success. An underpowered or
+  incomplete run cannot accept T006, promote a default or establish dollar savings.
+  Retain the baseline if the outcome gate fails, even if G2 improved. A v2 contrast
+  accepts one of T007–T009 or 008 T003–T005 only under that task's own unchanged bar
+  (Experiment above). No real-agent benefit of any retrieval change is measured; a
+  retrieval contrast would need a new owner decision. Owner decision, 2026-11-06,
   "Lexical-only, drop T006 gate": this gate no longer decides
   `--experimental-behavior-context`. 001 T010's own local gates and the
   [2026-10-19 G2 rule](../../docs/validation.md#g2-rule-without-the-token-clause--2026-10-19)
