@@ -154,8 +154,10 @@ refinement. The hierarchy index remains **partial** until every eligible body,
 parent and file input is covered; completing the first pass never claims full
 retrieval or completed inference. Partitions still fit all hierarchy inputs, and
 the second pass still has the full model obligation. This improves delivery order;
-automatic query-driven selective body preparation remains open. Address, body-only
-and overview-only preparation keep their existing order.
+automatic query-driven selective body preparation is a named limitation (owner,
+2026-11-19; re-entry trigger under
+[T009](#t009--use-model-owned-geometry-and-contextual-representations)). Address,
+body-only and overview-only preparation keep their existing order.
 
 Evidence-delivery continuation, 2026-10-11: experimental prose context can focus
 long overview/hierarchy candidates to an exact source passage of at most 1,536
@@ -217,9 +219,11 @@ restart/revert reuse apply. Switching to hierarchy-v1 expands the recipe and reu
 matching overview vectors. There is still one active source recipe: this is not a
 simultaneous coarse index with automatic query-triggered body preparation. “Complete”
 means complete for the selected recipe; a file vector does not represent every omitted
-body byte or establish complete retrieval. Comparative quality and selective
-mixed-granularity preparation remain open; full representative inference is a named
-limitation (scale decision under [T006](#t006--bound-and-parallelize-semantic-partition-computation)).
+body byte or establish complete retrieval. Comparative quality remains open, and
+selective mixed-granularity preparation is a named limitation (owner, 2026-11-19,
+[T009](#t009--use-model-owned-geometry-and-contextual-representations)); full
+representative inference is a named limitation (scale decision under
+[T006](#t006--bound-and-parallelize-semantic-partition-computation)).
 Owner decision, 2026-11-06, "Keep as the low-cost recipe": overview-v1 stays an opt-in
 recipe, the cheapest to prepare though it locates fewer G2 answers than cards or
 hierarchy, with no code change; native macOS acceptance keeps using it
@@ -922,9 +926,13 @@ T003's, each passing only with that task's verification.
     and while IPC is blocked, then assert the worker disappears within 2 s; a separate
     test kills a worker that ignores TERM.
 
-    Named limitation: a worker stopped by SIGSTOP cannot exit itself. Package
-    acceptance therefore needs an OS-level guardian (a launch guardian or service
-    profile), which stays open with signing.
+    Named limitation: a worker stopped by SIGSTOP cannot exit itself, because its
+    watcher is a thread of the stopped process; it cannot end a worker that stays
+    stopped after its owner dies. Owner decision, 2026-11-19, "Named limitation": no
+    OS-level guardian is built, and package acceptance does not need one. This
+    supersedes the earlier wording here, under which package acceptance needed a launch
+    guardian or service profile. It re-enters when a stranded stopped worker is observed
+    ([record](../../docs/validation.md#owner-decisions--2026-11-19)).
   - *Resources.* Process count is `hard` (`RLIMIT_NPROC=0`). Memory is `supervised`:
     the supervisor polls the worker's physical footprint (`proc_pid_rusage`) every
     250 ms against a 3 GiB ceiling (D001 measured 1.82 GiB for 8 × 1024 tokens). A
@@ -1356,6 +1364,11 @@ placement baseline stands and the new holdout is still unconsumed.
 See the [seal receipt](../../docs/validation.md#t005-new-blind-holdout-sealed--2026-11-18).
 The [development result](../../docs/validation.md#t005-bounded-lexical-placement-fails-development-gates--2026-11-18)
 records the exact variant, paired scores and failure disposition.
+Owner decision, 2026-11-19, "Analyze, then one more": the next step studies the
+recorded losses without touching the sealed 2026-11-18 holdout. One more bounded
+candidate is selected only if that analysis shows a plausible large gain; otherwise
+the work returns to the owner. The candidate checkpoint and every acceptance guard
+below are unchanged ([record](../../docs/validation.md#owner-decisions--2026-11-19)).
 The original G2 verdict remains valid for its original question: gain over no profile.
 This task asks which current losses can be repaired at the same delivery budget.
 The [resumable handoff](../../docs/resume-context-ecosystem.md#current-status--2026-11-06)
@@ -1678,9 +1691,16 @@ watching and LLM enrichment remain separate work in the revised ecosystem plan.
 
 ### T007 — Make semantic bootstrap useful before a complete corpus pass
 
-Selected 2026-10-09; progressive scheduling/publication implemented experimentally,
-with device tuning and real throughput still unverified. Scale acceptance follows the
-owner's 2026-11-06 decision under [T006](#t006--bound-and-parallelize-semantic-partition-computation).
+Selected 2026-10-09; progressive scheduling/publication implemented experimentally.
+Scale acceptance follows the owner's 2026-11-06 decision under
+[T006](#t006--bound-and-parallelize-semantic-partition-computation). Owner decision,
+2026-11-19, "Named limitation": device tuning (runtime evidence for reusable CPU pools,
+other model batch sizes and device-pressure admission) and real throughput stay
+unverified and are a named limitation, covered by "Script checks only" (owner,
+2026-11-06): device acceptance is what `scripts/native-macos-acceptance.py` checks. It
+re-enters on a measured throughput or device-pressure failure on a real corpus, or a
+new supported device class
+([record](../../docs/validation.md#owner-decisions--2026-11-19)).
 T006 removes CPU computation
 from serving and writer locks. Replace the whole-source partition and initial
 generation barriers with bounded waves of
@@ -1753,7 +1773,8 @@ requires it. [Usage and accounting](../../docs/experimental-context.md#progressi
 separate coverage from live/last-run stage counters. Existing token geometry, vector
 meaning, model ownership and foreground hysteresis remain unchanged. Reusable CPU
 pools, different model batches, device-pressure admission and 010 generation controls
-need their own runtime evidence; this increment does not claim them completed.
+need their own runtime evidence; this increment does not claim them completed. The
+first three are the named limitation in T007's status above; 010 owns its controls.
 
 ### T006/T007 follow-up — Remove repeated preparation and startup work
 
@@ -2192,6 +2213,12 @@ decision, 2026-11-06, "Script checks only": device acceptance for T008 and T009 
 pressure, combined residency, thermal/battery and embedding-eviction policies are named
 limitations under [010 T002](../010-source-bound-derived-knowledge/spec.md#t002-shared-memory-admission--2026-10-10).
 Scale acceptance follows [T006](#t006--bound-and-parallelize-semantic-partition-computation).
+Owner decision, 2026-11-19: two representation questions are named limitations, with
+no work planned ([record](../../docs/validation.md#owner-decisions--2026-11-19)).
+Late chunking needs a different embedding backend, because the worker protocol carries
+pooled vectors only; it re-enters if the owner adopts a backend that exposes contextual
+token states. Selective (query-driven) body preparation re-enters on a measured
+preparation-time or coverage failure on a real corpus that it would prevent.
 The exact publisher contracts and their limits
 are in the [model-window audit](../../docs/context-ecosystem-plan.md#model-windows-and-chunk-representations).
 The selected EmbeddingGemma 2 advertises 8,192 tokens, while the legacy worker geometry has
@@ -2222,6 +2249,7 @@ Raising the card limit does not add multiline function bodies to that recipe.
   requires contextual token states and correct span pooling/projection/normalization;
   averaging existing chunk vectors does not implement it. Compare its recomputation
   and memory costs against independent body units before committing to that backend.
+  It is a named limitation since 2026-11-19 (status above).
 - Verify body-only edits, small versus oversized units, context-only edits, rename
   mapping, model/recipe migration, limits, batch parity and recoverable exact spans.
   Use sandbox fixtures first. Actual long-context quality, device throughput and
@@ -2289,7 +2317,8 @@ Profile switches rebuild partitions/publication without purging old vector rows;
 reversion reuses them. Existing partial coverage and freshness checks remain authoritative.
 No new table, worker, dependency, endpoint or representation-specific index is added.
 Long embedding inputs do not increase MCP evidence allowances. Late chunking still
-requires a different backend exposing contextual token states and is not implemented.
+requires a different backend exposing contextual token states and is not implemented;
+it is a named limitation (owner, 2026-11-19, T009 status above).
 
 Upstream reference for this task: llama.cpp
 [`b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea`](https://github.com/ggml-org/llama.cpp/tree/b9acf138a1e28ce1fc23b5a4fc4b12444b50f7ea),

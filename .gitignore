@@ -14,3 +14,7 @@
 .DS_Store
 /.claude/
 /.review/
+# Machine-local agent tool configuration (owner decision 2026-11-19, "Ignore them").
+/.mcp.json
+/.omp/mcp.json
+/.omp/tools/

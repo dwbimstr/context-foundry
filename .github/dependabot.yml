@@ -1,6 +1,10 @@
 # Dependabot version updates. Work happens on experimental/context-ecosystem, so
 # updates target it. GitHub Actions is unavailable (owner decision 2026-10-12): check
 # each update locally on Rust 1.90 (the MSRV) with scripts/gates.sh before merging.
+# Version-update pull requests are paused (owner decision 2026-11-19, "Pause version
+# updates"): each one started hosted workflow runs. A limit of 0 stops version-update
+# pull requests only; Dependabot alerts and security updates are unaffected. Raise
+# the limits to resume.
 version: 2
 updates:
   - package-ecosystem: "cargo"
@@ -8,6 +12,7 @@ updates:
     target-branch: "experimental/context-ecosystem"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 0
     groups:
       cargo-minor-and-patch:
         update-types:
@@ -18,3 +23,4 @@ updates:
     target-branch: "experimental/context-ecosystem"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 0

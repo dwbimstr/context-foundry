@@ -1,5 +1,227 @@
 # Validation
 
+## T005 loss analysis — 2026-11-19
+
+Owner decision 5 above selected an analysis of the recorded development losses before
+any further spec 009 T005 candidate. This is an in-session self-review: one agent,
+read-only, on the retained development G2 traces, the T005 records, the retrieval
+code and the archive branches. Neither holdout, nor any directory named for one, was
+opened, listed or hashed. No build, model, store or retrieval job ran; the new
+numbers come from two offline Python replays of the retained baseline traces, kept
+privately in `runs/t005-loss-analysis-2026-11-19/`.
+
+**Result: no bounded candidate with a plausible large gain was found.**
+
+- The four rejected candidates moved located definitions on G2's 388 questions by
+  +5/−0, +3/−0, +16/−1 and +15/−10 against the baseline of 169. The one that passed
+  development (kept-body declaration prefixes) shrank to +6/−2 on its sealed final
+  pair.
+- The 219 development misses split into three pools. In 95, no candidate covers
+  the target at all. In 85, a covering candidate is offered but cut at placement.
+  In 39, it is kept but dropped by the token budget at packing. In 207 of the 219,
+  all 32 kept units were dense, so the lexical lane placed nothing.
+- The final gate on the sealed 2026-11-18 holdout needs about 6 percentage points
+  net with at most one loss per corpus, roughly +24 of 400. The best development
+  effect so far, about +3.9 points, would not clear it even if it replicated
+  exactly.
+- The largest pool, candidate generation, is out of reach of any bounded ordering,
+  placement or packing change. The other two trade against kept bodies and current
+  successes under the fixed 2,048-token budget.
+- The best single change found is role-ordered placement: sort each lane by the
+  existing source, test and other path roles before the unchanged cuts. An exact
+  replay and a rough packing simulation estimate about +9/−1 on development G2,
+  with an error of about ±10 cases; the same simulator mispredicted the last
+  candidate. The analysis judges its chance of passing the final gate under 10%.
+
+Not established: any measured effect of role-ordered placement, which is a replay
+estimate only. Per decision 5, the next move returns to the owner.
+
+## Second encrypted backup batch — 2026-11-19
+
+Owner decision 16 above adds two private datasets to the encrypted backups. The batch
+is in `~/VSC_DEV/backups/foundry-20261119/`, encrypted to the owner's selected
+`~/.ssh/id_ed25519.pub` (fingerprint
+`SHA256:nsuaEpeRmr4BvJH1gfJkqkPuoiAz9uaQFmkLlL0rzsQ`).
+
+| Archive | Source | Files | Source bytes | Ciphertext bytes | SHA-256 prefix |
+| --- | --- | ---: | ---: | ---: | --- |
+| `01` | `datasets/context-foundry-g2-runs` | 211 | 8,508,573,465 | 7,615,236,263 | `df905c9c` |
+| `02` | `datasets/context-foundry-t005-final-2026-11-13-rsyq4_c4.noindex` | 44 | 8,091,302 | 2,882,057 | `31cb9e94` |
+| `03` | `runs/t005-heldout-final-2026-11-13` | 174 | 3,198,918 | 260,093 | `b3136101` |
+
+The job is the 2026-11-11 five-source backup script with its source list and the
+archive count in its README text changed; every pinned tool and both recovery files
+match their recorded digests. All three pipelines exit zero. The source manifests
+match before and after, the staging copy is removed, and every entry passes a fresh
+`shasum -a 256 -c` readback. It took 37 seconds and made no network, model or
+provider call.
+
+Archives 02 and 03 are the two roots of the
+[2026-11-13 T005 final bundle](#t005-sealed-final-pair-no-promotion--2026-11-13). That
+bundle held 7,112,164,903 bytes when it was sealed. The owner-selected
+[cleanup of 2026-11-14](#storage-cleanup--2026-11-14) had since removed its derived
+search stores, so the batch holds the 11 MB that remain, including the consumed
+holdout's private files, handled as opaque bytes. The G2 run results are 7.9 GiB on
+disk today, not the 15 GB [reported on 2026-11-06](resume.md#encrypted-backups):
+the owner-selected cleanups of 2026-11-14 and
+[2026-11-16](#original-daemon-presence-candidate--2026-11-16) removed or compressed
+parts of it.
+
+Not established: authenticated decryption and restoration, and any copy off the
+Mac. Both remain owner tasks. Private receipts are in `runs/backups-2026-11-19/`.
+
+## Learning module split (F14) — 2026-11-19
+
+The last planned split of follow-up F14 ran on the owner's Mac as seven commits,
+`04bcd18` to `a66a056`. `src/learning.rs` fell from 3,182 to 972 lines. The new
+children are `state` (with the module's seven tests), `run_policy`, `feedback`,
+`strict`, `io` and `prep`, which also holds the dataset read-back as the plan says.
+
+- Every move is verbatim apart from inserted `pub(super)`. One bumped signature is
+  wrapped by rustfmt. A whole-series check finds all 3,019 non-blank original lines
+  in the final files.
+- The plan allowed 9 `pub(super)` insertions; the split made 7, all in `prep`.
+  `check_floors` moved with the read-back, where it needs none. `OpenedDataset`
+  stays in the parent, because moving it would need two bumps beyond the plan.
+- The test functions, `#[ignore]` count and assertion count are unchanged. The eight
+  existing children are byte-identical.
+- Public API: rustdoc built into empty directories before and after has the same
+  17,604 documented members. The only page changes are 21 added redirect stubs for
+  re-exported items' new private paths; no page was removed.
+- An agent did the split and a second read-only agent reviewed every commit with its
+  own scripts; both are in-session.
+
+## Artifact cancellation test synchronization — 2026-11-19
+
+`artifact_verification_obeys_caller_cancellation` (`tests/neural.rs`) failed once in
+the [2026-11-06 gates run](#owner-decisions--2026-11-06) on `854cf88` with
+`Cancelled(None)` and passed alone. Its cancel flag was set by a fixed 400 ms timer
+started before the run. Under a loaded full suite the flag could flip before the run
+reached the weights hash, at a bare checkpoint that returns the cancel as an error
+instead of the named stop.
+
+- Reproduced: a 600 ms delay injected before partition compute makes the old test
+  fail every time with the recorded message.
+- Repair, `b4fcf6d`: the flag is set only after the artifact-hash fault point reports
+  `model.gguf` in flight, and the test asserts the run reached the hash. Its other
+  assertions and bounds are unchanged.
+- Checked: the new test passes under the same injected delay, and in three plain
+  runs. The same commit marks `ChangeReader::fetch`'s fault-only parameter, so the
+  default-features build is warning-free again; `65fd799` had introduced that
+  warning.
+
+Not changed: the same bare checkpoints make a real `semantic prepare` cancellation
+report differently depending on timing (exit 130 with no report, or exit 1 with a
+`cancelled` report). That is a product behaviour, not the test, and is not changed.
+
+## Documentation status corrections and patch notices — 2026-11-19
+
+Commit `f2cf6f3` corrects about 30 sentences across 18 files that still called work
+to do or not run after its dated record. It also fixes wrong schema instructions
+(`upgrade-store --to 12`, search schema 9, unit schema 7) and says that lexical
+behavioral selection is default-on on the experimental line and that watching is
+opt-in. It drafts the release notes' known limitations, the first release's
+compatibility statement and the [inventory of the oh-my-pi reference
+patches](dependencies.md#oh-my-pi-reference-patches). Each change was checked against
+the code or its dated record by a second in-session agent. Eleven of the 25 patches
+lacked the upstream MIT notice; they now carry it, with their hunks unchanged.
+
+## Local gates on `f2cf6f3` — 2026-11-19
+
+All eight gates exit 0 on `f2cf6f3`, the head of the split, the test repair and the
+documentation pass, on a clean tree on the owner's Mac (05:01–05:17 UTC). Rust 1.97.1
+and Rust 1.90.0 with the macOS 26.5 SDK. Default suite: **1,321 passed, 0 failed, 35
+ignored**; it includes the repaired cancellation test and the 6,000-file watcher test.
+Pilot-capture unit tests: 125 passed, 1 ignored. Log SHA-256 prefixes: Clippy
+`33444cd2`, test `d7a0af6f`, pilot Clippy `a35fdd7a`, pilot tests `f854d34c`, MSRV
+check `987d14bf`, MSRV Clippy `eda82401`, MSRV pilot check `dd5632d7`. Logs are
+private, under `datasets/context-foundry-gates/f2cf6f3-2026-11-19/`. This is the first
+fresh eight-gate run since `3bd30be`; the rounds between them reran the four
+pilot-capture gates and reused the default-feature receipts.
+
+## Owner decisions — 2026-11-19
+
+A read-only sweep on 2026-11-19 listed 123 pending items at `85a63c3`. The owner
+answered sixteen open decisions, choosing the recommended option each time. Each row
+quotes the owner's choice; the last column is the result or where it is recorded.
+
+| # | Item | Owner's choice | Result |
+|---|---|---|---|
+| 1 | Dependabot PR #55, eleven Cargo minor and patch updates | "Apply 8, hold 3" | Apply ignore, ureq, rmcp, uuid, notify, toml, tokio-rustls and rustls-pki-types by hand with a full gates run; hold tree-sitter-scala (parse output and schema), usearch (ANN graph and G2) and redb (store database) until each is measured; close the PR. |
+| 2 | Weekly hosted workflow runs on Dependabot branches | "Pause version updates" | `.github/dependabot.yml` sets `open-pull-requests-limit: 0` for both ecosystems. Dependabot reads its configuration from the default branch, `main`, so the pause takes effect only after the next owner-approved merge to `main`. Alerts and security updates are unaffected. |
+| 3 | Local-only branches of the rejected T005 experiments | "Push as archive branches" | Done: `archive/t005-fragment-order-20261113` (`ac81777`), `archive/t005-kept-body-headers-20261113` (`74b0b26`) and `archive/t005-headers-red-mutant-20261113` (`74b1be9`) are on GitHub. They never merge; they keep the commits the T005 receipts cite. |
+| 4 | Untracked `.mcp.json`, `.omp/mcp.json`, `.omp/tools/` | "Ignore them" | Done: ignored as machine-local in `.gitignore`. |
+| 5 | Next move for 009 T005 | "Analyze, then one more" | Study the recorded development losses without touching the sealed 2026-11-18 holdout; select one more bounded candidate only if the analysis shows a plausible large gain, otherwise return to the owner. The analysis found none ([record](#t005-loss-analysis--2026-11-19)); the choice is back with the owner. |
+| 6 | Spec 010 T001-T002 for the release | "Accept at written scope" | Accepted at their written, experimental and unadvertised scope; real-model task utility stays deferred (decision 14 of 2026-11-06). |
+| 7 | 009 T007 device tuning and real throughput | "Named limitation" | Covered by decision 12 of 2026-11-06, "Script checks only". |
+| 8 | Version of the first release | "0.2.0" | `Cargo.toml` moves to 0.2.0 in the release commit, not before: the installer refuses to upgrade to an installed version, and development builds carry the Cargo version. |
+| 9 | Host memory in pilot v2 | "Off in every arm" | Host memory and auto-learn stay off in every v2 arm; other backends are out of scope. |
+| 10 | `PI_PROXY_ANTHROPIC` in pilot v2 | "Not used in v2" | Any later use needs full request, tool and headroom qualification. |
+| 11 | The 25 oh-my-pi reference patches | "Keep as reference" | Status quo: published reference data, host built privately and pinned by SHA-256. |
+| 12 | Identity of the source-built host | "Digest plus pinned inputs" | Executable SHA-256 plus the ordered patches, dependency lock, Bun runtime and native-addon digests; no byte-for-byte rebuild required. |
+| 13 | A SIGSTOP-stopped embedding worker whose owner dies | "Named limitation" | Re-entry trigger: an observed stranded stopped worker. |
+| 14 | Pilot private-output hardening | "Accept a and c, test b" | A same-user racing process and power-loss durability are named limitations, recorded in the [pilot v2 draft](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md); forced permission-call and sync-call failures get fault-injection tests. |
+| 15 | Open items with no owner | All four selected | Named limitations: 003 T009 coverage gaps; 009 T009 late chunking and selective body preparation; 008 task-view host extensions; upstream presence-file cleanup and daemon shutdown on ordinary host exit. Recorded in specs 003, 008 and 009 and the pilot v2 draft. |
+| 16 | Backups beyond the 2026-11-11 batch | "Add those two" | Done: one more encrypted batch for the G2 run results and the 2026-11-13 T005 final bundle ([record](#second-encrypted-backup-batch--2026-11-19)). |
+
+The owner chose named limitations in rows 7, 13, 14 and 15 without wording their
+re-entry triggers. The triggers written into the specs and the pilot v2 draft are
+the implementer's proposals, each an observed failure or a changed input: for example
+an observed stranded stopped worker (row 13), a pilot private output changed by a
+process the pilot does not own, or a synced record found truncated after power loss
+(row 14). The owner may replace any of them.
+
+## T005 second holdout encrypted retention — 2026-11-19
+
+The 400-question blind holdout
+[sealed on 2026-11-18](#t005-new-blind-holdout-sealed--2026-11-18) is the only
+unconsumed acceptance set for spec 009 task T005, and until today it existed in
+one place, `runs/t005-holdout-fresh-2026-11-18/`. It now has a local encrypted
+archive in `~/VSC_DEV/backups/foundry-t005-holdout-20261118/`, encrypted to the
+owner's selected `~/.ssh/id_ed25519.pub` (fingerprint
+`SHA256:nsuaEpeRmr4BvJH1gfJkqkPuoiAz9uaQFmkLlL0rzsQ`). This follows the
+[2026-11-11 precedent](#t005-sealed-holdout-encrypted-retention--2026-11-11) for the
+first holdout, not a new owner decision.
+
+- The job is the 2026-11-11 holdout backup script with two lines changed, the
+  source base directory and the source name; every pinned tool and both recovery
+  files still match their recorded SHA-256 digests.
+- All three tar, zstd and age pipeline exits are zero. The byte-and-mode manifests
+  of the source and of its clone match before and after, the private staging copy
+  is removed, and all five checksum entries pass a fresh `shasum -a 256 -c` readback.
+- The source folder is archived as it is today: 49 files, 58,122,472 bytes. The seal
+  record counts 47 files and 58,108,244 bytes; the difference is two files written
+  at sealing time. Archive size: 11,611,548 bytes; SHA-256:
+  `3c30c3bc7b6654ec4bdf32ce540acfc6d5d4466ccb88431bc12106ce5bcf010f`.
+- The job was bounded at 300 seconds with a 20 GiB free-space floor, ran in under one
+  second of supervised time, and made no network, model or provider call. It read
+  only the selected public key. The set was handled as opaque bytes: no question,
+  label, file name or manifest row was opened by the implementation side.
+
+Not established: authenticated decryption and restoration, and any copy off the Mac.
+Both remain owner tasks, as for the [2026-11-11 archives](#encrypted-evidence-backups--2026-11-11).
+Private receipts are in `runs/t005-holdout-backup-2026-11-19/`.
+
+## Kept Nemotron files identity check — 2026-11-19
+
+Owner decision 31 of 2026-11-06 keeps Foundry's Nemotron model file and stores as
+historical evidence. They still exist, in a different form than on that date:
+
+- The model file and tokenizer are in place under
+  `datasets/context-foundry-g2-runs/artifacts/models/nemotron`. Their SHA-256
+  digests begin `e0cd7ff3` and `797410df`, the values recorded in the
+  [measurement handoff](measurement-handoff.md#inputs).
+- The two Nemotron stores are the compressed archives made by the
+  [2026-11-16 cold-storage cleanup](#original-daemon-presence-candidate--2026-11-16),
+  `store-bun-nemotron.tar.zst` and `store-rust-nemotron.tar.zst`. Both digests are
+  in that cleanup's private manifest, and both archives pass `zstd -t`
+  (4,932,249,600 bytes decompressed in total).
+
+Not run: a restoration of either store to disk. The old store paths are small
+placeholder files, so a tool that expects a directory there fails until the
+recorded restore script runs. These files have no encrypted backup and no copy off
+the Mac.
+
 ## Catalog refusal binding in the startup diagnostic — 2026-11-19
 
 The fixed startup diagnostic uses a fresh, private host and enables only
@@ -10845,8 +11067,21 @@ the read-only permissions two gateway fault tests rely on, so those tests were
 rerun unprivileged. The 2026-10-16 Codex sandbox runs as uid 1000 and passes them
 directly.
 
+Since 2026-11-06 the script runs eight gates; the three pilot-capture gates are
+reported in the test cell. Rows from 2026-11-10 on ran on the owner's Mac with Rust
+1.97.1 and 1.90.0, with logs kept privately. The rows below list selected full
+eight-gate runs; other runs are in their dated records. The rounds from `3bd30be`
+to `85a63c3` reran only the four gates the pilot-capture feature affects and reused
+the default-feature receipts; they are not listed as full runs.
+
 | Commit | fmt | clippy 1.97 | test 1.97 | msrv-check | msrv-clippy |
 | --- | --- | --- | --- | --- | --- |
+| `f2cf6f3` | 0 | 0 | 0: 1,321 passed, 35 ignored; pilot-capture gates 0, pilot units 125 passed, 1 ignored ([receipt](#local-gates-on-f2cf6f3--2026-11-19)) | 0 | 0 |
+| `3bd30be` | 0 | 0 | 0: 1,319 passed, 35 ignored; pilot-capture gates 0, pilot units 102 passed, 1 ignored ([receipt](#native-startup-watchdog-and-promise-hook-limits--2026-11-15)) | 0 | 0 |
+| `98157db` | 0 | 0 | 0: 1,319 passed, 35 ignored; pilot-capture gates 0, pilot units 101 passed, 1 ignored ([receipt](#stateless-native-request-repair--2026-11-15)) | 0 | 0 |
+| `68ed776` | 0 | 0 | 0: 1,307 passed, 34 ignored; pilot-capture gates 0, pilot units 62 passed ([receipt](#parser-bundle-and-complete-unit-comparison--2026-11-11)) | 0 | 0 |
+| `2929769` | 0 | 0 | 0: 1,307 passed, 34 ignored; pilot-capture gates 0, pilot units 62 passed ([receipt](#tantivy-027-store-compatibility-and-g1-neutrality--2026-11-11)) | 0 | 0 |
+| `85369dd` | 0 | 0 | 101: 1,304 passed, 1 failed (Tantivy `LockBusy`), 34 ignored; pilot-capture gates 0 ([receipt](#derived-writer-contention-after-fork--2026-11-11)) | 0 | 0 |
 | `65fd799` | 0 | 0 | 0: 1,315 passed, 34 ignored; pilot-capture gates 0 ([receipt](#watcher-test-repair-f18--2026-11-10)) | 0 | 0 |
 | `854cf88` | 0 | 0 | 101: 1,312 passed, 2 timing failures (watcher F18, cancellation), 34 ignored; pilot-capture gates 0 ([receipt](#owner-decisions--2026-11-06)) | 0 | 0 |
 | `8600fc0` | 0 | 0 | 0: 1,314 passed, 34 ignored ([receipt](#owner-decisions--2026-11-06)) | 0 | 0 |

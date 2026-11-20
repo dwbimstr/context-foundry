@@ -34,6 +34,12 @@ provider/recipe selection and real-model task acceptance are deferred, the relea
 longer waits on 010's task utility, the implemented code stays experimental and
 unadvertised, and nothing is downloaded or spent for that deferred task-utility work
 ([record](../../docs/validation.md#owner-decisions--2026-11-06)).
+Owner decision, 2026-11-19, "Accept at written scope": T001 and T002 are accepted at
+their written, experimental and unadvertised scope. Provider/recipe selection and
+real-model task utility stay deferred under "Defer 010 real-model acceptance" (decision
+14 of 2026-11-06). 010 therefore no longer blocks the release. The native script still
+has to run on the signed release candidate, as a [release](../../docs/release.md) step
+([record](../../docs/validation.md#owner-decisions--2026-11-19)).
 Import and lifecycle fixtures use synthetic outputs through real storage, retrieval,
 HTTP/CLI and native-worker boundaries. Real CPU and Metal initial/changed-input
 generation and restart/revert reuse are recorded in validation. These smoke checks
@@ -152,7 +158,9 @@ edit/delete, edits during generation and final selection, CAS/replay, unknown fi
 byte/UTF-8/citation bounds, row corruption, hash verification, namespace collisions,
 user-memory preservation, restart/repair, pending replacement during drain, explicit
 schema-7 upgrade and real child-process exits before/after put and forget commits.
-See [validation](../../docs/validation.md) for executed checks and limits.
+See [validation](../../docs/validation.md) for executed checks and limits. Owner
+decision, 2026-11-19, "Accept at written scope": T001 is accepted at this written,
+experimental and unadvertised scope (Status above).
 
 ### T002 — Generate useful briefs and area knowledge within idle resources
 
@@ -160,6 +168,9 @@ Status: explicit CLI and continuous MCP generation implemented experimentally. S
 client admission and owned local per-worker limits are implemented. Aggregate hardware
 headroom is a named limitation, device acceptance is what the native script checks, and
 real-model task acceptance is deferred (owner decisions, 2026-11-06, Status above).
+Owner decision, 2026-11-19, "Accept at written scope": T002 is accepted at its written,
+experimental and unadvertised scope; the provider selection and real-provider task
+comparison below stay deferred (Status above).
 The efficiency amendment places this after
 changed-work ownership (009 T008) and input/resource identity (009 T009); see the
 [build order](../../docs/context-ecosystem-plan.md#revised-build-order).

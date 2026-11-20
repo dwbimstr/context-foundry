@@ -546,6 +546,16 @@ F6 is retired as a gate and F8 is retired.
 
 ## F14. God-module splits (audit 2026-10-13)
 
+- **Status (2026-11-19):** done. The last row, `src/learning.rs`, ran on the owner's
+  Mac as seven gated commits (`04bcd18` to `a66a056`): `state`, `run_policy`,
+  `feedback`, `strict`, `io`, `prep` and the read-back, merged into `prep` as planned.
+  The parent fell from 3,182 to 972 lines. Every move is verbatim apart from 7
+  `pub(super)` insertions, all in `prep`, against 9 planned: `check_floors` moved with
+  the read-back, where it needs no bump, and `OpenedDataset` stays in the parent,
+  because moving it would need two more bumps than planned. The tests, the eight
+  existing children and the public API pages are unchanged
+  ([receipt](docs/validation.md#learning-module-split-f14--2026-11-19)). No further
+  split is planned.
 - **Status (2026-10-14):** the owner stopped the refactor after PR #21 (merge
   `2bab612`, 16 verbatim splits with no visibility change), then resumed it for the
   planned visibility-change splits: planned bumps only, and park anything that needs
@@ -648,7 +658,7 @@ F6 is retired as a gate and F8 is retired.
 
   | File | Next splits (bumps) | Precondition or blocker |
   | --- | --- | --- |
-  | `src/learning.rs` | `state` with its tests (0), `run_policy` (0), `feedback` (0), `strict` and `io` (0), `prep` (2), `readback` (7 if merged with `prep`) | Needs a Mac. `serve`, `supervisor` and `worker` are `#[cfg(target_os = "macos")]`, so Linux gates do not compile the items they reach (`LearningPolicy`, `fail`); keep those in the root or re-export them. |
+  | `src/learning.rs` | `state` with its tests (0), `run_policy` (0), `feedback` (0), `strict` and `io` (0), `prep` (2), `readback` (7 if merged with `prep`) | Done 2026-11-19 with 7 bumps in all (status above). `serve`, `supervisor` and `worker` are `#[cfg(target_os = "macos")]`, so Linux gates do not compile the items they reach (`LearningPolicy`, `fail`); those stay in the root. |
 
   `src/neural/query.rs` keeps the dense index, the fallback and query tokenization, and
   `src/graph.rs` keeps `invalid`, `OccurrenceKind`, the storage key codec and the test

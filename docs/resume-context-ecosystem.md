@@ -2,8 +2,33 @@
 
 ## Current status — 2026-11-06
 
-Updated 2026-11-19. This section owns current status; other documents link here,
+Updated 2026-11-20. This section owns current status; other documents link here,
 and dated paragraphs below are history.
+
+- **Owner decisions and pending-work round, 2026-11-19.** A read-only sweep listed
+  123 pending items; the owner answered sixteen open decisions
+  ([record](validation.md#owner-decisions--2026-11-19)). Done in this round:
+  - the last F14 split, of `src/learning.rs`
+    ([record](validation.md#learning-module-split-f14--2026-11-19));
+  - a repair of the intermittent cancellation test
+    ([record](validation.md#artifact-cancellation-test-synchronization--2026-11-19));
+  - stale-status corrections, draft release notes and compatibility statement, and
+    the upstream notice on eleven reference patches
+    ([record](validation.md#documentation-status-corrections-and-patch-notices--2026-11-19));
+  - encrypted archives of the 2026-11-18 holdout, the G2 run results and the
+    2026-11-13 T005 final bundle
+    ([holdout](validation.md#t005-second-holdout-encrypted-retention--2026-11-19),
+    [batch](validation.md#second-encrypted-backup-batch--2026-11-19));
+  - archive branches for the rejected T005 experiments, and ignore rules for local
+    tool configuration.
+
+  All eight gates pass on `f2cf6f3`
+  ([receipt](validation.md#local-gates-on-f2cf6f3--2026-11-19)). Spec 010 T001-T002
+  are accepted at their written scope, and new named limitations are recorded in
+  specs 003, 008 and 009 and the pilot v2 draft. The T005 loss analysis found no
+  bounded candidate with a plausible large gain, so the next T005 move is with the
+  owner ([analysis](validation.md#t005-loss-analysis--2026-11-19)). Pausing
+  Dependabot version updates takes effect only after the next merge to `main`.
 
 - **Catalog refusal binding, 2026-11-19.** The fixed startup diagnostic
   requires the shared catalog refusal before recording catalog retirement.
@@ -169,7 +194,9 @@ and dated paragraphs below are history.
   verifier passed. The custodian retains the set; implementation verified only
   the metadata receipt. The set remains unconsumed after the development rejection.
   T005 remains open
-  ([record](validation.md#t005-new-blind-holdout-sealed--2026-11-18)).
+  ([record](validation.md#t005-new-blind-holdout-sealed--2026-11-18)). Its encrypted
+  archive was built on 2026-11-19
+  ([record](validation.md#t005-second-holdout-encrypted-retention--2026-11-19)).
 
 - **Startup RPC command boundary, 2026-11-18.** The startup observation parent
   has no RPC command writer. A separate native control placed raw Ready before
@@ -1062,8 +1089,8 @@ and dated paragraphs below are history.
     sandbox and its archive are declared lost; F2, F6, F8, F10 and F11 retire.
     Five encrypted backups are built and checksum-verified in
     `~/VSC_DEV/backups/foundry-20261111-retry1`
-    ([receipt](validation.md#encrypted-evidence-backups--2026-11-11)). The new sealed
-    T005 holdout also has a verified encrypted archive in
+    ([receipt](validation.md#encrypted-evidence-backups--2026-11-11)). The 2026-11-11
+    T005 holdout, consumed on 2026-11-13, has a verified encrypted archive in
     `~/VSC_DEV/backups/foundry-t005-heldout-20261111`
     ([receipt](validation.md#t005-sealed-holdout-encrypted-retention--2026-11-11)). The owner
     retains the recovery private key and handles off-machine copying and authenticated

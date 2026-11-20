@@ -38,7 +38,9 @@ off (owner, 2026-10-07), the release package is built without `--with-learning` 
 advertises no learned routing, so its learning-worker checks are not release conditions.
 Owner decision, 2026-11-06, "Defer 010 real-model acceptance": the release does not
 wait on 010's real-model task utility, and 010's implemented code stays experimental
-and unadvertised.
+and unadvertised. Owner decision, 2026-11-19, "Accept at written scope": 010 T001 and
+T002 are accepted at their written, experimental and unadvertised scope, so 010 no
+longer blocks the release ([record](validation.md#owner-decisions--2026-11-19)).
 
 Owner decision, 2026-11-06, "Release it separately": as
 [spec 003](../specs/003-agent-retrieval-context/spec.md#t004--forward-and-meter-an-actual-supported-model-workflow)
@@ -75,7 +77,14 @@ the signed release candidate. Owner decision, 2026-11-06, "Script checks only": 
 is what that script checks, and the release notes name the unbuilt global GPU
 pressure, combined embedding and generation residency, thermal/battery and
 embedding-eviction policies as limitations. They also state the other limitations the
-owner named that day in the [decision record](validation.md#owner-decisions--2026-11-06).
+owner named that day in the [decision record](validation.md#owner-decisions--2026-11-06),
+and those the owner named on 2026-11-19 in its own
+[decision record](validation.md#owner-decisions--2026-11-19): 009 T007's device tuning
+and real throughput ("Named limitation"), a SIGSTOP-stopped embedding worker whose
+owner dies ("Named limitation"; no OS-level guardian is built and package acceptance
+does not need one), 009 T009's late chunking and selective body preparation, 003
+T009's coverage gaps and 008's task-view host extensions. The release does not wait
+on them; each owning spec gives its re-entry trigger.
 
 ## Compatibility and data preservation for the first release
 
@@ -90,12 +99,17 @@ The statement becomes final on the signed release candidate, after these three t
    `PACKAGE.json` records as `git_commit`.
 2. Run the step 2 lifecycle on the signed package. The lifecycle evidence so far is
    from unsigned packages ([2026-10-06](validation.md#installable-package--2026-10-06)).
-3. Replace `<version>`. **The version number is an open question for the owner.**
-   `Cargo.toml` says `0.1.0`, which is also the number of the withdrawn local tag, and
-   no record says whether the first release reuses it. `scripts/package.sh` names the
-   package from that number and records it in `PACKAGE.json`, `scripts/install.sh`
-   names the version directory from that record, and `scripts/install.sh upgrade`
-   refuses a package whose version is already installed (exit 73).
+3. Replace `<version>` with `0.2.0`. Owner decision, 2026-11-19, "0.2.0": the first
+   release is 0.2.0, not the `0.1.0` of the withdrawn local tag
+   ([record](validation.md#owner-decisions--2026-11-19)). `Cargo.toml` still says
+   `0.1.0` and changes to `0.2.0` in the release commit itself, not before.
+   `scripts/package.sh` names the package from that number and records it in
+   `PACKAGE.json`, `scripts/install.sh` names the version directory from that record,
+   and `scripts/install.sh upgrade` refuses a package whose version is already
+   installed (exit 73). Development builds carry the same number: `foundry bootstrap`
+   reports it as `versions.core`. If the number changed earlier, a development package
+   built in between would already be `0.2.0`, and `upgrade` would refuse the release
+   package over an installation of it.
 
 When it is final, it is recorded with the release's checklist record in
 [validation](validation.md), as item 3 of the

@@ -83,6 +83,15 @@ owner. Other datasets, including `context-foundry-g2-runs`, are not in this batc
 The owner copies the entire batch off the Mac. Carry it with `cf-private.tar`;
 off-machine copying and authenticated recovery are not yet verified.
 
+Two later batches use the same key, tools and recovery files, and the owner copies
+them off the Mac too. `~/VSC_DEV/backups/foundry-t005-holdout-20261118` holds the
+unconsumed T005 holdout sealed on 2026-11-18
+([receipt](validation.md#t005-second-holdout-encrypted-retention--2026-11-19)).
+`~/VSC_DEV/backups/foundry-20261119` holds the G2 run results and the 2026-11-13 T005
+final bundle (owner decision 16 of 2026-11-19,
+[receipt](validation.md#second-encrypted-backup-batch--2026-11-19)). The first
+holdout's archive, `foundry-t005-heldout-20261111`, protects a consumed set.
+
 The successful build command, run from this repository, was:
 
 ```sh

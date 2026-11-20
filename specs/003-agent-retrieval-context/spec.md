@@ -982,7 +982,14 @@ runs compare verified completions, incorrect changes, complete provider usage,
 auxiliary generation and amortized preparation cost. Smaller tool replies alone are
 not success. This acceptance evidence does not block experimental implementation.
 Owner decision, 2026-11-06: these paired runs belong to the T006 suite and pilot v2,
-and T009 stays unaccepted until an authorized run passes.
+and T009 stays unaccepted until an authorized run passes. Owner decision, 2026-11-19:
+six coverage gaps are named limitations, with no work planned: dynamic dispatch,
+indirect wrappers, unsupported languages, broader framework behavior, requirement
+satisfaction and semantic constraint conflicts. Reports already state `complete:false`,
+mark constraint conflicts `not_evaluated` and never claim a satisfied requirement. The
+gaps re-enter when an authorized real-task run, such as pilot v2, fails because
+composed evidence missed a fact behind one of them
+([record](../../docs/validation.md#owner-decisions--2026-11-19)).
 
 
 #### T009 implementation — 2026-10-10
@@ -1042,8 +1049,9 @@ catalog fixture exposes a provider returning `items` while consumer/test require
 `products`; the delivered spans support a one-line provider repair, with billing and
 the route unchanged. A deterministic in-process Python transport executes the selected
 provider, consumer and test before/after the repair. This verifies the sandbox contract,
-not a deployed HTTP service or autonomous model patch quality. Real-host paired tasks,
-provider economics and broader language/framework coverage remain follow-ups. [Usage](../../docs/experimental-context.md#boundary-relationships-and-task-evidence)
+not a deployed HTTP service or autonomous model patch quality. Real-host paired tasks
+and provider economics remain follow-ups; broader language/framework coverage is a
+named limitation (owner, 2026-11-19, T009 status above). [Usage](../../docs/experimental-context.md#boundary-relationships-and-task-evidence)
 and [validation](../../docs/validation.md#boundary-relationships-and-task-evidence--2026-10-10)
 retain the practical limits.
 
@@ -1096,7 +1104,8 @@ inside ordinary source files. Parsing is size/time bounded and cached per source
 the final read snapshot. Relationships remain compiler **references**: `runtime_call`
 is `unverified` and `test_execution` is `not_observed`. Attributes do not establish
 execution or requirement coverage; existing test-path classification remains heuristic. Definition, reference and additional syntax bodies must all fit before the
-relationship is emitted. Dynamic dispatch and semantic constraint conflicts remain open.
+relationship is emitted. Dynamic dispatch and semantic constraint conflicts are named
+limitations (owner, 2026-11-19, T009 status above).
 
 T009 source discovery continuation (2026-10-11): composition no longer requires a
 compiler artifact to discover useful caller/test candidates. Up to four resolved
@@ -1162,8 +1171,9 @@ window: even an unlimited result is not an absence or completeness proof. Final
 delivered facets still depend on exact bodies that fit the budget. Compiler
 relationships and imported execution observations keep separate provenance.
 Dynamic dispatch, indirect wrappers, unsupported languages, broader framework behavior
-and requirement satisfaction remain open. Task-word test selection still searches
-only selected files; it is discovery, not observed coverage. Search schema 8
+and requirement satisfaction are named limitations (owner, 2026-11-19, T009 status
+above). Task-word test selection still searches only selected files; it is
+discovery, not observed coverage. Search schema 8
 (2026-10-26) requires explicit derived-index repair, including from schema 7,
 whose field-compatible postings predate the pulldown-cmark 0.13.5 Markdown
 grammar, and from schema 6, whose identical fields lack canonical import-alias

@@ -10,6 +10,12 @@ owns current status. It does not reuse v1's credential, budget, launch manifest 
 four-category usage exception. [V1](bounded-pilot-v1.md) remains byte-for-byte frozen.
 No provider request, credential access, training or execution is authorized here.
 
+The owner's decisions of 2026-11-19 on host memory, `PI_PROXY_ANTHROPIC`, host
+identity, reference patches, private-output protection and presence cleanup are
+recorded where each topic is discussed
+([record](../../../docs/validation.md#owner-decisions--2026-11-19)). They neither
+fund nor freeze this draft.
+
 ## Outcome and claim boundary
 
 Measure verified coding outcomes on several harder, previously unused tasks,
@@ -51,6 +57,13 @@ outcome. A bundled improvement cannot establish the effect of every component.
    The control gets the same ordinary task instructions, without v1's asymmetric
    placeholder telling only that arm to inspect the workspace. Record actual
    final-request bytes and remaining admission headroom for each arm.
+   Owner decision, 2026-11-19, "Off in every arm"
+   ([record](../../../docs/validation.md#owner-decisions--2026-11-19)): the host's
+   memory backend stays off (`memory.backend` is `off`) and auto-learn stays
+   disabled (`autolearn.enabled=false`) in every v2 arm, so no treatment enables
+   them. Other memory backends and auto-learn execution are out of scope. This
+   covers the host's own memory, not Foundry's 008 task context that item 4
+   compares.
 6. Freeze randomized, balanced arm order within strata, its seed and all planned
    repetitions before outcomes. Never replace a failed, partial or inconvenient
    task. Retain every scheduled row, including unstarted rows after a halt.
@@ -217,6 +230,17 @@ Do not add a new proxy, experiment service, database or generic workflow owner.
 The private launch manifest binds the contract digest, apparatus/executable hashes,
 host/model/settings, task and oracle manifests, allocation, profile/model inputs,
 all permitted routes, permissions and actual run directory. Rehash inputs at use.
+
+Owner decision, 2026-11-19, "Digest plus pinned inputs"
+([record](../../../docs/validation.md#owner-decisions--2026-11-19)): the v2 host's
+identity is its exact executable SHA-256 plus the ordered patch list, dependency
+lock, Bun runtime and native-addon digests. A byte-for-byte reproducible build is
+not required. Owner decision, 2026-11-19, "Keep as reference": the oh-my-pi
+reference patches in `docs/references` stay published reference data, which
+Foundry does not apply automatically. The host built from them stays private and
+is pinned by its SHA-256, as the source-built diagnostic hosts already are in
+[`host.rs`](../../../src/pilot_capture/host.rs). A future freeze binds these
+values; this draft stays unfunded and unfrozen.
 
 **Selected authority/run-path repair, 2026-11-11 — qualified at the selected local fixture boundary.** Launch
 metadata uses `bounded-pilot-v1-launch-v2` with required canonical `run_dir`, distinct
@@ -859,8 +883,10 @@ only the original non-OAuth prefetch; full startup admission remains open.
 The native baseline/observer pair selects the actual `offBackend` singleton and
 observes one original `start` call with the actual model registry, completed before
 session-start readback. Complete model objects match and auto-learn is disabled.
-This is the existing no-provider read/edit qualifier's profile, not a policy that
-removes future declared memory/task-context integration.
+This began as the no-provider read/edit qualifier's profile. Owner decision,
+2026-11-19, "Off in every arm", keeps the off backend and disabled auto-learn in
+every v2 arm (item 5 of the arms rules). Foundry's own 008 task context is
+separate and is not changed by that decision.
 
 Install one small embedded memory-owner check in the trusted factory before SDK
 construction. It must require the actual native Settings instance, `memory.backend`
@@ -1798,9 +1824,9 @@ facts and leaves these boundaries to qualify before the inventory can be frozen.
 | Startup area | Current diagnostic evidence | Remaining scope for the admitting profile |
 | --- | --- | --- |
 | Connection preparation | The original warm-up caller settles after the parent durably refuses the classified Anthropic HEAD route. | Establish before-I/O ownership for each enabled route and fail closed on unclassified transports. |
-| Tools, MCP, memory and credentials | The sealed identity reports fixed `edit` and `read`, MCP and memory exclusions, and joined credential-usage work. | Bind the final task tools and any admitted MCP integration to actual before-I/O controls. |
+| Tools, MCP, memory and credentials | The sealed identity reports fixed `edit` and `read`, MCP and memory exclusions, and joined credential-usage work. | Bind the final task tools and any admitted MCP integration to actual before-I/O controls. Keep `memory.backend` off and auto-learn disabled in every arm (owner decision, 2026-11-19, "Off in every arm"); other memory backends and auto-learn execution are out of scope. |
 | Catalog, settings and authentication | Source owner receipts cover selected discovery, settings callbacks and the empty authentication profile. The catalog GET is classified and refused before transport. The fixed registry closes runtime registration and binds Anthropic-only discovery eligibility. Native launch and late-change controls verify that the fixed set cannot expand. | Qualify the remaining enabled catalog transport and callbacks in the final profile. |
-| Presence, telemetry, marketplace and logging | The selected owners close or exclude their own work and record the original joins. | Review enabled update and output paths outside these selected owners. |
+| Presence, telemetry, marketplace and logging | The selected owners close or exclude their own work and record the original joins. | Review enabled update and output paths outside these selected owners. Named limitation with no work planned ([owner decision, 2026-11-19](../../../docs/validation.md#owner-decisions--2026-11-19)): an ordinary non-pilot host RPC exit leaves its presence file ([record](../../../docs/validation.md#original-daemon-presence-candidate--2026-11-16)), and daemon-server shutdown is unexamined. Both are upstream host questions, out of scope for Foundry. Re-entry trigger: a pilot profile that depends on ordinary RPC exit cleanup or a daemon server, or a leftover presence file observed to affect a Foundry run. |
 | Plugin roots and first-party extension | The diagnostic reports plugin-root retirement and the original extension dispatch join. It excludes managed timers and the selected workspace scan. Native controls cover the exact bridge graph read and the loader's awaited factory. | Check work started by enabled transitive loads, including native timers, discovery and callbacks. |
 | Advisors | The candidate excludes advisor discovery, tool construction, restore and activation in the explicit profile. The existing restricted-session receipt records the exclusion. Native controls exercised ordinary RPC and a late activation and restore attempt. | Preserve the disposition in the final admitting profile. |
 | Prompt and command inputs | Source guards close implicit prompt, template, command and active-repo discovery at the selected owners. The restricted prompt skips optional URI scheme descriptions before invoking their owners. Native controls cover input exclusion, ordinary RPC and active-child projection. The prompt builder rejects a preparation timeout in this profile. | Bind the same decisions to the final admitting profile and retain evidence for any enabled prompt or transitive discovery owner. |
@@ -1812,7 +1838,9 @@ facts and leaves these boundaries to qualify before the inventory can be frozen.
 profile. The advisor candidate excludes discovery, tools, cost restore and
 activation at their source owners. Ordinary RPC exercises the original paths
 in [native controls](../../../docs/validation.md#advisor-exclusion-during-startup-observation--2026-11-18).
-Bind the compiled and native artifacts and ordered source patches. The
+Bind the compiled and native artifacts and ordered source patches into the host
+identity that the launch manifest pins (owner decision, 2026-11-19, "Digest plus
+pinned inputs", under the capture owner above). The
 observation journal binds the bridge, effective arguments, settings, sanitized
 environment and sandbox policy. Each reachable owner needs a source anchor, an eligibility
 decision, a side-effect boundary and evidence of exclusion before construction,
@@ -1869,11 +1897,14 @@ Replacing the default HTTPS export does not replace the namespace call on the
 owned runtime. A `ClientRequest.end` refusal still permits an independently
 observed loopback connection, so neither patch qualifies the required before-IO
 boundary. Existing `PI_PROXY_ANTHROPIC` routing exposes the known warm-up to global
-fetch, but the direct-HTTPS bypass remains. It is a configuration candidate, not
-a selected fence or new proxy service. Qualify every admitted owner/route before
-construction/IO at the actual bridge/profile boundary; do not enable admission
-from a zero-fetch snapshot or the narrow routing control. Ordinary configuration,
-frozen v1 and execution authority remain unchanged.
+fetch, but the direct-HTTPS bypass remains. It was a configuration candidate, not
+a selected fence or new proxy service. Owner decision, 2026-11-19, "Not used in
+v2" ([record](../../../docs/validation.md#owner-decisions--2026-11-19)): v2 does
+not use it, and any later use needs full request, tool and headroom qualification
+first. Qualify every admitted owner/route before construction/IO at the actual
+bridge/profile boundary; do not enable admission from a zero-fetch snapshot or
+the narrow routing control. Ordinary configuration, frozen v1 and execution
+authority remain unchanged.
 
 A future closed protocol revision carries metadata-only messages, using existing
 identity, sequence, length and journal limits:
@@ -1956,7 +1987,7 @@ paid authority, task/sample freeze and signing remain separate gates.
 | Checker binds environment names only | Bind exact sanitized environment values, sandbox profile bytes and freshly hashed oracle/compiler bytes to each checker receipt. Credentials are absent from the checker environment. The selected local checks pass ([record](../../../docs/validation.md#pilot-checker-provenance-and-retained-diagnostics--2026-11-11)); the limits in the selected repair below and broader v2 qualification remain. |
 | Compile stderr only hashed | Retain bounded private stderr bytes and their digest, with explicit overflow/failure behavior. Inspect errors; a matching binary hash cannot explain omitted diagnostics. The selected local checks pass ([record](../../../docs/validation.md#pilot-checker-provenance-and-retained-diagnostics--2026-11-11)); the limits in the selected repair below and broader v2 qualification remain. |
 | Coding authority outside chain; declared/actual paths differ | Append the authorization digest to the durable chain before a paid attempt and require the canonical actual run root to equal the authorized root. The selected metadata/path and chained-authority fixtures pass ([record](../../../docs/validation.md#pilot-authority-and-run-path-binding--2026-11-11)); historical v1 evidence is unchanged. Current installed-host compatibility and actual Live-compatible probe history remain unproved. |
-| Some private artifacts have wider permissions | Enforce and verify 0700 directories/0600 private files, including host/store outputs; fail before transmission if this cannot be established. Executables need explicitly declared private executable modes. The selected local metadata, child-launcher, lexical-store, pinned-host and actual-checker checks pass ([record](../../../docs/validation.md#pilot-private-output-permissions-and-terminal-publication--2026-11-11)); the real semantic-producer check qualifies its closed outputs ([record](../../../docs/validation.md#pilot-semantic-producer-permissions--2026-11-13)); the frozen-host private pipeline also passes after closed-preview archival ([record](../../../docs/validation.md#private-full-pipeline-and-preview-archival--2026-11-13)). Transient worker scratch-file modes, current installed-host compatibility, v2's declared task/arm/host qualification and complete startup-network observation remain unqualified. |
+| Some private artifacts have wider permissions | Enforce and verify 0700 directories/0600 private files, including host/store outputs; fail before transmission if this cannot be established. Executables need explicitly declared private executable modes. The selected local metadata, child-launcher, lexical-store, pinned-host and actual-checker checks pass ([record](../../../docs/validation.md#pilot-private-output-permissions-and-terminal-publication--2026-11-11)); the real semantic-producer check qualifies its closed outputs ([record](../../../docs/validation.md#pilot-semantic-producer-permissions--2026-11-13)); the frozen-host private pipeline also passes after closed-preview archival ([record](../../../docs/validation.md#private-full-pipeline-and-preview-archival--2026-11-13)). Transient worker scratch-file modes, current installed-host compatibility, v2's declared task/arm/host qualification and complete startup-network observation remain unqualified. Same-user races and power-loss durability are named limitations, and forced permission-call and sync-call failures still need fault-injection tests (owner decision, 2026-11-19, "Accept a and c, test b", below). |
 | Rejected credential after claim has no terminal journal outcome | Preserve consumed claim and append a terminal refusal without printing the credential; prove no provider transmission. The selected local repair passes the pinned-artifact fixture checks, including synthetic Live admission ordering ([record](../../../docs/validation.md#pilot-credential-refusal-durability--2026-11-11)). Current installed-host compatibility and actual Live-compatible probe history remain unproved; v2 still requires its declared host/arm qualification. |
 | Workspace restore failure exits without halt record | Journal a terminal halt, stop owned processes and prohibit the next slot. The selected local fixtures pass: healthy journal finalization retains the halt and unstarted rows, the post-admission CLI returns failure, and failed halt persistence prevents a later success receipt ([record](../../../docs/validation.md#pilot-workspace-restoration-and-halt-persistence--2026-11-11)). This does not establish live-front-door admission, current installed-host/provider compatibility, private-oracle outcomes or power-loss durability; v2 still requires its declared host/arm qualification. |
 | `seal_slot` relies only on exit status | Bind actual expected oracle-completion evidence to the checked candidate and receipt; zero exit without the required completion evidence cannot pass. The selected completion/artifact consumer and actual owned-copy producer checks pass ([record](../../../docs/validation.md#pilot-checker-completion-and-artifact-binding--2026-11-11)). Complete stream capture and terminal check-chain errors are enforced; this does not qualify the private full pipeline, remaining capture gaps or pilot v2/T006. |
@@ -2049,6 +2080,23 @@ producer and before receipt publication establish the observed output modes;
 inheritance alone is insufficient evidence. Private source copies preserve bytes
 and refuse links or special files. Checker diagnostic and artifact checks keep
 their existing identity, completion, retention and failure requirements.
+
+Owner decision, 2026-11-19, "Accept a and c, test b"
+([record](../../../docs/validation.md#owner-decisions--2026-11-19)), settles three
+remaining protection questions:
+
+- (a) A racing process of the same user is a named limitation. The walk refuses
+  replaced entries and wrong modes, and the writers create each object
+  exclusively, but neither stops a same-user process that changes an output
+  between two checks. Re-entry trigger: an observed change to a pilot private
+  output by a process the pilot does not own.
+- (b) Forced failures of the permission calls and sync calls get fault-injection
+  tests; these are not written yet. No existing test forces those calls to fail,
+  and the verification fault switch covers only journal appends.
+- (c) Power-loss durability is a named limitation. Writers sync each new file and
+  its parent directory, but no pilot test checks what survives a crash or power
+  loss. Re-entry trigger: a synced pilot record found missing or truncated after
+  a crash or power loss.
 
 The existing capture owner refuses privacy failures before reserving/sending a
 count request and rechecks before sending Messages. A failure after an observed

@@ -459,8 +459,9 @@ The existing Rust gateway applies it under the [adapter contract](../003-agent-r
 This avoids a new host extension runtime or store-owning service. Retained originals
 support expand/re-export/restart; packets and host history remain caller-owned and
 must be deleted separately after forgetting a task. Ordinary MCP application remains
-unknown. The following continuation implements live synchronization; broader
-host-region selection remains pending.
+unknown. The following continuation implements live synchronization. Applying a view
+through ordinary MCP and broader host-region selection are named limitations (owner,
+2026-11-19; see below).
 
 ### Live host continuation — 2026-10-10
 
@@ -470,7 +471,14 @@ Task edits require no file projection or second store owner. The gateway pins an
 explicit exported binding, resolves the current selected view for each request and
 refuses a revoked/unavailable binding. Folding stays caller-authored, original history
 stays recoverable, and a concurrent edit after resolution is outside that snapshot.
-Multiple host regions, automatic selection and real-provider task outcomes remain open.
+Real-provider task outcomes remain open for pilot v2 (Status above). Owner decision,
+2026-11-19: three task-view host extensions are named limitations, with no work
+planned: applying a view through ordinary MCP, broader or multiple host regions beyond
+the one tool result the gateway replaces, and automatic selection (the exported
+binding names that result explicitly today). They re-enter when a supported host
+acknowledges applying a view delivered through ordinary MCP, or when an authorized
+real-host run, such as pilot v2, fails because one explicitly named region could not
+carry the view ([record](../../docs/validation.md#owner-decisions--2026-11-19)).
 
 ### Freshness visibility on compact memory lines — 2026-10-25
 
