@@ -237,9 +237,83 @@ fn persistence(code: &'static str) -> CaptureFault {
     CaptureFault::new(FaultClass::Persistence, code)
 }
 
+/// The permission and sync calls of the exclusive private-output writers.
+/// Unit tests can force one to fail on their own thread; outside `cfg(test)`
+/// [`writer_call`] is an always-`Ok` inline no-op.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WriterCall {
+    /// `new_private_file`: fchmod of the new file to 0600.
+    FileMode,
+    /// `new_private_file`: fsync of the parent after the file is created.
+    FileParentSync,
+    /// `write_private_new`: fsync of the written file.
+    FileSync,
+    /// `create_private_dir`: fchmodat of the new directory to 0700.
+    DirMode,
+    /// `create_private_dir`: fsync of the new directory.
+    DirSync,
+    /// `create_private_dir`: fsync of the parent after the directory is created.
+    DirParentSync,
+    /// `fsync_dir`: fsync of a named directory, such as a written file's parent.
+    ParentSync,
+}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn writer_call(_call: WriterCall) -> std::io::Result<()> {
+    Ok(())
+}
+
+#[cfg(test)]
+thread_local! {
+    static ARMED_WRITER_CALLS: std::cell::RefCell<Vec<WriterCall>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Tests only: an injected error in place of `call` while it is armed on
+/// this thread; the real call is then not made.
+#[cfg(test)]
+fn writer_call(call: WriterCall) -> std::io::Result<()> {
+    if ARMED_WRITER_CALLS.with(|armed| armed.borrow().contains(&call)) {
+        return Err(std::io::Error::other("injected writer-call failure"));
+    }
+    Ok(())
+}
+
+/// Tests only: fail `call` on this thread until the returned guard drops,
+/// including when an assertion panics while it is armed.
+#[cfg(test)]
+#[must_use]
+fn arm_writer_call(call: WriterCall) -> ArmedWriterCall {
+    ARMED_WRITER_CALLS.with(|armed| {
+        let mut armed = armed.borrow_mut();
+        if !armed.contains(&call) {
+            armed.push(call);
+        }
+    });
+    ArmedWriterCall(call)
+}
+
+/// Tests only: disarms its call when dropped.
+#[cfg(test)]
+struct ArmedWriterCall(WriterCall);
+
+#[cfg(test)]
+impl Drop for ArmedWriterCall {
+    fn drop(&mut self) {
+        disarm_writer_call(self.0);
+    }
+}
+
+/// Tests only: let `call` reach the operating system again on this thread.
+#[cfg(test)]
+fn disarm_writer_call(call: WriterCall) {
+    ARMED_WRITER_CALLS.with(|armed| armed.borrow_mut().retain(|armed| *armed != call));
+}
+
 fn fsync_dir(path: &Path) -> Result<(), CaptureFault> {
     File::open(path)
-        .and_then(|d| d.sync_all())
+        .and_then(|d| writer_call(WriterCall::ParentSync).and_then(|()| d.sync_all()))
         .map_err(|_| persistence("dir_fsync_failed"))
 }
 
@@ -388,7 +462,8 @@ fn new_private_file(path: &Path, append: bool) -> Result<File, CaptureFault> {
         return Err(persistence("private_file_create_failed"));
     }
     let file = unsafe { File::from_raw_fd(fd) };
-    file.set_permissions(fs::Permissions::from_mode(0o600))
+    writer_call(WriterCall::FileMode)
+        .and_then(|()| file.set_permissions(fs::Permissions::from_mode(0o600)))
         .map_err(|_| persistence("private_file_mode_failed"))?;
     require_private_metadata(
         &file
@@ -396,8 +471,8 @@ fn new_private_file(path: &Path, append: bool) -> Result<File, CaptureFault> {
             .map_err(|_| persistence("private_file_mode_failed"))?,
         PrivateArtifact::File,
     )?;
-    parent
-        .sync_all()
+    writer_call(WriterCall::FileParentSync)
+        .and_then(|()| parent.sync_all())
         .map_err(|_| persistence("dir_fsync_failed"))?;
     Ok(file)
 }
@@ -680,14 +755,15 @@ pub(crate) fn create_private_dir(path: &Path) -> Result<(), CaptureFault> {
     }
     // SAFETY: the parent fd and one-component name are valid; this operation
     // never follows a replacement symlink to another target.
-    if unsafe {
-        libc::fchmodat(
-            parent.as_raw_fd(),
-            name.as_ptr(),
-            0o700,
-            libc::AT_SYMLINK_NOFOLLOW,
-        )
-    } != 0
+    if writer_call(WriterCall::DirMode).is_err()
+        || unsafe {
+            libc::fchmodat(
+                parent.as_raw_fd(),
+                name.as_ptr(),
+                0o700,
+                libc::AT_SYMLINK_NOFOLLOW,
+            )
+        } != 0
     {
         return Err(persistence("private_dir_mode_failed"));
     }
@@ -706,8 +782,9 @@ pub(crate) fn create_private_dir(path: &Path) -> Result<(), CaptureFault> {
     require_private_metadata(&meta, PrivateArtifact::Directory)?;
     // mkdir/mode establishment/acquisition are not atomic against arbitrary
     // concurrent same-user replacement. This owned creation has one writer.
-    child
-        .sync_all()
+    writer_call(WriterCall::DirSync)
+        .and_then(|()| child.sync_all())
+        .and_then(|()| writer_call(WriterCall::DirParentSync))
         .and_then(|()| parent.sync_all())
         .map_err(|_| persistence("dir_fsync_failed"))
 }
@@ -715,6 +792,7 @@ pub(crate) fn create_private_dir(path: &Path) -> Result<(), CaptureFault> {
 pub(crate) fn write_private_new(path: &Path, bytes: &[u8]) -> Result<(), CaptureFault> {
     let mut file = new_private_file(path, false)?;
     file.write_all(bytes)
+        .and_then(|()| writer_call(WriterCall::FileSync))
         .and_then(|()| file.sync_all())
         .map_err(|_| persistence("private_file_write_failed"))?;
     if let Some(parent) = path.parent() {
@@ -6296,5 +6374,179 @@ mod tests {
                 assert_eq!(result.unwrap_err().code, "private_artifact_not_private");
             }
         }
+    }
+
+    // Forced permission-call and sync-call failures (owner, 2026-11-19). Each
+    // test arms one writer call on its own thread through the test-only seam;
+    // the real call is then not made.
+
+    /// Absent, or an owned entry of the expected kind with no mode bit beyond
+    /// owner-only (0600 for a file, 0700 for a directory).
+    fn assert_not_widened(path: &Path, directory: bool) {
+        let owner_only = if directory { 0o700 } else { 0o600 };
+        match fs::symlink_metadata(path) {
+            Err(error) => assert_eq!(error.kind(), std::io::ErrorKind::NotFound),
+            Ok(meta) => {
+                assert!(if directory {
+                    meta.is_dir()
+                } else {
+                    meta.is_file()
+                });
+                assert_eq!(meta.uid(), current_uid());
+                let mode = meta.mode() & 0o7777;
+                assert_eq!(
+                    mode & !owner_only,
+                    0,
+                    "{} widened to {mode:o}",
+                    path.display()
+                );
+            }
+        }
+    }
+
+    /// `write_private_new` with `call` forced to fail: the exact fault, an
+    /// owner-only leftover holding `left`, refusal of a second exclusive write
+    /// after disarming, and normal success on a new path.
+    fn check_forced_file_write_failure(call: WriterCall, code: &'static str, left: &[u8]) {
+        let temp = fixture_private_tempdir().unwrap();
+        let root = temp.path();
+        let path = root.join("owned-output");
+        let armed = arm_writer_call(call);
+        let fault = write_private_new(&path, b"owned output").unwrap_err();
+        drop(armed);
+        assert_eq!((fault.class, fault.code), (FaultClass::Persistence, code));
+        assert_not_widened(&path, false);
+        assert_eq!(fs::read(&path).unwrap(), left);
+        let again = write_private_new(&path, b"owned replacement").unwrap_err();
+        assert_eq!(
+            (again.class, again.code),
+            (FaultClass::Persistence, "private_file_create_failed")
+        );
+        assert_eq!(
+            fs::read(&path).unwrap(),
+            left,
+            "a failed write was replaced"
+        );
+        assert_not_widened(&path, false);
+        let fresh = root.join("after-disarm");
+        write_private_new(&fresh, b"owned output").unwrap();
+        assert_eq!(fs::metadata(&fresh).unwrap().mode() & 0o7777, 0o600);
+        assert_eq!(fs::read(&fresh).unwrap(), b"owned output");
+        assert_eq!(fs::metadata(root).unwrap().mode() & 0o7777, 0o700);
+    }
+
+    /// `Journal::create` (append-mode `new_private_file`) with `call` forced
+    /// to fail: no journal is returned, the empty leftover stays owner-only and
+    /// a second exclusive create after disarming is refused.
+    fn check_forced_journal_create_failure(call: WriterCall) {
+        let temp = fixture_private_tempdir().unwrap();
+        let path = temp.path().join("journal.jsonl");
+        let armed = arm_writer_call(call);
+        let fault = Journal::create(&path, None).err().unwrap();
+        drop(armed);
+        assert_eq!(
+            (fault.class, fault.code),
+            (FaultClass::Persistence, "journal_create_failed")
+        );
+        assert_not_widened(&path, false);
+        assert_eq!(fs::read(&path).unwrap(), b"");
+        let again = Journal::create(&path, None).err().unwrap();
+        assert_eq!(
+            (again.class, again.code),
+            (FaultClass::Persistence, "journal_create_failed")
+        );
+        assert_eq!(fs::read(&path).unwrap(), b"");
+        let fresh = temp.path().join("after-disarm.jsonl");
+        let mut journal = Journal::create(&fresh, None).unwrap();
+        journal
+            .append("owned", serde_json::json!({"synthetic": true}))
+            .unwrap();
+        assert_eq!(fs::metadata(&fresh).unwrap().mode() & 0o7777, 0o600);
+    }
+
+    /// `create_private_dir` with `call` forced to fail: the exact fault, an
+    /// owner-only empty leftover directory, refusal of a second exclusive
+    /// directory or file at that path after disarming, and normal success on
+    /// a new path.
+    fn check_forced_dir_failure(call: WriterCall, code: &'static str) {
+        let temp = fixture_private_tempdir().unwrap();
+        let root = temp.path();
+        let path = root.join("owned-directory");
+        let armed = arm_writer_call(call);
+        let fault = create_private_dir(&path).unwrap_err();
+        drop(armed);
+        assert_eq!((fault.class, fault.code), (FaultClass::Persistence, code));
+        assert_not_widened(&path, true);
+        let again = create_private_dir(&path).unwrap_err();
+        assert_eq!(
+            (again.class, again.code),
+            (FaultClass::Persistence, "private_dir_create_failed")
+        );
+        let over = write_private_new(&path, b"owned replacement").unwrap_err();
+        assert_eq!(
+            (over.class, over.code),
+            (FaultClass::Persistence, "private_file_create_failed")
+        );
+        assert_not_widened(&path, true);
+        assert_eq!(fs::read_dir(&path).unwrap().count(), 0);
+        let fresh = root.join("after-disarm");
+        create_private_dir(&fresh).unwrap();
+        assert_eq!(fs::metadata(&fresh).unwrap().mode() & 0o7777, 0o700);
+        require_private_directory(&fresh).unwrap();
+        assert_eq!(fs::metadata(root).unwrap().mode() & 0o7777, 0o700);
+    }
+
+    #[test]
+    fn privacy_forced_file_mode_failure_refuses_without_widening_or_replacement() {
+        check_forced_file_write_failure(WriterCall::FileMode, "private_file_mode_failed", b"");
+        check_forced_journal_create_failure(WriterCall::FileMode);
+    }
+
+    #[test]
+    fn privacy_forced_file_parent_sync_failure_refuses_without_widening_or_replacement() {
+        check_forced_file_write_failure(WriterCall::FileParentSync, "dir_fsync_failed", b"");
+        check_forced_journal_create_failure(WriterCall::FileParentSync);
+    }
+
+    #[test]
+    fn privacy_forced_file_sync_failure_refuses_without_widening_or_replacement() {
+        check_forced_file_write_failure(
+            WriterCall::FileSync,
+            "private_file_write_failed",
+            b"owned output",
+        );
+    }
+
+    #[test]
+    fn privacy_forced_parent_sync_failure_refuses_without_widening_or_replacement() {
+        check_forced_file_write_failure(
+            WriterCall::ParentSync,
+            "dir_fsync_failed",
+            b"owned output",
+        );
+        let temp = fixture_private_tempdir().unwrap();
+        let armed = arm_writer_call(WriterCall::ParentSync);
+        let fault = fsync_dir(temp.path()).unwrap_err();
+        drop(armed);
+        assert_eq!(
+            (fault.class, fault.code),
+            (FaultClass::Persistence, "dir_fsync_failed")
+        );
+        fsync_dir(temp.path()).unwrap();
+    }
+
+    #[test]
+    fn privacy_forced_dir_mode_failure_refuses_without_widening_or_replacement() {
+        check_forced_dir_failure(WriterCall::DirMode, "private_dir_mode_failed");
+    }
+
+    #[test]
+    fn privacy_forced_dir_sync_failure_refuses_without_widening_or_replacement() {
+        check_forced_dir_failure(WriterCall::DirSync, "dir_fsync_failed");
+    }
+
+    #[test]
+    fn privacy_forced_dir_parent_sync_failure_refuses_without_widening_or_replacement() {
+        check_forced_dir_failure(WriterCall::DirParentSync, "dir_fsync_failed");
     }
 }
