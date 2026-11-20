@@ -1,5 +1,121 @@
 # Validation
 
+## Startup inventory census — 2026-11-20
+
+A read-only, in-session census of what remains before the pilot v2 startup inventory
+can be frozen. It read the draft contract's ten-row inventory table, the 2026-11-18
+and 2026-11-19 records, `src/pilot_capture/startup.rs` and the patched upstream source
+retained for the last staged round. That copy matches all 10,339 files of the last
+qualified source manifest. Nothing was run.
+
+| Row | Remaining before freeze | Native rounds |
+| --- | --- | ---: |
+| Connection preparation | A list of every transport the admitted code can reach, each excluded before construction or refused before I/O through the journal; unclassified transports fail closed. A raw `Bun.connect` bypass is known. | 1-2 |
+| Tools, MCP, memory and credentials | The deferred credential and MCP notifications that the extension runner flushes before the owned `session_start` join; the final task tools and any MCP binding, which wait on owner inputs. | 1, then 1 after the inputs |
+| Catalog, settings and authentication | Late starts after the acknowledgment: runtime model discovery and settings callbacks in the admitting profile. | 0-1 |
+| Presence, telemetry, marketplace and logging | Notice output paths after the handoff; version checks start only interactively, by source. | 0-1 |
+| Plugin roots and first-party extension | The deferred flush above, the command-metadata listener and plugin-root reload after dispatch opens, and work started by the bridge's transitive loads. | 1-2 |
+| Advisors | Bind the existing exclusion into the admitting profile's receipt. | 0 |
+| Prompt and command inputs | Bind the existing exclusions; depends on the final task prompt. | 0-1 |
+| Debugger and process timers | A native census of timer creation and teardown; about 300 `setTimeout` and 80 `setInterval` text matches, reachability unknown. | 1 |
+| Native addon and process resources | The addon's own transport list beyond the attributed socket pair, and any process capability the final runtime needs. | 1 |
+| RPC initialization and parent admission | The new protocol revision (`startup_settled`, `startup_ack`, Ready echo), the await-acknowledgment handoff and its crash and write-failure controls. | 2-3 |
+
+Then the inventory freeze binds the host identity of owner decision 12. No document
+records a canonical order for the 25 reference patches; the census inferred it from
+the last round's restore script, so the freeze should record it explicitly.
+
+The round staged on 2026-11-19 for the deferred credential and MCP notifications is
+still the right next round, but it cannot run as staged: its deadline has passed, its
+base commit is stale, six of its reused gate inputs changed with the F14 split and the
+dependency updates, and it has no candidate patch or native driver yet. The census
+estimates 9 to 15 more native rounds, from the 2026-11-18/19 cadence of about one
+90-minute no-provider round per owner. Unknowns it lists include whether the
+credential notice can fire with empty authentication at all, and which of the matched
+timer and network sites are reachable.
+
+## Native addon socket-pair static attribution — 2026-11-20
+
+The [2026-11-19 record](#native-unix-socket-creation-during-addon-load--2026-11-19)
+bound one Unix socket-pair call at addon load to the native image and left the
+calling function open. A read-only static analysis of the same stripped addon
+(SHA-256 `ee0bf26f…900b`) with `otool` and `objdump`, against the pinned crate
+sources, attributes it with high confidence:
+
+- The call at `0xdc21ac` is Mio's macOS `UnixStream` pair helper, by its exact
+  `socketpair` arguments and its four `fcntl` calls.
+- Tokio 1.53.1's signal globals initializer calls it, by the embedded panic location
+  `tokio-1.53.1/src/signal/unix.rs:71:53` ("failed to create UnixStream").
+- That initializer runs while napi's `create_runtime` builds the multi-thread runtime
+  (`tokio_runtime.rs:1294:21`), forced from `napi_register_module_v1`.
+- Every one of the 13 sampled return addresses sits directly after a call to the next
+  frame's function.
+- The three Unix descriptors are Tokio's receiver and sender endpoints plus a
+  `try_clone` duplicate of the receiver (`F_DUPFD_CLOEXEC` at `0x32c1974`). This
+  matches the 2026-11-18 kernel snapshots and the component fixture.
+
+This is static inference on a stripped binary; no addon or host was run. A native
+confirmation would extend the existing witness to `fcntl`, `kqueue` and `kevent` and
+check the predicted sequence. A second `socketpair` site and other socket, pipe and
+`sigaction` call sites exist in the addon outside the load path. Their reachability
+is part of the open transport inventory.
+
+## Sandbox profile segmentation fault diagnosis — 2026-11-20
+
+The [2026-11-15 settlement record](#startup-settlement-counterexample--2026-11-15)
+kept five segmentation faults and one addon-load failure from ad-hoc sandbox profiles
+with their cause unestablished. A read-only diagnosis read the five macOS crash
+reports, which were not in the evidence directory. They are now copied, owner-only,
+into `runs/pilot-startup-settlement-2026-11-15/crash-reports/`.
+
+- Observed: all five crashes have the same stack. On a Bun worker thread, the host's
+  check for Apple's on-device model reaches, through the native addon's extracted
+  helper library and Apple's frameworks, `NSUserDefaults` suite initialisation. It
+  then calls `CFBundleGetIdentifier` on a null bundle and reads address `0x8`.
+- Inferred, not confirmed: the ad-hoc profile denied every file read under the home
+  directory, metadata included, so the process's main bundle could not be resolved
+  from the executable's directory. The production policy, `Host::sandbox_policy`,
+  denies only `file-read-data` under the home directory. The canonical-shaped runs
+  reached and finished the same check without a crash.
+- The startup-observation and owned profiles disable the implicit `apple` provider,
+  and none of their retained runs extracted the helper library. Ordinary capture
+  still runs the check on macOS.
+- The one addon-load failure (`Cannot find module` on an extracted, hash-verified
+  addon) stays unexplained by the retained evidence.
+
+No native control was run. The next steps the diagnosis proposes are a check of the
+retained system log for sandbox denials, one control under the same profile with the
+`apple` provider disabled, and an owner choice: whether every pilot v2 arm disables
+the `apple` provider or binds its availability result as a pinned startup input.
+
+## Pilot v2 freeze-input proposals — 2026-11-20
+
+Four proposals for inputs that must exist before pilot v2 can be frozen are now
+subsections of the [draft contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md).
+Each is headed "Proposed, 2026-11-20, not frozen". None chooses the task-data rights,
+budget, key, final sample or confirmatory contrasts, which stay the owner's.
+
+- **Arm and interface bindings.** It binds each arm and contrast to flags and tools
+  that exist today. The apparatus admits only the host's `read` and `edit` tools, so
+  no Foundry MCP server can be admitted yet; it lists the work that would need.
+- **Task manifest, authoring and allocation.** The fields, checks and sealing protocol
+  for each held-out task, modelled on the T005 holdout, and a seeded, balanced
+  allocation procedure with no seed drawn.
+- **Sample and statistical design.** Three candidate designs from
+  `scripts/pilot-v2-power.py`, with tables. The tool's bound needs about 330 tasks
+  for two contrasts at a 0.20 margin. A variance-based paired method from an
+  uncommitted script, kept privately in `runs/pilot-v2-proposals-2026-11-20/`, needs
+  about 96. The closure of 009 T005 leaves the anchorless arm with no repair to bind,
+  so the arm list needs an owner choice.
+- **Startup and run limits.** Proposed wall-clock, attempt and metadata limits for the
+  admitting protocol revision, from 43 retained startup journals, and a table of the
+  per-run bounds still to choose.
+
+Four in-session agents drafted them, one integrated them as additions only, and a
+reviewer checked every number, flag and reference and fixed eleven problems. The
+proposals disagree in three places, which are disclosed in the text for an owner or
+freeze decision.
+
 ## Local gates on `afa7b38` — 2026-11-20
 
 All eight gates exit 0 on `afa7b38`, on a clean tree on the owner's Mac
@@ -358,6 +474,8 @@ identifies the Unix signal driver in the component fixture and accounts
 for the matching pattern in the addon as an inference. The compiled
 addon's sampled frames identify the image and offsets. They leave its
 internal function identity and the remaining transport inventory open.
+(A [static attribution of 2026-11-20](#native-addon-socket-pair-static-attribution--2026-11-20)
+since names the function, as an inference; the transport inventory stays open.)
 
 macOS denied the debugger attachment. The first test-only syscall witness
 crashed during addon loading. The successful witness calls the original
@@ -5504,7 +5622,9 @@ All original failures remain: five segmentation faults occur in ad-hoc sandbox
 controls, including controls without a preload or fetch replacement; one stricter
 policy fails native-addon loading. Those profiles differ from `Host::launch`.
 The exact permission/runtime cause is unestablished; the corresponding canonical
-policy runs complete normally. An absent-preload-log collector error is preserved,
+policy runs complete normally. (A [read-only diagnosis of
+2026-11-20](#sandbox-profile-segmentation-fault-diagnosis--2026-11-20) since reads
+the five crash reports and infers a cause.) An absent-preload-log collector error is preserved,
 then fixed only for the fresh baseline. A readback assumption that all other
 refusals preceded readiness is also retained and corrected to check the actual
 contiguous prefix. The unstarted no-listener case stays unstarted. None of these

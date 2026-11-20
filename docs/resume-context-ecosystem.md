@@ -5,6 +5,19 @@
 Updated 2026-11-20. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
+- **Startup census and pilot v2 proposals, 2026-11-20.** A read-only census lists
+  what remains before the pilot v2 startup inventory can be frozen, row by row, and
+  estimates 9 to 15 more no-provider native rounds; the next is the re-staged round
+  for deferred credential and MCP notifications
+  ([census](validation.md#startup-inventory-census--2026-11-20)). The addon's
+  startup socket pair is attributed statically to Tokio's signal driver, and the
+  2026-11-15 sandbox segfaults to a metadata-denying ad-hoc profile, by inference
+  ([attribution](validation.md#native-addon-socket-pair-static-attribution--2026-11-20),
+  [diagnosis](validation.md#sandbox-profile-segmentation-fault-diagnosis--2026-11-20)).
+  The draft contract gains four unfrozen proposals for its freeze inputs
+  ([record](validation.md#pilot-v2-freeze-input-proposals--2026-11-20)). Startup
+  admission, the acknowledgment and the runtime handoff stay on HOLD.
+
 - **Owner decisions and pending-work round, 2026-11-19.** A read-only sweep listed
   123 pending items; the owner answered sixteen open decisions
   ([record](validation.md#owner-decisions--2026-11-19)). Done in this round:
