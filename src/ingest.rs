@@ -945,6 +945,8 @@ impl ChangeReader {
         }
     }
     /// One verified no-follow read of a named file, with nothing published.
+    /// `engine` reaches only the fault point, which the default build omits.
+    #[cfg_attr(not(feature = "test-faults"), allow(unused_variables))]
     fn fetch(&self, engine: &Engine, path: &str, control: &Control) -> FResult<Fetched> {
         crate::store::validate_path(path)?;
         control.check()?;
