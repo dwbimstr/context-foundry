@@ -26,8 +26,10 @@ and dated paragraphs below are history.
   ([receipt](validation.md#local-gates-on-f2cf6f3--2026-11-19)). Spec 010 T001-T002
   are accepted at their written scope, and new named limitations are recorded in
   specs 003, 008 and 009 and the pilot v2 draft. The T005 loss analysis found no
-  bounded candidate with a plausible large gain, so the next T005 move is with the
-  owner ([analysis](validation.md#t005-loss-analysis--2026-11-19)). Pausing
+  bounded candidate with a plausible large gain
+  ([analysis](validation.md#t005-loss-analysis--2026-11-19)), and the owner closed
+  009 T005 without promotion: the baseline stays, it is a named limitation and no
+  longer a release condition, and the 2026-11-18 holdout stays sealed. Pausing
   Dependabot version updates takes effect only after the next merge to `main`.
 
 - **Catalog refusal binding, 2026-11-19.** The fixed startup diagnostic

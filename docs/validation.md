@@ -34,7 +34,8 @@ privately in `runs/t005-loss-analysis-2026-11-19/`.
   candidate. The analysis judges its chance of passing the final gate under 10%.
 
 Not established: any measured effect of role-ordered placement, which is a replay
-estimate only. Per decision 5, the next move returns to the owner.
+estimate only. Per decision 5 the next move went back to the owner, who closed T005
+without promotion (decision 17 above).
 
 ## Second encrypted backup batch — 2026-11-19
 
@@ -142,7 +143,8 @@ pilot-capture gates and reused the default-feature receipts.
 ## Owner decisions — 2026-11-19
 
 A read-only sweep on 2026-11-19 listed 123 pending items at `85a63c3`. The owner
-answered sixteen open decisions, choosing the recommended option each time. Each row
+answered sixteen open decisions, then a seventeenth after the T005 analysis, choosing
+the recommended option each time. Each row
 quotes the owner's choice; the last column is the result or where it is recorded.
 
 | # | Item | Owner's choice | Result |
@@ -151,7 +153,7 @@ quotes the owner's choice; the last column is the result or where it is recorded
 | 2 | Weekly hosted workflow runs on Dependabot branches | "Pause version updates" | `.github/dependabot.yml` sets `open-pull-requests-limit: 0` for both ecosystems. Dependabot reads its configuration from the default branch, `main`, so the pause takes effect only after the next owner-approved merge to `main`. Alerts and security updates are unaffected. |
 | 3 | Local-only branches of the rejected T005 experiments | "Push as archive branches" | Done: `archive/t005-fragment-order-20261113` (`ac81777`), `archive/t005-kept-body-headers-20261113` (`74b0b26`) and `archive/t005-headers-red-mutant-20261113` (`74b1be9`) are on GitHub. They never merge; they keep the commits the T005 receipts cite. |
 | 4 | Untracked `.mcp.json`, `.omp/mcp.json`, `.omp/tools/` | "Ignore them" | Done: ignored as machine-local in `.gitignore`. |
-| 5 | Next move for 009 T005 | "Analyze, then one more" | Study the recorded development losses without touching the sealed 2026-11-18 holdout; select one more bounded candidate only if the analysis shows a plausible large gain, otherwise return to the owner. The analysis found none ([record](#t005-loss-analysis--2026-11-19)); the choice is back with the owner. |
+| 5 | Next move for 009 T005 | "Analyze, then one more" | Study the recorded development losses without touching the sealed 2026-11-18 holdout; select one more bounded candidate only if the analysis shows a plausible large gain, otherwise return to the owner. The analysis found none ([record](#t005-loss-analysis--2026-11-19)); see row 17. |
 | 6 | Spec 010 T001-T002 for the release | "Accept at written scope" | Accepted at their written, experimental and unadvertised scope; real-model task utility stays deferred (decision 14 of 2026-11-06). |
 | 7 | 009 T007 device tuning and real throughput | "Named limitation" | Covered by decision 12 of 2026-11-06, "Script checks only". |
 | 8 | Version of the first release | "0.2.0" | `Cargo.toml` moves to 0.2.0 in the release commit, not before: the installer refuses to upgrade to an installed version, and development builds carry the Cargo version. |
@@ -163,6 +165,7 @@ quotes the owner's choice; the last column is the result or where it is recorded
 | 14 | Pilot private-output hardening | "Accept a and c, test b" | A same-user racing process and power-loss durability are named limitations, recorded in the [pilot v2 draft](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md); forced permission-call and sync-call failures get fault-injection tests. |
 | 15 | Open items with no owner | All four selected | Named limitations: 003 T009 coverage gaps; 009 T009 late chunking and selective body preparation; 008 task-view host extensions; upstream presence-file cleanup and daemon shutdown on ordinary host exit. Recorded in specs 003, 008 and 009 and the pilot v2 draft. |
 | 16 | Backups beyond the 2026-11-11 batch | "Add those two" | Done: one more encrypted batch for the G2 run results and the 2026-11-13 T005 final bundle ([record](#second-encrypted-backup-batch--2026-11-19)). |
+| 17 | 009 T005 after the [loss analysis](#t005-loss-analysis--2026-11-19) | "Close, no promotion" | T005 closes without promotion: the measured candidates are its outcome, the current baseline stays, anchorless retrieval quality beyond it is a named limitation, and T005 is no longer a release condition. The 2026-11-18 holdout stays sealed for future work. |
 
 The owner chose named limitations in rows 7, 13, 14 and 15 without wording their
 re-entry triggers. The triggers written into the specs and the pilot v2 draft are

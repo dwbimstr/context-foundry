@@ -9,7 +9,9 @@ The first three tasks are **active, in progress**. The owner's subsequent instru
 authorizes experimental sandbox implementation of later milestones without waiting
 for measurements or gates. Their concrete contracts are refined in the owning specs.
 Existing acceptance, signing and
-release requirements remain in force; 013 remains frozen off.
+release requirements remain in force; 013 remains frozen off. (Owner decision,
+2026-11-19, "Close, no promotion": the first of the three, 009 T005, is closed without
+promotion; the [revised build order](#revised-build-order) records the outcome.)
 
 The product objective is **verified task completion with faithful evidence and user
 constraints, at an acceptable total cost and latency**. Foundry should find the
@@ -119,11 +121,13 @@ of the broader acceptance work below.
 | Task/project memory | Explicit task state, reversible folds, original recovery, grounded review, promotion/correction/forgetting: [task context](../src/task_context.rs), [tests](../tests/task_context.rs). | Measured reduction in repeated failures/missed constraints and unnecessary interventions. By owner decision, 2026-11-06, semantic conflict detection (008 T004's semantic triggers: contradiction and constraint-violation detection) was to be built. On 2026-11-13 the owner selected explicit structured assertions under the no-model rule, and they were implemented locally ([record](validation.md#structured-task-assertions-008-t004--2026-11-13)): review compares caller-declared assertions and interprets no prose. Semantic loop reasoning remains a conditional extension. |
 | Host integration and accounting | Declared receipt-based task economics now counts failed attempts and separates amortization assumptions. Frozen and live task-view application through the existing MCP owner and Rust gateway, revision checks, final-request receipts, restart/revocation refusal; cached/uncached accounting and per-arm cache reset; installed OMP checks: [live resolution](../src/task_host/live.rs), [gateway tests](../tests/gateway.rs). | Broader matched free-form tasks with a capable tool-using model and complete usage. Ordinary MCP delivery does not prove host application. Broader view regions remain a conditional extension. |
 | Local resource controls | Per-worker CPU/RAM, shared memory admission, Linux affinity/cgroup hysteresis and idle generation eviction. Linux embedding now enforces seccomp, CPU/AS ceilings and owner death: [resources](../src/knowledge/local/resources.rs), [worker checks](../tests/embed_linux.rs). | Native macOS CPU observation/pressure acceptance on the signed release candidate; the native script's checks passed with ad-hoc signing on 2026-11-10 ([receipt](validation.md#native-macos-acceptance--2026-11-10)). Global GPU headroom, thermal/battery adaptation, optional embedding eviction and combined embedding-plus-generation residency are unbuilt and, by owner decision, 2026-11-06, named limitations rather than acceptance conditions. |
-| Retrieval quality and economics | Experimental prose coverage/proximity scoring, exact body/declaration excerpts and partial-coverage interleaving. Development delivery is 2/8 versus previous 1/8 on Foundry and 3/6 versus 0/6 on inspected Rust probes; eight additional public Rust questions deliver 5/8 versus legacy 0/8. A regressing passage reranker was removed. Two-passage selection, language-qualifier disambiguation and matching semantic admission preserve prior delivery; mixed-corpus Go now improves from prior 1/8 to 5/8, retaining all preceding Foundry/Rust deliveries. Broader inflection expansion was removed after Rust regressions. Frozen-source attribution and pinned real-host repair diagnostics: [attribution](../tests/retrieval_attribution.rs), [host tasks](../tests/gateway/host_task.rs). | Effective general anchorless repair and held-out acceptance. The parser patches pass but composed execution reaches its deadline with greater known usage. Both new upstream percent-decoder pairs fail, with public checks and with/without prompt caching. Broader representative quality and amortized total-cost improvement remain. |
+| Retrieval quality and economics | Experimental prose coverage/proximity scoring, exact body/declaration excerpts and partial-coverage interleaving. Development delivery is 2/8 versus previous 1/8 on Foundry and 3/6 versus 0/6 on inspected Rust probes; eight additional public Rust questions deliver 5/8 versus legacy 0/8. A regressing passage reranker was removed. Two-passage selection, language-qualifier disambiguation and matching semantic admission preserve prior delivery; mixed-corpus Go now improves from prior 1/8 to 5/8, retaining all preceding Foundry/Rust deliveries. Broader inflection expansion was removed after Rust regressions. Frozen-source attribution and pinned real-host repair diagnostics: [attribution](../tests/retrieval_attribution.rs), [host tasks](../tests/gateway/host_task.rs). | Effective general anchorless repair and held-out acceptance; since 2026-11-19, when 009 T005 closed without promotion ("Close, no promotion"), anchorless quality beyond the current baseline is a named limitation, not an acceptance condition. The parser patches pass but composed execution reaches its deadline with greater known usage. Both new upstream percent-decoder pairs fail, with public checks and with/without prompt caching. Broader representative quality and amortized total-cost improvement remain. |
 
 The next implementation priority is a repair tied to observed retrieval losses, with
 model/runtime efficiency and broader evidence coverage following under their existing
-owners. The [pending inventory](#pending-work-inventory--2026-10-10) retains all open
+owners. (That repair was 009 T005, which the owner closed without promotion on
+2026-11-19, "Close, no promotion".) The
+[pending inventory](#pending-work-inventory--2026-10-10) retains all open
 work, including hardware acceptance and conditional extensions. Existing historical
 Gemma preparation times (112,549 cards in 1,256 s; 332,732 in 4,437 s) do not profile
 today's pipeline or establish its speedup. Process memory measurements are not whole-host RAM.
@@ -338,10 +342,12 @@ wall times cannot identify which stage caused them.
 
 Remaining acceptance and owner-dependent inputs are recorded in the
 [current handoff](resume-context-ecosystem.md#current-status--2026-11-06).
-They include 009 T005 anchorless quality and 003 T006/T007–T009 real-host outcomes;
+They include 003 T006/T007–T009 real-host outcomes, and included 009 T005 anchorless
+quality until it closed on 2026-11-19 (below);
 001 T010's lexical retrieval scope is accepted, 010 real-model utility is deferred,
 and signed-package acceptance remains gated. Owner decisions of 2026-11-06
-([validation](validation.md#owner-decisions--2026-11-06)) set how these close:
+([validation](validation.md#owner-decisions--2026-11-06)) and one of 2026-11-19
+([validation](validation.md#owner-decisions--2026-11-19)) set how these close:
 
 - **003 T006** ("Draft pilot v2, unfunded"). The pilot v2 contract is drafted but not
   frozen ([draft](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md)).
@@ -369,6 +375,15 @@ and signed-package acceptance remains gated. Owner decisions of 2026-11-06
 - **005 T005** ("Accept at written scope"). The owner accepts it at its written scope;
   acceptance is recorded ([receipt](validation.md#boundary-scope-acceptance-005-t005--2026-11-10)). Other frameworks,
   brokers, cross-language identity and dynamic collectors become named limitations.
+- **009 T005** ("Close, no promotion", 2026-11-19). The
+  [loss analysis](validation.md#t005-loss-analysis--2026-11-19) found no bounded
+  candidate with a plausible large gain, so T005 closes without promotion. Its four
+  measured candidates and the unbuilt role-ordered placement estimate are its outcome,
+  the current retrieval baseline stays, and anchorless quality beyond it becomes a
+  named limitation. T005 is no longer a release condition, and the sealed 2026-11-18
+  holdout stays unopened for future work; the
+  [spec](../specs/009-optional-semantic-retrieval/spec.md#t005--diagnose-and-improve-anchorless-evidence-retrieval)
+  gives the re-entry trigger.
 
 Experimental task state, recovery and reminders are implemented. Explicitly configured OMP gateway application
 is verified; ordinary MCP application and measured quality/economics remain unknown.
@@ -391,7 +406,7 @@ keeps the evidence. This inventory lists capabilities and remaining work. Rows t
 
 | Area | Implemented and verified | Remaining work |
 | --- | --- | --- |
-| Retrieval | File-first hierarchy, owner-prioritized competition with other current file bodies, coarse excerpts/acronyms, structural-fragment roles, bounded independent body scoring and coverage-independent interleaving, exact document/excerpt forms, owner-passage grouping, coverage-aware packing and candidate backfill. Semantic publication counts the exact JSON it writes and no longer refuses large repositories. The frozen G2 set runs through [`scripts/g2.sh`](../scripts/g2.sh), which also scores verbatim definition bodies. Complete hierarchy beats address cards on G2 (169 against 136 of 388). | Superseded 2026-10-22: the owner decision on promoting complete hierarchy (about twice the units and serving memory), the G1 gates for default promotion and the held-out acceptance ([FOLLOWUP](../FOLLOWUP.md) F4). Complete hierarchy became the default and F4 passed on 2026-10-22 ([validation](validation.md#f4-and-the-hierarchy-default--2026-10-22)). G2 losses by stage: target file never retrieved, file retrieved but not the target unit, unit cut by placement limits, and unit packed but omitted by the token packer. Breadth-first packing is rejected (it trades 95 verbatim bodies for 14 located names); 001 T010's lexical singleton candidate is accepted at its written retrieval scope and defaults on with explicit opt-out ([current status](resume-context-ecosystem.md#current-status--2026-11-06), [evidence](validation.md#t010-singleton-qualification--2026-11-11)). Semantic quality and 003 T006 agent-task outcomes retain their own acceptance requirements. |
+| Retrieval | File-first hierarchy, owner-prioritized competition with other current file bodies, coarse excerpts/acronyms, structural-fragment roles, bounded independent body scoring and coverage-independent interleaving, exact document/excerpt forms, owner-passage grouping, coverage-aware packing and candidate backfill. Semantic publication counts the exact JSON it writes and no longer refuses large repositories. The frozen G2 set runs through [`scripts/g2.sh`](../scripts/g2.sh), which also scores verbatim definition bodies. Complete hierarchy beats address cards on G2 (169 against 136 of 388). | Superseded 2026-10-22: the owner decision on promoting complete hierarchy (about twice the units and serving memory), the G1 gates for default promotion and the held-out acceptance ([FOLLOWUP](../FOLLOWUP.md) F4). Complete hierarchy became the default and F4 passed on 2026-10-22 ([validation](validation.md#f4-and-the-hierarchy-default--2026-10-22)). G2 losses by stage: target file never retrieved, file retrieved but not the target unit, unit cut by placement limits, and unit packed but omitted by the token packer. Breadth-first packing is rejected (it trades 95 verbatim bodies for 14 located names); 001 T010's lexical singleton candidate is accepted at its written retrieval scope and defaults on with explicit opt-out ([current status](resume-context-ecosystem.md#current-status--2026-11-06), [evidence](validation.md#t010-singleton-qualification--2026-11-11)). Semantic quality and 003 T006 agent-task outcomes retain their own acceptance requirements. Owner decision, 2026-11-19, "Close, no promotion": 009 T005 closed without promotion, the current baseline stays, and anchorless quality beyond it is a named limitation. |
 | Indexing and scale | Incremental watcher, cache/ANN publication, bounded resume plans, initial file views before refinement; current overview fitting across 67,663 distinct admitted sources. A separate 274-source Gemma 2 overview run completes in 298.563 s with zero-call unchanged replay. | Current 009 T006–T009 scale acceptance is recorded in the [resumable handoff](resume-context-ecosystem.md#current-status--2026-11-06), with the [completed Mac Rust replay and changed-input receipt](validation.md#semantic-scale-replay-and-changed-input-acceptance--2026-11-10). The batch-one/eight calibration and full Linux driver ([FOLLOWUP](../FOLLOWUP.md) F10, F11), which needed `avx512_bf16` and the pinned public archives, are retired unrun; Linux x86 scale and complete real-model inference over the 67,663-source corpus become a named limitation. Overview completion must remain separate from exhaustive bodies and sustained churn. |
 | Representations and runtime | Independent body/parent/file/area vectors, exact-key reuse, production 8,192-token allocation correction, real CPU/Metal numerical parity. Body contexts keep the region's own declaration over budget (`+context2`); long overviews keep declaration documentation summaries and the file opening (`+overview4`), with no measured delivery change. | Representation/long-context quality, selective refinement outcomes and larger-area requirements. Late chunking remains a conditional backend extension, not an implemented feature. |
 | Evidence | Current call-name postings, conservative Python aliases, whole router dependency proofs and revision-bound execution snapshots; eight real framework/execution checks. Atomic proof/source allocation now retains both relevant fixture relationships where the old allocator delivered one; this is not observed task execution. | Broader collectors/frameworks and resolved cross-language callers, named limitations of 005 T005 since 2026-11-06; observed representative host outcomes, which 003 T009 awaits from pilot v2. Unsupported or dynamic cases remain incomplete; syntax is not observed execution. |
@@ -488,7 +503,7 @@ and what causes the 249 anchorless misses, remain measurement questions.
 
 | Order | User-visible outcome | Existing owner and work | Exit evidence |
 | --- | --- | --- | --- |
-| 1. Retrieve the required evidence | Behavioral and mixed symbol/behavior questions return useful implementation evidence within the requested budget. | [009 T005](../specs/009-optional-semantic-retrieval/spec.md#t005--diagnose-and-improve-anchorless-evidence-retrieval) diagnoses and repairs anchorless retrieval; [001 T010](../specs/001-source-state-recovery/spec.md#t010--retrieve-behavioral-evidence-for-a-named-symbol) repairs mixed intent. | Stage-attributed losses, paired improvement over current Gemma on fresh held-out cases, preserved source/budget invariants and G1 guards. |
+| 1. Retrieve the required evidence | Behavioral and mixed symbol/behavior questions return useful implementation evidence within the requested budget. | [009 T005](../specs/009-optional-semantic-retrieval/spec.md#t005--diagnose-and-improve-anchorless-evidence-retrieval) diagnoses and repairs anchorless retrieval; [001 T010](../specs/001-source-state-recovery/spec.md#t010--retrieve-behavioral-evidence-for-a-named-symbol) repairs mixed intent. 009 T005 closed without promotion on 2026-11-19 ("Close, no promotion"); anchorless quality beyond the current baseline is a named limitation. | Stage-attributed losses, paired improvement over current Gemma on fresh held-out cases, preserved source/budget invariants and G1 guards. |
 | 2. Improve actual coding tasks | Agents reach the right evidence and a verified patch with fewer unnecessary discovery steps. | [003 T006](../specs/003-agent-retrieval-context/spec.md#t006--validate-retrieval-repairs-in-real-coding-tasks) tests current versus repaired retrieval at the real host boundary. | Verified task outcomes, full-task usage and latency, visible failures, and an inspected host capability boundary for the next milestone. |
 | 3. Preserve task state and observations | A restart retains the user constraint, rejected approach, unresolved question and supporting observation. | Experimental 003 T007 delivery and 008 T003 explicitly scoped retained records; 001 continues to own source identity. | Atomic updates, conflict handling, bounded opt-in capture, exact retained-observation recovery, and no inferred root admission or training permission. |
 | 4. Edit and recover working context | The agent can fold a large observation, keep the task coherent, and recover exact details before acting. | Experimental 003 T007 / 008 T003 reversible views using source identities and milestone 3 records. | A real host applies an identified view revision; round-trip recovery, valid tool linkage, interrupted-commit/restart behavior and measured task economics pass. |
@@ -508,7 +523,8 @@ checks remain pending and never imply default promotion or release acceptance.
 The three linked task sections are the authoritative backlog and acceptance detail.
 Execute them in this order:
 
-1. **Freeze and explain the baseline — 009 T005 diagnostic checkpoint.** Pin the
+1. **Freeze and explain the baseline — 009 T005 diagnostic checkpoint.** Closed with
+   T005 on 2026-11-19 (note below). Pin the
    current binary, Gemma profile, corpora, prepared generations, harness and budgets.
    Inspect all 388 results, including the 139 successes. For each miss record the
    first observed loss: absent/ineligible unit, candidate retrieval, ordering/caps,
@@ -523,7 +539,8 @@ Execute them in this order:
    current graph evidence. Amend the existing packing contract explicitly; do not
    merely turn dense retrieval on for every anchored query.
 3. **Repair the largest demonstrated anchorless loss — 009 T005 candidate checkpoint.**
-   Choose one mechanism from the attribution: richer source-derived cards, candidate
+   Closed without promotion on 2026-11-19 (note below). Choose one mechanism from the
+   attribution: richer source-derived cards, candidate
    coverage, deterministic ordering, or packing. Hold the selected embedding model
    fixed. Evaluate at most three predeclared variants in the first tranche; use the
    simplest variant that clears the gate. Change a representation recipe only with
@@ -536,6 +553,16 @@ Execute them in this order:
    longer decides 001 T010's `--experimental-behavior-context`: its own local gates
    and the 2026-10-19 G2 rule do ("Lexical-only, drop T006 gate";
    [record](validation.md#owner-decisions--2026-11-06)).
+
+Owner decision, 2026-11-19, "Close, no promotion": steps 1 and 3, the two 009 T005
+checkpoints, close with T005, which closes without promotion. After the
+[loss analysis](validation.md#t005-loss-analysis--2026-11-19) found no bounded
+candidate with a plausible large gain, the four measured candidates (compact
+preference, fragment order, kept-body declaration prefixes and lexical placement) and
+the unbuilt role-ordered placement estimate are T005's outcome. The current retrieval
+baseline stays, anchorless quality beyond it is a named limitation, T005 is no longer
+a release condition, and the sealed 2026-11-18 holdout stays unopened for future work
+([record](validation.md#owner-decisions--2026-11-19)). The steps above stay as written.
 
 The exit artifact is a concise decision record: loss counts, chosen repair and
 rejected alternatives, changed contracts, paired results and regressions, runtime

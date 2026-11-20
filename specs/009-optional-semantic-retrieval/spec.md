@@ -232,6 +232,7 @@ hierarchy, with no code change; native macOS acceptance keeps using it
 Planning addition, 2026-10-09: [T005](#t005--diagnose-and-improve-anchorless-evidence-retrieval)
 is authorized for execution by the owner on 2026-10-09 under the [ecosystem plan](../../docs/context-ecosystem-plan.md).
 It does not change T001–T004 acceptance or semantic enablement/package restrictions.
+(T005 closed without promotion on 2026-11-19, "Close, no promotion"; see its status.)
 
 Experimental update, 2026-10-09: T006/T007 implement bounded parallel partitions and
 progressive bootstrap. The subsequent efficiency audit selects their CPU/startup
@@ -1343,7 +1344,8 @@ for this proof.
 
 ### T005 — Diagnose and improve anchorless evidence retrieval
 
-**Status:** authorized 2026-10-09 (owner: “go for 1 then 2 and onwards”); in progress, not accepted. T004's
+**Status:** authorized 2026-10-09 (owner: “go for 1 then 2 and onwards”); closed without
+promotion on 2026-11-19 (owner decision, "Close, no promotion"; see below). T004's
 selected Gemma profile and current implementation are the comparison baseline.
 The selected K=1 packing experiment completed on 2026-11-11 with **no promotion**:
 it failed G2 body preservation and was removed from active code. Its G1 comparison
@@ -1369,13 +1371,28 @@ recorded losses without touching the sealed 2026-11-18 holdout. One more bounded
 candidate is selected only if that analysis shows a plausible large gain; otherwise
 the work returns to the owner. The candidate checkpoint and every acceptance guard
 below are unchanged ([record](../../docs/validation.md#owner-decisions--2026-11-19)).
+Owner decision 17, 2026-11-19, "Close, no promotion": the
+[loss analysis](../../docs/validation.md#t005-loss-analysis--2026-11-19) found no
+bounded candidate with a plausible large gain, and T005 closes without promotion. Its
+outcome is five candidates: the four measured ones (compact preference, fragment
+order, kept-body declaration prefixes and lexical placement) and the analysed but
+unbuilt role-ordered placement estimate. The current retrieval baseline stays.
+Anchorless retrieval quality beyond that baseline is a named limitation, and T005 is
+no longer a release condition. The sealed 2026-11-18 holdout stays unopened, reserved
+for future work. The re-entry trigger is the implementer's proposal, which the owner
+may replace: a new candidate that shows at least about +30 net located definitions on
+development G2 before it may spend that holdout, or a change of embedding
+representation or query handling that the owner selects
+([record](../../docs/validation.md#owner-decisions--2026-11-19)). The checkpoints and
+acceptance guards below are kept as written.
 The original G2 verdict remains valid for its original question: gain over no profile.
 This task asks which current losses can be repaired at the same delivery budget.
 The [resumable handoff](../../docs/resume-context-ecosystem.md#current-status--2026-11-06)
 owns the current baseline, case-review disposition and selected repair hypothesis;
 the candidate checkpoint below remains required before promotion.
 
-**Implementation in progress:** `src/retrieval_trace.rs` owns opt-in request-local
+**Implementation (in progress until the 2026-11-19 closure; the trace code remains):**
+`src/retrieval_trace.rs` owns opt-in request-local
 diagnostics, shared through `Control` by the ordinary selection/final-read paths.
 `context --retrieval-trace-dir DIR` and `mcp --retrieval-trace-dir DIR` require a new
 run directory; existing paths, including symlinks, are refused. Unix directories are

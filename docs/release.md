@@ -83,8 +83,12 @@ and those the owner named on 2026-11-19 in its own
 and real throughput ("Named limitation"), a SIGSTOP-stopped embedding worker whose
 owner dies ("Named limitation"; no OS-level guardian is built and package acceptance
 does not need one), 009 T009's late chunking and selective body preparation, 003
-T009's coverage gaps and 008's task-view host extensions. The release does not wait
-on them; each owning spec gives its re-entry trigger.
+T009's coverage gaps and 008's task-view host extensions. The same record adds
+anchorless retrieval quality beyond the current baseline: under "Close, no promotion"
+(2026-11-19), [009 T005](../specs/009-optional-semantic-retrieval/spec.md#t005--diagnose-and-improve-anchorless-evidence-retrieval)
+closes without promotion and is no longer a release condition, and its sealed
+2026-11-18 holdout stays unopened for future work. The release does not wait on any of
+them; each owning spec gives its re-entry trigger.
 
 ## Compatibility and data preservation for the first release
 

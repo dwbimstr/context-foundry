@@ -34,7 +34,11 @@ classified their remaining unknowns as settled decisions, owned decisions (both 
 2026-10-04) or external prerequisites, all listed in the portfolio. Since then 013 has
 been frozen off (2026-10-07); 005 T005 is accepted at its written scope
 ([receipt](validation.md#boundary-scope-acceptance-005-t005--2026-11-10)), and 009 remains open
-([owner decisions, 2026-11-06](validation.md#owner-decisions--2026-11-06)). 003
+([owner decisions, 2026-11-06](validation.md#owner-decisions--2026-11-06)). Within 009,
+the anchorless retrieval task T005 closed without promotion on 2026-11-19 ("Close, no
+promotion"): its diagnostic and candidate checkpoints are closed, the current baseline
+stays, anchorless quality beyond it is a named limitation and T005 is no longer a
+release condition ([owner decisions, 2026-11-19](validation.md#owner-decisions--2026-11-19)). 003
 T006–T009 and 008 T003–T005 retain their task-outcome requirements. See the
 [resumable handoff](resume-context-ecosystem.md) for current acceptance and remaining
 release checks. 001 D001 stays resolved: redb/Tantivy. Optional model choices do not reopen that decision by default.

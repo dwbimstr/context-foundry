@@ -147,6 +147,27 @@ on the signed release candidate. The fixed bounds of the core are listed in the
   ([record](docs/validation.md#semantic-scale-replay-and-changed-input-acceptance--2026-11-10)).
   Scale on Linux x86 and on the 67,663-source Rust and Go corpus is not accepted. That
   record accepts neither retrieval quality nor a benefit on coding tasks.
+- **Anchorless retrieval quality is not improved beyond the current baseline.** The
+  work to improve retrieval for questions with no anchor (spec 009 T005) closed
+  without promotion: four candidates were measured, none was promoted, and the current
+  retrieval stays (owner decision, 2026-11-19, "Close, no promotion";
+  [record](docs/validation.md#owner-decisions--2026-11-19);
+  [loss analysis](docs/validation.md#t005-loss-analysis--2026-11-19)). The
+  [spec](specs/009-optional-semantic-retrieval/spec.md#t005--diagnose-and-improve-anchorless-evidence-retrieval)
+  gives the condition for reopening it.
+- **Other limitations the owner named on 2026-11-19.** Each has no planned work and a
+  condition for reopening it in its spec
+  ([record](docs/validation.md#owner-decisions--2026-11-19)):
+  - device tuning and real throughput for semantic preparation (009 T007) are
+    unverified beyond what the native script checks;
+  - a semantic embedding worker paused with SIGSTOP is not ended if its owning
+    `foundry` process dies;
+  - late chunking and selective body preparation are not built (009 T009);
+  - task evidence composition does not cover dynamic dispatch, indirect wrappers,
+    unsupported languages, broader framework behaviour, requirement satisfaction or
+    semantic constraint conflicts (003 T009);
+  - a task view cannot be applied through ordinary MCP, to more than one host region
+    or automatically (008).
 - **Boundary relationships cover the accepted fixture scope only.** The producer reads
   Python FastAPI and Flask services. Other frameworks and brokers, broader import
   forms, identity across languages and dynamic collectors are outside that scope
