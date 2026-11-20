@@ -1,5 +1,45 @@
 # Validation
 
+## Local gates on `afa7b38` — 2026-11-20
+
+All eight gates exit 0 on `afa7b38`, on a clean tree on the owner's Mac
+(05:34–05:47 UTC), with Rust 1.97.1 and 1.90.0 and the macOS 26.5 SDK. The commit
+adds the eight dependency updates of decision 1 and the private-writer fault tests
+of decision 14 to `f2cf6f3`. Default suite: **1,321 passed, 0 failed, 35 ignored**,
+including the repaired cancellation test and the 6,000-file watcher test.
+Pilot-capture unit tests: **132 passed, 1 ignored**, seven more than on `f2cf6f3`.
+Log SHA-256 prefixes: Clippy `b2c9ccf3`, test `b78aa70f`, pilot Clippy `4618eeba`,
+pilot tests `f66cf9e7`, MSRV check `e4bb536a`, MSRV Clippy `2d7261c6`, MSRV pilot
+check `34c71af1`. Logs are private, under
+`datasets/context-foundry-gates/afa7b38-2026-11-20/`.
+
+Not run: CI (Actions unavailable), native macOS acceptance, live MCP hosts against
+rmcp 3.10.0 (the MCP tests use the real SDK client), and G2 or G1, which none of the
+eight updates touches.
+
+## Private writer fault-injection tests — 2026-11-20
+
+Owner decision 14 of 2026-11-19 asks for tests of forced permission-call and
+sync-call failures in the pilot's private-output writers (`src/pilot_capture.rs`).
+Commit `232a7ad` adds a test-only seam: seven named calls (file mode, file sync, the
+file's parent sync, directory mode, directory sync, the directory's parent sync and
+`fsync_dir`) can be made to fail on the test's own thread, and the real call is then
+skipped. Outside tests the seam is an inline function that always succeeds, so
+production calls, error codes and order are unchanged. Arming returns a guard that
+disarms on drop, even if an assertion panics.
+
+Seven tests, one per call, check that each writer returns the exact fault class and
+code it maps that failure to. They also check that a second exclusive write or create
+at the same path is refused rather than replacing the leftover, that the leftover is
+no wider than owner-only, and that the writer succeeds again on a new path. Making
+the seam a no-op fails all seven. An agent wrote the change in its own worktree and a
+second read-only agent reviewed it; both are in-session. The review's two fixes, the
+drop guard and two missing fault-class checks, are in the same commit.
+
+Not covered: real kernel `EIO` or `EPERM`, failures of `openat`, `mkdirat`, `fstatat`
+or `write_all`, power-loss durability and a racing process of the same user; the last
+two are the named limitations of decision 14.
+
 ## T005 loss analysis — 2026-11-19
 
 Owner decision 5 above selected an analysis of the recorded development losses before
@@ -149,7 +189,7 @@ quotes the owner's choice; the last column is the result or where it is recorded
 
 | # | Item | Owner's choice | Result |
 |---|---|---|---|
-| 1 | Dependabot PR #55, eleven Cargo minor and patch updates | "Apply 8, hold 3" | Apply ignore, ureq, rmcp, uuid, notify, toml, tokio-rustls and rustls-pki-types by hand with a full gates run; hold tree-sitter-scala (parse output and schema), usearch (ANN graph and G2) and redb (store database) until each is measured; close the PR. |
+| 1 | Dependabot PR #55, eleven Cargo minor and patch updates | "Apply 8, hold 3" | Done: ignore, ureq, rmcp, uuid, notify, toml, tokio-rustls and rustls-pki-types applied by hand in `afa7b38` at the PR's versions, with a full gates run ([receipt](#local-gates-on-afa7b38--2026-11-20)); tree-sitter-scala (parse output and schema), usearch (ANN graph and G2) and redb (store database) are held until each is measured; the PR is closed. |
 | 2 | Weekly hosted workflow runs on Dependabot branches | "Pause version updates" | `.github/dependabot.yml` sets `open-pull-requests-limit: 0` for both ecosystems. Dependabot reads its configuration from the default branch, `main`, so the pause takes effect only after the next owner-approved merge to `main`. Alerts and security updates are unaffected. |
 | 3 | Local-only branches of the rejected T005 experiments | "Push as archive branches" | Done: `archive/t005-fragment-order-20261113` (`ac81777`), `archive/t005-kept-body-headers-20261113` (`74b0b26`) and `archive/t005-headers-red-mutant-20261113` (`74b1be9`) are on GitHub. They never merge; they keep the commits the T005 receipts cite. |
 | 4 | Untracked `.mcp.json`, `.omp/mcp.json`, `.omp/tools/` | "Ignore them" | Done: ignored as machine-local in `.gitignore`. |
@@ -162,7 +202,7 @@ quotes the owner's choice; the last column is the result or where it is recorded
 | 11 | The 25 oh-my-pi reference patches | "Keep as reference" | Status quo: published reference data, host built privately and pinned by SHA-256. |
 | 12 | Identity of the source-built host | "Digest plus pinned inputs" | Executable SHA-256 plus the ordered patches, dependency lock, Bun runtime and native-addon digests; no byte-for-byte rebuild required. |
 | 13 | A SIGSTOP-stopped embedding worker whose owner dies | "Named limitation" | Re-entry trigger: an observed stranded stopped worker. |
-| 14 | Pilot private-output hardening | "Accept a and c, test b" | A same-user racing process and power-loss durability are named limitations, recorded in the [pilot v2 draft](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md); forced permission-call and sync-call failures get fault-injection tests. |
+| 14 | Pilot private-output hardening | "Accept a and c, test b" | A same-user racing process and power-loss durability are named limitations, recorded in the [pilot v2 draft](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md); forced permission-call and sync-call failures have fault-injection tests in `232a7ad` ([record](#private-writer-fault-injection-tests--2026-11-20)). |
 | 15 | Open items with no owner | All four selected | Named limitations: 003 T009 coverage gaps; 009 T009 late chunking and selective body preparation; 008 task-view host extensions; upstream presence-file cleanup and daemon shutdown on ordinary host exit. Recorded in specs 003, 008 and 009 and the pilot v2 draft. |
 | 16 | Backups beyond the 2026-11-11 batch | "Add those two" | Done: one more encrypted batch for the G2 run results and the 2026-11-13 T005 final bundle ([record](#second-encrypted-backup-batch--2026-11-19)). |
 | 17 | 009 T005 after the [loss analysis](#t005-loss-analysis--2026-11-19) | "Close, no promotion" | T005 closes without promotion: the measured candidates are its outcome, the current baseline stays, anchorless retrieval quality beyond it is a named limitation, and T005 is no longer a release condition. The 2026-11-18 holdout stays sealed for future work. |
@@ -11079,6 +11119,7 @@ the default-feature receipts; they are not listed as full runs.
 
 | Commit | fmt | clippy 1.97 | test 1.97 | msrv-check | msrv-clippy |
 | --- | --- | --- | --- | --- | --- |
+| `afa7b38` | 0 | 0 | 0: 1,321 passed, 35 ignored; pilot-capture gates 0, pilot units 132 passed, 1 ignored ([receipt](#local-gates-on-afa7b38--2026-11-20)) | 0 | 0 |
 | `f2cf6f3` | 0 | 0 | 0: 1,321 passed, 35 ignored; pilot-capture gates 0, pilot units 125 passed, 1 ignored ([receipt](#local-gates-on-f2cf6f3--2026-11-19)) | 0 | 0 |
 | `3bd30be` | 0 | 0 | 0: 1,319 passed, 35 ignored; pilot-capture gates 0, pilot units 102 passed, 1 ignored ([receipt](#native-startup-watchdog-and-promise-hook-limits--2026-11-15)) | 0 | 0 |
 | `98157db` | 0 | 0 | 0: 1,319 passed, 35 ignored; pilot-capture gates 0, pilot units 101 passed, 1 ignored ([receipt](#stateless-native-request-repair--2026-11-15)) | 0 | 0 |

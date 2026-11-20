@@ -22,8 +22,9 @@ and dated paragraphs below are history.
   - archive branches for the rejected T005 experiments, and ignore rules for local
     tool configuration.
 
-  All eight gates pass on `f2cf6f3`
-  ([receipt](validation.md#local-gates-on-f2cf6f3--2026-11-19)). Spec 010 T001-T002
+  All eight gates pass on `afa7b38`, which also carries eight of Dependabot's eleven
+  updates and fault-injection tests for the pilot's private writers
+  ([receipt](validation.md#local-gates-on-afa7b38--2026-11-20)). Spec 010 T001-T002
   are accepted at their written scope, and new named limitations are recorded in
   specs 003, 008 and 009 and the pilot v2 draft. The T005 loss analysis found no
   bounded candidate with a plausible large gain
