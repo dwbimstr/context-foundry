@@ -4,7 +4,9 @@ import math
 import json
 import subprocess
 import sys
+from fractions import Fraction
 from pathlib import Path
+from statistics import NormalDist
 import unittest
 
 spec = importlib.util.spec_from_file_location('pilot_v2_power', Path(__file__).with_name('pilot-v2-power.py'))
@@ -262,6 +264,266 @@ class PowerTests(unittest.TestCase):
                 width = math.sqrt(2 * math.log(1 / tail) / n)
                 endpoint = {'gain': discordance / 2, 'loss': discordance / 2}
                 self.assertLessEqual(power.endpoint_power(n, endpoint, 0.0, width), tail + 1e-12)
+
+
+# The seven hypothetical scenarios of the 2026-11-20 sample proposal
+# (bounded-pilot-v2.md, "Proposed sample and statistical design"):
+# name, success (baseline, gain, loss), discovery (baseline, gain, loss).
+PROPOSAL = [('H1', (0.50, 0.05, 0.05), (0.30, 0.15, 0.05)),
+            ('H2', (0.50, 0.10, 0.10), (0.30, 0.25, 0.05)),
+            ('H3', (0.50, 0.20, 0.20), (0.30, 0.35, 0.05)),
+            ('H4', (0.30, 0.10, 0.05), (0.20, 0.45, 0.05)),
+            ('H5', (0.70, 0.15, 0.05), (0.50, 0.30, 0.10)),
+            ('H6', (0.50, 0.25, 0.05), (0.10, 0.55, 0.05)),
+            ('H7', (0.50, 0.05, 0.15), (0.50, 0.10, 0.10))]
+
+
+def scenarios(names=None):
+    def endpoint(values):
+        return {'baseline': values[0], 'gain': values[1], 'loss': values[2]}
+    return [{'name': name, 'success': endpoint(s), 'discovery': endpoint(d)}
+            for name, s, d in PROPOSAL if names is None or name in names]
+
+
+def calibrated(k=2, margin=0.2, counts=(96,), names=None, alpha=0.05):
+    return {'method': 'calibrated_paired', 'overall_alpha': alpha, 'confirmatory_contrasts': k,
+            'noninferiority_margin': margin, 'required_discovery_gain': 0.0,
+            'task_counts': list(counts), 'repetitions_per_task': 1, 'scenarios': scenarios(names)}
+
+
+def searching(k=2, margin=0.2, multiple=6, largest=640, target=0.9):
+    data = calibrated(k, margin, names=('H2',))
+    del data['task_counts']
+    data['search'] = {'scenario': 'H2', 'per_endpoint_target_power': target,
+                      'task_multiple': multiple, 'max_tasks': largest}
+    return data
+
+
+def multinomial(n, b, c, gain, loss):
+    """Independent outcome chance, written with integer binomial coefficients."""
+    same = max(1.0 - gain - loss, 0.0)
+    return math.comb(n, b) * math.comb(n - b, c) * gain ** b * loss ** c * same ** (n - b - c)
+
+
+def published(x):
+    """The proposal's three-decimal format."""
+    return '<0.001' if x < 0.0005 else ('>0.999' if x > 0.9995 else f'{x:.3f}')
+
+
+class CalibratedPairedTests(unittest.TestCase):
+    def test_success_size_is_within_tail_on_the_grid_and_raised_no_further(self):
+        for n, margin, tail in ((20, 0.1, 0.0125), (40, 0.2, 0.0125), (33, 0.15, 0.025), (60, 0.2, 0.05 / 14)):
+            with self.subTest(n=n, margin=margin, tail=tail):
+                test = power.calibrate_success_test(n, margin, tail)
+                z = {(b, c): power.tango_statistic(n, b, c, -margin)
+                     for b in range(n + 1) for c in range(n + 1 - b)}
+                rejected = {o for o, value in z.items() if value > test['critical_value']}
+                self.assertEqual(rejected, set(test['rejected']))
+                top = (1 - margin) / 2
+
+                def worst(region):
+                    return max(math.fsum(multinomial(n, b, c, top * i / 60, top * i / 60 + margin)
+                                         for b, c in region) for i in range(61))
+                self.assertLessEqual(worst(rejected), tail)
+                self.assertAlmostEqual(worst(rejected), test['worst_size'], places=12)
+                self.assertGreaterEqual(test['critical_value'], test['nominal_critical_value'])
+                if test['critical_value'] > test['nominal_critical_value']:
+                    # Rejecting the outcomes at the critical value as well would
+                    # break the tail, so the value was raised no further than needed.
+                    self.assertGreater(test['worst_size_at_nominal'], tail)
+                    self.assertGreater(worst({o for o, v in z.items() if v >= test['critical_value']}), tail)
+                else:
+                    self.assertLessEqual(test['worst_size_at_nominal'], tail)
+        # The uncalibrated test exceeds its tail here, as the proposal reports.
+        self.assertEqual(f"{power.calibrate_success_test(20, 0.1, 0.0125)['worst_size_at_nominal']:.4f}", '0.0214')
+
+    def test_sign_test_keeps_its_size_exactly(self):
+        tail = 0.0125
+        critical = power.sign_test_critical_counts(60, tail)
+        def upper(d, first):
+            return Fraction(sum(math.comb(d, j) for j in range(first, d + 1)), 2 ** d)
+        for d in range(1, 61):
+            k = critical[d]
+            if k is None:
+                self.assertGreater(upper(d, d), Fraction(tail))
+            else:
+                self.assertLessEqual(upper(d, k), Fraction(tail))
+                self.assertGreater(upper(d, k - 1), Fraction(tail))
+        for n in (10, 30, 60):
+            rejected = power.sign_test_rejected(n, critical)
+            for discordance in (0.02, 0.1, 0.3, 0.6, 1.0):
+                for gain_share in (0.5, 0.4, 0.1):  # 0.5 is the boundary gain = loss
+                    gain, loss = discordance * gain_share, discordance * (1 - gain_share)
+                    size = math.fsum(multinomial(n, b, c, gain, loss) for b, c in rejected)
+                    self.assertLessEqual(size, tail + 1e-15)
+
+    def test_hand_computed_small_cases(self):
+        # With delta 0 Tango's statistic is McNemar's (b - c) / sqrt(b + c).
+        self.assertAlmostEqual(power.tango_statistic(10, 5, 1, 0.0), 4 / math.sqrt(6), places=14)
+        # Two tasks, one gain, delta -0.2: the restricted loss chance is 0.4 and
+        # the variance is 2 (2 * 0.4 - 0.2 * 1.2) = 1.12.
+        self.assertAlmostEqual(power.tango_statistic(2, 1, 0, -0.2), 1.4 / math.sqrt(1.12), places=14)
+        # One task, margin 0.2: a gain scores sqrt(1.5), a tie 0.5, a loss -sqrt(2/3).
+        self.assertAlmostEqual(power.tango_statistic(1, 1, 0, -0.2), math.sqrt(1.5), places=14)
+        self.assertAlmostEqual(power.tango_statistic(1, 0, 0, -0.2), 0.5, places=14)
+        self.assertAlmostEqual(power.tango_statistic(1, 0, 1, -0.2), -math.sqrt(2 / 3), places=14)
+        # At tail 0.45 the normal value 0.126 rejects a gain or a tie. On the
+        # boundary that happens with chance 1 - 0.2 - gain, worst 0.8 at gain 0.
+        # Rejecting only a gain has chance gain, worst 0.4 at the grid's end, so
+        # the critical value rises to the tie's 0.5.
+        test = power.calibrate_success_test(1, 0.2, 0.45)
+        self.assertAlmostEqual(test['nominal_critical_value'], NormalDist().inv_cdf(0.55), places=14)
+        self.assertAlmostEqual(test['worst_size_at_nominal'], 0.8, places=14)
+        self.assertAlmostEqual(test['critical_value'], 0.5, places=14)
+        self.assertAlmostEqual(test['worst_size'], 0.4, places=14)
+        self.assertEqual(test['rejected'], [(1, 0)])
+        one = power.calculate(calibrated(k=1, counts=[1], names=('H2',), alpha=0.9))['results'][0]
+        self.assertAlmostEqual(one['success_power'], 0.1, places=14)  # the chance of a gain
+        self.assertEqual(one['discovery_power'], 0.0)  # 1/2 > 0.45, so no sign test rejects
+        # Sign test at tail 0.0125: up to 6 discordant tasks never reject (1/64 >
+        # 0.0125); 7, 8 and 9 need all gains; 10 needs 9 (11/1024 <= 0.0125).
+        self.assertEqual(power.sign_test_critical_counts(10, 0.0125), [None] * 7 + [7, 8, 9, 9])
+        data = calibrated(counts=[7], names=('H2',))
+        data['scenarios'][0]['discovery'] = {'baseline': 0.3, 'gain': 0.5, 'loss': 0.1}
+        self.assertAlmostEqual(power.calculate(data)['results'][0]['discovery_power'], 0.5 ** 7, places=15)
+
+    def test_power_matches_independent_enumeration_of_task_sequences(self):
+        n, margin, alpha = 5, 0.3, 0.1  # one contrast, tail 0.05
+        data = calibrated(k=1, margin=margin, counts=[n], alpha=alpha)
+        output = power.calculate(data)
+        critical = output['calibration'][0]['critical_value']
+        for row, scenario in zip(output['results'], data['scenarios']):
+            expected = {'success': 0.0, 'discovery': 0.0}
+            for endpoint in expected:
+                gain, loss = scenario[endpoint]['gain'], scenario[endpoint]['loss']
+                chance = {1: gain, -1: loss, 0: 1 - gain - loss}
+                for sequence in itertools.product((1, 0, -1), repeat=n):
+                    b, c = sequence.count(1), sequence.count(-1)
+                    if endpoint == 'success':
+                        reject = power.tango_statistic(n, b, c, -margin) > critical
+                    else:
+                        upper = Fraction(sum(math.comb(b + c, j) for j in range(b, b + c + 1)), 2 ** (b + c))
+                        reject = b + c > 0 and upper <= Fraction(0.05)
+                    if reject:
+                        expected[endpoint] += math.prod(chance[v] for v in sequence)
+            with self.subTest(scenario=row['scenario']):
+                self.assertAlmostEqual(row['success_power'], expected['success'], places=13)
+                self.assertAlmostEqual(row['discovery_power'], expected['discovery'], places=13)
+
+    def test_power_rises_with_tasks_on_a_doubling_scale(self):
+        # Published cells of the proposal's Result 2 table (H2, k = 2).
+        cells = {0.2: (['0.218', '0.567', '0.934', '0.999'], ['0.107', '0.465', '0.850', '0.995']),
+                 0.1: (['0.051', '0.153', '0.337', '0.681'], ['0.107', '0.465', '0.850', '0.995'])}
+        for margin, (success, discovery) in cells.items():
+            rows = power.calculate(calibrated(margin=margin, counts=[20, 40, 80, 160], names=('H2',)))['results']
+            for name in ('success_power', 'discovery_power'):
+                values = [row[name] for row in rows]
+                self.assertEqual(values, sorted(set(values)), (margin, name))
+            self.assertEqual([published(r['success_power']) for r in rows], success)
+            self.assertEqual([published(r['discovery_power']) for r in rows], discovery)
+        # Discrete tests are not monotone at every step: 112 tasks has less
+        # success power than 110 (k = 6, margin 0.20).
+        rows = power.calculate(calibrated(k=6, counts=[110, 112], names=('H2',)))['results']
+        self.assertLess(rows[1]['success_power'], rows[0]['success_power'])
+
+    def test_published_design_a_figures(self):
+        # Sensitivity rows H1..H7 (success/discovery) of the proposal's
+        # "Sizes, power and provider calls" section.
+        def check(margin, n, row):
+            output = power.calculate(calibrated(margin=margin, counts=[n]))
+            got = '; '.join(f"{published(r['success_power'])}/{published(r['discovery_power'])}"
+                            for r in output['results'])
+            self.assertEqual(got, row)
+            return output['calibration'][0], output['results'][1]
+        test, h2 = check(0.2, 96, '0.999/0.405; 0.968/0.922; 0.790/0.998; >0.999/>0.999; '
+                                  '>0.999/0.793; >0.999/>0.999; 0.404/0.007')
+        self.assertEqual(published(h2['joint_power_lower_bound']), '0.890')
+        self.assertEqual(f"{test['nominal_critical_value']:.3f}", '2.241')
+        self.assertEqual(f"{test['critical_value']:.3f}", '2.280')
+        self.assertEqual(f"{test['worst_size_at_nominal']:.4f}", '0.0135')
+        self.assertEqual(f"{test['worst_size']:.4f}", '0.0121')
+        _, h2 = check(0.1, 264, '0.994/0.917; 0.901/>0.999; 0.619/>0.999; >0.999/>0.999; '
+                                '>0.999/0.999; >0.999/>0.999; 0.011/0.009')
+        self.assertEqual(published(h2['joint_power_lower_bound']), '0.901')
+        # The balanced search (multiples of 6) reproduces 264 at margin 0.10.
+        self.assertEqual(power.calculate(searching(margin=0.1))['search']['smallest_tasks'], 264)
+        # At margin 0.20 it finds 90, not the proposal's 96: the proposal scanned
+        # steps of 4 with the uncalibrated critical value, found 92, and rounded
+        # up to a multiple of 6. At 90 the calibrated method gives 0.945 / 0.900.
+        found = power.calculate(searching(margin=0.2))
+        self.assertEqual(found['search']['smallest_tasks'], 90)
+        self.assertEqual([published(found['results'][0][x]) for x in ('success_power', 'discovery_power')],
+                         ['0.945', '0.900'])
+        budget = power._Budget(10 ** 9)
+        critical = power.sign_test_critical_counts(100, 0.0125)
+        def uncalibrated(n):
+            plan = scenarios(('H2',))[0]
+            region = power._success_region(n, 0.2, 0.0125, budget)['outcomes']
+            return min(power._rejection_power(n, region, plan['success'], budget),
+                       power._rejection_power(n, power.sign_test_rejected(n, critical), plan['discovery'], budget))
+        self.assertEqual(next(n for n in range(20, 101, 4) if uncalibrated(n) >= 0.9), 92)
+
+    def test_calibrated_inputs_are_refused(self):
+        def change(edit):
+            data = calibrated(counts=[20], names=('H2',))
+            edit(data)
+            return data
+        cases = {
+            'no counts or search': change(lambda d: d.pop('task_counts')),
+            'both counts and search': change(lambda d: d.update(search=searching()['search'])),
+            'unknown method': change(lambda d: d.update(method='bootstrap')),
+            'unknown key': change(lambda d: d.update(extra=1)),
+            'discovery gain': change(lambda d: d.update(required_discovery_gain=0.1)),
+            'margin one': change(lambda d: d.update(noninferiority_margin=1.0)),
+            'margin zero': change(lambda d: d.update(noninferiority_margin=0.0)),
+            'tiny tail': change(lambda d: d.update(overall_alpha=1e-12)),
+            'bad probability': change(lambda d: d['scenarios'][0]['success'].update(gain=0.6)),
+            'unsorted counts': change(lambda d: d.update(task_counts=[40, 20])),
+            'count too large': change(lambda d: d.update(task_counts=[1001])),
+            'over the bound': calibrated(counts=[900, 1000]),  # about 69 million evaluations
+            'stratified input': change(lambda d: (d.pop('task_counts'), d.pop('scenarios'),
+                                                  d.pop('repetitions_per_task'), d.update(designs=[]))),
+        }
+        searches = {'unknown scenario': lambda s: s.update(scenario='H9'),
+                    'target one': lambda s: s.update(per_endpoint_target_power=1.0),
+                    'multiple zero': lambda s: s.update(task_multiple=0),
+                    'multiple boolean': lambda s: s.update(task_multiple=True),
+                    'max below multiple': lambda s: s.update(max_tasks=4),
+                    'missing max': lambda s: s.pop('max_tasks')}
+        for label, edit in searches.items():
+            data = searching()
+            edit(data['search'])
+            cases['search: ' + label] = data
+        for label, data in cases.items():
+            with self.subTest(label), self.assertRaises(ValueError):
+                power.calculate(data)
+        path = Path(__file__).with_name('pilot-v2-power.py')
+        run = subprocess.run([sys.executable, str(path)], input=json.dumps(cases['discovery gain']),
+                             text=True, capture_output=True, check=False)
+        self.assertEqual((run.returncode, run.stdout), (2, ''))
+        self.assertIn('required_discovery_gain', run.stderr)
+
+    def test_every_output_is_unfrozen_and_the_default_is_unchanged(self):
+        path = Path(__file__).with_name('pilot-v2-power.py')
+        not_found = searching(largest=30)
+        for data in (calibrated(counts=[10, 20], names=('H1', 'H2')), searching(largest=120), not_found):
+            run = subprocess.run([sys.executable, str(path)], input=json.dumps(data),
+                                 text=True, capture_output=True, check=False)
+            self.assertEqual(run.returncode, 0, run.stderr)
+            output = json.loads(run.stdout)
+            self.assertEqual(output['status'], 'sensitivity_only_not_frozen')
+            self.assertEqual(output['method'], 'calibrated_paired')
+            self.assertIs(output['execution_authorized'], False)
+            self.assertEqual((output['provider_calls'], output['spend_usd']), (0, 0))
+        self.assertEqual(output['search']['smallest_tasks'], None)
+        self.assertEqual(output['results'], [])
+        # No method field and an explicit conservative_bound give the same numbers.
+        default = power.calculate(example())
+        self.assertNotIn('method', default)
+        explicit = power.calculate({**example(), 'method': 'conservative_bound'})
+        self.assertEqual(explicit['results'], default['results'])
+        self.assertEqual(explicit['method'], 'conservative_bound')
+        self.assertIs(explicit['execution_authorized'], False)
 
 
 if __name__ == '__main__':
