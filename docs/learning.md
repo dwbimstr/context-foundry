@@ -69,7 +69,11 @@ foundry learning train --input DATASET/manifest.json --policy POLICY.json \
   and `lost`. Otherwise it is `null`; reports written earlier read the same way. A token
   sum past u64 is `economics_overflow`.
 
-**Deferred to the measurement phase** (owner directive 2026-10-05: written, not run):
+**Deferred to the measurement phase** (owner directive 2026-10-05: written, not run on
+that date). The measurement phase of 2026-10-06 then ran under the development bundles;
+its [record](validation.md#measurement-phase--2026-10-06) gives the two real training
+rounds, the passing exhaustive comparison and bundle negative probes, and what was not
+measured. The deferred items were:
 
 - the exhaustive full-reference comparison: `LIBTORCH=… CONTEXT_FOUNDRY_013_FULL_REFERENCE=…/reference-t002-full.safetensors
   cargo test --locked --features learning-worker --test learning_worker -- --ignored exhaustive`;
@@ -147,12 +151,15 @@ agent about one extra turn (12.4–13.0k provider tokens of fixed prefix per OMP
 [validation](validation.md)), while per-response token deltas are tens of tokens and the
 router adds about 200–300 ms per routed request.
 
-**Deferred to the measurement phase** (owner directive 2026-10-05: written, not run):
+**Deferred to the measurement phase** (owner directive 2026-10-05: written, not run on
+that date):
 the combined 009+013 residency run (`mcp --semantic-profile S --policy-config P
 --development-isolation` under `/usr/bin/time -l`, both workers loaded, the summed
 peak footprint against deployment's aggregate budget); and real-checkpoint prediction
 latency (`cargo test --features learning-worker --test policy -- --nocapture
-served_probabilities` reports parity only, not timing).
+served_probabilities` reports parity only, not timing). The measurement phase of
+2026-10-06 recorded serving latency with a selected real candidate and did not run the
+joint residency test ([record](validation.md#measurement-phase--2026-10-06)).
 
 ## Scope, ownership and the loop
 

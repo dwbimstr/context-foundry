@@ -25,8 +25,9 @@ and no new code.
 **2026-10-11 resource-code handoff.** The macOS CPU sampler now exists in
 [`model_resources.rs`](../src/model_resources.rs), using the existing optional
 background CPU policy. Linux verifies tick accounting/reset and policy hysteresis;
-native compilation and actual CPU-pressure behavior have not run here. The current
-Linux environment has no configured native Mac runner or GPU access. On an idle Mac:
+native compilation and actual CPU-pressure behavior had not run in that Linux
+environment, which had no configured native Mac runner or GPU access. Both checks
+below passed on the owner's Mac in the 2026-11-10 run recorded above. On an idle Mac:
 
 ```sh
 cargo test --locked --lib model_resources::tests::native_macos_cpu_observation \
@@ -557,7 +558,11 @@ verification steps. Owner decisions, 2026-11-06: "Encrypted off-machine copy" an
 (`datasets/context-foundry-f4`), the G2 harness, the G1 apparatus and the pilot's
 private evidence also go into encrypted, checksummed archives in `~/VSC_DEV/backups`,
 which the owner copies off the Mac ([encrypted backups](resume.md#encrypted-backups)).
-The archives are not built yet.
+The five archives were built and checksum-verified on 2026-11-11 in
+`~/VSC_DEV/backups/foundry-20261111-retry1`
+([receipt](validation.md#encrypted-evidence-backups--2026-11-11)). Copying them off
+the Mac and an authenticated restoration remain with the owner, and neither is
+recorded as done.
 
 | Input | Location | Identity |
 | --- | --- | --- |

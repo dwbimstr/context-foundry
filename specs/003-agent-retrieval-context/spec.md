@@ -822,7 +822,11 @@ an error may leave the prior payload in use. Upstream `docs/extensions.md` says
 (`devin-agent` does not), and an ephemeral turn's `maxContextBytes` check precedes
 payload replacement. Consequently this inspection proves neither end-to-end budget
 enforcement nor applied-view acknowledgment. The later installed-host check below
-verifies the gateway boundary against a scripted upstream. No third-party code is vendored.
+verifies the gateway boundary against a scripted upstream. No third-party code is vendored
+as a Cargo or build dependency. The repository does track 25 reference patch files
+against upstream oh-my-pi, which reproduce some upstream source text; nothing in
+Foundry builds, reads or applies them
+([inventory](../../docs/dependencies.md#oh-my-pi-reference-patches)).
 
 **Run procedure when measurement inputs are available:**
 
@@ -833,6 +837,9 @@ verifies the gateway boundary against a scripted upstream. No third-party code i
    plumbing only, not general task-quality improvement.
 2. Control: launch the existing Foundry MCP command without the experimental flag.
    Candidate: use the identical command plus `--experimental-behavior-context`.
+   (Since 2026-11-11 the flag defaults on, so a control for it must pass
+   `--experimental-behavior-context=false`; this gate no longer decides the flag, as
+   Acceptance below records.)
    The current anchorless repair is unselected, so do not invent its ablation result
    or claim the combined milestone has passed.
 3. For attribution runs, append `--retrieval-trace-dir <new-private-directory>` to
@@ -867,8 +874,10 @@ verifies the gateway boundary against a scripted upstream. No third-party code i
     task suite to extend in later milestones, not a new benchmark for every feature.
     Owner decision, 2026-11-06, "Measure them in pilot v2": the outcome tasks of
     T007–T009 and 008 T003–T005 join this suite and pilot v2 with their acceptance
-    bar unchanged, and 008 T004's semantic triggers are still to be built. All six
-    stay open until an authorized run passes.
+    bar unchanged. 008 T004's triggers were built on 2026-11-13 as the owner-selected
+    explicit structured assertions under the no-model rule
+    ([record](../../docs/validation.md#structured-task-assertions-008-t004--2026-11-13)).
+    All six stay open until an authorized run passes.
   - Record first useful evidence, complete supporting evidence, exploratory calls,
     steps to a verified patch, constraint violations, retries, task success, turns,
     latency and complete available provider usage under the economics contract.
@@ -883,9 +892,11 @@ verifies the gateway boundary against a scripted upstream. No third-party code i
   "Lexical-only, drop T006 gate": this gate no longer decides
   `--experimental-behavior-context`. 001 T010's own local gates and the
   [2026-10-19 G2 rule](../../docs/validation.md#g2-rule-without-the-token-clause--2026-10-19)
-  decide it. Its semantic-store effects are to be removed, and once those gates pass
-  it defaults on only where lexical results are served. No real-agent benefit is
-  claimed for the flag.
+  decide it. Its semantic-store effects were removed and those gates passed on
+  2026-11-11, so it now defaults on, with an explicit opt-out, and changes only lexical
+  delivery
+  ([receipt](../../docs/validation.md#t010-singleton-qualification--2026-11-11)). No
+  real-agent benefit is claimed for the flag.
 - **Next-milestone capability artifact:** inspect the pinned real host for tool
   interception, pre-send context mutation, protected message/tool pairing, restart
   persistence and application acknowledgments. Classify each as supported with

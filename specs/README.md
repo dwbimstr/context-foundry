@@ -75,7 +75,10 @@ Opt-in continuous MCP scheduling, shared client admission and source-first deriv
 context now work on both transports. Owned local generation adds pinned snapshot reuse,
 idle unload and per-worker CPU/RAM/Metal controls. Shared memory and Linux affinity/cgroup CPU admission are implemented; native macOS
 CPU/global GPU pressure policies, Metal hardware acceptance and real-model task
-acceptance remain open. See the
+acceptance remain open. (Since this paragraph was written, the native macOS CPU and
+Metal checks passed with ad-hoc signing on the owner's Mac on 2026-11-10
+([receipt](../docs/validation.md#native-macos-acceptance--2026-11-10)); the 009 and
+010 rows of the task table below give the named limitations and the deferral.) See the
 [revised build order](../docs/context-ecosystem-plan.md#revised-build-order).
 005 T005 and 003 T009 now implement a scoped static Python HTTP boundary producer and
 explicit primary-task evidence composition introduced in schema 11. Schema 12 adds
@@ -118,7 +121,11 @@ after an observing-test edit. Long prose units can now contribute two disjoint e
 budgets. Materialization traces distinguish excerpt loss from packing; outline handles
 no longer count as delivered body evidence. Portable native embedding receipts and a
 strict CPU/Metal comparator are implemented; Linux passes the 8,192-token receipt,
-but native Metal comparison remains unexecuted. Two further upstream percent-decoder
+but native Metal comparison remains unexecuted. (A hosted macOS runner later ran that
+comparison on Apple Paravirtual Metal, not a physical Mac, and it passed:
+[record](../docs/validation.md#realistic-acceptance-continuation--2026-10-11). The
+2026-11-10 run on the owner's Mac did not establish cross-host CPU/Metal numerical
+parity.) Two further upstream percent-decoder
 pairs expose unchanged public unit tests and compare prompt caching on/off. Every arm
 still fails the external oracle; cached input savings do not establish task benefit.
 The combined Rust/Go corpus now contains 69,565 regular files / 68,056 distinct

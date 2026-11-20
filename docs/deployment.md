@@ -631,6 +631,11 @@ writer against a new schema. Uninstall removes only owned executables/service/co
 entries, preserving stores, caches, memories, datasets and checkpoints by default.
 Data purge is a distinct explicit action with the existing ownership checks.
 
+The first release's compatibility and data-preservation statement applies these rules
+to the current formats and names where no upgrade support exists. It is a
+[draft in the release checklist](release.md#compatibility-and-data-preservation-for-the-first-release)
+until it is checked on the signed release candidate.
+
 ## Acceptance and release ownership
 
 - 003: inspect→apply baseline→connect→budgeted task→edit/reindex, plus interrupted
@@ -685,8 +690,12 @@ from prior state on restart; watching alone loads no model. Pause through
 require explicit resume. Ordinary status reads a publication observation; use
 `semantic status --audit` or MCP `status {"semantic_audit":true}` for integrity/census.
 
-Semantic generation format v5 remains derived data under schema 12: existing vector-cache
-rows and partitions remain reusable. Older generation formats are refused by name;
+Semantic generation format v6 remains derived data under schema 12: existing vector-cache
+rows and partitions remain reusable. The format was v5 until
+[2026-10-22](validation.md#interned-label-map-generation-v6--2026-10-22), when v6 began
+storing each distinct source path and hash once in the label map; the current number
+is `GENERATION_VERSION` in [`src/neural/index.rs`](../src/neural/index.rs).
+Older generation formats are refused by name;
 explicit preparation or `repair-index` republishes them from cache. Small edits publish
 one bounded ANN delta and a separate bounded location overlay. Location compaction
 retains unchanged ANN files. Immutable membership is stored outside the small manifest.
@@ -706,7 +715,7 @@ identity changes, unmatched/interrupted checkpoints and explicit repair rebuild 
 lookup. File-verification receipts never survive restart.
 Warm queries check owner/profile/manifest identity; refresh rechecks file versions.
 Explicit audits always validate independently. Cold verification and compaction remain
-corpus-sized. Generation v5 remains unchanged by the knowledge feature; the latter
+corpus-sized. The knowledge feature does not change the generation format; the feature
 was introduced by schema 10 and is preserved by the schema-12 upgrade.
 
 Selective knowledge preparation uses an explicitly configured HTTP or owned local provider and source

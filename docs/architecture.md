@@ -386,13 +386,17 @@ client admission and notification-driven idle waits. Derived context stays sourc
 and budgeted. `knowledge::local` now owns a pinned native decoder, bounded private pipes,
 verified file-backed artifact reuse and idle unload. Linux has descriptor-only seccomp
 isolation and hard CPU/address-space bounds; the macOS App Sandbox/Metal path has supervised
-footprint/allocation limits and still needs hardware acceptance. No second table or source
-owner is added. Opt-in `model_resources` now reserves combined worker ceilings, checks
-host/container memory headroom and evicts idle generation under pressure. Native CPU
-admission still needs device acceptance. Owner decision, 2026-11-06, "Script checks
-only": device acceptance covers what `scripts/native-macos-acceptance.py` checks, and
+footprint/allocation limits. No second table or source owner is added. Opt-in
+`model_resources` now reserves combined worker ceilings, checks host/container memory
+headroom and evicts idle generation under pressure. Owner decision, 2026-11-06,
+"Script checks only": device acceptance covers what
+`scripts/native-macos-acceptance.py` checks, and
 the unbuilt global GPU pressure, combined embedding and generation residency,
-thermal/battery and embedding-eviction policies are named limitations. See
+thermal/battery and embedding-eviction policies are named limitations. The script's
+native CPU admission, Metal embedding and owned Metal generation checks passed in the
+ad-hoc-signed run on the owner's Mac on 2026-11-10
+([receipt](validation.md#native-macos-acceptance--2026-11-10)); the script must run
+again on the signed release candidate. See
 [usage](experimental-context.md#owned-local-generation).
 Exact source/graph evidence, derived repository knowledge and explicit task memory
 have distinct provenance and invalidation rules. The
@@ -418,8 +422,9 @@ sequence capacity; legacy descriptors retain their exact identity and 2,048-toke
 geometry. Both preparation paths pack by actual token totals, preserving foreground
 admission and one model slot. Source and response allowances remain independent.
 See [profile usage and limits](experimental-context.md#model-aware-bodyparent-chunking).
-Real-device long-context parity/quality and independent file/area representations
-remain open; current address-model acceptance does not cover this new recipe.
+Real-device long-context parity and quality remain open, and current address-model
+acceptance does not cover this recipe. Independent file and area representations
+have since arrived with `hierarchy-v1` (above).
 
 ### Embedding models and the policy head have different jobs
 
@@ -777,8 +782,9 @@ restart uses the matching durable lookup below; overflow, identity change and re
 reconcile. Required cold reads and compaction remain corpus-sized. Selective LLM generation now uses the explicit 010 T002 CLI described
 above and opt-in continuous MCP maintenance, now with owned local generation and
 per-worker resource controls, shared memory admission and optional Linux host CPU
-pause/resume thresholds. Native CPU admission still needs device acceptance, which
-covers what `scripts/native-macos-acceptance.py` checks. By owner decisions of
+pause/resume thresholds. Native CPU admission passed the device checks of
+`scripts/native-macos-acceptance.py` in the ad-hoc-signed run of 2026-11-10
+([receipt](validation.md#native-macos-acceptance--2026-11-10)). By owner decisions of
 2026-11-06, global GPU pressure and the other unbuilt policies are named limitations and
 010's model task utility is deferred.
 
@@ -810,9 +816,11 @@ before any unique join. Extraction is explicit; source watching alone starts no 
 work. One explicitly enabled configuration can reuse the existing watcher for bounded
 file turns, unchanged-scope reuse, status and pause, without another thread or durable queue.
 Owner decision, 2026-11-06, "Accept at written scope": the owner accepts T005 at this
-written static Python HTTP scope; acceptance is recorded once the local gates receipt
-exists (to do). Other frameworks, brokers, cross-language identity and dynamic
-collectors are named limitations.
+written static Python HTTP scope. The acceptance was recorded on 2026-11-10 against
+the `65fd799` local gates receipt
+([record](validation.md#boundary-scope-acceptance-005-t005--2026-11-10)). Other
+frameworks, brokers, cross-language identity and dynamic collectors are named
+limitations.
 
 [003 T009](../specs/003-agent-retrieval-context/spec.md#t009--compose-evidence-for-a-repository-task)
 uses [`task_evidence.rs`](../src/task_evidence.rs) to add bounded lexical task queries,

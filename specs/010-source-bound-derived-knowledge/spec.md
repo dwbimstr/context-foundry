@@ -425,9 +425,11 @@ quality; the fixed repair-selection workloads and negative results live in valid
 
 This controls one generation worker. Opt-in shared memory admission now accounts for
 combined configured embedding/generation ceilings, as described below. Global GPU use,
-thermal pressure and battery draw are named limitations; native CPU utilization and
-macOS hardware/package acceptance remain open within what the native script checks;
-verified task utility and large-repository economics are deferred (owner decisions,
+thermal pressure and battery draw are named limitations. The native script's CPU and
+macOS hardware checks passed with ad-hoc signing on 2026-11-10
+([receipt](../../docs/validation.md#native-macos-acceptance--2026-11-10)); the repeat
+on the signed release candidate and package acceptance remain open. Verified task
+utility and large-repository economics are deferred (owner decisions,
 2026-11-06, Status above). Linux synthetic native-denial and
 lifecycle tests plus the real-model smoke are separate evidence in
 [validation](../../docs/validation.md#owned-local-generation-and-resource-controls).
@@ -522,7 +524,9 @@ usage; revert has zero calls/launches/verified bytes. Linux CPU execution and re
 verified. Model/recipe task utility is deferred and combined model pressure is a named
 limitation (owner decisions, 2026-11-06, Status above). The long-context embedding
 comparison was closed on 2026-11-06 ("Close it; Gemma only"), and macOS/Metal
-acceptance within the native script's checks remains open. See
+acceptance within the native script's checks passed with ad-hoc signing on 2026-11-10
+([receipt](../../docs/validation.md#native-macos-acceptance--2026-11-10)), with the
+signed release candidate run still required. See
 [validation](../../docs/validation.md#evidence-coverage-host-application-and-real-cpu-maintenance--2026-10-10).
 
 

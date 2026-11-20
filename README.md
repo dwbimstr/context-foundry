@@ -46,7 +46,8 @@ It is **not**:
 
 - a hosted or multi-user service (one store has one owner; there is no user
   authentication or tenant isolation);
-- a file watcher (index again after edits);
+- a background file watcher unless you ask for one (watching is opt-in with
+  `mcp --watch` and off by default; otherwise index again after edits);
 - a compiler or code-intelligence server (it imports compiler references, it never
   runs a compiler);
 - a vector database, general memory service or secret scrubber;
@@ -90,7 +91,7 @@ upgrades are explicit (`upgrade-store`, `repair-index`). Per-task evidence is in
 
 | Area | Maturity | Notes |
 | --- | --- | --- |
-| Indexing, recovery, repair | Stable core | Explicit store creation, bounded refresh, interrupted-index recovery, `repair-index`, `upgrade-store --to 6` |
+| Indexing, recovery, repair | Stable core | Explicit store creation, bounded refresh, interrupted-index recovery, `repair-index`, `upgrade-store --to 12` (the current store schema, and the only target the command accepts) |
 | `search`, `context`, `retrieve` | Stable core | City map, doors, exact budgets; CLI and MCP |
 | MCP server | Stable core | Seven tools over stdio, or one shared loopback HTTP owner |
 | `bootstrap`, `connect` | Stable core | Configuration printed for OMP and Codex |
@@ -294,6 +295,18 @@ Short pointers; each links to its contract.
   Add `--retrieval-trace-dir NEW_PRIVATE_DIR` to record selection and packing decisions,
   including stale/capped candidates, shortened forms, unsupported citations, and budget
   omissions. Traces are bounded diagnostics, not evidence of host consumption.
+  Lexical behavioral selection has been on by default on the
+  `experimental/context-ecosystem` line since 2026-11-11 (`main`, last merged on
+  2026-11-07, still defaults it off). A behavior question such as "how does …" about
+  one resolved type gets the type's address and up to four of its methods that match
+  the question, instead of the type body, when the candidates include such a method;
+  otherwise the ordinary anchored result is kept. An eligible plain-language question
+  that names no identifier uses prose selection. Pass
+  `--experimental-behavior-context=false` to `context` or `mcp` for the ordinary
+  lexical path. The flag changes lexical delivery only, and no real-agent benefit is
+  claimed
+  ([contract](specs/001-source-state-recovery/contracts/context-v2.md#experimental-behavioral-support--001-t010-2026-10-09),
+  [evidence](docs/validation.md#t010-singleton-qualification--2026-11-11)).
 - **Retrieve.** `retrieve --handle H` returns exact bytes, optionally narrowed with
   `--lines`, or `--view outline`; long spans continue with `next:`.
 - **Compiler references** ([005](specs/005-graph-evidence-lifecycle/spec.md)).
@@ -328,8 +341,10 @@ Short pointers; each links to its contract.
 
 - One store has one owner: a CLI command, a stdio MCP session or the shared HTTP
   owner. Others get `store_busy`.
-- Results describe the **indexed snapshot**, not the current bytes on disk. There is
-  no watcher.
+- Results describe the **indexed snapshot**, not the current bytes on disk. Nothing
+  watches the workspace unless you start `mcp --watch`, which is opt-in and off by
+  default
+  ([001 T011](specs/001-source-state-recovery/spec.md#t011--maintain-the-admitted-workspace-from-filesystem-change-hints)).
 - Excluded from indexing: hidden files, ignored paths, `target`, `node_modules`,
   symlinks, non-UTF-8 files and files over 2 MiB. The sensitive-file deny rules are
   narrow; they are not a secret or PII scrubber.

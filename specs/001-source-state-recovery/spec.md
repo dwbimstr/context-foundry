@@ -151,9 +151,11 @@ There is no general migration framework. Interrupted upgrade is wholly v1 or v2;
 old binaries refuse v2. Unknown versions and authoritative corruption do not migrate.
 Rollback before upgrade uses v1; after upgrade use v2 or a pre-upgrade backup, never
 write v2 with the old binary. D001 must amend this if storage selection changes.
-Since 008 (2026-10-04), the current store schema is **3**. `upgrade-store --to 3`
-performs these v1→v2 steps and the memory/typed-pending-key steps in one transaction
-from v1 or v2, and `--to 2` is refused ([008](../008-scoped-durable-memory/spec.md)).
+From 008 (2026-10-04) the store schema was **3**: `upgrade-store --to 3` performed
+these v1→v2 steps and the memory/typed-pending-key steps in one transaction from v1 or
+v2, and `--to 2` was refused ([008](../008-scoped-durable-memory/spec.md)). (As of
+2026-11-19 the current store schema is **12**: `upgrade-store --to 12` applies the
+cumulative steps from any of v1–v11 in one transaction and refuses every other target.)
 Search index schema v2 (T005) is derived state, not a store-schema change: an upgrade
 stays metadata-only, so an upgraded store, or any store indexed before T005, reports
 `repair_required` with reason `search_schema` until an explicit `repair-index`.
@@ -673,9 +675,11 @@ and [current status](../../docs/resume-context-ecosystem.md).
 - **Verification:** targeted core/MCP fixtures for relevant support, identity
   ambiguity, unavailable/stale graph, bounded packing and scope isolation, followed
   by the required implementation checks and the frozen measurements when this task
-  is implemented. Local implementation evidence is recorded in validation; the full
-  benchmark gates are still open. The real-host agent-task gate was dropped for this
-  flag on 2026-11-06.
+  is implemented. The singleton candidate passed the frozen G1 and G2 measurements
+  and, on its test-only continuation, all eight local gates on 2026-11-11
+  ([receipt](../../docs/validation.md#t010-singleton-qualification--2026-11-11)); the
+  receipt also keeps the first full gate run, which failed. The real-host agent-task
+  gate was dropped for this flag on 2026-11-06.
 
 ### G1 — city-map measurement
 

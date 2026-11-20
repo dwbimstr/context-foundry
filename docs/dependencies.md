@@ -2,6 +2,10 @@
 
 This inventory records Cargo metadata for the locked dependency graph. It is not a legal or vulnerability audit. No dependency sources are vendored. Binary distribution must retain the applicable license/notice texts from the selected graph.
 
+One section is not about a dependency. The
+[oh-my-pi reference patches](#oh-my-pi-reference-patches) are tracked files that
+carry lines of upstream source, and that section records their license and notices.
+
 ## Direct dependencies
 
 The existing rows retain the `cargo metadata --locked` inventory from 2026-10-01
@@ -243,3 +247,119 @@ are retained in [009 T008](../specs/009-optional-semantic-retrieval/spec.md#t008
 The MPL license/notice and source-availability obligations apply to that upstream
 package when distributing; Foundry's own code remains MIT. No upstream source is
 modified or vendored.
+
+## oh-my-pi reference patches
+
+`docs/references` tracks 25 patch files (`omp-*.patch`, 364,340 bytes in total at
+`85a63c3`). They are not Cargo dependencies, and nothing in Foundry's source, scripts
+or tests reads or applies them. They are reference data for the
+[proposed startup observation and admission](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md#proposed-startup-observation-and-admission)
+section of the bounded pilot v2 draft for 003 T006, which is unfunded and not frozen.
+They are unified diffs against
+[`can1357/oh-my-pi`](https://github.com/can1357/oh-my-pi/tree/24439066040e006eb08da7b204f0ac41c79d2de9)
+at commit `24439066040e006eb08da7b204f0ac41c79d2de9`. The patches form one series, in
+which later patches apply on top of earlier ones. The facts below were checked on
+2026-11-19 at Foundry commit `85a63c3`, against upstream files read at the pinned
+commit through the public GitHub API; the last paragraph records the notice headers
+added after that check. This is an inventory, not a legal audit.
+
+**Upstream license.** The upstream root
+[`LICENSE`](https://github.com/can1357/oh-my-pi/blob/24439066040e006eb08da7b204f0ac41c79d2de9/LICENSE)
+at that commit is the MIT License with three copyright lines: Mario Zechner (2025),
+Can Bölük (2025-2026) and Stencil Labs, Inc. (2026). Its Git blob is
+`09a0c6c926a81c9d56dc3326cff1e5358c63c6d6`, 1,144 bytes, SHA-256
+`16c45f9d667442781f03fa198914cc39abcaa48ec5ed8f644643e554ca2fbf63`. The patches touch
+four upstream packages, and each declares `MIT` and version 18.18.1 in its
+`package.json`. `packages/ai` and `packages/coding-agent` carry the same `LICENSE`
+blob as the root. `packages/catalog` and `packages/utils` carry a `LICENSE` that
+differs only by omitting the Mario Zechner line (blob
+`f7a04b97f9a0a145a5787e8ea8a36ebd3b1eaef1`). The upstream
+`packages/coding-agent/THIRD-PARTY-NOTICES.txt` names five files taken from other
+projects, three under Apache-2.0 and two under other authors' MIT terms. None of them
+is among the 50 paths the patches touch.
+
+**What the files contain.** The diffs cover 50 upstream paths: 32 that exist at the
+pinned commit and 18 new files that the patches add. Their hunks hold 4,823 added
+lines, 2,148 context lines and 388 removed lines. The added lines are Foundry's
+proposed changes. With leading and trailing whitespace removed, 72 of them are at
+least 40 characters long and also occur in one of the 32 upstream files (30 when lines
+are compared whole, with their indentation). Of the context and removed lines, 2,014
+occur as whole lines in the same upstream file at the pinned commit (1,668 context,
+346 removed). The other 522 are lines that a patch in the series adds to the same
+file. The tracked files therefore reproduce upstream source text in at least 2,014
+hunk lines, of which 113 are blank or hold only whitespace.
+
+**Notice carried by each file.** At `85a63c3`, fourteen files reproduced the upstream
+license text, with its three copyright lines, in a header above the diff that also
+names the upstream and the pinned commit. Eleven did not.
+`omp-startup-rpc-observation.patch` named the upstream, the commit and "MIT" in its
+header but did not carry the notice. The other ten had no header: they started at the
+diff and named neither the upstream nor the commit, although their paths and context
+lines match that commit and the rest of the series. Outside the fourteen headers the
+repository held no copy of the upstream notice; Foundry's own [`LICENSE`](../LICENSE)
+names only "Context Foundry contributors". The table gives the state at `85a63c3`;
+the last paragraph records the headers added since.
+
+| Patch | Dated record | Upstream notice in the file at `85a63c3` |
+| --- | --- | --- |
+| [omp-restricted-startup.patch](references/omp-restricted-startup.patch) | [2026-11-16](validation.md#restricted-startup-ownership--2026-11-16) | full text |
+| [omp-startup-advisor-exclusion.patch](references/omp-startup-advisor-exclusion.patch) | [2026-11-18](validation.md#advisor-exclusion-during-startup-observation--2026-11-18) | none; no header |
+| [omp-startup-auth-retirement.patch](references/omp-startup-auth-retirement.patch) | [2026-11-16](validation.md#source-built-capture-profile-qualification--2026-11-16) | full text |
+| [omp-startup-catalog-spotlight.patch](references/omp-startup-catalog-spotlight.patch) | [2026-11-18](validation.md#catalog-refusal-and-spotlight-startup-exclusion--2026-11-18) | none; no header |
+| [omp-startup-connection-warmups.patch](references/omp-startup-connection-warmups.patch) | [2026-11-16](validation.md#source-built-bounded-startup-caller-owner--2026-11-16) | full text |
+| [omp-startup-dap-idle-sweep.patch](references/omp-startup-dap-idle-sweep.patch) | [2026-11-18](validation.md#debugger-sweep-starts-with-session-registration--2026-11-18) | none; no header |
+| [omp-startup-discovery-retirement.patch](references/omp-startup-discovery-retirement.patch) | [2026-11-16](validation.md#source-owned-startup-discovery-retirement--2026-11-16) | full text |
+| [omp-startup-empty-auth.patch](references/omp-startup-empty-auth.patch) | [2026-11-16](validation.md#fixed-empty-auth-startup-retirement--2026-11-16) | full text |
+| [omp-startup-extension-owner.patch](references/omp-startup-extension-owner.patch) | [2026-11-18](validation.md#source-owned-startup-extension-dispatch--2026-11-18) | full text |
+| [omp-startup-fixed-discovery-plan.patch](references/omp-startup-fixed-discovery-plan.patch) | [2026-11-19](validation.md#fixed-discovery-provider-inventory-at-startup--2026-11-19) | none; no header |
+| [omp-startup-fixed-runtime-providers.patch](references/omp-startup-fixed-runtime-providers.patch) | [2026-11-18](validation.md#fixed-runtime-providers-during-startup-observation--2026-11-18) | none; no header |
+| [omp-startup-logging-owner.patch](references/omp-startup-logging-owner.patch) | [2026-11-18](validation.md#source-owned-startup-logger--2026-11-18) | full text |
+| [omp-startup-managed-timer-exclusion.patch](references/omp-startup-managed-timer-exclusion.patch) | [2026-11-18](validation.md#restricted-startup-managed-timer-exclusion--2026-11-18) | full text |
+| [omp-startup-marketplace-exclusion.patch](references/omp-startup-marketplace-exclusion.patch) | [2026-11-18](validation.md#source-owned-marketplace-exclusion--2026-11-18) | full text |
+| [omp-startup-plugin-roots-owner.patch](references/omp-startup-plugin-roots-owner.patch) | [2026-11-18](validation.md#source-owned-startup-plugin-roots--2026-11-18) | full text |
+| [omp-startup-presence-retirement.patch](references/omp-startup-presence-retirement.patch) | [2026-11-16](validation.md#original-daemon-presence-candidate--2026-11-16) | full text |
+| [omp-startup-prompt-exclusion.patch](references/omp-startup-prompt-exclusion.patch) | [2026-11-18](validation.md#restricted-prompt-inputs-and-startup-launch-binding--2026-11-18) | none; no header |
+| [omp-startup-prompt-scheme-exclusion.patch](references/omp-startup-prompt-scheme-exclusion.patch) | [2026-11-19](validation.md#restricted-startup-scheme-descriptions-and-process-policy--2026-11-19) | none; no header |
+| [omp-startup-refusal.patch](references/omp-startup-refusal.patch) | [2026-11-16](validation.md#source-owned-durable-startup-refusal--2026-11-16) | full text |
+| [omp-startup-rpc-observation.patch](references/omp-startup-rpc-observation.patch) | [2026-11-18](validation.md#restricted-startup-rpc-retirement--2026-11-18) | none; header names MIT |
+| [omp-startup-rpc-runtime-exclusion.patch](references/omp-startup-rpc-runtime-exclusion.patch) | [2026-11-18](validation.md#rpc-runtime-callbacks-excluded-during-startup-observation--2026-11-18) | none; no header |
+| [omp-startup-sdk-export.patch](references/omp-startup-sdk-export.patch) | [2026-11-18](validation.md#direct-sdk-import-for-startup-observation--2026-11-18) | none; no header |
+| [omp-startup-settings-retirement.patch](references/omp-startup-settings-retirement.patch) | [2026-11-16](validation.md#source-owned-settings-retirement--2026-11-16) | full text |
+| [omp-startup-telemetry-exclusion.patch](references/omp-startup-telemetry-exclusion.patch) | [2026-11-18](validation.md#source-owned-telemetry-exclusion--2026-11-18) | full text |
+| [omp-startup-workspace-scan-exclusion.patch](references/omp-startup-workspace-scan-exclusion.patch) | [2026-11-18](validation.md#restricted-workspace-scan-exclusion--2026-11-18) | none; no header |
+
+**What the license requires.** The MIT text grants permission to use, copy, modify,
+merge, publish, distribute, sublicense and sell the software. Its one condition is
+that the copyright notice and the permission notice are included in "all copies or
+substantial portions of the Software". The text sets no other condition, so on its
+wording the patches may stay in this MIT repository as long as the upstream notice
+stays with them; it gives no reason to move them out of Git. Tracked files are copied
+by every clone, push and source archive, and the selected release destination carries
+a source archive ([release](release.md)). The macOS package built by
+`scripts/package.sh` does not include `docs/`.
+
+**Notice added.** The eleven files without the notice hold 505 of those upstream
+lines (441 context, 64 removed; 24 of the 505 are blank), all from
+`packages/coding-agent`, whose `LICENSE` is the root text with all three copyright
+lines. The license does not define "substantial portions", and this inventory does not
+decide whether those lines are a substantial portion; carrying the notice makes the
+question moot. The GitHub repository `dwbimstr/context-foundry` is public (checked
+through the GitHub API on 2026-11-19), and the eleven files, committed on 2026-11-18
+and 2026-11-19, are on the pushed `experimental/context-ecosystem` branch, so they
+were published without the notice and those versions remain in its history. The
+change that adds this section gives each of the eleven the upstream notice header in
+the form the other fourteen use: `omp-startup-advisor-exclusion.patch`,
+`omp-startup-catalog-spotlight.patch`, `omp-startup-dap-idle-sweep.patch`,
+`omp-startup-fixed-discovery-plan.patch`,
+`omp-startup-fixed-runtime-providers.patch`, `omp-startup-prompt-exclusion.patch`,
+`omp-startup-prompt-scheme-exclusion.patch`, `omp-startup-rpc-observation.patch`,
+`omp-startup-rpc-runtime-exclusion.patch`, `omp-startup-sdk-export.patch` and
+`omp-startup-workspace-scan-exclusion.patch`. Their hunks are unchanged, so the line
+counts above still hold, but the header changes each file's bytes. Of the 25 files'
+SHA-256 digests at `85a63c3`, the dated records in [validation](validation.md) contain
+one, that of `omp-startup-auth-retirement.patch`, which already carried the notice and
+is not changed. No other tracked file cites the SHA-256 digest or Git blob id of any
+of the 25. The private receipts were not opened for this check, so whether any of them
+records a digest of the eleven files is not known. Step 4 of the
+[release checklist](release.md), which inspects the Git contents for licenses and
+notices, still applies before any release.
