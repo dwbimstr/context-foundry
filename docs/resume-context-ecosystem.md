@@ -5,6 +5,17 @@
 Updated 2026-11-20. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
+- **Startup transport witness, 2026-11-20.** A no-provider native round advances census row 1
+  without a source change. On the pinned host, a test-only library-call witness recorded,
+  among network calls in normal startup, only the addon's socket pair and one Unix-socket
+  connect that libSystem's logging makes before any host code; the startup policy denies it
+  silently. Making the policy's network denial fatal kills every Bun process at that connect,
+  so the fatal denial was not adopted
+  ([record](validation.md#startup-transport-witness--2026-11-20)). The host pin and bridge
+  are unchanged. A fail-closed rule for unclassified transports, Mach and XPC routes to system
+  daemons, the `SIGUSR1` inspector listener, the admitting profile and the rest of the
+  inventory stay on HOLD.
+
 - **Experimental line merged to `main`, 2026-11-20.** On the owner's instruction,
   [PR #56](https://github.com/dwbimstr/context-foundry/pull/56) merged the
   experimental line through `f06c533` into `main` by merge commit `37a3cd8`, covered
