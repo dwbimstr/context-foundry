@@ -8,9 +8,13 @@ and dated paragraphs below are history.
 - **Startup transport witness, 2026-11-20.** A no-provider native round advances census row 1
   without a source change. On the pinned host, a test-only library-call witness recorded,
   among network calls in normal startup, only the addon's socket pair and one Unix-socket
-  connect that libSystem's logging makes before any host code; the startup policy denies it
-  silently. Making the policy's network denial fatal kills every Bun process at that connect,
-  so the fatal denial was not adopted
+  connect to a 15-character path before any host code. That connect is inferred to be
+  libSystem's logging socket and to be denied by the startup policy; its result was not
+  recorded. Under a fatal network denial every Bun process the round launched (19, all from
+  paths under the denied home readable only through a literal rule) died during startup. That
+  connect is the only network call the witness recorded before its constructor, which no
+  witness run under the fatal denial reached, so it is inferred to be the call killed. The
+  fatal denial was not adopted
   ([record](validation.md#startup-transport-witness--2026-11-20)). The host pin and bridge
   are unchanged. A fail-closed rule for unclassified transports, Mach and XPC routes to system
   daemons, the `SIGUSR1` inspector listener, the admitting profile and the rest of the

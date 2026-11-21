@@ -6,12 +6,14 @@ This round advances row 1 of the [startup inventory census](#startup-inventory-c
 "Connection preparation". It reads the startup transports from source, tests on the pinned host
 which kernel network operations the startup-observation profile denies, and tried to make such a
 denial end the host instead of returning an error the host can ignore. That change was not
-adopted: every Bun process the round started makes a denied Unix-socket connect during startup,
-before any host or Foundry code runs, from libSystem's logging path (attributed by inference,
-below), so a fatal denial kills normal startup. A test-only library-call witness
-recorded what the host called. The base commit is `f51b223`; no source changed, the host stays
-`28c61eff…5406` and the bridge `ce9a7181…44c7`. One agent ran the round in the main checkout;
-this is in-session self-review, not an independent review.
+adopted: under the fatal denial, every Bun process the round started (19, bare and host) died
+during startup before it printed or sent anything, so a fatal denial kills normal startup. The
+inferred cause is one Unix-socket connect that each Bun process in which the repaired witness
+loaded made before any host code. Its result and the kill site were not recorded, and its
+attribution to libSystem's logging path is also an inference (below). A test-only library-call
+witness recorded what the host called. The base commit is `f51b223`; no source changed, the
+host stays `28c61eff…5406` and the bridge `ce9a7181…44c7`. One agent ran the round in the main
+checkout; this is in-session self-review, not an independent review.
 
 ### Route table (source reading; completeness not established)
 
@@ -25,7 +27,7 @@ reading, not runtime proof; the runtime column cites this round's runs.
 | Anthropic warm-up HEAD, catalog GET | yes | classified and refused before I/O through the journal | two refusals per run |
 | Other registry fetches | only through the catalog hook | fail closed through the journal | no |
 | Addon Tokio socket pair | yes | observed and attributed; same process, no peer | one per run |
-| Unix-socket connect from libSystem logging (inferred) | yes, before any host code | denied silently; unclassified | one per Bun process |
+| Early Unix-socket connect to a 15-character path (inferred: libSystem logging to the syslog socket) | yes, before any host code | inferred denied silently (result not recorded); unclassified | recorded in the 9 Bun processes in which the repaired witness loaded |
 | `SIGUSR1` inspector listener | armed; external signal only | unjournaled listener attempt, denied | when signalled |
 | Provider discovery, credentials, telemetry, marketplace, MCP, memory | no | excluded before construction; existing receipts | no |
 | Tools, web, browser, subagents, inference, CLI subcommands | no | need a prompt, tool or command | no |
@@ -33,7 +35,7 @@ reading, not runtime proof; the runtime column cites this round's runs.
 | Automatic Codex WebSocket prewarm | no (model, provider, empty auth) | excluded by gates only; no patch | no |
 | Addon Mach/XPC services | no | excluded by gates; Mach lookups are not denied | no |
 | Bun crash upload, auto-install, resolver configuration | unknown | unclassified runtime routes | no |
-| `DNSServiceCreateConnection` / `getaddrinfo` to `mDNSResponder` | only if used | Unix-socket route, denied | no (bare fixtures only) |
+| `DNSServiceCreateConnection` / `getaddrinfo` to `mDNSResponder` | only if used | Unix-socket route, denied; `getaddrinfo("localhost")` also makes two denied AF_SYSTEM control connects | no (bare fixtures only) |
 
 ### Kernel controls
 
@@ -49,16 +51,22 @@ With today's denials, each of these returned -1 with `EPERM` from the libSystem 
 - AF_UNIX connect to a listening socket the driver owned;
 - AF_SYSTEM control connect.
 
-An AF_UNIX connect to a path that does not exist returned `ENOENT` instead: the path lookup
-comes before the sandbox check. Sending on a same-process Unix socket pair succeeded.
+An AF_UNIX connect to a path that does not exist returned `ENOENT` instead, consistent with the
+path lookup failing before any sandbox check (inferred). Sending on a same-process Unix socket
+pair succeeded.
 
 With `(deny network* (with send-signal SIGKILL))` appended, each of the nine denied classes ended
-by signal 9 that the driver did not send, 10 to 28 ms after the fixture's marker and before
-the call returned. The missing-path connect and the socket pair were not killed.
+by signal 9 that the driver did not send, before the fixture printed its result. The driver
+reaped them 10 to 28 ms after the fixture's marker; these are reap times, upper bounds on the
+time of death, since the two fixtures that were not killed, the missing-path connect and the
+socket pair, were reaped 31 and 34 ms after theirs.
 `DNSServiceCreateConnection` and `getaddrinfo("localhost")` take the Unix-socket route to
-`mDNSResponder`. Both are killed under the fatal suffix. Under today's policy the first fails, and
-the second still answers `localhost` without that route or the `com.apple.dnssd.service` Mach
-lookup; where the answer comes from is not shown.
+`mDNSResponder`, and `getaddrinfo` also makes two AF_SYSTEM control connects inside
+`libsystem_info`, both denied. Both fixtures are killed under the fatal suffix. Since a bare
+AF_SYSTEM control connect is also killed there, a fatal rule that allowed only the
+`mDNSResponder` route would still kill this name resolution (inferred). Under today's policy the
+first fails, and the second still answers `localhost` after those denials and without the
+`com.apple.dnssd.service` Mach lookup; where the answer comes from is not shown.
 
 Bun reports the kernel's `EPERM` on connect as `ECONNREFUSED` through `Bun.connect`, `node:net`,
 `node:http`, `node:https`, `node:http2` and `node:tls`, and as `EPERM` through `fetch` and
@@ -69,11 +77,12 @@ Bun reports the kernel's `EPERM` on connect as `ECONNREFUSED` through `Bun.conne
 
 Under the fatal suffix, every Bun process died at startup, before it printed or sent anything:
 
-- bare Bun in ten runs, including one that only loads the addon: 12 to 23 ms after launch, or
-  79 to 86 ms with the witness inserted;
-- the exact host and bridge in nine runs: three normal, withhold-catalog, the spliced `Bun.connect`
-  fixture, a 20-second hold, `SIGUSR1`, and two with the witness. They ended 58 to 67 ms after
-  launch, or 115 to 133 ms with the witness, with no channel frame and no addon extraction.
+- bare Bun in ten runs, including one that only loads the addon: reaped 12 to 23 ms after
+  launch, or 79 to 86 ms with the witness inserted;
+- the exact host and bridge, launched by the Python reconstruction described under Witness, in
+  nine runs: three normal, withhold-catalog, the spliced `Bun.connect` fixture, a 20-second hold,
+  `SIGUSR1`, and two with the witness. They were reaped 58 to 67 ms after launch, or 115 to 133 ms
+  with the witness, with no channel frame and no addon extraction.
 
 So the fatal suffix would kill normal startup, and the `Bun.connect` fixture never reached its
 connect. The protocol's decision rule therefore kept the startup policy unchanged. No product
@@ -92,32 +101,54 @@ inspector. It printed that the address was in use, and the run still reached the
 The witness is a test-only library-call witness: a library inserted with
 `DYLD_INSERT_LIBRARIES` that interposes 37 libSystem entry points. It is not a system-call
 tracer. It records the transport class, destination class and port, result, errno and
-image-relative frames. It records no payloads, addresses, full hostnames or paths. It refuses,
-without passing on, any lookup of a name other than `localhost` or a numeric literal; no such
-lookup occurred. Its self-test passed 61 checks.
+image-relative frames. It records no payloads or addresses: an IP destination is a class and a
+port. It names a host only from a five-name allowlist (only `localhost` occurred), a Unix socket
+path only for five allowlisted system sockets (otherwise a class and length), and a Mach or
+notify name only under `com.apple.`. It refuses, without passing on, any lookup of a name other
+than `localhost` or a numeric literal; outside its self-test no such lookup occurred. The first
+version's self-test passed 61 checks; the repaired version was checked only by the A1 and B1
+reruns (see the deviations).
 
 Positive controls under bare pinned Bun and C fixtures showed these calls:
 
 - `connect`, `connect$NOCANCEL`, `connectx`, `bind`, `sendmsg_x`, `send` and `sendto`;
 - `socket`, `socketpair`, `recvmsg` and `recvmsg_x`;
 - `getaddrinfo` and `DNSServiceCreateConnection`;
-- `bootstrap_look_up`, `bootstrap_look_up2` and `xpc_connection_create_mach_service`;
-- `notify_register_file_descriptor`, `notify_register_check` and `notify_register_dispatch`;
+- `bootstrap_look_up` and `xpc_connection_create_mach_service`;
+- `notify_register_file_descriptor`;
 - `posix_spawn` and `fork`.
 
-Other hooks are hooked but not shown, among them `accept`, `getnameinfo`, `DNSServiceQueryRecord`,
-`posix_spawnp` and `execve`. Calls between system libraries were visible: `send` reached `sendto`,
-and the resolver calls reached `connect$NOCANCEL`. In every case it was inserted into and that
-lived long enough, the witness loaded once in the right process, with no re-entry, truncation
-or lost record. A record-cap fixture overflowed as designed, and injection
-through `sandbox-exec`'s own environment loaded nothing. Sandbox violation reports were not
-readable with `log stream` as this user: neither control produced a report line.
+`bootstrap_look_up2`, `notify_register_check` and `notify_register_dispatch` were also recorded,
+but only incidentally; no designed control covers them, and the protocol lists them as hooked,
+not shown. Other hooks are hooked but not shown, among them `accept`, `getnameinfo`,
+`DNSServiceQueryRecord`, `posix_spawnp` and `execve`. Calls between system libraries were
+visible: `send` reached `sendto`, and the resolver calls reached `connect$NOCANCEL`. In every
+case it was inserted into and that lived long enough, the witness loaded once in the right
+process, with no re-entry, truncation or lost record, except that the XPC fixture wrote no
+summary record, so its lost count is unknown. A record-cap fixture overflowed as designed, and
+injection through `sandbox-exec`'s own environment loaded nothing.
 
-Every Bun process with the witness made two calls before the witness's constructor, which the
-first version only counted; the C fixtures made none. The one allowed repair recorded them, and both versions are retained. They are a `socket`
-and an AF_UNIX `connect` to a path of 15 characters. That length matches the syslog socket, and
-the frames resolve to libSystem's simple logging path by nearest exported symbol (both inferred;
-the logged message is not identified). This is the call the fatal suffix killed.
+The sandbox report probe did not run. `sandbox-exec` rejected the protocol's report suffix
+`(deny network* (with report))` with exit 65 ("report modifier does not apply to deny action"),
+so neither feasibility control made its call. `log stream`, run as this user without a privilege
+prompt, did deliver Sandbox deny lines for other processes, so report capture itself was not
+ruled out. The report runs of the two route fixtures and of the host were not run.
+
+Every Bun process in which the witness loaded (30) made two calls before the witness's
+constructor, which the first version only counted; the 13 C fixtures in which it loaded made
+none. The one allowed repair recorded them in the nine Bun processes in which it loaded, and both
+versions are retained. They are a `socket` and an AF_UNIX `connect` to a path of 15 characters. The repair
+records no result or errno for them, and keeps at most 12 return addresses. That length matches
+the syslog socket, and the frames resolve to libSystem's simple logging path by nearest exported
+symbol (both inferred; the logged message is not identified). That this connect is denied today
+and is the call the fatal suffix killed is also inferred. It is the only `network*` call recorded
+before the witness's constructor, and none of the five witness runs under the fatal suffix lived
+long enough for the witness to write anything. In the kernel controls, a `socket` followed by a
+connect to a missing path was not killed, while an AF_UNIX connect to a listening socket was
+denied and killed. The system profile treats `/private/var/run/syslog` as `network-outbound`.
+Every Bun executable ran in place from a path under the denied home that only a literal rule
+re-allows, while every C fixture ran from its case directory, so the round does not separate
+Bun from how it was launched.
 
 On the exact host and bridge, with the production policy, arguments and environment
 reconstructed in a Python parent (plus the witness in argv and environment), five runs were
@@ -125,12 +156,13 @@ recorded: three normal runs, a withhold-catalog run and a run held 20 seconds af
 `rpc_retired`. Among network calls, each recorded only that early connect and the addon's Unix
 stream socket pair. None recorded a resolver or spawn call or anything after `rpc_retired`. These
 are recorded calls only. The Mach lookups recorded were `com.apple.system.notification_center`,
-`com.apple.logd` and `com.apple.FSEvents`, within the visible functions.
+`com.apple.logd` and `com.apple.FSEvents`, all through `bootstrap_look_up2`.
 
 With the spliced `Bun.connect` fixture, the witness recorded its connect to the closed port
 returning -1 `EPERM` from the host image, so connects made by host code are visible. The
-`SIGUSR1` run recorded a numeric-literal lookup and `bind 127.0.0.1:9229` returning -1 `EPERM`
-from the host image. The inspector listener is a real, unjournaled transport attempt.
+`SIGUSR1` run recorded a numeric-literal lookup and an IPv4 loopback `bind` on port 9229
+returning -1 `EPERM` from the host image. The inspector listener is a real, unjournaled transport
+attempt.
 
 ### Gates
 
@@ -153,9 +185,12 @@ gates were not run because no code changed.
 
 ### Cleanup and size
 
-109 native process groups ran, 91 bare and 18 host, and all were reaped without force. The
-cleanup removed the two Cargo targets and the round's scratch, which reduced allocation by
-3,507,916,800 bytes. The nine addon copies the host extracted and the round's own shared copy
+The round's qualification readback counts 108 native process groups, 90 bare (including the
+passing staging self-test before the clock) and 18 host; all were gone afterwards and none was
+forced. Two failed attempts are outside that count: the first staging self-test, whose group was
+gone and not forced, and the first K0 attempt, whose driver crashed parsing output after waiting
+for the group, so its reap was not recorded. The cleanup removed the two Cargo targets and the
+round's scratch, which reduced allocation by 3,507,916,800 bytes. The nine addon copies the host extracted and the round's own shared copy
 were removed after matching `ee0bf26f…900b`, taking the round from 1,354,555,392 to
 243,437,568 allocated bytes. The pinned host and all 1,006 files of the previous round were
 unchanged.
@@ -167,8 +202,9 @@ under `runs/pilot-startup-transport-witness-2026-11-20/`.
 
 ### Deviations from the protocol
 
-- An AF_UNIX connect to a missing path never reaches the sandbox check. Two added controls and the
-  witness's two Unix-socket connect controls therefore used a listening socket the driver owned.
+- An AF_UNIX connect to a missing path returns `ENOENT`, apparently before the sandbox check. Two
+  added controls and the witness's two Unix-socket connect controls therefore used a listening
+  socket the driver owned.
 - Case-root socket paths exceed the 104-byte socket path limit. Fixtures used paths relative to
   the case root, and the witness classifies them as relative.
 - Four driver errors were fixed after the clock started: an output parser, shell argument
@@ -176,23 +212,58 @@ under `runs/pilot-startup-transport-witness-2026-11-20/`.
   repeated, and the failed attempts are kept.
 - The witness image table holds 2,048 entries, not 512, and records each image's text size, not
   its address range. The XPC fixture exits without cancelling its connection.
+- The repaired witness has no build receipt from the round, and its self-test was not run; the
+  61-check self-test covers the first version. A later rebuild of the retained repaired source
+  with the staging flags, run from the round directory under `(deny network*)`, reproduced the
+  retained library byte for byte (`8cb93966…`). That shows the compiler and flags, not how or
+  under which policy the original was built. The repair only adds the pre-constructor records.
+- The first version served the bare witness controls; the repaired one served the A1 and B1
+  reruns and all host witness runs.
+- The protocol's report suffix is malformed on this Darwin (above), and the report probe's
+  driver ran outside the bounded native runner; its four cases' groups were reaped and receipted.
+- `bun --version` ran once at staging without a sandbox, against the protocol's rule that every
+  native run uses `(deny network*)`. No receipt records it.
+- `bootstrap_look_up2`, `notify_register_check` and `notify_register_dispatch` were reported
+  from incidental records, although the protocol lists them as hooked, not shown.
+- The protocol said the contract's "Native addon and process resources" row gains a sentence if
+  the witness is fit. The round did not add it; the fix-up below did.
+
+### Fix-up after self-review
+
+Three in-session review passes over the committed record (self-review, not independent) found
+inferences stated as observations, a report-probe outcome misread, a group count that disagreed
+with its receipt and omitted deviations. A fix-up later the same day corrected this record, the
+handoff and the contract rows from the retained receipts, rebuilt the repaired witness once to
+check its bytes, and ran no native case or gate, because no code changed. Its receipts are in
+the round's `fixup/` directory.
 
 ### Not established
 
-- A fail-closed rule for unclassified transports at startup. The early logging connect must be
-  handled before network denial can be fatal, and handling it was not tried.
+- A fail-closed rule for unclassified transports at startup. The early Unix-socket connect must
+  be handled before network denial can be fatal, and handling it was not tried.
+- The early connect's result and the kill site: the repair records no result, and nothing was
+  recorded under the fatal suffix. Both are inferred above.
+- Whether the early connect comes from Bun itself or from how it was launched. Every Bun
+  executable ran in place from a path under the denied home that only a literal rule re-allows,
+  and every C fixture from its case directory. A bare fatal-suffix pair, Bun copied into a case
+  directory and a C fixture run from a literal-only path, would separate them.
+- Whether an allow rule placed after `(deny network* (with send-signal SIGKILL))` prevents the
+  kill: the one control, a Bun fixture, died at startup before its connect.
+- Sandbox reports: the report probe did not run.
 - Journal completeness: a kernel denial is silent, and no destination is journaled.
 - Operation classes not shown, for example `accept`, and every claim through the witness beyond
   the functions with a passing control.
 - Calls the witness cannot see: calls inside one library, unhooked functions (`write`, `writev`,
   `sendfile`, `recv`), Network.framework flow setup, daemon-proxied I/O, JIT or unscanned images.
   Calls before it loads are seen only through the repair, without results or reliable frames.
-- Which logging message opens the syslog socket, and why only Bun processes send it.
-- Mach and XPC routes to system daemons, which stay allowed.
+- Whether the early connect goes to the syslog socket, and which code and message open it.
+- Mach and XPC routes to system daemons, which stay allowed, and the AF_SYSTEM control connects
+  inside name resolution.
 - Activity later than about 20 seconds after `rpc_retired`, and timers that fire later.
-- Fidelity of the witness launch: it reconstructs the launch in Python, with
-  `DYLD_INSERT_LIBRARIES` in argv and environment. The Cargo native tests ran the actual
-  launcher without the witness.
+- Fidelity of the host launches: every host run, including the nine under the fatal suffix,
+  reconstructs the launch in Python, and the witness runs add `DYLD_INSERT_LIBRARIES` to argv and
+  environment. The Cargo native tests ran the actual launcher without the witness and under
+  today's policy only.
 - The route table's unknown rows, its 2026-11-16 build census, which predates patches 4-26, and
   its grep for unindented constructors.
 - Several routes were not exercised: Bun crash upload, auto-install, the automatic Codex WebSocket
@@ -520,9 +591,11 @@ credential notice can fire with empty authentication at all, and which of the ma
 timer and network sites are reachable.
 
 Note, later on 2026-11-20: the [startup transport witness](#startup-transport-witness--2026-11-20)
-round advanced row 1 without closing it. A fatal network denial was not adopted because
-libSystem makes a denied Unix-socket connect in every Bun process before any host code, so the
-row still needs a fail-closed rule that survives that connect.
+round advanced row 1 without closing it. A fatal network denial was not adopted because every
+Bun process the round launched died under it during startup, all of them from paths under the
+denied home readable only through a literal rule. The inferred cause is a Unix-socket connect
+made before any host code, attributed by inference to libSystem's logging, so the row still
+needs a fail-closed rule that survives that connect.
 
 ## Native addon socket-pair static attribution — 2026-11-20
 
