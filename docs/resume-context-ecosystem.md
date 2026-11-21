@@ -2,23 +2,29 @@
 
 ## Current status — 2026-11-06
 
-Updated 2026-11-20. This section owns current status; other documents link here,
+Updated 2026-11-21. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
-- **Startup transport witness, 2026-11-20.** A no-provider native round advances census row 1
-  without a source change. On the pinned host, a test-only library-call witness recorded,
-  among network calls in normal startup, only the addon's socket pair and one Unix-socket
-  connect to a 15-character path before any host code. That connect is inferred to be
-  libSystem's logging socket and to be denied by the startup policy; its result was not
-  recorded. Under a fatal network denial every Bun process the round launched (19, all from
-  paths under the denied home readable only through a literal rule) died during startup. That
-  connect is the only network call the witness recorded before its constructor, which no
-  witness run under the fatal denial reached, so it is inferred to be the call killed. The
-  fatal denial was not adopted
-  ([record](validation.md#startup-transport-witness--2026-11-20)). The host pin and bridge
-  are unchanged. A fail-closed rule for unclassified transports, Mach and XPC routes to system
-  daemons, the `SIGUSR1` inspector listener, the admitting profile and the rest of the
-  inventory stay on HOLD.
+- **Startup early connect, 2026-11-21.** A no-provider native round adopts a fail-closed
+  startup network rule for census row 1.
+  - **The early connect.** The connect every Bun process in the previous round made before
+    host code is libSystem's logging socket, `/var/run/syslog`. It is made when the
+    executable's directory is unreadable (inferred from launch-path controls and static
+    reading). It stays denied and is now non-fatal.
+  - **The new rule.** Any other sandbox network denial now ends the startup host, and the
+    journal records the exit code and signal. Twelve classes were shown on bare fixtures with
+    the same suffix (inferred for the host). A kill names no destination, and Mach and XPC
+    routes are not covered.
+  - **Through the actual launcher**, a `SIGUSR1` now ends the host by signal 9, and the parent
+    fails closed.
+  - **Implementer interpretation, flagged to the owner.** Reading the kernel tripwire as outside
+    the rejected API fence is not an owner decision. The owner chose this round, and that
+    choice does not decide the reading. Reverting means the constant, the policy oracle and its
+    message, the constant pin test and the `SIGUSR1` test
+    ([record](validation.md#startup-early-connect-and-fatal-network-denial--2026-11-21);
+    [previous round](validation.md#startup-transport-witness--2026-11-20)).
+  - The host pin and bridge are unchanged. Mach and XPC routes, the admitting profile and the
+    rest of the inventory stay on HOLD.
 
 - **Experimental line merged to `main`, 2026-11-20.** On the owner's instruction,
   [PR #56](https://github.com/dwbimstr/context-foundry/pull/56) merged the

@@ -635,7 +635,7 @@ impl Host {
             &spec.deny_literals,
         )?;
         if startup_observation {
-            policy_text.push_str("(deny process-fork)");
+            policy_text.push_str(STARTUP_OBSERVATION_POLICY_SUFFIX);
         }
         let mut args = omp_args(&paths);
         if startup_observation {
@@ -1596,6 +1596,15 @@ pub fn file_identity(path: &Path) -> Option<(u64, u64)> {
     fs::symlink_metadata(path).ok().map(|m| (m.dev(), m.ino()))
 }
 
+/// Appended only to the startup-observation launch policy. `sandbox_policy` already
+/// applies `(deny network*)`; this suffix forbids process creation and makes such a
+/// denial end the host instead of returning an error it can ignore. The last rule keeps
+/// one denial non-fatal: the libSystem logging socket, which the host connects to before
+/// its own code runs (observed). The trigger, an unreadable executable directory, is
+/// inferred (docs/validation.md, 2026-11-21). Later rules win in SBPL, so that connect is
+/// still denied.
+pub const STARTUP_OBSERVATION_POLICY_SUFFIX: &str = "(deny process-fork)(deny network* (with send-signal SIGKILL))(deny network-outbound (literal \"/private/var/run/syslog\"))";
+
 #[cfg(test)]
 mod tests {
     // Compatibility setup for NEW owned synthetic fixtures only. Existing
@@ -1934,6 +1943,26 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn startup_observation_policy_suffix_is_fatal_network_denial_with_syslog_carve_out() {
+        let s = STARTUP_OBSERVATION_POLICY_SUFFIX;
+        assert_eq!(
+            s,
+            concat!(
+                "(deny process-fork)",
+                "(deny network* (with send-signal SIGKILL))",
+                "(deny network-outbound (literal \"/private/var/run/syslog\"))",
+            )
+        );
+        assert!(s.starts_with("(deny process-fork)"));
+        assert_eq!(s.matches("(with send-signal SIGKILL)").count(), 1);
+        assert!(
+            s.find("(deny network-outbound").unwrap()
+                > s.find("(with send-signal SIGKILL)").unwrap()
+        );
+        assert!(!s.contains("(allow"));
     }
 
     #[test]

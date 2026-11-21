@@ -120,7 +120,11 @@ async fn source_startup_profile_refuses_rpc_commands() {
         &spec.deny_literals,
     )
     .unwrap();
-    expected_policy.push_str("(deny process-fork)");
+    expected_policy.push_str(concat!(
+        "(deny process-fork)",
+        "(deny network* (with send-signal SIGKILL))",
+        "(deny network-outbound (literal \"/private/var/run/syslog\"))",
+    ));
     let first = tokio::time::timeout(Duration::from_secs(10), events.recv()).await;
     let result = host
         .send_rpc(&json!({"id": "startup-control", "type": "get_state"}))
@@ -132,10 +136,15 @@ async fn source_startup_profile_refuses_rpc_commands() {
     assert_eq!(error.class, FaultClass::Protocol);
     assert_eq!(error.code, "rpc_on_startup_channel");
     assert!(exit.group_gone && !exit.forced);
+    assert_ne!(
+        exit.signal,
+        Some(libc::SIGKILL),
+        "the startup host must not die by SIGKILL in this control"
+    );
     assert_eq!(
         actual_policy_sha256,
         pilot_capture::sha256_hex(expected_policy.as_bytes()),
-        "startup launch must bind the process-fork denial"
+        "startup launch must bind the fatal network denial and its syslog carve-out"
     );
     assert!(
         !drained
@@ -333,6 +342,14 @@ fn source_startup_refusal_is_durable_and_incomplete_inventory_never_admits() {
                 halt["observed_prefix_sha256"],
                 pilot_capture::sha256_hex(&bytes[..prefix_bytes])
             );
+            let host_exit = &rows[17];
+            assert_eq!(host_exit["kind"], "startup_host_exit");
+            assert!(
+                host_exit.as_object().unwrap().contains_key("signal")
+                    && host_exit["signal"].is_null()
+                    && host_exit["code"] == 0,
+                "startup_host_exit must record the exit code and terminating signal"
+            );
             if let Some(out) = &output {
                 fixture_private_dirs(out).unwrap();
                 fixture_private_write(
@@ -368,6 +385,125 @@ fn source_startup_refusal_is_durable_and_incomplete_inventory_never_admits() {
             .is_err()
         );
     }
+}
+
+/// Actual launcher: SIGUSR1 makes the startup host try to bind Bun's inspector on
+/// loopback. The fatal network denial must end the host (the parent sends no kill),
+/// and the parent must fail closed instead of returning the HOLD receipt.
+#[test]
+#[ignore = "needs explicit CF_PILOT_STARTUP_OMP; no-provider startup signal listener control"]
+fn source_startup_signal_listener_fails_closed() {
+    use pilot_capture::startup::ObservationAdmission;
+    use std::time::{Duration, Instant};
+    let omp = PathBuf::from(
+        std::env::var_os("CF_PILOT_STARTUP_OMP").expect("explicit startup source host"),
+    );
+    let output = std::env::var_os("CF_PILOT_CURRENT_EVIDENCE_ROOT").map(PathBuf::from);
+    let e = env();
+    let run_dir = e._root.path().join("startup-observation");
+    let journal = run_dir.join("journal.jsonl");
+    let admission = ObservationAdmission {
+        run_dir,
+        omp,
+        workspace: e.workspace.clone(),
+        faults: VerificationFaults::default(),
+    };
+    let observer = std::thread::spawn(move || CaptureSession::observe_startup(admission));
+    let complete = |bytes: &[u8]| -> Vec<Value> {
+        let end = match bytes.iter().rposition(|b| *b == b'\n') {
+            Some(i) => i + 1,
+            None => 0,
+        };
+        bytes[..end]
+            .split(|b| *b == b'\n')
+            .filter(|l| !l.is_empty())
+            .map(|l| serde_json::from_slice(l).unwrap())
+            .collect()
+    };
+    let started = Instant::now();
+    let pid = loop {
+        let rows = std::fs::read(&journal)
+            .map(|b| complete(&b))
+            .unwrap_or_default();
+        if rows.iter().any(|r| r["kind"] == "halt") {
+            break None;
+        }
+        let launch = rows.iter().find(|r| r["kind"] == "host_launched");
+        if rows.iter().any(|r| r["kind"] == "startup_refused") {
+            break launch
+                .and_then(|r| r["pid"].as_i64())
+                .and_then(|p| i32::try_from(p).ok());
+        }
+        if started.elapsed() >= Duration::from_secs(20) {
+            break None;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    };
+    // SAFETY: `pid` is the launched sandbox-exec child, which runs the host in place. The
+    // parent normally reaps it in `Host::finish` after a halt row, and the snapshot read
+    // just before this call had none; the remaining window is microseconds, and a halt-less
+    // path fails this test rather than passing it.
+    let signalled = pid.map(|pid| unsafe { libc::kill(pid, libc::SIGUSR1) });
+    let result = observer.join().unwrap();
+    let bytes = std::fs::read(&journal).unwrap();
+    if let Some(out) = &output {
+        fixture_private_dirs(out).unwrap();
+        fixture_private_write(out.join("signal-journal.jsonl"), &bytes).unwrap();
+    }
+    assert!(pid.is_some(), "no refusal within 20 s, or a halt before it");
+    assert_eq!(signalled, Some(0), "SIGUSR1 was not delivered");
+    let rows = complete(&bytes);
+    assert!(
+        result.is_err(),
+        "startup reached the HOLD after SIGUSR1: the inspector listener attempt was not fatal"
+    );
+    let error = result.unwrap_err();
+    let exits: Vec<&Value> = rows
+        .iter()
+        .filter(|r| r["kind"] == "startup_host_exit")
+        .collect();
+    assert_eq!(exits.len(), 1);
+    assert_eq!(
+        exits[0]["signal"],
+        libc::SIGKILL,
+        "the sandbox must end the host"
+    );
+    assert!(exits[0]["code"].is_null());
+    assert_eq!(exits[0]["normal"], false);
+    assert_eq!(
+        exits[0]["forced"], false,
+        "the parent must not have killed the host"
+    );
+    assert_eq!(exits[0]["group_gone"], true);
+    let halts: Vec<&Value> = rows.iter().filter(|r| r["kind"] == "halt").collect();
+    let last = rows.last().unwrap()["kind"].clone();
+    if rows.iter().any(|r| r["kind"] == "startup_rpc_retired") {
+        assert_eq!(halts.len(), 2);
+        assert_eq!(halts[0]["code"], "startup_inventory_unqualified");
+        assert_eq!(halts[1]["phase"], "startup_cleanup");
+        assert_eq!(last, "halt");
+        assert_eq!(error.code, halts[1]["code"].as_str().unwrap());
+        println!("signal_kill_branch=after_retirement code={}", error.code);
+    } else {
+        assert_eq!(halts.len(), 1);
+        assert_eq!(halts[0]["phase"], "startup_observation");
+        assert_eq!(halts[0]["class"], "protocol");
+        assert_eq!(last, "startup_host_exit");
+        assert_eq!(error.code, halts[0]["code"].as_str().unwrap());
+        println!("signal_kill_branch=before_retirement code={}", error.code);
+    }
+    assert!(!rows.iter().any(|r| matches!(
+        r["kind"].as_str(),
+        Some(
+            "startup_ack"
+                | "startup_settled"
+                | "bridge_ready"
+                | "prompt_sent"
+                | "permit"
+                | "counter_result"
+                | "provider_attempt"
+        )
+    )));
 }
 
 async fn startup_control_configuration(

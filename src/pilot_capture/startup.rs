@@ -761,7 +761,7 @@ async fn observe(a: ObservationAdmission) -> Result<ObservationReceipt, CaptureF
     if terminal.class == FaultClass::Persistence {
         return Err(terminal);
     }
-    journal.append("startup_host_exit",json!({"normal":exit.normal,"forced":exit.forced,"group_gone":exit.group_gone,"stderr_bytes":exit.stderr_bytes,"stderr_sha256":exit.stderr_sha256}))?;
+    journal.append("startup_host_exit",json!({"normal":exit.normal,"code":exit.code,"signal":exit.signal,"forced":exit.forced,"group_gone":exit.group_gone,"stderr_bytes":exit.stderr_bytes,"stderr_sha256":exit.stderr_sha256}))?;
     if terminal.code != INVENTORY_UNQUALIFIED {
         return Err(terminal);
     }

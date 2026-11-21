@@ -1,5 +1,216 @@
 # Validation
 
+## Startup early connect and fatal network denial — 2026-11-21
+
+This round advances row 1 of the [startup inventory census](#startup-inventory-census--2026-11-20),
+"Connection preparation", and answers the [previous round](#startup-transport-witness--2026-11-20)'s
+open items about the Unix-socket connect every Bun process it launched made before host code. The
+startup launcher now makes a sandbox `network*` denial end the host, except a denial of the syslog
+socket, which stays non-fatal. Twelve classes were shown to be killed on bare fixtures with the
+same suffix (inferred for the host). Mach/XPC and daemon-proxied routes are not covered. Base
+`99966c2`; host `28c61eff…5406` and bridge `ce9a7181…44c7` unchanged. One session ran it in the
+main checkout, with agents for staging, controls and the product gates; this is in-session
+self-review, not an independent review.
+
+### The early connect
+
+Static reading on this Mac (macOS 27.0.1, 26A434), with 12 receipts (ten tool runs under
+`(deny network*)`, two in-process Python reads): libSystem's simple logging makes
+`socket(AF_UNIX, SOCK_DGRAM, 0)` and connects it to the 15-byte path `/var/run/syslog`. When
+that connect fails it closes the socket and sends nothing. It is reached from libxpc's `_xpc_bundle_resolve_root`, at the call that logs
+`bundle %s tainted with reason "missing root"` after the bundle's container fails a read check;
+that this container is the executable's directory is inferred from the launch-path cells below.
+The `libsystem_platform` and `libxpc` UUIDs match the witness's image records. The logged
+message was not captured.
+
+Kernel level, without the witness: under the fatal rule alone, bare Bun in place died before main
+(signal 9, no output, 24.9 ms after launch). With the syslog carve-out added it exited normally. So
+did the host's three normal runs, which died under the fatal rule in the previous round. So every
+sandbox network operation in those startups matched the carve-out (inferred from these pairs;
+another operation on the same socket could not be told apart).
+
+Witness corroboration: a test-only library-call witness (v3, not a system-call tracer; 72-check
+self-test, whose errno check cannot detect a dropped `RESTORE_ERRNO` alone; fit in all eight
+witness runs) recorded the pre-constructor `connect` to `/var/run/syslog` returning −1 `EPERM` in
+Bun in place, in a C fixture at a literal-only path, in bare Bun under the carve-out and in the
+host's witness run. Its frames run from `_simple_asl_connect` through `_os_log_simple` to the
+"missing root" log site, then, symbolized after the round by a
+sandboxed static read, through `__xpc_bundle_resolve_sync`, a `dispatch_once` block,
+`__xpc_bundle_resolve`, `xpc_bundle_copy_services` and `__xpc_collect_images` to
+`__libxpc_initializer`. The design's predicted route through `__xpc_early_init` and
+`__xpc_init_pid_domain` did not appear, so that part of the static model is not shown.
+
+Launch path (pattern A of the protocol). Under today's policy with the witness, the connect was
+present for Bun in place and for a C no-op fixture copied to a path that only a literal rule
+re-allows. It was absent for Bun copied into a readable case directory and for the C fixture run
+from its case directory. Under the fatal rule, the two literal-only executables died before main
+and the two readable ones lived. Allowing `file-read-data` on Bun's directory alone removed the
+connect. So the connect is made by any libSystem process whose executable's directory is
+unreadable, not by Bun itself (inferred from these cells and the static reading; every settled
+prediction held). The copied Bun matched the original's hash, mode, extended attributes and
+signature lines.
+
+The optional log probe did not run: `log stream` under `(deny network*)` exited with code 64 within
+its 1.5 s start window, with no stream lines and one stderr line (not kept), so no Sandbox deny
+line was captured.
+
+### Fatal denial with a syslog carve-out
+
+The C fixture's syslog connect returned −1 `EPERM` under today's policy and was killed under the
+fatal rule. With `(deny network-outbound (literal "/private/var/run/syslog"))` after the fatal rule
+(P1S), it returned −1 `EPERM` and the process lived. A later non-fatal deny therefore replaces the
+fatal action, and nothing is newly allowed; the `remote unix-socket` form was not needed. Still
+killed under P1S, each within 11-28 ms: TCP4 and TCP6 connect, UDP send with an address, UDP
+connect, inet bind, `listen` on an unbound socket, AF_UNIX connect to an owned listener (0
+accepts), AF_UNIX bind, AF_SYSTEM control connect, AF_UNIX connect to `/var/run/mDNSResponder`,
+`DNSServiceCreateConnection` and `getaddrinfo("localhost")`. A same-process socket pair was not
+killed. A later `(allow network-outbound (remote ip "localhost:Q"))` to an owned listener also
+overrode the kill (one accept). A later path-filter allow was not run, because it would have let
+the connect reach syslogd.
+
+### Startup under the new rule
+
+In the Python reconstruction of the exact host and bridge under P1S:
+- Survived: bare Bun and its addon load (exit 0), and the host's three normal runs, the
+  withhold-catalog run and the witness run, each reaching HOLD with the extracted addon
+  `ee0bf26f…`. The witness run recorded no `network*` call after its constructor and one addon
+  socket pair. A 20-second hold after
+  `rpc_retired` passed without a kill.
+- A close with the refusal pending ended with exit 70 under both today's policy and P1S. The host
+  made no fatal `network*` call there.
+- Killed by signal 9 the driver did not send: bare `Bun.connect` (24.5 ms after launch), the spliced
+  `Bun.connect` (0.9 ms after its trace) and `SIGUSR1` (11.2 ms after the signal). With the witness,
+  the `SIGUSR1` run's last `network*` record is an inet `bind` to loopback port 9229 with no exit
+  record, so the killed call is inferred to be the inspector bind.
+
+### Red, fix, green
+
+The change sets `STARTUP_OBSERVATION_POLICY_SUFFIX` in `src/pilot_capture/host.rs` to
+`(deny process-fork)(deny network* (with send-signal SIGKILL))(deny network-outbound (literal "/private/var/run/syslog"))`,
+used only under `CatalogProfile::StartupObservation`. `startup_host_exit` now records `code` and
+`signal`. Tests:
+- a pin on the constant;
+- the `rpc-input` control's written-out policy oracle, plus an assertion that its host did not die by
+  `SIGKILL`;
+- a check that the normal journal's exit row has `code: 0` and `signal: null`;
+- `source_startup_signal_listener_fails_closed`, which sends `SIGUSR1` through the actual launcher
+  after the first refusal.
+
+On the red tree (old constant, exit record without code and signal), the four tests failed with
+exit 101, each on its own assertion. The signal
+test failed because startup reached the HOLD. After the fix all passed. Through the actual launcher,
+without the witness, both signal runs ended the host by signal 9 that the parent did not send. Each
+journaled `startup_host_exit` with `signal: 9`, `code: null`, `forced: false`, after a protocol halt
+`startup_unexpected_event` before retirement, and the parent returned that fault. That the killed
+call was the bind rests on the reconstruction's witness run. A kill names no destination, so this
+is not journal completeness. A parent-killed test was not added: its path is the signal test's
+before-retirement branch.
+
+Implementer interpretation, flagged to the owner: this kernel action on an existing denial
+intercepts no JavaScript API, so it is read as outside the rejected blanket API fence. The contrary
+reading: the fence was rejected because its coverage was incomplete, and this rule is also
+incomplete, since it misses Mach/XPC and daemon-proxied routes and a kill names no destination. The
+owner chose this round; that is not a decision on either reading. Reverting it means the constant,
+the policy oracle and its message, the constant pin test and the `SIGUSR1` test.
+
+### Gates
+
+`pilot-capture` feature, Rust 1.97.1 unless stated, one at a time; stdout SHA-256 prefixes:
+- Reds, exit 101: `unit-red` (132 passed, 1 failed, 1 ignored) `575997ea`, `rpc-input-red`
+  `a7d1af65`, `startup-red` `09399cc1`, `signal-red` `85c45cb6`.
+- Greens: `unit` (133 passed, 1 ignored) `eb24d52e`, `rpc-input` `6581fada`, `signal` `3badb3a1`,
+  `signal-repeat` `a356e27b`, `startup` `7d767c45`, `startup-repeat` `d97eadfa` (each 14 journals;
+  normal journal 18 rows with the HOLD), `lint` (clippy `-D warnings`) and `msrv` (Rust 1.90.0
+  `cargo check`).
+- `fmt` failed once: rustfmt joined the constant onto one line and split two assertions. The
+  pre-declared `cargo fmt` fallback changed only `host.rs` and `tests/pilot_capture.rs`, and
+  `fmt-2` passed.
+- After cleanup, the kept test binaries replayed the startup, `rpc-input` and signal tests (signal
+  9, `forced: false`). The reconstruction under the landed constant gave HOLD, a spliced-connect
+  kill and a `SIGUSR1` kill.
+
+Not run: `scripts/gates.sh` and the default-feature gates (only `pilot-capture` code changed; not a
+merge), and native macOS acceptance.
+
+### Cleanup and size
+
+All 44 native groups in the qualification readback (43 clocked cases and the staging self-test)
+were gone and none was forced; so were the superseded first staging self-test and the three
+replay host cases.
+Cleanup removed the two Cargo targets and the round's scratch, reducing allocation by
+3,514,355,712 bytes. The final readback then removed 15 host-extracted addon copies, the
+staged shared addon and 2 Bun copies after matching their hashes. That took the round from
+2,189,123,584 to 234,274,816 allocated bytes. The pinned host and both earlier rounds' files were unchanged. The clock started
+at 15:24:17 UTC: decision at minute 4.8, all gates green by minute 21.3, close-out within the
+150-minute deadline. That deadline overrides the contract's 90-minute wording; authoring and
+compiling were staged before the clock. Zero provider calls, zero spend. Receipts, including the
+protocol, critiques and amendments, are under `runs/pilot-startup-early-connect-2026-11-21/`.
+
+### Deviations from the protocol
+
+- Session-owner amendments before the clock, not deviations:
+  - if the close-pending case had been killed only under the carve-out, the rule would not have
+    been adopted;
+  - compile-only steps were added before the red and the green gates. Both compiled first time,
+    so there were no authoring fixes.
+- Staging ran `sw_vers` once outside the sandbox (output discarded); the static receipt ran
+  sandboxed.
+- Design-time static reads (`dyld_info`, `sw_vers`) ran without a sandbox in four in-session stages
+  before the round (the brief and three design stages); the in-round static receipts ran under
+  `(deny network*)` and are the evidence.
+- By protocol, the brief's optional late allow of the syslog socket was replaced with the documented
+  loopback allow to an owned listener, so no connect reached a system daemon.
+- Staging departed from the protocol text where it was wrong or could not be built, each recorded in
+  the round's `staging-report.md`:
+  - extended-attribute names were read through libSystem's `listxattr`;
+  - self-test check 11 was rebuilt (4 own-image and 28 libxpc addresses) and check 5 strengthened;
+  - pre fitness was extended to in-flight network records and to absence claims;
+  - part of S3 ran before S2;
+  - the `Qw` case was added.
+
+  Twelve review findings in the tooling were fixed before the clock, two of them in part (findings
+  2 and 12). The witness was rebuilt once and its self-test rerun; the first receipts are kept.
+- Helper files went into the session's scratchpad under `/private/tmp`, where the protocol drafts
+  were also written before staging: a clock helper, a copy of the host cases' execution receipt, a
+  policy listing from a review pass and a staging review script. None is evidence; the receipts are
+  under the round directory. The session owner read G.1 S7 as covering stores and evidence, and
+  treated this as a deviation, not a stop.
+- During the controls, the first `decision.json` misread the static receipt and withdrew the static
+  claim. It was kept as `superseded-decision-1.json` and corrected at minute 4.82, with no other
+  branch changed. The probe's outcome was added to it once afterwards.
+- The controls executor:
+  - ran one extra witness check on the first launch-path cells before the rest;
+  - added a decision tool (`decide.py`, not in the protocol's copy list);
+  - annotated `witness-readback.json` after `check.py` wrote it (three fields; `check.py`
+    unchanged).
+- The product-phase agent's session ended with an API error after the last gate, before it wrote
+  its summary, and the close-out agent failed the same way. The session owner wrote the summary from
+  the receipts and ran the close-out; nothing was rerun. The replay's three Cargo tests have no
+  before-and-after listing of the temporary directory; the listing taken afterwards was unchanged.
+- The deeper frames were symbolized after the round by a sandboxed static read, first without a
+  receipt and then repeated with one (`attribution/deeper-frames.json`).
+- The first self-review pass ran before the commit existed and was repeated after it. In response,
+  the constant's doc comment and the signal test's SAFETY comment were reworded (comments only).
+  `cargo fmt --check` and clippy with `-D warnings` passed on the committed tree; no other gate was
+  rerun (receipts in the round's `postfix/`).
+
+### Not established
+
+- Journal completeness: a kill names no destination.
+- `network*` classes other than the twelve shown, and Mach and XPC routes. The twelve were shown
+  on bare fixtures with the same suffix; at the host, only a TCP connect and the inspector bind were
+  killed. Name resolution's AF_SYSTEM and `mDNSResponder` connects are therefore inferred to end the
+  startup host. The syslog socket stays a silent denial.
+- The logged message and other log routes.
+- The libxpc initializer route the design predicted.
+- How the Cargo test's 13 fault-path hosts end, since that test journals no exit for them.
+- Activity beyond 20 s after `rpc_retired`.
+- Fidelity of the reconstruction: the reconstructed witness launches add `DYLD_INSERT_LIBRARIES`.
+- The admitting profile, the inventory freeze and admission stay on HOLD.
+- Whether the tripwire is outside the rejected fence is an implementer interpretation awaiting the
+  owner.
+- This was in-session self-review, not an independent one.
+
 ## Startup transport witness — 2026-11-20
 
 This round advances row 1 of the [startup inventory census](#startup-inventory-census--2026-11-20),
@@ -596,6 +807,13 @@ Bun process the round launched died under it during startup, all of them from pa
 denied home readable only through a literal rule. The inferred cause is a Unix-socket connect
 made before any host code, attributed by inference to libSystem's logging, so the row still
 needs a fail-closed rule that survives that connect.
+
+Note, 2026-11-21: the [startup early connect](#startup-early-connect-and-fatal-network-denial--2026-11-21)
+round adopted a fail-closed startup rule. The early connect is libSystem's logging socket, made
+when the executable's directory is unreadable (inferred). Any other sandbox network denial now
+ends the startup host, without journaling a destination; twelve classes were shown on bare
+fixtures with the same suffix (inferred for the host). Mach and XPC routes and the admitting
+profile remain.
 
 ## Native addon socket-pair static attribution — 2026-11-20
 
