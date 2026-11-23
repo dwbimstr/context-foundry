@@ -16,10 +16,20 @@ boundaries and existing authorization; do not ask again for already selected wor
   database, generic orchestration platform or inherited C++ obligations.
 - Use the [modified Spec Kit tools](.specify/README.md) as needed. One spec is sufficient;
   plan/tasks files and command stages are optional. No benchmark per feature by default.
-- When compatible Foundry tools are mounted for an admitted indexed repository, use
-  `search`/`context`/`retrieve` before eligible repository grep/ripgrep. Follow
-  [003's fallback rules](specs/003-agent-retrieval-context/spec.md#native-source-discovery-and-fallback)
-  for unsupported patterns, current-file checks and unavailable coverage.
+- Use Context Foundry first for discovery in this indexed project, including
+  ChatGPT desktop sessions. At first connection or after a host restart, check
+  `status` when the bound workspace is uncertain. The synthetic desktop demo has
+  its own store; its results only answer questions about the demo.
+- Locate an identifier with Foundry `search`, understand behavior or relationships
+  with `context`, and follow a returned handle with `retrieve`. Try the applicable
+  Foundry operation before grep, ripgrep, host code search, file listing or
+  exploratory file reads. Follow useful citations directly. While testing
+  Foundry, keep both Prakarana tool registrations disabled and use the project
+  Foundry MCP configuration if the chat's catalog has yet to refresh.
+- For an exact byte/regex check, known current file, unsaved buffer, exhaustive
+  live scan, or unavailable/incomplete indexed coverage, identify the reason and
+  use the appropriate host operation. See
+  [003's fallback rules](specs/003-agent-retrieval-context/spec.md#native-source-discovery-and-fallback).
 - Preserve source identity, freshness, provenance, bounded output and user data. Never
   run workspace code merely to index it. Training stays outside source transactions.
   Training consent differs from retrieval consent.

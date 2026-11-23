@@ -5,6 +5,20 @@
 Updated 2026-11-23. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
+- **Finite desktop qualification, 2026-11-23.** The selected round ends with
+  the ChatGPT desktop connection check, the paired memory fixtures, one
+  development trace check and one native Mach/XPC observation. The desktop
+  host exposes a read-only synthetic fallback. The real project has its own
+  configuration. Direct MCP readback passed for each, while native tool use in
+  the running project chat remains to be confirmed. The second-client memory
+  replay passed all eight probes. The selected reference hop recovered zero
+  missed Rust targets; retain the current retrieval baseline. The native
+  five-second hold recorded process-wide IPC after startup retirement, so the
+  admitting profile stays on HOLD. The next product check is an actual project
+  chat answering the two authored cases against their oracles. The next startup
+  question is which owner accounts for the observed post-retirement activity.
+  [Evidence and limits](validation.md#chatgpt-desktop-memory-handoff-rust-use-sites-and-mach-ipc--2026-11-23).
+
 - **Startup timer census, 2026-11-23.** A no-provider native round advances the census row
   "Debugger and process timers" without a source change. A test-only timer preload on the
   pinned host saw, in six startup runs, 45 JavaScript timers created before RPC retirement,

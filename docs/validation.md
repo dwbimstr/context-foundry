@@ -1,5 +1,114 @@
 # Validation
 
+## ChatGPT desktop, memory handoff, Rust use sites and Mach IPC — 2026-11-23
+
+Base `c143f24` already includes the timer census. This no-provider round had four
+outputs: a desktop connection, one development-only retrieval rule, two original
+synthetic cases read by a second client, and one native startup observation.
+It leaves the broad startup inventory, paid pilot and signed package outside
+this round. Private receipts are under `runs/chatgpt-dev-round-2026-11-23/`.
+
+**ChatGPT desktop.** On macOS arm64, ChatGPT desktop 26.1117.41037
+(`com.openai.codex`) displayed the installed executable and all project STDIO
+arguments in Settings. The operator subsequently reported the server missing
+from `/mcp`. The project store initially reported `repair_required`; derived
+index repair and explicit source indexing restored ready status (415 indexed
+sources, zero pending, revision 499 at the check). The older optional semantic
+generation was retained and requires a separate refit. These checks used lexical
+retrieval. Five focused MCP connection tests passed.
+
+With owner approval, a user-scope fallback binds a separate synthetic workspace
+and limits discovery to five read tools. The trusted project overrides the root
+and store and enables task context. The native app-server's unscoped catalog
+returned the five fallback tools. An MCP client using the two exact configurations
+called `status`, `search` and `retrieve` in order and recovered the public
+`apply_owned_block` declaration at `src/bootstrap.rs:904` and the current station
+in the synthetic `dispatch.rs:1`, respectively. This running chat's own registry
+still reported an unknown MCP server at that check. The user-scope catalog,
+Settings screenshot and direct MCP readback are separate observations. The
+[desktop instructions](../README.md#chatgpt-desktop-on-your-mac) include a
+fresh-chat check for the native tool path.
+
+A repeat catalog discovery exposed a competing STDIO owner of the synthetic
+store. The later client failed its initialization handshake. The final fallback
+opens a separate copy of a closed synthetic seed per connection. Two simultaneous
+clients completed `status → search → retrieve` on the same cited handle and
+both copies were removed on shutdown. The unscoped app-server catalog then
+returned the five Foundry tools with no startup error. A separate session
+still lacked a mounted Foundry binding. The native call from this project
+chat remains unverified.
+
+At the owner's request the test also disables the desktop `prakarana` and
+`prakarana-ask` registrations and parks this checkout's other Prakarana
+registrations and OMP tool. Positive checks covered the parsed config,
+preservation of unrelated settings and a dry run of the private restoration
+script. The app-server accepted the MCP configuration reload and returned zero
+callable tools under each disabled Prakarana registration. The pre-existing
+chat still listed its earlier mounted tools, so the test uses no Prakarana
+calls. The private settings backup sits outside the build and run caches.
+
+**Memory.** Two authors in separate fresh contexts wrote the
+[Pavo](../examples/task-handoff/stale-case.json) and
+[Palisade](../examples/task-handoff/conflict-case.json) cases. After the CLI
+writer exited, a separately initialized MCP reader issued 30 tool calls. Eight
+of eight reminder and silence expectations matched. Seven of seven original
+entries matched byte-for-byte, and two folded observations were recovered by
+content search and peek. Pavo refused the stale handle, recovered the current
+station from source and kept the question open. Palisade returned the opposing
+author for each same-scope proposal and silence for the three controls. The
+first setup attempt counted its ignore file as a fourth source and stopped
+before creating tasks. The corrected attempt indexed exactly three sources.
+The [portable exercises](../examples/task-handoff/README.md) reproduce the
+fixture store for a human or second client. The oracle was deterministic.
+Model behavior and provider economics are unmeasured.
+
+**Use sites.** Before joining development labels, the constructor sealed one
+candidate list from 388 archived G2 responses. It examined up to eight displayed
+locators per case, required verified verbatim bytes, and chose at most one
+unique compiler-resolved definition per seed. Ties favored more distinct uses
+in the seed, fewer referencing documents, earlier use, then full symbol ID.
+All 292 selected Rust hops matched the frozen occurrence extract and source
+bytes. Five synthetic selection and abstention controls passed.
+
+| Corpus | Cases | Baseline located | Cases with a hop | Missed targets newly reached |
+| --- | ---: | ---: | ---: | --- |
+| Rust | 197 | 52 | 114 | 0 of 145 |
+| TypeScript | 191 | 117 | Unknown | No pinned compiler reference producer |
+
+Of 1,544 Rust seed slots, 1,077 lacked a producer document, including 893 outside
+the library-only producer scope. Of the other slots, 18 lacked eligible verbatim
+source and 157 lacked an eligible reference. The 292 hops yielded 248 distinct
+destinations when deduplicated per case. One already-located target was
+rediscovered. This measures exact identity reachability under the selected rule.
+It gives no case for promoting that rule. The fresh holdout stayed sealed. No
+ranking, model or shipping default changed.
+
+**Mach and XPC.** Four bounded runs used the pinned host and production bridge
+under the existing restrictions in the Python launcher reconstruction. All four
+reached HOLD with two local refusal receipts each and exited without Ready.
+Each of the three instrumented runs saw three successful service lookups and
+seven successful notification registrations. The two monitored XPC constructors
+recorded zero calls. From the retirement sample to close, the uninstrumented
+half-second hold counted two sends and one receive. Two instrumented half-second
+holds counted zero. The single five-second hold counted ten sends and five
+receives while the monitored hooks were silent. These are whole-task counters;
+the peer, cause and external effects remain unknown.
+
+The task-local control counted 64 sends and 64 receives against zero while
+idle. Two early controls trapped during cleanup of an inactive anonymous XPC
+object. The corrected control passed. All eight process groups were reaped
+without force. The run and first readback finished within 116 seconds of the
+25-minute limit by UTC. The cross-process monotonic check was unsuitable on the
+installed Python. The result advances the inventory and leaves runtime
+admission on HOLD. It supplies no production Rust-launcher observation.
+
+**Local gates.** All eight gates in `scripts/gates.sh` exited zero for the Rust
+adapter changes in this round with Cargo offline. The default suite reported
+1,321 passed and 35 ignored; the feature-specific pilot suite reported 136 passed
+and one ignored. The default and Rust 1.90 Clippy/check gates passed. The
+portable fixture loader separately reproduced both task revisions and source
+freshness. The private gate logs and per-gate exit codes are under the round.
+
 ## Startup timer census — 2026-11-23
 
 This round advances the census row "Debugger and process timers" of the

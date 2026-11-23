@@ -217,6 +217,40 @@ foundry --store /tmp/foundry-demo graph src/main.rs --depth 1
 
 ## Use it from an agent
 
+### ChatGPT desktop on your Mac
+
+Open the indexed repository as a trusted local project in the ChatGPT desktop
+app. From that repository, use a Foundry executable installed outside Cargo's
+build cache. The following commands configure this project only.
+
+```sh
+foundry --store "$PWD/.context-foundry" index "$PWD"
+mkdir -p .codex
+touch .codex/config.toml
+foundry --store "$PWD/.context-foundry" connect --host chatgpt-desktop \
+  --root "$PWD" --experimental-task-context --apply-config .codex/config.toml
+```
+
+In **Settings → MCP servers**, restart the server, then check `/mcp` in the
+composer. In the project chat ask “Use Context Foundry to search for a symbol
+I name, retrieve its handle, and show the cited lines.” Choose a symbol from
+your checkout. The tool call and returned lines verify discovery and readback
+in the app. `--experimental-task-context` also enables explicit task revisions,
+recovery and review. Omit it for the ordinary catalog. To disconnect, use
+`foundry connect --remove-config .codex/config.toml`.
+See the [ChatGPT desktop MCP guide](https://learn.chatgpt.com/docs/extend/mcp).
+
+If Settings lists the project server but the chat does not, compare the
+project and user-level catalogs. A user-level fallback can point to the demo
+in a separate store. Keep the real repository binding in the trusted project.
+Check `status` before relying on a citation. For project discovery follow
+the [Foundry-first session instructions](AGENTS.md).
+
+The [two-client handoff exercises](examples/task-handoff/README.md) create a
+separate synthetic workspace for testing stale evidence and conflicting claims.
+
+### Other local clients
+
 ```sh
 foundry bootstrap --root ~/src/repo             # inspect: prints a report, writes nothing
 foundry bootstrap --root ~/src/repo --apply     # create ~/src/repo/.context-foundry and index

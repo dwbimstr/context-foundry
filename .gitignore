@@ -16,5 +16,6 @@
 /.review/
 # Machine-local agent tool configuration (owner decision 2026-11-19, "Ignore them").
 /.mcp.json
+/.codex/config.toml
 /.omp/mcp.json
 /.omp/tools/

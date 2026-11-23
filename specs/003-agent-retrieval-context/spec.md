@@ -95,7 +95,12 @@ configuration manager, global prompt injection or extra instruction file format.
 An exception follows the actual task's required semantics. Rewriting an ordinary
 identifier lookup as a regex does not exempt it from using Foundry first.
 
-An eligible discovery request attempts Foundry once before shell search. If useful
+An eligible discovery request attempts Foundry once before shell search, host
+code search, directory exploration or exploratory reads. A desktop session with
+both project and synthetic configurations checks the workspace identity when
+the selected store is uncertain. If the mounted tool catalog is unavailable
+but the project MCP configuration works, use its Foundry server and identify
+the calling client in the receipt. If useful
 evidence is returned, follow its citations and do not automatically repeat the same
 discovery with grep. A later distinct question or explicitly requested exhaustive
 check remains permitted. Optional models are not required for this ordering: use
@@ -138,6 +143,14 @@ exposes them. MCP-only Foundry delivery counters cannot establish their cost or 
 reuse the [adapter economics contract](contracts/adapter-economics.md), not new receipts.
 
 ### Catalog and instruction text
+
+The ChatGPT desktop local-project adapter (`connect --host chatgpt-desktop`)
+uses the same TOML transport and tool-approval settings as the Codex host.
+An explicitly selected `connect --experimental-task-context` forwards the
+existing server option to the owner's launch command. A desktop acceptance
+receipt requires a call from the project chat with the indexed result returned
+to the chat. Configuration generation and a scripted MCP client measure earlier
+steps in the connection. See the [desktop quickstart](../../README.md#chatgpt-desktop-on-your-mac).
 
 Approved 2026-10-03 for T005; it landed with 001 T004 (committed in `5edf32c`) because
 both change `src/mcp.rs` and `src/bootstrap.rs`, and an MCP test pins these strings

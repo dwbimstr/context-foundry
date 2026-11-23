@@ -122,6 +122,7 @@ pub enum AdapterCommand {
     /// `--apply-config FILE` authorizes the positively owned block, or
     /// `--remove-config FILE` removes it again.
     Connect {
+        /// Target host: chatgpt-desktop, codex or omp.
         #[arg(long, required_unless_present = "remove_config")]
         host: Option<String>,
         #[arg(long, required_unless_present = "remove_config")]
@@ -138,7 +139,7 @@ pub enum AdapterCommand {
             value_name = "FILE",
             conflicts_with_all = [
                 "host", "root", "print_config", "apply_config", "http_port",
-                "token_env", "budget", "reference",
+                "token_env", "budget", "reference", "experimental_task_context",
                 "semantic_profile", "knowledge_profile", "development_isolation",
             ]
         )]
@@ -156,6 +157,9 @@ pub enum AdapterCommand {
         /// (repeat for up to 8 references); recorded in the printed argv.
         #[arg(long = "reference", value_name = "ROOT=STORE")]
         reference: Vec<String>,
+        /// Include the opt-in task_context tool on the launched owner.
+        #[arg(long)]
+        experimental_task_context: bool,
         /// Forward this semantic serving profile; printing does not load it.
         #[arg(long, value_name = "FILE")]
         semantic_profile: Option<PathBuf>,
@@ -467,6 +471,7 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
             token_env,
             budget,
             reference,
+            experimental_task_context,
             semantic_profile,
             knowledge_profile,
             development_isolation,
@@ -515,6 +520,7 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
                 store,
                 budget: read_budget(budget.as_deref())?,
                 budget_file,
+                experimental_task_context,
                 semantic_profile,
                 knowledge_profile,
                 development_isolation,
