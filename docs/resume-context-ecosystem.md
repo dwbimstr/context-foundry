@@ -19,6 +19,16 @@ and dated paragraphs below are history.
   question is which owner accounts for the observed post-retirement activity.
   [Evidence and limits](validation.md#chatgpt-desktop-memory-handoff-rust-use-sites-and-mach-ipc--2026-11-23).
 
+  For the next no-spend check, start with one fresh desktop project chat.
+  Read the workspace identity, retrieve one cited definition, then answer the
+  two [handoff exercises](../examples/task-handoff/README.md) through their
+  scoped server. Compare citations, the open question, both authors and the
+  silent control with the authored oracles. Stop after these two cases or a
+  recorded native tool-binding failure. If retrieval research resumes, the
+  proposed next diagnostic is a blind wording pair on development tasks using
+  the existing local vectors. It requires a separate candidate selection.
+  Keep the unopened holdout and the paid pilot outside that diagnostic.
+
 - **Startup timer census, 2026-11-23.** A no-provider native round advances the census row
   "Debugger and process timers" without a source change. A test-only timer preload on the
   pinned host saw, in six startup runs, 45 JavaScript timers created before RPC retirement,

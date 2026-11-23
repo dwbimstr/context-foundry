@@ -109,6 +109,15 @@ and one ignored. The default and Rust 1.90 Clippy/check gates passed. The
 portable fixture loader separately reproduced both task revisions and source
 freshness. The private gate logs and per-gate exit codes are under the round.
 
+**Publication readback.** The implementation and records were pushed as
+`fe3fb26` on `experimental/context-ecosystem`. A fresh checkout from the
+remote matched the commit and Git tree, and its Markdown link check passed.
+The final project reindex at that point reported 418 sources, ready state and
+zero pending. Cleanup removed only the two dedicated gate caches, with
+7,975,821,312 allocated bytes measured before deletion. Receipts, the installed
+desktop executable, synthetic workspaces and temporary-settings recovery
+files remain available locally.
+
 ## Startup timer census — 2026-11-23
 
 This round advances the census row "Debugger and process timers" of the
