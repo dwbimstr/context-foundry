@@ -2,8 +2,18 @@
 
 ## Current status — 2026-11-06
 
-Updated 2026-11-21. This section owns current status; other documents link here,
+Updated 2026-11-23. This section owns current status; other documents link here,
 and dated paragraphs below are history.
+
+- **Startup timer census, 2026-11-23.** A no-provider native round advances the census row
+  "Debugger and process timers" without a source change. A test-only timer preload on the
+  pinned host saw, in six startup runs, 45 JavaScript timers created before RPC retirement,
+  every one fired or cleared by it, and none created or fired in a 40-second hold after it.
+  Teardown adds four shutdown deadlines, all cleared, and a 10-second postmortem deadline
+  abandoned at exit. Only the wrapped JavaScript entry points are seen; runtime and addon
+  internals, 84 never-observed unknown entries and timers after the handoff stay open
+  ([record](validation.md#startup-timer-census--2026-11-23)). Host pin and bridge are unchanged; the admitting profile and
+  the rest of the inventory stay on HOLD.
 
 - **Startup early connect, 2026-11-21.** A no-provider native round adopts a fail-closed
   startup network rule for census row 1.

@@ -1,5 +1,120 @@
 # Validation
 
+## Startup timer census — 2026-11-23
+
+This round advances the census row "Debugger and process timers" of the
+[startup inventory census](#startup-inventory-census--2026-11-20). It counts timer creation sites in
+the host's patched source and observes the timers the pinned host creates during startup, without a
+source change. Base `ed5b53f`; host `28c61eff…5406` and bridge `ce9a7181…44c7` unchanged; every
+native run used the landed startup policy (fatal network denial with the syslog carve-out) or, for
+the ordinary-RPC control, `(deny network*)` without the process-fork denial. One session ran it in
+the main checkout with agents for design, staging and the clocked run; this is in-session
+self-review, not an independent review.
+
+### Static census
+
+A search of the 10,339-file patched source found 1,933 timer-API matches (`setTimeout`,
+`setInterval`, `setImmediate`, `AbortSignal.timeout`, `Bun.sleep`, `Bun.sleepSync` and
+`scheduler.wait`/`yield`), plus 42 separate `node:timers/promises` imports. 1,094 are in tests and
+121 are comments, types or non-timers; 718 are in runtime code at 713 sites. Their classes are
+inferred from paths, flags and owners: 8 seen in startup in earlier rounds, 2 teardown, 125 behind
+an existing startup exclusion, 308 after the handoff by path, 169 in other modes, 27 outside the
+main JavaScript context and 79 unknown, plus 5 unknown imports. Two design critiques corrected the
+first classification before the run: a known teardown site; an auth timer seen in startup; the
+connection prewarm and usage prefetch, which are called in startup but excluded before any timer
+(now behind an exclusion); and secrets loading, gated off by default (now unknown).
+
+### Native census
+
+A test-only preload, not a product fence, wrapped the global timer functions, `node:timers` and
+`node:timers/promises`, `AbortSignal.timeout`, `Bun.sleep`, `scheduler.wait` and
+`ref`/`unref`/`refresh`. It recorded creation with frames reduced to chunk and line, fire, clear,
+and pending snapshots at RPC retirement, at the end of a hold and at exit. Bare Bun under the
+startup policy recorded every wrapped form, `Bun.sleep` included. `Bun.sleep`, `scheduler.wait` and
+the promise `setTimeout` keep the event loop alive; `AbortSignal.timeout` does not.
+
+On the exact host and bridge, three preloaded normal runs reached HOLD with the same channel and
+refusals as a run without the preload, within twice its launch-to-reap time. Over the six runs that
+decide settlement (three normal, withheld catalog, close with the refusal pending, and a 40-second
+hold after `rpc_retired`):
+- 45 timers were created before retirement, and every one was fired or cleared by it. None was
+  pending at retirement, and none was created or fired in the retirement window or the hold. The
+  close-pending run, which never retires, had 3 timers with no retirement window. The hold run
+  recorded the same 51 trace rows as a normal run.
+- 14 site and owner keys at 10 source sites were observed, all joined to source lines the static
+  census predicted; two helper owners joined ambiguously. They are 9 startup keys, among them the
+  catalog and provider discovery deadlines, the 30-second extension handler race, the 10-second
+  watchdog interval and a 200 ms settings timer, and 5 teardown keys.
+- In teardown, four session shutdown deadlines are created through `withTimeout` and cleared (5 of
+  6 runs; not the close-pending run), and the 10-second `postmortem.ts:290` deadline is abandoned
+  at exit in every run, which came at most 17.3 ms after close. With the refusal pending, the
+  watchdog interval is also abandoned at exit.
+- A repeat of a normal run from a fresh case directory gave its site set.
+
+An ordinary-RPC control started the debugger sweep after a launch request and five other sites
+absent from the restricted runs, including the connection prewarm. It keeps most exclusions (no
+LSP, skills, title, prewalk, MCP, OTLP or marketplace), so those owners' timers were not contrasted.
+An in-host control recorded a timer for each probe through the host's bundled helpers.
+
+### Findings for the owner
+
+- The pre-registered expiry of the per-extension 30-second abort signal (`runner.ts:1263`) did not
+  occur: no production run created an `AbortSignal.timeout`. Why that site was not reached is not
+  shown.
+- The in-host control's probe frames were tagged as non-bridge (`x`) rather than bridge (`b`), so
+  the coverage rule classed all 18 in-host forms blind although each probe recorded its timer. The
+  inferred cause is the file name the trusted extension copy of the bridge loads under. It was
+  recorded as computed.
+- The bundled call path is not shown for `Bun.sleep` (no bundled caller), `setImmediate` (its one
+  site's first frame is native) or `scheduler.yield`.
+
+### Cleanup and size
+
+All 34 native groups (33 in the qualification readback plus the repeat run) were reaped and none
+was forced. The final readback removed 10 host-extracted addon copies and the staged shared addon
+(11 files) after matching `ee0bf26f…900b`, taking the round from 1,237,962,752 to 16,011,264
+allocated bytes. The pinned host and the four earlier rounds' files were unchanged. The clocked part
+took about 4 of its 150 minutes, which override the contract's 90-minute wording, with authoring,
+staging and self-tests before the clock. There was no product change and no Cargo gate. Zero
+provider calls, zero spend. Receipts, including the protocol, critiques, amendments and static
+census, are under `runs/pilot-startup-timer-census-2026-11-23/`.
+
+### Deviations from the protocol
+
+- Session-owner amendments, not deviations: the defaults on the ordinary-RPC policy, chunk-and-line
+  frames and no product change; the abort-signal expiry as a finding, not a failure; the
+  ordinary-RPC control keeping `--restrict-tools`; and the replacement of `check.py` and `replay.py`
+  by the timer checker, decision script and the repeat run.
+- Staging needed its one allowed repair: Bun's `process.hrtime` does not share the driver's clock, so
+  the preload records real time; the `Bun` wrappers are assigned rather than redefined; and the
+  fixture keeps its abort signals alive. Two pre-clock reviews then found 23 tooling defects, all
+  fixed and the self-tests rerun before the clock. The join's shape fallback was not implemented; it
+  was not needed.
+- Staging measured the bundle chunk count as 3,210, not 3,201, and the header counts as 3,791 and
+  3,519, not the design's 3,351 and 3,081. The bundle join scores candidates with three lines of
+  context on each side and a 0.1 margin. Drivers ran with `python3 -E -s -B`, not `-I`.
+  `inputs.json` wraps the zero-cost fields for the pinned static census receipt.
+- `/private/tmp`: one empty shell here-document ran during the staging fix before `TMPDIR` was set,
+  and staging made two read-only listings beyond the fixture glob. In the clocked phase, read-only
+  inspection commands ran without the `TMPDIR` prefix; none wrote a file and the listing was
+  unchanged. No round data was written there.
+
+### Not established
+
+- Timers outside the wrapped JavaScript entry points: Bun, Zig and JavaScriptCore internals, the
+  addon's Tokio timers, option-driven timeouts, blocking `Atomics.wait`, workers and subprocesses,
+  unexecuted third-party code, and references captured before the preload loaded.
+- Reachability of unobserved runtime sites: the 84 unknown entries and the unobserved sites in the
+  other classes. Every static class is inferred.
+- Whether host code runs in response to an `AbortSignal.timeout` expiry.
+- Timers created after the RPC/Ready handoff in an admitting profile, and activity later than 40
+  seconds after `rpc_retired`.
+- Fidelity of the launches: the host runs reconstruct the launch in Python and add the preload; no
+  production-launcher (Cargo) run was made.
+- Any owner decision on the fence or on a host patch. The admitting profile, the inventory freeze
+  and admission stay on HOLD.
+- This was in-session self-review, not an independent one.
+
 ## Startup early connect and fatal network denial — 2026-11-21
 
 This round advances row 1 of the [startup inventory census](#startup-inventory-census--2026-11-20),
@@ -814,6 +929,12 @@ when the executable's directory is unreadable (inferred). Any other sandbox netw
 ends the startup host, without journaling a destination; twelve classes were shown on bare
 fixtures with the same suffix (inferred for the host). Mach and XPC routes and the admitting
 profile remain.
+
+Note, 2026-11-23: the [startup timer census](#startup-timer-census--2026-11-23) advanced the
+"Debugger and process timers" row without a source change. Every JavaScript timer the preload saw
+in startup was fired or cleared by RPC retirement, and none started in a 40-second hold; 84
+statically unknown entries were never observed, and `Bun.sleep`, runtime and addon internals and
+timers after the handoff remain.
 
 ## Native addon socket-pair static attribution — 2026-11-20
 
