@@ -1,5 +1,48 @@
 # Validation
 
+## First-try desktop inspect and peek — 2026-11-23
+
+The [previous native run](#fresh-chatgpt-desktop-project-chat--2026-11-23)
+returned eight argument errors on the two task reads. The shared command
+schema listed every operation's fields together. In `c63ced6`, the
+[advertised schema](../src/mcp/task_context.schema.json) requires the exact
+keys for each of these reads. The tool description also gives complete examples
+for hosts that display a simplified type signature.
+
+The new catalog regression failed against the old binary's schema and passed
+on the candidate. All 27 task-context tests passed. A Draft 2020-12 validator
+checked the installed executable's actual `tools/list` response against three
+valid and eleven invalid requests. That included the extra inspect fields and
+missing peek fields seen in the previous chat.
+
+**Desktop catalog refresh.** The first fresh project chat after the executable
+swap displayed the old description and received two argument errors, one on
+each read operation. That chat finished and its exercise connection was closed.
+After the new description became visible, a separate fresh chat called
+`status`, confirmed the exercise workspace (`c7ab30e07bde1c6f…`), and read
+the mounted declaration before touching either task. Its prompts supplied
+neither the command fields nor the expected answers.
+
+| Handoff | First inspections | First peeks | Answer checked against the fixture |
+| --- | ---: | ---: | --- |
+| Pavo, revision 7 | 1/1 | 5/5 | Recovered the historical layout and folded station observation. Used seal `MICA-37`, adopted layout `VALE-61`, cited current station `LARCH-86` at `dispatch.rs:1`, and kept ticket `QUILL-52` open. |
+| Palisade, revision 11 | 1/1 | 2/2 | Retrieved Edda Lo's pearl ticket and Ivo Keen's moss specimen report. Cited both originals and left the production stock unresolved. |
+
+All seven original texts and hashes matched the authored fixtures. Every peek
+completed in one page. The only refusal in the qualifying chat's 23 native
+calls was the expected `stale_handle` when it retrieved the old Pavo source.
+The second turn ran the eight fixed review inputs once each. All eight matched
+their expected advice or silence, including the changed-source count and both
+opposing authors. Both Prakarana registrations were disabled. The chat used
+only the exercise MCP server and launched no separate paid provider job.
+Private catalog snapshots, native calls, grader and logs are under
+`runs/desktop-read-schema-2026-11-23/`.
+
+All eight local gates passed on the code and tests in `c63ced6`, using Rust
+1.97.1 and the 1.90.0 minimum toolchain with Cargo offline. The default suite
+reported 1,319 passed and 35 ignored across its test binaries. The separate
+`pilot-capture` unit suite reported 133 passed and one ignored.
+
 ## Fresh ChatGPT desktop project chat — 2026-11-23
 
 One new local ChatGPT desktop chat opened in the trusted Context Foundry project

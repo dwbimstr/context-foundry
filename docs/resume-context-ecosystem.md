@@ -9,9 +9,12 @@ and dated paragraphs below are history.
   desktop project chat verified the real project store and retrieved
   `apply_owned_block` at `src/bootstrap.rs:904`. Through the separate exercise
   store it answered both memory cases against withheld oracles and passed all
-  eight fixed reviews. Prakarana was disabled. The first turn needed a Foundry
-  source lookup to correct the `inspect` and `peek` arguments.
-  [Native desktop receipt](validation.md#fresh-chatgpt-desktop-project-chat--2026-11-23).
+  eight fixed reviews. After the MCP read schema was corrected, a fresh chat
+  with the updated catalog made both inspections and all seven original reads
+  on its first attempt, then passed all eight fixed reviews. Prakarana was
+  disabled. The first chat after the binary swap still saw the old description.
+  [Project-store receipt](validation.md#fresh-chatgpt-desktop-project-chat--2026-11-23)
+  and [first-try read receipt](validation.md#first-try-desktop-inspect-and-peek--2026-11-23).
 
   The selected development reference hop recovered zero missed Rust targets.
   Retain the current retrieval baseline. A blind wording pair on development
