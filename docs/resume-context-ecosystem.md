@@ -5,29 +5,22 @@
 Updated 2026-11-23. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
-- **Finite desktop qualification, 2026-11-23.** The selected round ends with
-  the ChatGPT desktop connection check, the paired memory fixtures, one
-  development trace check and one native Mach/XPC observation. The desktop
-  host exposes a read-only synthetic fallback. The real project has its own
-  configuration. Direct MCP readback passed for each, while native tool use in
-  the running project chat remains to be confirmed. The second-client memory
-  replay passed all eight probes. The selected reference hop recovered zero
-  missed Rust targets; retain the current retrieval baseline. The native
-  five-second hold recorded process-wide IPC after startup retirement, so the
-  admitting profile stays on HOLD. The next product check is an actual project
-  chat answering the two authored cases against their oracles. The next startup
-  question is which owner accounts for the observed post-retirement activity.
-  [Evidence and limits](validation.md#chatgpt-desktop-memory-handoff-rust-use-sites-and-mach-ipc--2026-11-23).
+- **Finite desktop qualification complete, 2026-11-23.** A fresh ChatGPT
+  desktop project chat verified the real project store and retrieved
+  `apply_owned_block` at `src/bootstrap.rs:904`. Through the separate exercise
+  store it answered both memory cases against withheld oracles and passed all
+  eight fixed reviews. Prakarana was disabled. The first turn needed a Foundry
+  source lookup to correct the `inspect` and `peek` arguments.
+  [Native desktop receipt](validation.md#fresh-chatgpt-desktop-project-chat--2026-11-23).
 
-  For the next no-spend check, start with one fresh desktop project chat.
-  Read the workspace identity, retrieve one cited definition, then answer the
-  two [handoff exercises](../examples/task-handoff/README.md) through their
-  scoped server. Compare citations, the open question, both authors and the
-  silent control with the authored oracles. Stop after these two cases or a
-  recorded native tool-binding failure. If retrieval research resumes, the
-  proposed next diagnostic is a blind wording pair on development tasks using
-  the existing local vectors. It requires a separate candidate selection.
-  Keep the unopened holdout and the paid pilot outside that diagnostic.
+  The selected development reference hop recovered zero missed Rust targets.
+  Retain the current retrieval baseline. A blind wording pair on development
+  tasks using existing local vectors remains a possible future diagnostic,
+  subject to separate candidate selection. The unopened holdout stays sealed.
+  The native five-second hold recorded process-wide IPC after startup
+  retirement. Identifying its owner remains the open startup question, and
+  the admitting profile stays on HOLD.
+  [Development and startup evidence](validation.md#chatgpt-desktop-memory-handoff-rust-use-sites-and-mach-ipc--2026-11-23).
 
 - **Startup timer census, 2026-11-23.** A no-provider native round advances the census row
   "Debugger and process timers" without a source change. A test-only timer preload on the

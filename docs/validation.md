@@ -1,5 +1,42 @@
 # Validation
 
+## Fresh ChatGPT desktop project chat — 2026-11-23
+
+One new local ChatGPT desktop chat opened in the trusted Context Foundry project
+at `ea8d084`. Its native `context-foundry.status` returned the project workspace
+(`2f558a2157b9c452…`), ready at source revision 515 with 418 sources, zero pending
+and zero parse failures. A search for `apply_owned_block`, scoped to
+`src/bootstrap.rs`, returned a definition handle. Retrieving that same handle
+returned lines 904–908, beginning with the public function declaration at line 904.
+
+The same chat opened the separate `foundry-case-review` workspace
+(`c7ab30e07bde1c6f…`, three sources at revision 4). It answered both
+[authored cases](../examples/task-handoff/README.md) before receiving the fixed
+review inputs. The prompts withheld the answer keys. Grading compared the first
+answer and the recorded native tool responses against the fixtures.
+
+| Case | What the chat recovered | Fixed review inputs |
+| --- | --- | --- |
+| Pavo, revision 7 | Seal `MICA-37`, adopted layout `VALE-61`, and current station `LARCH-86` at `dispatch.rs:1`. It recovered the folded `CEDAR-24` observation, received `stale_handle` on its saved link, and left vellum ticket `QUILL-52` open. | 3/3 matched. The conflicting seal and superseded layout triggered both expected reminders. The changed-source proposal returned empty advice with `stale: 1`. The matching control returned empty advice with `stale: 0`. |
+| Palisade, revision 11 | Edda Lo's job ticket specified pearl at `job_ticket.md:7`. Ivo Keen's specimen report recorded moss at `specimen_report.md:7`. The chat retrieved both current sources, attributed each value and left production stock unresolved. | 5/5 matched. Each stock proposal cited the opposing report. The proofing, matching-trim and empty-proposal controls returned empty advice. |
+
+All eight fixed reviews returned `verified: false` and `omitted: 0`. The
+returned advice matched the expected entries and triggers, including the stored
+and proposed values in both Palisade conflicts. Every advised entry matched its
+original bytes, author, provenance and source links. Task revisions held at 7
+and 11 throughout both turns.
+
+The first turn made 39 native MCP calls. Two `inspect` requests included
+unsupported fields and six `peek` requests lacked the required byte range.
+The chat used Foundry to look up the command shapes and recovered all six
+requested originals. One concurrent retrieve returned `busy`; retrying the
+saved handle returned the expected `stale_handle`. The second turn made eight
+native calls, one per fixed review, all successful. Both Prakarana registrations
+were disabled and the chat made zero Prakarana calls. The test used the existing
+desktop session and local Foundry servers. It launched no paid provider run and
+did not measure desktop token cost. Native receipts, answers and the grader are
+local under `runs/chatgpt-desktop-native-2026-11-23/`.
+
 ## ChatGPT desktop, memory handoff, Rust use sites and Mach IPC — 2026-11-23
 
 Base `c143f24` already includes the timer census. This no-provider round had four
@@ -35,8 +72,9 @@ opens a separate copy of a closed synthetic seed per connection. Two simultaneou
 clients completed `status → search → retrieve` on the same cited handle and
 both copies were removed on shutdown. The unscoped app-server catalog then
 returned the five Foundry tools with no startup error. A separate session
-still lacked a mounted Foundry binding. The native call from this project
-chat remains unverified.
+still lacked a mounted Foundry binding. A later
+[fresh project chat](#fresh-chatgpt-desktop-project-chat--2026-11-23)
+completed the native call.
 
 At the owner's request the test also disables the desktop `prakarana` and
 `prakarana-ask` registrations and parks this checkout's other Prakarana
