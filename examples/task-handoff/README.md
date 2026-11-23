@@ -33,6 +33,11 @@ Restart the server and open the project chat. Use the exercise server's
 `status` to read the workspace ID. Each prompt uses the same store the loader
 closed. A second STDIO owner of that store must wait for the first one to exit.
 
+After updating the executable, check the mounted `task_context` description
+after the first `status` call. It should show command examples for both
+`inspect` and `peek`. If the chat still shows the older description, wait
+for the catalog to refresh and run the exercise in a fresh project chat.
+
 For a user-level synthetic fallback that several desktop clients can discover,
 prepare a separate seed and save the loader's JSON output as `manifest.json`
 in that seed directory. Keep the seed store closed. Configure the STDIO

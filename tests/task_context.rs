@@ -596,6 +596,20 @@ async fn experimental_mcp_tool_is_opt_in_and_matches_cli_state() {
                 .find(|t| t.name == "task_context")
                 .unwrap()
                 .input_schema;
+            let command = &schema["properties"]["command"];
+            assert_eq!(command["required"], json!(["op"]));
+            let rules = command["allOf"].as_array().expect("per-operation rules");
+            for (op, fields) in [
+                ("inspect", vec!["op"]),
+                ("peek", vec!["op", "entry_id", "offset", "bytes"]),
+            ] {
+                let rule = rules
+                    .iter()
+                    .find(|rule| rule["if"]["properties"]["op"]["const"] == op)
+                    .expect("catalog describes the read operation");
+                assert_eq!(rule["then"]["required"], json!(fields));
+                assert_eq!(rule["then"]["maxProperties"], fields.len());
+            }
             assert_eq!(
                 schema["properties"]["command"]["properties"]["assertions"]["maxItems"],
                 16
@@ -608,6 +622,7 @@ async fn experimental_mcp_tool_is_opt_in_and_matches_cli_state() {
             for command in [
                 json!({"op":"create","title":"MCP task"}),
                 json!({"op":"apply","expected_revision":1,"edits":[{"op":"add","entry":{"id":"obs","kind":"observation","text":"MCP recovery bytes","author":"sandbox operator","provenance":"synthetic task interaction","source_links":[],"assertions":[{"key":"scope:mcp","relation":"equals","value":"3"}]}}]}),
+                json!({"op":"inspect"}),
                 json!({"op":"peek","entry_id":"obs","offset":0,"bytes":100}),
                 json!({"op":"review","expected_revision":2,"paths":[],"finishing":true,"max_bytes":4096}),
                 assertion_review(

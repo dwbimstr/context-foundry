@@ -262,9 +262,11 @@ This adds one migration and one record validator, without another index or queue
   the same engine operations; it is omitted unless explicitly enabled at launch.
   Every request names `workspace_id` and `task_id`; the primary root owns the record.
 - `create` names a title. `apply` names `expected_revision` and a bounded sequence of
-  edits, all validated and committed together. `inspect` returns metadata and view;
-  `peek` returns a byte-bounded UTF-8 page of one exact original observation with
-  payload digest, offset and next offset. `render` returns the selected working view
+  edits, all validated and committed together. The MCP catalog describes the exact
+  read commands. `{"op":"inspect"}` returns metadata and view. A `peek` command
+  requires `op`, `entry_id`, `offset` and `bytes` (4–65,536). Start at byte zero
+  and use the returned `next_offset` for the next UTF-8 page of the original.
+  Each page carries the payload digest. `render` returns the selected working view
   within a complete serialized **byte** budget, or refuses without truncating protected
   entries. It does not claim a provider token allowance or conversation replacement.
 - Entry kinds distinguish requirement, constraint, observation, hypothesis, decision,
