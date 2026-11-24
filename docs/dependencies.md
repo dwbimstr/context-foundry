@@ -2,6 +2,11 @@
 
 This inventory records Cargo metadata for the locked dependency graph. It is not a legal or vulnerability audit. No dependency sources are vendored. Binary distribution must retain the applicable license/notice texts from the selected graph.
 
+The optional task context workflow uses `rust-stemmers` 1.2.0
+(`MIT/BSD-3-Clause` in the package manifest) for English word forms in
+meeting notes. The locked crate uses the existing serde dependencies. No
+model or external service is involved.
+
 One section is not about a dependency. The
 [oh-my-pi reference patches](#oh-my-pi-reference-patches) are tracked files that
 carry lines of upstream source, and that section records their license and notices.

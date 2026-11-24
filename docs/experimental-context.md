@@ -582,6 +582,16 @@ correction via `supersedes`. Send the feature question to `context` with
 with `retrieve` to check what depends on the change. A `text_match` indicates
 which supplied words led to a source. Use `peek` to inspect an earlier account.
 
+When a later meeting note arrives and you do not know which feature it
+belongs to, send `{"op":"find_decisions","text":"<meeting note>"}` with only
+the workspace ID. Use the returned feature and revision to capture the note.
+Read `{"op":"connections","entry_id":"<captured note ID>"}` to see the note
+beside the earlier promises. Show their authors, exact passages and the
+clarification to the operator. After their choice, send `review_connection`
+with the current `expected_revision`, the note's `entry_id`, the earlier
+`prior_id`, its `prior_span` of `[offset,end]`, the reviewer's `author` and `disposition` of `accept` or `dismiss`.
+The next session can read the outcome with `connections` or `inspect`.
+
 Save the returned `revision`. Every mutation after creation names the current
 `expected_revision`; a conflict means inspect the live record before retrying. A
 single `apply` may combine up to 32 edits. For example, place this inside `command`,

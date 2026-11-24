@@ -79,6 +79,182 @@ fn cli(e: &Env, command: Value) -> Value {
     serde_json::from_slice(&output.stdout).unwrap()
 }
 #[test]
+fn later_note_finds_two_promises_and_reviews_only_the_connection() {
+    let e = env();
+    let engine = Engine::open_existing(&e.store).unwrap();
+    let r = create(&engine);
+    let promise = "Café rules. Record the original task identity. Copy access is retained while edits are reviewed. Removing the original task preserves separately edited copies.";
+    engine.replace_source("policy.md", promise).unwrap();
+    let spec = call(
+        &engine,
+        json!({"op":"capture","expected_revision":r,"source":"policy.md"}),
+    )
+    .unwrap();
+    let r = apply(&engine,spec["revision"].as_u64().unwrap(),json!([
+        add("old","decision","Notify legal on every separately edited copy."),
+        {"op":"add","entry":{"id":"notice","kind":"decision","text":"Notify the editor before removing an edited copy.","author":"Mika","provenance":"team decision","supersedes":"old","source_links":[]}},
+        add("other","decision","The café opens every Monday.")
+    ])).unwrap()["revision"].as_u64().unwrap();
+    let note = "Can we remove an edited copy when the original task closes?";
+    let find = |text: &str| {
+        task_context::parse(
+            json!({"workspace_id":e.wid,"command":{"op":"find_decisions","text":text}}),
+        )
+        .unwrap()
+    };
+    let found = engine
+        .task_context(&find(note), &Control::unbounded())
+        .unwrap();
+    assert_eq!(found["matching"], 2);
+    assert!(found["clarification"].as_str().unwrap().ends_with('?'));
+    let matched = found["candidates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["entry_id"] == spec["entry_id"])
+        .unwrap();
+    let range =
+        matched["offset"].as_u64().unwrap() as usize..matched["end"].as_u64().unwrap() as usize;
+    assert_eq!(matched["quote"], &promise[range]);
+    assert!(
+        matched["quote"]
+            .as_str()
+            .unwrap()
+            .contains("preserves separately edited copies")
+    );
+    assert_eq!(matched["source_links"][0]["status"], "fresh");
+    assert_eq!(
+        engine
+            .task_context(&find("Jupiter tulips"), &Control::unbounded())
+            .unwrap()["matching"],
+        0
+    );
+    let mut wrong = find(note);
+    wrong.workspace_id = "0".repeat(64);
+    assert!(matches!(
+        engine.task_context(&wrong, &Control::unbounded()),
+        Err(FoundryError::WrongWorkspace)
+    ));
+
+    let saved = call(
+        &engine,
+        json!({"op":"capture","expected_revision":r,"source":"meeting","text":note}),
+    )
+    .unwrap();
+    let read = json!({"op":"connections","entry_id":saved["entry_id"]});
+    let proposed = call(&engine, read.clone()).unwrap();
+    assert_eq!(proposed["note"]["quote"], note);
+    assert_eq!(proposed["note"]["sha256"], saved["sha256"]);
+    let review = |rev: &Value, prior: &Value, disposition: &str| {
+        let passage = proposed["candidates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["entry_id"] == *prior);
+        let span = passage
+            .map(|p| json!([p["offset"], p["end"]]))
+            .unwrap_or(json!([0, 1]));
+        json!({"op":"review_connection","entry_id":saved["entry_id"],"prior_id":prior,"prior_span":span,
+               "expected_revision":rev,"disposition":disposition,"author":"Reviewer"})
+    };
+    let mut wrong_passage = review(&saved["revision"], &spec["entry_id"], "accept");
+    wrong_passage["prior_span"] = json!([0, 1]);
+    assert!(matches!(
+        call(&engine, wrong_passage),
+        Err(FoundryError::Conflict(_))
+    ));
+    let accept = review(&saved["revision"], &spec["entry_id"], "accept");
+    let accepted = call(&engine, accept.clone()).unwrap();
+    assert!(matches!(
+        call(&engine, accept),
+        Err(FoundryError::Conflict(_))
+    ));
+    let retry = call(
+        &engine,
+        review(&accepted["revision"], &spec["entry_id"], "accept"),
+    )
+    .unwrap();
+    assert_eq!(retry["revision"], accepted["revision"]);
+    assert_eq!(retry["outcome"], "existing");
+    assert!(
+        call(
+            &engine,
+            review(&accepted["revision"], &json!("old"), "accept")
+        )
+        .is_err()
+    );
+    assert!(
+        call(
+            &engine,
+            review(&accepted["revision"], &json!("other"), "accept")
+        )
+        .is_err()
+    );
+    let dismissed = call(
+        &engine,
+        review(&accepted["revision"], &json!("notice"), "dismiss"),
+    )
+    .unwrap();
+    drop(engine);
+    let reopened = cli(&e, read.clone());
+    let engine = Engine::open_existing(&e.store).unwrap();
+    assert_eq!(reopened["candidates"], json!([]));
+    assert_eq!(reopened["reviews"].as_array().unwrap().len(), 2);
+    let reviewed = reopened["reviewed_passages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["review"]["disposition"] == "accept")
+        .unwrap();
+    assert_eq!(reviewed["prior"]["quote"], matched["quote"]);
+    assert_eq!(reviewed["prior"]["sha256"], matched["sha256"]);
+    let render = || json!({"op":"render","max_bytes":8192});
+    let view = call(&engine, render()).unwrap();
+    let current_note = |v: &Value| {
+        v["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["id"] == saved["entry_id"])
+            .unwrap()["accepted_connections"]
+            .clone()
+    };
+    assert_eq!(current_note(&view), json!([spec["entry_id"]]));
+    let reversed = call(
+        &engine,
+        review(&dismissed["revision"], &json!("notice"), "accept"),
+    )
+    .unwrap();
+    assert_ne!(reversed["revision"], dismissed["revision"]);
+    assert_eq!(
+        call(&engine, read).unwrap()["reviews"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+    engine
+        .replace_source("policy.md", "Different policy.")
+        .unwrap();
+    assert!(
+        call(
+            &engine,
+            review(&reversed["revision"], &spec["entry_id"], "accept")
+        )
+        .is_err()
+    );
+    let view = call(&engine, render()).unwrap();
+    assert_eq!(current_note(&view), json!(["notice"]));
+    let original = call(
+        &engine,
+        json!({"op":"peek","entry_id":spec["entry_id"],"offset":0,"bytes":4096}),
+    )
+    .unwrap();
+    assert_eq!(original["text"], promise);
+    assert_eq!(original["source_links"][0]["status"], "stale");
+}
+
+#[test]
 fn capture_replays_without_duplication_and_corrections_preserve_separate_accounts() {
     let e = env();
     let engine = Engine::open_existing(&e.store).unwrap();
@@ -651,6 +827,20 @@ async fn experimental_mcp_tool_is_opt_in_and_matches_cli_state() {
             assert_eq!(command["required"], json!(["op"]));
             let rules = command["allOf"].as_array().expect("per-operation rules");
             for (op, fields) in [
+                ("find_decisions", vec!["op", "text"]),
+                ("connections", vec!["op", "entry_id"]),
+                (
+                    "review_connection",
+                    vec![
+                        "op",
+                        "expected_revision",
+                        "entry_id",
+                        "prior_id",
+                        "prior_span",
+                        "disposition",
+                        "author",
+                    ],
+                ),
                 ("inspect", vec!["op"]),
                 ("peek", vec!["op", "entry_id", "offset", "bytes"]),
             ] {
@@ -672,7 +862,7 @@ async fn experimental_mcp_tool_is_opt_in_and_matches_cli_state() {
             );
             for command in [
                 json!({"op":"create","title":"MCP task"}),
-                json!({"op":"apply","expected_revision":1,"edits":[{"op":"add","entry":{"id":"obs","kind":"observation","text":"MCP recovery bytes","author":"sandbox operator","provenance":"synthetic task interaction","source_links":[],"assertions":[{"key":"scope:mcp","relation":"equals","value":"3"}]}}]}),
+                json!({"op":"apply","expected_revision":1,"edits":[{"op":"add","entry":{"id":"obs","kind":"observation","text":"MCP recovery bytes","author":"sandbox operator","provenance":"synthetic task interaction","source_links":[],"assertions":[{"key":"scope:mcp","relation":"equals","value":"3"}]}}, add("cap", "decision", "Keep the retry limit at three.")]}),
                 json!({"op":"inspect"}),
                 json!({"op":"peek","entry_id":"obs","offset":0,"bytes":100}),
                 json!({"op":"review","expected_revision":2,"paths":[],"finishing":true,"max_bytes":4096}),
@@ -708,6 +898,20 @@ async fn experimental_mcp_tool_is_opt_in_and_matches_cli_state() {
             }
         }
         if enabled {
+            let request = json!({"workspace_id":e.wid,"command":{"op":"find_decisions","text":"Should the retry limit change when a request expires?"}});
+            let answer = client
+                .call_tool(
+                    CallToolRequestParams::new("task_context")
+                        .with_arguments(request.as_object().unwrap().clone()),
+                )
+                .await
+                .unwrap();
+            assert_ne!(answer.is_error, Some(true), "{answer:?}");
+            let rmcp::model::ContentBlock::Text(text) = &answer.content[0] else {
+                panic!()
+            };
+            let found: Value = serde_json::from_str(&text.text).unwrap();
+            assert_eq!(found["candidates"][0]["entry_id"], "cap");
             let arguments = |id| {
                 json!({"workspace_id":e.wid,"task_id":"investigation","command":{"op":"apply","expected_revision":2,"edits":[add(id,"work","race candidate")]}}).as_object().unwrap().clone()
             };

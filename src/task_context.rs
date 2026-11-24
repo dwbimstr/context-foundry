@@ -8,6 +8,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 mod capture;
+mod connections;
+pub use connections::ConnectionChoice;
+use connections::ConnectionReview;
 
 pub(crate) const TASKS: TableDefinition<&str, &str> = TableDefinition::new("task_context");
 pub const MAX_REQUEST_BYTES: usize = 1024 * 1024;
@@ -44,6 +47,13 @@ pub enum Command {
         #[serde(default)]
         after_id: Option<String>,
     },
+    FindDecisions {
+        text: String,
+    },
+    Connections {
+        entry_id: String,
+    },
+    ReviewConnection(ConnectionChoice),
     Create {
         title: String,
     },
@@ -145,6 +155,13 @@ impl Kind {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Disposition {
+    Accept,
+    Dismiss,
+}
+
 /// An exact, single-valued caller fact or constraint. Keys include any scope or
 /// environment identity the caller needs; prose is never interpreted as a rule.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -224,6 +241,8 @@ struct Task {
     checkpoints: BTreeMap<String, BTreeMap<String, View>>,
     dismissed: BTreeSet<String>,
     promotions: BTreeMap<String, Promotion>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    connection_reviews: Vec<ConnectionReview>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -407,6 +426,7 @@ impl Task {
                 return Err(invalid("invalid or duplicate promotion lineage"));
             }
         }
+        self.validate_connection_reviews()?;
         for (name, checkpoint) in &self.checkpoints {
             id(name)?;
             for (entry_id, view) in checkpoint {
@@ -530,12 +550,19 @@ pub fn parse(value: Value) -> FResult<Request> {
     if crate::json_len(&value)? > MAX_REQUEST_BYTES {
         return Err(invalid("task request exceeds 1 MiB"));
     }
-    if value["command"]["op"] == "list" && value.get("task_id").is_some() {
-        return Err(invalid("list uses workspace_id without a task_id"));
+    if matches!(
+        value["command"]["op"].as_str(),
+        Some("list" | "find_decisions")
+    ) && value.get("task_id").is_some()
+    {
+        return Err(invalid("workspace discovery omits task_id"));
     }
     let request: Request =
         serde_json::from_value(value).map_err(|_| invalid("invalid task request fields"))?;
-    if !matches!(request.command, Command::List { .. }) {
+    if !matches!(
+        request.command,
+        Command::List { .. } | Command::FindDecisions { .. }
+    ) {
         id(&request.task_id)?;
     }
     Ok(request)
@@ -577,14 +604,22 @@ fn render_view(tx: &redb::ReadTransaction, task: &Task) -> FResult<Value> {
             } else {
                 "original"
             };
+            let links = source_links(tx, &e.entry)?;
+            let fresh = links.iter().all(|link| link["status"] == "fresh");
             let mut value = e.with_assertions(json!({
                 "id": e.entry.id, "kind": e.entry.kind,
                 "author": e.entry.author, "provenance": e.entry.provenance, "sha256": e.sha256,
                 "representation": representation, "text": e.view.summary.as_ref().unwrap_or(&e.entry.text),
-                "source_links": source_links(tx, &e.entry)?
+                "source_links": links
             }));
             if let Some(previous) = &e.entry.supersedes {
                 value["supersedes"] = json!(previous);
+            }
+            if fresh {
+                let connected = task.accepted_priors(tx, &e.entry.id)?;
+                if !connected.is_empty() {
+                    value["accepted_connections"] = json!(connected);
+                }
             }
             Ok(value)
         }).collect::<FResult<Vec<_>>>()?;
@@ -662,6 +697,12 @@ impl Engine {
         if crate::json_len(request)? > MAX_REQUEST_BYTES {
             return Err(invalid("task request exceeds 1 MiB"));
         }
+        if let Command::FindDecisions { text } = &request.command {
+            if !request.task_id.is_empty() {
+                return Err(invalid("workspace discovery omits task_id"));
+            }
+            return self.find_decisions(&request.workspace_id, text, control);
+        }
         if let Command::List { after_id } = &request.command {
             if !request.task_id.is_empty() {
                 return Err(invalid("list uses workspace_id without a task_id"));
@@ -673,6 +714,7 @@ impl Engine {
             Command::Create { .. }
             | Command::Apply { .. }
             | Command::Capture { .. }
+            | Command::ReviewConnection(_)
             | Command::Forget { .. }
             | Command::Promote { .. } => self.task_mutate(request, control),
             _ => {
@@ -898,7 +940,13 @@ impl Engine {
                             return Err(invalid("advice envelope exceeds byte budget"));
                         }
                     }
+                    Command::Connections { entry_id } => {
+                        result = task.connections(&tx, entry_id, control)?;
+                    }
                     Command::Inspect {} => {
+                        if !task.connection_reviews.is_empty() {
+                            result["connection_reviews"] = json!(task.connection_reviews);
+                        }
                         result["dismissed"] = json!(task.dismissed);
                         result["promotions"] = json!(task.promotions);
                         result["title"] = json!(task.title);
@@ -1035,6 +1083,7 @@ impl Engine {
                         checkpoints: BTreeMap::new(),
                         dismissed: BTreeSet::new(),
                         promotions: BTreeMap::new(),
+                        connection_reviews: Vec::new(),
                     }
                 }
                 (Command::Create { title }, Some(task)) => {
@@ -1054,6 +1103,9 @@ impl Engine {
                     | Command::Capture {
                         expected_revision, ..
                     }
+                    | Command::ReviewConnection(ConnectionChoice {
+                        expected_revision, ..
+                    })
                     | Command::Forget { expected_revision }
                     | Command::Promote {
                         expected_revision, ..
@@ -1193,6 +1245,12 @@ impl Engine {
             let revision = store::read_counter(&meta, "task_revision")?
                 .checked_add(1)
                 .ok_or(FoundryError::RevisionExhausted)?;
+            if let Command::ReviewConnection(choice) = &request.command
+                && !task.record_connection(&tx, choice, revision)?
+            {
+                return Ok(json!({"task_id":task.task_id,"revision":task.revision,
+                    "outcome":"existing","disposition":choice.disposition}));
+            }
             if matches!(request.command, Command::Forget { .. }) {
                 let mut removed = Vec::new();
                 let mut memory = tx.open_table(crate::memory::MEMORY)?;
@@ -1231,6 +1289,9 @@ impl Engine {
             if let Some((memory_id, memory_revision)) = promoted {
                 result["memory_id"] = json!(memory_id);
                 result["memory_revision"] = json!(memory_revision);
+            }
+            if let Command::ReviewConnection(choice) = &request.command {
+                result["disposition"] = json!(choice.disposition);
             }
             if let Some((id, sha256)) = captured {
                 result["entry_id"] = json!(id);

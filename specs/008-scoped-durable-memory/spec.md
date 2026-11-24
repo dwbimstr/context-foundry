@@ -516,3 +516,34 @@ status once in fresh+stale+missing order joined by `+` — rendered by the one s
 read-only: no pruning, no revision consumption, no claim that the record itself was
 revalidated, no invented timestamp, and `get`'s exact per-link handles/statuses are
 unchanged. Stale or missing links never affect a record's eligibility.
+
+### Later notes and earlier decisions
+
+For a meeting note or ticket of up to 4,096 bytes, `find_decisions {text}`
+searches current selected entries in the admitted workspace without a task ID.
+Keep the original in the chosen feature with `capture`. Read `connections
+{entry_id}` to see which earlier passages the saved note may affect. Give
+the note and each suggested passage a verifiable entry ID, attribution,
+hash and byte range. Source-backed passages retain their indexed citations.
+A decision, an explicit requirement or constraint, and a captured account
+keep their original kinds. Shared words indicate a possible connection.
+Two plausible passages produce one clarification naming both.
+
+Only `review_connection {expected_revision,entry_id,prior_id,prior_span,disposition,author}`
+records an operator's choice and the exact byte range they saw. A later read
+returns the two most recently reviewed passages with their attributions and
+current source status. The full history keeps every reviewed range. Accept attaches the earlier entry to the note's
+current view. Dismiss removes the pair from suggestions. Both originals stay
+available. Every changed disposition is attributed and revisioned in the
+owning task's transaction. Restoring a view preserves the review history.
+A superseded or stale source cannot authorize a current connection. The
+review applies to the relationship alone. Decisions, promotions and project
+memory continue to use their existing explicit operations.
+
+The local search returns at most two source passages with qualifying word
+overlap using English word stems in one or two adjacent sentences, bounded
+to a contiguous 512-byte window. It reports matching and stale
+counts. Captures longer than the query limit use the first 4,096 bytes for
+discovery and retain the entire original. The task owns up to 128 review
+events. Older task records start with an empty history. Use the updated
+experimental reader for records containing reviews.
