@@ -54,6 +54,17 @@ and dated paragraphs below are history.
   in its own words. Similar wording alone returns a question for the operator.
   [Two-feature walkthrough and limits](validation.md#which-other-feature-relies-on-this-decision--2026-11-24).
 
+  **Indirect change requests, 2026-11-24.** Paste a request with its source
+  and author. Foundry saves the original, follows an attributed meeting note
+  to a candidate decision, and shows which other feature relies on it and
+  why. In the saved case, the cleanup feature's guide and the retrieved Rust
+  guard both require reconciliation before deletion. An explicit scope answer
+  survives a restart. Losing the reviewed evidence reopens the question.
+  The operator still needs to decide whether deleting the task should be
+  allowed while keeping a separately edited copy.
+  [Plan and commands](../specs/003-agent-retrieval-context/contracts/indirect-change-impact.md)
+  and [walkthrough](validation.md#from-an-indirect-request-to-the-affected-feature--2026-11-24).
+
 - **Finite desktop qualification complete, 2026-11-23.** A fresh ChatGPT
   desktop project chat verified the real project store and retrieved
   `apply_owned_block` at `src/bootstrap.rs:904`. Through the separate exercise

@@ -1,5 +1,53 @@
 # Validation
 
+## From an indirect request to the affected feature — 2026-11-24
+
+“Someone rewrote the team's shared guidance. Can I clean up the original
+without losing their work?” The operator supplied that request, an author
+and a source label. The previous executable found the meeting note and
+rejected the new proposal operation. On the saved two-feature case the new
+operation preserved the complete question and followed the note's accepted
+review at revision 7. The rule about deleting an edited copy sits immediately
+before the reviewed passage in the same indexed spec. Foundry returned it
+as a possible interpretation and asked whether that rule governed the request.
+
+The conditional impact was specific. **“Forget a task and its promoted
+project memory”** relies on the original rule. Its saved requirement cited
+both the rule and the guide. Retrieving the guide returned “task forget
+refuses atomically: resolve/forget that record through `memory` first.”
+The suggested `context` arguments returned an implementation handle.
+Retrieving it showed the revision comparison in `Engine::task_mutate` and
+the early conflict before removal. The operator's policy choice remains
+open. Should cleanup keep refusing deletion, or allow deletion while
+preserving the separately edited copy?
+
+A fresh local MCP process recovered an explicit exercise answer and its
+chosen decision. Withdrawing the supporting passage review removed the
+candidate; the previous answer remained readable and a stale acceptance
+was refused. A subsequent dismissal survived another restart. The local
+store tests also added two stronger wording matches after confirmation,
+superseded the selected decision, and changed the cited source. They check
+that unrelated wording cannot displace the selection and that withdrawn
+support cannot confirm a replacement. In the same-file negative control,
+a more distant rule and a paraphrase citing the adjacent byte range were
+both excluded.
+
+The [contract and implementation plan](../specs/003-agent-retrieval-context/contracts/indirect-change-impact.md)
+gives the commands, persistence limits and failure behavior. The walkthrough
+used an isolated copy of the saved project features under local MCP. Its
+answers are exercise data. Discovery starts from at most two lexical leads;
+this case demonstrates a reviewed evidence path, without establishing general
+paraphrase recall.
+
+All eight existing local gates passed on `6a065de`. The default suite had
+1,327 passes and 35 ignored tests. The pilot suite had 133 passes and one
+ignored test. Both reported zero failures. Two fresh local MCP processes
+launched the installed desktop executable. The first retrieved the guide
+and code; the second reopened the original proposal and retrieved the same
+guard. The active ChatGPT GUI process was outside this run. Both Prakarana
+registrations were disabled. Provider spend was zero. Local receipts are in
+`runs/indirect-impact-2026-11-24/`.
+
 ## Which other feature relies on this decision? — 2026-11-24
 
 The feature “Correcting a decision after it was copied to project memory”
