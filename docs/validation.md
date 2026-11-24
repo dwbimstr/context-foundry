@@ -1,5 +1,49 @@
 # Validation
 
+## Change planning from a reviewed note — 2026-11-24
+
+We asked what would need attention if deleting a task could keep a shared copy
+that someone else had edited. The local MCP request supplied the question,
+the saved feature and its revision, with a 6,000-token delivery cap. The
+walkthrough used an isolated copy of the previous review against the real
+Foundry repository. Its reviewer had accepted one connection at revision 7.
+The task held that connection and a separate dismissal at revision 8.
+
+On the same indexed sources, the previously installed binary returned the
+accepted entry ID. Its view cut off part of the reviewed promise, and its
+delivered source omitted the revision check. With `91b21e9`, the reply paired
+the meeting note with the exact 229-byte passage accepted from the
+[memory spec](../specs/008-scoped-durable-memory/spec.md). A separate
+`retrieve` on the passage handle returned those same bytes at lines 353–356.
+The evidence report attributed the [deletion code](../src/task_context.rs)
+to a text match on that review. Opening the returned Rust handle confirmed
+both the revision check and the removal of an unchanged copy.
+
+**What would change for the operator?** Today, an edited copy blocks deletion
+of the original task. An unchanged copy is removed with the task. Allowing
+the task to disappear while an edited copy survives would affect the deletion
+branch, the recorded promise of explicit reconciliation, and the
+[regression that expects a conflict](../tests/task_context.rs). One decision
+remains open. Should the surviving copy retain a reference to its deleted
+origin, and what should opening that reference show? The review establishes
+that the two passages belong together. The operator has yet to approve a
+change in deletion behavior.
+
+A separate local MCP replay dismissed the accepted link at revision 9. The
+same question then returned zero accepted passages and zero sources attributed
+to a reviewed text match. All three review events remained readable. The
+focused regression also changes the indexed source and supersedes the note.
+Each removes the affected pair and its search attribution. The mounted project
+task was inspected at revision 3 with six originals. The walkthrough made
+its review choices only in the isolated store.
+
+All eight existing local gates passed on `91b21e9`. The documentation link
+check passed. A fresh stdio MCP client launched the updated desktop executable
+and reopened the reviewed spec and the deletion code. This delivery check ran
+locally on one saved feature. The already-open chat used its existing server
+process. Both Prakarana servers were disabled. The run used no provider,
+signing service or release workflow.
+
 ## Later meeting note and earlier decisions — 2026-11-23
 
 The starting input was one illustrative meeting note asking whether removing

@@ -2,7 +2,7 @@
 
 ## Current status — 2026-11-06
 
-Updated 2026-11-23. This section owns current status; other documents link here,
+Updated 2026-11-24. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
 - **Product goal, 2026-11-23.** An operator can give Foundry project context
@@ -37,6 +37,20 @@ and dated paragraphs below are history.
   is whether deleting the original task should succeed while leaving the
   edited copy in place, or continue to require explicit reconciliation.
   [Walkthrough and limits](validation.md#later-meeting-note-and-earlier-decisions--2026-11-23).
+
+  **Change planning from a reviewed note, 2026-11-24.** Asking what would
+  change if task deletion kept an edited copy now brings the meeting note,
+  the exact earlier promise and a cited deletion guard into the same scoped
+  answer. The code currently refuses deletion when the copy was edited. The
+  operator still owns the decision to change that behavior. Dismissing the
+  connection removes its quotation and search attribution on the next read.
+  [Feature walkthrough](validation.md#change-planning-from-a-reviewed-note--2026-11-24).
+
+  **Suggested next increment.** Answer “Which other feature relies on this
+  decision?” across saved project tasks. Start with two features that refer
+  to one decision. Name the affected feature and quote the source that ties
+  it to the decision. If the only link is similar wording, show it as a
+  question for the operator.
 
 - **Finite desktop qualification complete, 2026-11-23.** A fresh ChatGPT
   desktop project chat verified the real project store and retrieved
