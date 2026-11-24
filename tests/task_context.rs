@@ -79,6 +79,57 @@ fn cli(e: &Env, command: Value) -> Value {
     serde_json::from_slice(&output.stdout).unwrap()
 }
 #[test]
+fn capture_replays_without_duplication_and_corrections_preserve_separate_accounts() {
+    let e = env();
+    let engine = Engine::open_existing(&e.store).unwrap();
+    let initial = create(&engine);
+    let original = format!("{}é{}", "a".repeat(1023), "b".repeat(80));
+    let input = json!({"op":"capture","expected_revision":initial,"source":"planning meeting","text":original});
+    let first = call(&engine, input.clone()).unwrap();
+    let view = call(&engine, json!({"op":"render","max_bytes":4096})).unwrap();
+    assert_eq!(view["entries"][0]["representation"], "source_excerpt");
+    assert_eq!(view["entries"][0]["text"], "a".repeat(1023));
+    let other = call(&engine, json!({"op":"capture","expected_revision":first["revision"],"source":"ticket","author":"editor","text":original})).unwrap();
+    assert_ne!(other["entry_id"], first["entry_id"]);
+    let change = json!({"op":"capture","expected_revision":other["revision"],"source":"meeting correction","text":"Keep the separately edited copy.","supersedes": first["entry_id"]});
+    let corrected = call(&engine, change.clone()).unwrap();
+    assert_eq!(call(&engine, change).unwrap()["outcome"], "existing");
+    let mut stale = input.clone();
+    stale["text"] = json!("stale concurrent change");
+    assert!(matches!(
+        call(&engine, stale),
+        Err(FoundryError::Conflict(_))
+    ));
+    drop(engine);
+
+    let engine = Engine::open_existing(&e.store).unwrap();
+    let list = task_context::parse(json!({"workspace_id":e.wid,"command":{"op":"list"}})).unwrap();
+    let tasks = engine.task_context(&list, &Control::unbounded()).unwrap();
+    assert_eq!(
+        tasks["tasks"],
+        json!([{"task_id":"investigation","title":"Repair a retry policy","revision":corrected["revision"]}])
+    );
+    let replay = call(&engine, input).unwrap();
+    assert_eq!(replay["revision"], corrected["revision"]);
+    assert_eq!(replay["historical"], true);
+    let peek = call(
+        &engine,
+        json!({"op":"peek","entry_id":first["entry_id"],"offset":0,"bytes":4096}),
+    )
+    .unwrap();
+    assert_eq!(peek["text"], original);
+    assert_eq!(peek["sha256"], first["sha256"]);
+    let current = call(&engine, json!({"op":"render","max_bytes":4096})).unwrap();
+    let ids: Vec<_> = current["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| &e["id"])
+        .collect();
+    assert_eq!(ids, [&other["entry_id"], &corrected["entry_id"]]);
+}
+
+#[test]
 fn cli_lifecycle_recovers_non_repository_observation_after_fold_restart_and_restore() {
     let e = env();
     let r = cli(&e, json!({"op":"create","title":"Repair a retry policy"}))["revision"]

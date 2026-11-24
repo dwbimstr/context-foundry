@@ -143,7 +143,7 @@ impl FoundryMcp {
                 .and_then(serde_json::Value::as_object_mut)
                 .expect("context properties");
             properties.insert("task_id".into(), serde_json::json!({"type":"string","minLength":1,"maxLength":128,"description":"Primary task ID; requires task_revision."}));
-            properties.insert("compose_evidence".into(), serde_json::json!({"type":"boolean","description":"Compose bounded evidence across selected admitted roots using the primary task; requires task_id and task_revision."}));
+            properties.insert("compose_evidence".into(), serde_json::json!({"type":"boolean","description":"Compose evidence for a feature question using task_id and task_revision. Source handles can be retrieved. A text_match is a lead; check the cited source before asserting a dependency."}));
             properties.insert("compact_evidence".into(), serde_json::json!({"type":"boolean","description":"Compact evidence accounting; requires compose_evidence. Source citations and task constraints are retained."}));
             properties.insert("boundary_config".into(), serde_json::json!({"type":"string","description":"Indexed boundary configuration path; requires compose_evidence."}));
             properties.insert("task_revision".into(), serde_json::json!({"type":"integer","minimum":1,"description":"Expected task revision; requires task_id."}));
@@ -1329,7 +1329,7 @@ impl FoundryMcp {
 
     #[tool(
         name = "task_context",
-        description = r#"Experimental task state and recoverable views. To inspect a task, send exactly {"op":"inspect"} as command. To peek at an original, send {"op":"peek","entry_id":"<id from inspect>","offset":0,"bytes":4096}. Continue at next_offset until null. Review compares explicit structured assertions; export uses CLI."#,
+        description = r#"Project task memory. Discover saved features with {"op":"list"} and workspace_id alone. Create the task if needed. With capture, give expected_revision and a source label plus original text, or an indexed file path as source with optional lines. Add supersedes for an explicit correction. To assess impact, call context with task_id, the receipt revision as task_revision, and compose_evidence:true. To inspect a task, send exactly {"op":"inspect"} as command. To peek at an original, send {"op":"peek","entry_id":"<id from inspect>","offset":0,"bytes":4096}. Continue at next_offset until null. Review compares explicit structured assertions; export uses CLI."#,
         input_schema = schema(include_str!("task_context.schema.json")),
         annotations(read_only_hint = false, open_world_hint = false)
     )]
@@ -1363,7 +1363,8 @@ impl FoundryMcp {
         }
         let read = matches!(
             request.command,
-            crate::task_context::Command::Search { .. }
+            crate::task_context::Command::List { .. }
+                | crate::task_context::Command::Search { .. }
                 | crate::task_context::Command::Advise { .. }
                 | crate::task_context::Command::Review { .. }
                 | crate::task_context::Command::Inspect {}

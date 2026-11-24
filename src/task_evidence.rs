@@ -267,6 +267,14 @@ impl Engine {
         let goals: Vec<_> = entries
             .iter()
             .filter(|e| matches!(e.kind, Kind::Requirement | Kind::Question))
+            .map(|e| (e, "task"))
+            .chain(
+                entries
+                    .iter()
+                    .rev()
+                    .filter(|e| e.is_captured_source())
+                    .map(|e| (e, "text_match")),
+            )
             .collect();
         let mut plan = Plan {
             compact: options.compact_evidence,
@@ -393,7 +401,7 @@ impl Engine {
                 plan.discovery_limited |= !add(&mut candidates, h.clone(), facet(&h.path), "query");
             }
         }
-        for e in goals.iter().take(4) {
+        for (e, basis) in goals.iter().take(4) {
             control.check()?;
             let mut end = e.text.len().min(1024);
             while !e.text.is_char_boundary(end) {
@@ -407,12 +415,12 @@ impl Engine {
             plan.discovery_limited |= end < e.text.len();
             let batch = self.search_candidates(text, None, 4, control)?;
             plan.discovery_limited |= batch.counters.candidates_full;
+            let via = format!("{basis}:{}", e.id);
             for i in batch.items {
                 if let Some(h) = i.handle {
                     plan.discovery_limited |= compiler_seed(&h);
                     let f = facet(&h.path);
-                    plan.discovery_limited |=
-                        !add(&mut candidates, h, f, &format!("task:{}", e.id));
+                    plan.discovery_limited |= !add(&mut candidates, h, f, &via);
                 }
             }
         }
@@ -740,7 +748,8 @@ impl Engine {
                 }
             }
             let mut test_words = BTreeSet::new();
-            for text in std::iter::once(query).chain(goals.iter().take(4).map(|e| e.text.as_str()))
+            for text in
+                std::iter::once(query).chain(goals.iter().take(4).map(|(e, _)| e.text.as_str()))
             {
                 let mut end = text.len().min(1024);
                 while !text.is_char_boundary(end) {

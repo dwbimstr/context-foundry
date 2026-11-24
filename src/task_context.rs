@@ -7,6 +7,7 @@ use redb::{ReadableDatabase, ReadableTable, ReadableTableMetadata, TableDefiniti
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
+mod capture;
 
 pub(crate) const TASKS: TableDefinition<&str, &str> = TableDefinition::new("task_context");
 pub const MAX_REQUEST_BYTES: usize = 1024 * 1024;
@@ -30,6 +31,7 @@ pub struct ContextView {
 #[serde(deny_unknown_fields)]
 pub struct Request {
     pub workspace_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub task_id: String,
     pub command: Command,
 }
@@ -37,12 +39,29 @@ pub struct Request {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    /// Find a feature by title in this workspace, including after a client restart.
+    List {
+        #[serde(default)]
+        after_id: Option<String>,
+    },
     Create {
         title: String,
     },
     Apply {
         expected_revision: u64,
         edits: Vec<Edit>,
+    },
+    Capture {
+        expected_revision: u64,
+        source: String,
+        #[serde(default)]
+        text: Option<String>,
+        #[serde(default)]
+        lines: Option<String>,
+        #[serde(default)]
+        author: Option<String>,
+        #[serde(default)]
+        supersedes: Option<String>,
     },
     Advise {
         action_key: String,
@@ -128,7 +147,7 @@ impl Kind {
 
 /// An exact, single-valued caller fact or constraint. Keys include any scope or
 /// environment identity the caller needs; prose is never interpreted as a rule.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Assertion {
     pub key: String,
@@ -144,7 +163,7 @@ pub enum Relation {
 
 /// Caller assertions with attribution; neither an observation nor a decision is
 /// automatically certified true. Supersession is explicit and preserves history.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Entry {
     pub id: String,
@@ -511,7 +530,15 @@ pub fn parse(value: Value) -> FResult<Request> {
     if crate::json_len(&value)? > MAX_REQUEST_BYTES {
         return Err(invalid("task request exceeds 1 MiB"));
     }
-    serde_json::from_value(value).map_err(|_| invalid("invalid task request fields"))
+    if value["command"]["op"] == "list" && value.get("task_id").is_some() {
+        return Err(invalid("list uses workspace_id without a task_id"));
+    }
+    let request: Request =
+        serde_json::from_value(value).map_err(|_| invalid("invalid task request fields"))?;
+    if !matches!(request.command, Command::List { .. }) {
+        id(&request.task_id)?;
+    }
+    Ok(request)
 }
 
 fn source_links(tx: &redb::ReadTransaction, entry: &Entry) -> FResult<Vec<Value>> {
@@ -540,9 +567,27 @@ fn source_links(tx: &redb::ReadTransaction, entry: &Entry) -> FResult<Vec<Value>
         .collect()
 }
 fn render_view(tx: &redb::ReadTransaction, task: &Task) -> FResult<Value> {
-    let entries = task.entries.iter().filter(|e| e.view.selected && !task.superseded(&e.entry.id)).map(|e| -> FResult<Value> {
-        Ok(e.with_assertions(json!({"id":e.entry.id,"kind":e.entry.kind,"author":e.entry.author,"provenance":e.entry.provenance,"sha256":e.sha256,"representation":if e.view.summary.is_some() { "caller_summary" } else { "original" },"text":e.view.summary.as_ref().unwrap_or(&e.entry.text),"source_links":source_links(tx,&e.entry)?})))
-    }).collect::<FResult<Vec<_>>>()?;
+    let entries = task.entries.iter()
+        .filter(|e| e.view.selected && !task.superseded(&e.entry.id))
+        .map(|e| -> FResult<Value> {
+            let representation = if e.has_source_excerpt() {
+                "source_excerpt"
+            } else if e.view.summary.is_some() {
+                "caller_summary"
+            } else {
+                "original"
+            };
+            let mut value = e.with_assertions(json!({
+                "id": e.entry.id, "kind": e.entry.kind,
+                "author": e.entry.author, "provenance": e.entry.provenance, "sha256": e.sha256,
+                "representation": representation, "text": e.view.summary.as_ref().unwrap_or(&e.entry.text),
+                "source_links": source_links(tx, &e.entry)?
+            }));
+            if let Some(previous) = &e.entry.supersedes {
+                value["supersedes"] = json!(previous);
+            }
+            Ok(value)
+        }).collect::<FResult<Vec<_>>>()?;
     Ok(
         json!({"workspace_id":task.workspace_id,"task_id":task.task_id,"revision":task.revision,"boundary":"foundry_task_context","host_application":"unknown","title":task.title,"entries":entries}),
     )
@@ -581,7 +626,9 @@ impl Engine {
             .filter(|e| e.view.selected && !task.superseded(&e.entry.id))
             .map(|e| {
                 let mut entry = e.entry.clone();
-                if let Some(summary) = &e.view.summary {
+                if let Some(summary) = &e.view.summary
+                    && !e.has_source_excerpt()
+                {
                     entry.text = summary.clone();
                 }
                 entry
@@ -612,13 +659,20 @@ impl Engine {
         if self.workspace_id().ok_or(FoundryError::WorkspaceUnbound)? != request.workspace_id {
             return Err(FoundryError::WrongWorkspace);
         }
-        id(&request.task_id)?;
         if crate::json_len(request)? > MAX_REQUEST_BYTES {
             return Err(invalid("task request exceeds 1 MiB"));
         }
+        if let Command::List { after_id } = &request.command {
+            if !request.task_id.is_empty() {
+                return Err(invalid("list uses workspace_id without a task_id"));
+            }
+            return self.list_tasks(&request.workspace_id, after_id.as_deref(), control);
+        }
+        id(&request.task_id)?;
         match &request.command {
             Command::Create { .. }
             | Command::Apply { .. }
+            | Command::Capture { .. }
             | Command::Forget { .. }
             | Command::Promote { .. } => self.task_mutate(request, control),
             _ => {
@@ -944,6 +998,7 @@ impl Engine {
         }
     }
     fn task_mutate(&self, request: &Request, control: &Control) -> FResult<Value> {
+        let capture = self.capture_original(request)?;
         let tx = self.db.begin_write()?;
         let mut result;
         {
@@ -953,6 +1008,16 @@ impl Engine {
                 .get(request.task_id.as_str())?
                 .map(|v| decode(v.value(), &request.task_id, &request.workspace_id))
                 .transpose()?;
+            if let (Some(task), Some(entry)) = (&previous, &capture)
+                && let Some(existing) = task.entries.iter().find(|e| e.entry.id == entry.id)
+            {
+                if existing.entry != *entry {
+                    return Err(FoundryError::Conflict("capture ID already in use".into()));
+                }
+                return Ok(json!({"task_id":task.task_id,"revision":task.revision,
+                    "outcome":"existing","entry_id":entry.id,"sha256":existing.sha256,
+                    "historical":task.superseded(&entry.id)}));
+            }
             let mut task = match (&request.command, previous) {
                 (Command::Create { title }, None) => {
                     text(title, 1024)?;
@@ -986,6 +1051,9 @@ impl Engine {
                     Command::Apply {
                         expected_revision, ..
                     }
+                    | Command::Capture {
+                        expected_revision, ..
+                    }
                     | Command::Forget { expected_revision }
                     | Command::Promote {
                         expected_revision, ..
@@ -1002,6 +1070,33 @@ impl Engine {
                 (_, None) => return Err(FoundryError::NotFound),
                 _ => unreachable!(),
             };
+            let captured = capture
+                .as_ref()
+                .map(|entry| (entry.id.clone(), crate::digest(entry.text.as_bytes())));
+            if let Some(entry) = capture {
+                if let Some(parent) = &entry.supersedes
+                    && !task
+                        .entries
+                        .iter()
+                        .any(|e| e.entry.id == *parent && e.entry.is_captured_source())
+                {
+                    return Err(invalid(
+                        "capture can correct only a previously captured original",
+                    ));
+                }
+                for handle in &entry.source_links {
+                    store::validate_link_span(&tx, &request.workspace_id, handle)?;
+                }
+                let excerpt = capture::excerpt(&entry.text).map(str::to_owned);
+                task.edit(&Edit::Add { entry })?;
+                if let Some(excerpt) = excerpt {
+                    task.entries
+                        .last_mut()
+                        .expect("just added capture")
+                        .view
+                        .summary = Some(excerpt);
+                }
+            }
             if let Command::Apply { edits, .. } = &request.command {
                 if edits.is_empty() || edits.len() > 32 {
                     return Err(invalid("apply requires 1..32 edits"));
@@ -1136,6 +1231,11 @@ impl Engine {
             if let Some((memory_id, memory_revision)) = promoted {
                 result["memory_id"] = json!(memory_id);
                 result["memory_revision"] = json!(memory_revision);
+            }
+            if let Some((id, sha256)) = captured {
+                result["entry_id"] = json!(id);
+                result["sha256"] = json!(sha256);
+                result["historical"] = json!(false);
             }
             meta.insert("task_revision", revision.to_string().as_str())?;
         }

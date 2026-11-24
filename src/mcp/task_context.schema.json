@@ -1,7 +1,12 @@
 {
   "type": "object",
   "additionalProperties": false,
-  "required": ["workspace_id", "task_id", "command"],
+  "required": ["workspace_id", "command"],
+  "allOf": [{
+    "if": {"properties": {"command": {"properties": {"op": {"const": "list"}}}}},
+    "then": {"not": {"required": ["task_id"]}},
+    "else": {"required": ["task_id"]}
+  }],
   "properties": {
     "workspace_id": {"type": "string"},
     "task_id": {"type": "string"},
@@ -11,8 +16,12 @@
       "required": ["op"],
       "properties": {
         "op": {
-          "enum": ["create", "apply", "inspect", "peek", "render", "forget", "advise", "review", "promote", "search"]
+          "enum": ["list", "create", "capture", "apply", "inspect", "peek", "render", "forget", "advise", "review", "promote", "search"]
         },
+        "source": {"type": "string", "description": "Origin of pasted text, or an indexed repository-relative file path when text is omitted."},
+        "text": {"type": "string", "description": "Verbatim supplied text. Omit to capture the indexed source."},
+        "lines": {"type": "string", "description": "Optional one-based line range of the indexed source, e.g. 319-335."},
+        "supersedes": {"type": "string", "description": "For an explicit correction, the earlier captured entry ID."},
         "title": {"type": "string"},
         "expected_revision": {"type": "integer", "minimum": 0},
         "edits": {
@@ -123,6 +132,19 @@
         }
       },
       "allOf": [
+        {
+          "if": {"properties": {"op": {"const": "list"}}},
+          "then": {"additionalProperties": false, "properties": {"op": {}, "after_id": {}}}
+        },
+        {
+          "if": {"properties": {"op": {"const": "capture"}}},
+          "then": {
+            "required": ["op", "expected_revision", "source"],
+            "not": {"required": ["text", "lines"]},
+            "additionalProperties": false,
+            "properties": {"op": {}, "expected_revision": {}, "source": {}, "text": {}, "lines": {}, "author": {}, "supersedes": {}}
+          }
+        },
         {"if": {"properties": {"op": {"const": "inspect"}}}, "then": {"required": ["op"], "maxProperties": 1}},
         {
           "if": {"properties": {"op": {"const": "peek"}}},

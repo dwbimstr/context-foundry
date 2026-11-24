@@ -564,11 +564,23 @@ with `foundry --store STORE mcp --root ROOT --experimental-task-context`. `--no-
 MCP catalog is unchanged without the flag. Task IDs are caller-chosen, scoped to the
 primary store's workspace ID (shown by `status`). They are not per-user access controls.
 
-Every request has this shape:
+To resume a feature in another session, call `task_context` with the workspace
+ID and `{"op":"list"}` as the command. Follow `next_after_id` with `after_id`
+when needed. To start a feature, choose a short task ID and a descriptive title:
 
 ```json
 {"workspace_id":"<workspace ID from status>","task_id":"retry-investigation","command":{"op":"create","title":"Repair retry backoff"}}
 ```
+
+For a feature-impact question, give the chat the material as you received it.
+The client can record a conversation or ticket with a command such as
+`{"op":"capture","expected_revision":1,"source":"design meeting","text":"Keep the independently edited copy."}`.
+For an indexed spec, use its repository-relative path as `source` and optional
+`lines` in place of `text`. Keep the receipt's entry ID for an explicit
+correction via `supersedes`. Send the feature question to `context` with
+`task_id`, `task_revision` and `compose_evidence:true`. Follow cited handles
+with `retrieve` to check what depends on the change. A `text_match` indicates
+which supplied words led to a source. Use `peek` to inspect an earlier account.
 
 Save the returned `revision`. Every mutation after creation names the current
 `expected_revision`; a conflict means inspect the live record before retrying. A

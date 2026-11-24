@@ -5,6 +5,32 @@
 Updated 2026-11-23. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
+- **Product goal, 2026-11-23.** An operator can give Foundry project context
+  from any source they choose, in the form they already have it. Foundry saves
+  the original, organizes related material as it arrives, and uses those
+  relationships to answer “If we build or change this feature, what else is
+  affected, why, and what do I still need to decide?” ChatGPT desktop is the
+  first place to use that capability. Project memory lives in Foundry across
+  clients and sessions. Each source keeps its identity, revision and access
+  scope. Decisions retain their author, corrections and unresolved disagreements.
+  An answer can follow a short explanation back to the original evidence.
+
+  The first increment covers one feature in one project, using a
+  supplied conversation excerpt, an existing specification and the indexed
+  repository. The operator can supply plain text without tagging dependencies.
+  Start with the actual question “If we let someone correct a decision already
+  copied to project memory, what else needs attention?” The
+  [current contract](../specs/008-scoped-durable-memory/spec.md) distinguishes
+  the original task decision, the project copy and exports. Use existing
+  source links, promotion history and code references where available. Explain
+  each supported impact, label plausible effects that need checking, and ask
+  a concrete question when a missing decision would change the answer. A
+  correction should update the affected view and leave its history recoverable.
+  Done means an operator can use this on the feature in a later session
+  without resupplying the material or wiring the relationships by hand. Use
+  that workflow and focused checks for the changed behavior as the development
+  feedback. Existing publication gates apply when publishing.
+
 - **Finite desktop qualification complete, 2026-11-23.** A fresh ChatGPT
   desktop project chat verified the real project store and retrieved
   `apply_owned_block` at `src/bootstrap.rs:904`. Through the separate exercise

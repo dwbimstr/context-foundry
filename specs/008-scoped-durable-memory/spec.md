@@ -296,6 +296,27 @@ is to measure them (owner, 2026-11-06, Status above); T003 stays open until an
 authorized run passes. 003 owns
 the delivery boundary.
 
+#### Capturing sources for a feature question
+
+A client can rediscover a feature in the primary workspace with `list`. It
+returns up to eight task IDs, titles and current revisions per page. A
+`capture` records supplied text under its source label, or captures a passage
+from an indexed repository path with an optional line range. Preserve the
+original bytes, provenance, author when known and the exact indexed citation.
+Assign the entry ID in Foundry. An exact retry returns the existing receipt,
+including whether the entry has since been superseded. Other writes require
+the current task revision. All existing workspace and size limits apply.
+
+Keep separately attributed accounts visible until an explicit correction names
+the earlier capture. Show the correction in the current view and make the
+earlier original available by ID. A long capture initially displays a verbatim
+excerpt of up to 1,024 bytes. The client can open the full original. During
+task-scoped evidence composition, selected captures can supply search terms
+within the existing four-query limit, after requirements and questions.
+Report text matches as candidates and explicit stored citations separately.
+The host can inspect the evidence to explain impact and ask about an unresolved
+choice. An informal capture carries no authority to change a project decision.
+
 ### T004 — Experimental grounded reminders and explicit promotion
 
 Status: exact-action and grounded path/finishing reminders are implemented locally on
