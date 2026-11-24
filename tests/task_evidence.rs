@@ -134,6 +134,14 @@ fn captured_source_anchors_impact_and_keeps_its_original_across_reindex() {
             .contains(&saved["entry_id"])
     );
     let sources = evidence["sources"].as_array().unwrap();
+    assert!(
+        sources[0]["via"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|via| via == &format!("task:{entry_id}")
+                || via == &format!("text_match:{entry_id}"))
+    );
     for via in [format!("task:{entry_id}"), format!("text_match:{entry_id}")] {
         assert!(
             sources

@@ -313,7 +313,9 @@ earlier original available by ID. A long capture initially displays a verbatim
 excerpt of up to 1,024 bytes. The client can open the full original. During
 task-scoped evidence composition, selected captures can supply search terms
 within the existing four-query limit, after requirements and questions.
-Report text matches as candidates and explicit stored citations separately.
+When the operator supplies a current indexed passage, deliver its citation and
+related leads ahead of incidental question matches. Report text matches as
+candidates and explicit stored citations separately.
 The host can inspect the evidence to explain impact and ask about an unresolved
 choice. An informal capture carries no authority to change a project decision.
 

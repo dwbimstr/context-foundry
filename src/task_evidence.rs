@@ -444,6 +444,7 @@ impl Engine {
         let sources = tx.open_table(SOURCES)?;
         let wid = self.workspace_id().ok_or(FoundryError::WorkspaceUnbound)?;
         let mut linked = 0;
+        let mut supplied_passages = BTreeSet::new();
         for e in entries {
             for link in &e.source_links {
                 if linked == 8 {
@@ -484,6 +485,10 @@ impl Engine {
                             continue;
                         }
                         plan.requirement_links.push((e.id.clone(), handle.clone()));
+                    }
+                    if e.is_captured_source() {
+                        supplied_passages.insert(format!("task:{}", e.id));
+                        supplied_passages.insert(format!("text_match:{}", e.id));
                     }
                     let f = if e.kind == Kind::Constraint {
                         "constraints"
@@ -936,6 +941,12 @@ impl Engine {
             if !order.contains(&i) {
                 order.push(i);
             }
+        }
+        // A supplied, still-current passage and its search leads take precedence
+        // over incidental matches for the question. Preserve facet order within
+        // each group and keep the same source and delivery limits.
+        if !supplied_passages.is_empty() {
+            order.sort_by_key(|&i| candidates[i].support.via.is_disjoint(&supplied_passages));
         }
         for i in order {
             control.check()?;
