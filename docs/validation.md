@@ -1,5 +1,59 @@
 # Validation
 
+## Later meeting note and earlier decisions — 2026-11-23
+
+The starting input was one illustrative meeting note asking whether removing
+the original task also removes a shared copy someone edited. The local MCP
+client supplied the wording and the workspace ID alone. The preceding
+feature's four originals matched the connected desktop project store
+byte-for-byte. The walkthrough used a separate store indexing that same real
+repository so that reviewer choices during development could be exercised
+without settling the operator's actual policy.
+
+The first attempt located the right spec but quoted an attribution rule.
+With English word forms and a bounded window of adjacent sentences,
+`d7334bf` found the [live-copy protection](../specs/008-scoped-durable-memory/spec.md)
+and the separately attributed review note about deletion. The operator can
+distinguish two changes here. Correcting the original decision involves a
+live-copy guard. Deleting the task involves a revision check that refuses
+to remove an independently edited copy. A consequential clarification is
+whether deletion should now succeed and retain the edited copy. The current
+[implementation](../src/task_context.rs) requires explicit reconciliation.
+
+A fresh local MCP client located the feature without an earlier task or
+decision ID, captured the note, and opened both suggested passages by
+their exact byte ranges. The indexed spec citation was fresh. A walkthrough
+reviewer accepted the contract connection and dismissed the other. A later
+process rediscovered the feature and confirmed both quoted passages against
+their immutable originals at revision 8. Only the accepted connection
+appeared on the note. Both accounts remained intact. The feature regression
+also covers a reversed choice, intervening revision, wrong passage, unrelated
+source, changed source and UTF-8 byte offsets.
+
+The live desktop project task `correcting-a-copied-decision` holds the
+illustrative note at revision 3. Updating the spec file changed its source
+handle, so the saved passage was refreshed with the same bytes and a link
+to its former revision. The connected desktop owner verified the note and
+fresh citation using its existing task operations. Both proposed choices
+are pending in the actual project. The new operations were exercised through
+local MCP stdio sessions. The installed desktop executable advertised the three
+new operations and reopened the exact saved review passages. The already-open
+desktop connection still returned `invalid_argument` for `connections` on
+its earlier catalog.
+
+All eight existing gates passed on `d7334bf`, including Clippy on Rust 1.90.
+The default suite reported 1,322 top-level libtest passes and 35 ignored,
+and its custom recovery runner passed all 21 cases. The optional pilot
+suite passed 133 with one ignored. Counts exclude nested subprocess summaries.
+The documentation link check passed. All feature checks ran locally with
+Prakarana disabled.
+
+The matcher can suggest relationships when wording overlaps. A suggestion
+expresses a possible connection. Source text and author attribution remain
+visible for the operator's judgment. Reviews occupy the existing experimental
+task record. A reader predating this change can open earlier records and
+requires an upgrade to read tasks with saved connection reviews.
+
 ## Feature impact across sessions — 2026-11-23
 
 An operator supplied a conversation about understanding feature dependencies.

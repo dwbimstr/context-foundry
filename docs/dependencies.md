@@ -4,8 +4,10 @@ This inventory records Cargo metadata for the locked dependency graph. It is not
 
 The optional task context workflow uses `rust-stemmers` 1.2.0
 (`MIT/BSD-3-Clause` in the package manifest) for English word forms in
-meeting notes. The locked crate uses the existing serde dependencies. No
-model or external service is involved.
+meeting notes. The matcher calls `Stemmer::stem` with `Algorithm::English`.
+The 008 regression `later_note_finds_two_promises_and_reviews_only_the_connection`
+checks that comparisons preserve the original bytes and their attribution.
+The locked crate uses the existing serde dependencies.
 
 One section is not about a dependency. The
 [oh-my-pi reference patches](#oh-my-pi-reference-patches) are tracked files that

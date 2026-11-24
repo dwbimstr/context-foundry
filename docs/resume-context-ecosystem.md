@@ -28,15 +28,15 @@ and dated paragraphs below are history.
   `correcting-a-copied-decision`. [Workflow](experimental-context.md#recoverable-task-context)
   and [evidence](validation.md#feature-impact-across-sessions--2026-11-23).
 
-  **Next increment.** Give the same project one later meeting note or ticket
-  without naming the decision it affects. Surface the earlier decision it
-  might change, cite both sources, and explain which existing promise would
-  need revisiting. If either reading is plausible, show both and ask the
-  operator which applies. Finish when the operator can accept or dismiss the
-  proposed connection and see the consequence on this one feature. Use that
-  change request as the development check. Time-box the first attempt to two
-  hours. If the connection is still too ambiguous, show the two source
-  passages and record the one clarification a person needs to provide.
+  **Later meeting note delivered.** An ordinary note can now find a possible
+  decision across the project before the client has a feature or entry ID.
+  The saved note shows attributed candidate passages. An operator can accept
+  or dismiss a connection, revisit the exact words reviewed, and change that
+  choice while retaining its history. The copied-decision example located
+  the contract and a separate reviewer's account. Its open product question
+  is whether deleting the original task should succeed while leaving the
+  edited copy in place, or continue to require explicit reconciliation.
+  [Walkthrough and limits](validation.md#later-meeting-note-and-earlier-decisions--2026-11-23).
 
 - **Finite desktop qualification complete, 2026-11-23.** A fresh ChatGPT
   desktop project chat verified the real project store and retrieved
