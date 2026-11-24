@@ -1,5 +1,55 @@
 # Validation
 
+## Which other feature relies on this decision? — 2026-11-24
+
+The feature “Correcting a decision after it was copied to project memory”
+holds the contract that an independently edited or recreated project-memory
+record must be resolved before task deletion. **“Forget a task and its
+promoted project memory” relies on that decision.** Its operator guide says
+“task forget refuses atomically: resolve/forget that record through `memory`
+first.” The saved requirement cites both the guide and the original
+[memory contract](../specs/008-scoped-durable-memory/spec.md).
+The [operator workflow](experimental-context.md#recoverable-task-context)
+explains how to reopen the reason.
+
+The local MCP walkthrough used an isolated copy of the saved correction
+feature and saved the deletion feature beside it. The desktop project store
+already had a running stdio owner. Its live tasks and open choices were
+preserved. The walkthrough added a decision using the contract’s original
+bytes and saved the same passage as a requirement for deletion after checking
+the independently worded operator guide. Neither record supplied a foreign
+decision ID. On restart, the client listed both saved features, inspected the
+originating decision, then asked `decision_uses` for the other feature. It got
+one dependent and reopened the exact requirement, contract and guide citations.
+This establishes shared adoption of a documented rule. It leaves the proposed
+change to allow deletion with a surviving edited copy open.
+
+The previous executable rejected the new operation. During the walkthrough,
+the short note “Keep the independently edited copy” produced no lead. The
+guide’s separate sentence about removing an **unchanged** copy produced a
+clarification question and zero dependents. Saving the documented requirement
+then established the dependency. No reviewer approval was attributed to either
+wording match.
+
+An explicitly documented or operator-confirmed dependency can instead be
+saved with `relies_on` on the dependent feature’s requirement or constraint.
+On a second copy of the same two-feature store, a local MCP client supplied
+the guide’s own wording and the returned decision reference. Reading the
+dependency then quoted the guide and identified it as a declared requirement.
+The focused real-store regression covers that route, different source files
+with identical words, supersession, source edits, unrelated task revisions
+and reuse of task and decision IDs after deletion. The operation is scoped
+to one admitted workspace. It reads eight tasks per page and quotes one
+reason per other feature. Task rows containing new decision creation revisions
+or explicit references require a compatible reader.
+
+All eight existing local gates passed on `8a34154`, including the default test
+suite and the Rust 1.90 checks. The documentation link check passed. A fresh
+local MCP client ran the installed desktop executable against the saved pair
+and reopened both source citations. The existing desktop chat kept its own
+process. Both Prakarana registrations were disabled. The walkthrough used
+local storage and made no provider calls. Signing and release remain gated.
+
 ## Change planning from a reviewed note — 2026-11-24
 
 We asked what would need attention if deleting a task could keep a shared copy

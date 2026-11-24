@@ -46,11 +46,13 @@ and dated paragraphs below are history.
   connection removes its quotation and search attribution on the next read.
   [Feature walkthrough](validation.md#change-planning-from-a-reviewed-note--2026-11-24).
 
-  **Suggested next increment.** Answer “Which other feature relies on this
-  decision?” across saved project tasks. Start with two features that refer
-  to one decision. Name the affected feature and quote the source that ties
-  it to the decision. If the only link is similar wording, show it as a
-  question for the operator.
+  **Cross-feature decision use delivered, 2026-11-24.** Starting from the
+  saved correction decision, Foundry named “Forget a task and its promoted
+  project memory” and quoted why deletion must wait for an independently
+  edited copy to be resolved. Both features adopted the same indexed passage.
+  A requirement can also name a decision directly and explain its reliance
+  in its own words. Similar wording alone returns a question for the operator.
+  [Two-feature walkthrough and limits](validation.md#which-other-feature-relies-on-this-decision--2026-11-24).
 
 - **Finite desktop qualification complete, 2026-11-23.** A fresh ChatGPT
   desktop project chat verified the real project store and retrieved
