@@ -1,5 +1,46 @@
 # Validation
 
+## Feature impact across sessions — 2026-11-23
+
+An operator supplied a conversation about understanding feature dependencies.
+The feature under review was correcting a decision already copied to project
+memory. An indexed passage from the [memory contract](../specs/008-scoped-durable-memory/spec.md)
+supplied the current policy. The reviewer's working premise and correction
+were attributed to the reviewer. The operator made no decision about how the
+proposed feature should handle an independently edited copy.
+
+The first 6,000-token MCP response spent its source budget on incidental
+question matches. The spec citation survived in the task view, but the answer
+did not deliver the related implementation. On `b431ad6`, the same query and
+budget returned the operation declaration and the supplied contract first. A
+scoped search in the cited file and two exact reads located the [live-copy
+guard and revision comparison](../src/task_context.rs). They show why a
+correction currently requires explicitly handling the project copy, and why
+task deletion refuses an independently edited copy. The spec also places
+existing exports and backups outside logical deletion.
+
+The check used independent local MCP stdio sessions against the indexed
+Foundry repository. One saved the conversation, spec and working premise.
+After the explicit correction, a new client knew only the feature title and
+question. It discovered the feature at task revision 15, read three current
+entries and followed the correction back to the historical original. The
+spec citation was fresh. The report marked word matches as candidates and
+reported unavailable compiler coverage. Foundry delivered the evidence and
+the host interpreted the source to answer the question.
+
+The same four attributed originals were saved using the connected desktop
+owner's existing task edit operation. Its normal inspect, peek and retrieve
+calls confirmed all four digests, the historical premise and the live
+spec citation at lines 342–358, in project task `correcting-a-copied-decision`
+at revision 2. The new capture and listing operations ran in separate MCP
+sessions. The installed desktop executable subsequently reopened the example
+in a fresh stdio session. Existing desktop connections kept their loaded
+version. No model, training, provider call or new benchmark was needed.
+
+All eight local publication gates passed on `b431ad6`. The default suite
+passed 1,323 tests with 35 ignored. The optional pilot unit suite passed
+133 tests with one ignored. The documentation link check passed.
+
 ## First-try desktop inspect and peek — 2026-11-23
 
 The [previous native run](#fresh-chatgpt-desktop-project-chat--2026-11-23)

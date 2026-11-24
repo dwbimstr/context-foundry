@@ -14,22 +14,29 @@ and dated paragraphs below are history.
   clients and sessions. Each source keeps its identity, revision and access
   scope. Decisions retain their author, corrections and unresolved disagreements.
   An answer can follow a short explanation back to the original evidence.
+  Three design choices come from the roundups. Keep source material and the
+  context sent to a client separate, as in [Anthropic’s memory layers](https://www.anthropic.com/research/components-of-agent-memory).
+  Preserve changes over time as in [Zep](https://arxiv.org/abs/2501.13956).
+  Let a reader check a derived claim against its original, as in
+  [WikiTrace](https://arxiv.org/abs/2611.14320).
 
-  The first increment covers one feature in one project, using a
-  supplied conversation excerpt, an existing specification and the indexed
-  repository. The operator can supply plain text without tagging dependencies.
-  Start with the actual question “If we let someone correct a decision already
-  copied to project memory, what else needs attention?” The
-  [current contract](../specs/008-scoped-durable-memory/spec.md) distinguishes
-  the original task decision, the project copy and exports. Use existing
-  source links, promotion history and code references where available. Explain
-  each supported impact, label plausible effects that need checking, and ask
-  a concrete question when a missing decision would change the answer. A
-  correction should update the affected view and leave its history recoverable.
-  Done means an operator can use this on the feature in a later session
-  without resupplying the material or wiring the relationships by hand. Use
-  that workflow and focused checks for the changed behavior as the development
-  feedback. Existing publication gates apply when publishing.
+  **First increment delivered.** In one real project, a feature question draws
+  on a supplied conversation, an indexed spec passage and the code. A later
+  MCP session found the feature by title, recovered an explicit correction,
+  reopened the original and located the guards for changing a copied decision.
+  The example is saved in the desktop project store as
+  `correcting-a-copied-decision`. [Workflow](experimental-context.md#recoverable-task-context)
+  and [evidence](validation.md#feature-impact-across-sessions--2026-11-23).
+
+  **Next increment.** Give the same project one later meeting note or ticket
+  without naming the decision it affects. Surface the earlier decision it
+  might change, cite both sources, and explain which existing promise would
+  need revisiting. If either reading is plausible, show both and ask the
+  operator which applies. Finish when the operator can accept or dismiss the
+  proposed connection and see the consequence on this one feature. Use that
+  change request as the development check. Time-box the first attempt to two
+  hours. If the connection is still too ambiguous, show the two source
+  passages and record the one clarification a person needs to provide.
 
 - **Finite desktop qualification complete, 2026-11-23.** A fresh ChatGPT
   desktop project chat verified the real project store and retrieved
