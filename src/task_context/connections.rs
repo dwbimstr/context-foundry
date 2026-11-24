@@ -2,7 +2,10 @@
 //! Only a human disposition is persisted; word matches never revise a source.
 use super::*;
 mod dependents;
+mod impact;
 pub use dependents::DecisionRef;
+pub use impact::ProposalAnswer;
+pub(super) use impact::{ProposalState, proposal_title};
 use rust_stemmers::{Algorithm, Stemmer};
 
 const QUERY_BYTES: usize = 4096;
@@ -171,15 +174,39 @@ struct Suggestions {
     best: Vec<(usize, bool, Value)>,
     matching: usize,
     stale: usize,
+    include_identical_captures: bool,
 }
 
 impl Suggestions {
+    fn workspace(
+        tx: &redb::ReadTransaction,
+        workspace: &str,
+        words: &NoteWords,
+        include_identical_captures: bool,
+        control: &Control,
+    ) -> FResult<Self> {
+        let tasks = tx.open_table(TASKS)?;
+        let mut matches = Self {
+            include_identical_captures,
+            ..Self::default()
+        };
+        for row in tasks.iter()? {
+            control.check()?;
+            let (key, value) = row?;
+            let task = decode(value.value(), key.value(), workspace)?;
+            if task.proposal.is_none() {
+                matches.collect(tx, &task, words, None, None, control)?;
+            }
+        }
+        Ok(matches)
+    }
     fn collect(
         &mut self,
         tx: &redb::ReadTransaction,
         task: &Task,
         words: &NoteWords,
         note: Option<&StoredEntry>,
+        only_entry: Option<&str>,
         control: &Control,
     ) -> FResult<()> {
         if words.words.len() < 2 {
@@ -197,12 +224,16 @@ impl Suggestions {
                 break;
             }
             if !item.view.selected
+                || only_entry.is_some_and(|id| id != e.id)
                 || superseded.contains(e.id.as_str())
                 || note.is_some_and(|n| task.latest_review(&n.entry.id, &e.id).is_some())
             {
                 continue;
             }
-            if e.kind == Kind::Observation && item.sha256 == words.digest {
+            if !self.include_identical_captures
+                && e.kind == Kind::Observation
+                && item.sha256 == words.digest
+            {
                 continue;
             }
             let Some(kind) = prior_kind(e) else {
@@ -260,16 +291,8 @@ impl Engine {
     ) -> FResult<Value> {
         text(note, QUERY_BYTES)?;
         let tx = self.db.begin_read()?;
-        let tasks = tx.open_table(TASKS)?;
-        let words = NoteWords::new(note);
-        let mut matches = Suggestions::default();
-        for row in tasks.iter()? {
-            control.check()?;
-            let (key, value) = row?;
-            let task = decode(value.value(), key.value(), workspace)?;
-            matches.collect(&tx, &task, &words, None, control)?;
-        }
-        let mut result = matches.result();
+        let mut result =
+            Suggestions::workspace(&tx, workspace, &NoteWords::new(note), false, control)?.result();
         result["workspace_id"] = json!(workspace);
         Ok(result)
     }
@@ -394,6 +417,7 @@ impl Task {
                 self,
                 &NoteWords::new(&note.entry.text),
                 Some(note),
+                None,
                 control,
             )?;
         }

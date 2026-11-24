@@ -3,7 +3,7 @@
   "additionalProperties": false,
   "required": ["workspace_id", "command"],
   "allOf": [{
-    "if": {"properties": {"command": {"properties": {"op": {"enum": ["list", "find_decisions"]}}}}},
+    "if": {"properties": {"command": {"properties": {"op": {"enum": ["list", "find_decisions", "propose_change"]}}}}},
     "then": {"not": {"required": ["task_id"]}},
     "else": {"required": ["task_id"]}
   }],
@@ -16,8 +16,9 @@
       "required": ["op"],
       "properties": {
         "op": {
-          "enum": ["list", "find_decisions", "connections", "review_connection", "decision_uses", "create", "capture", "apply", "inspect", "peek", "render", "forget", "advise", "review", "promote", "search"]
+          "enum": ["list", "find_decisions", "propose_change", "proposal_impact", "clarify_proposal", "connections", "review_connection", "decision_uses", "create", "capture", "apply", "inspect", "peek", "render", "forget", "advise", "review", "promote", "search"]
         },
+        "scope_token": {"type":"string","pattern":"^[0-9a-f]{64}$","description":"The scope_token of the current interpretation explicitly selected by the operator."},
         "prior_span": {"type":"array","items":{"type":"integer","minimum":0},"minItems":2,"maxItems":2,"description":"The exact [offset,end] of the earlier passage shown to the operator."},
         "prior_id": {"type": "string", "description": "Earlier entry returned by connections."},
         "disposition": {"enum": ["accept", "dismiss"]},
@@ -140,6 +141,9 @@
         }
       },
       "allOf": [
+        {"if":{"properties":{"op":{"const":"propose_change"}}},"then":{"required":["op","text","source","author"],"maxProperties":4}},
+        {"if":{"properties":{"op":{"const":"proposal_impact"}}},"then":{"required":["op"],"maxProperties":1}},
+        {"if":{"properties":{"op":{"const":"clarify_proposal"}}},"then":{"required":["op","expected_revision","text","author","disposition"],"additionalProperties":false,"properties":{"op":{},"expected_revision":{},"text":{},"author":{},"disposition":{},"scope_token":{}},"if":{"properties":{"disposition":{"const":"accept"}}},"then":{"required":["scope_token"]},"else":{"not":{"required":["scope_token"]}}}},
         {"if": {"properties": {"op": {"const": "find_decisions"}}}, "then": {"required": ["op", "text"], "maxProperties": 2}},
         {"if": {"properties": {"op": {"const": "decision_uses"}}}, "then": {"required": ["op", "entry_id", "expected_revision"], "additionalProperties": false, "properties": {"op": {}, "entry_id": {}, "expected_revision": {}, "after_id": {}}}},
         {"if": {"properties": {"op": {"const": "connections"}}}, "then": {"required": ["op", "entry_id"], "maxProperties": 2}},

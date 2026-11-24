@@ -1082,6 +1082,9 @@ A page with no evidence establishes only that no qualifying entry was found
 on that page. Each page is a fresh snapshot and reports stale candidates
 encountered during selection. Restart pagination if the saved features change.
 
+The [indirect change-impact contract and implementation plan](contracts/indirect-change-impact.md)
+extends this workflow to a saved proposal expressed without feature or decision IDs.
+
 The planner starts with eight main-query candidates, at most four selected active
 task searches (1,024 bytes each, four lexical candidates per query), eight
 explicit source links, four source-bound briefs, eight boundary seed paths/eight

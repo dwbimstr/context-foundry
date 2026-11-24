@@ -79,6 +79,180 @@ fn cli(e: &Env, command: Value) -> Value {
     serde_json::from_slice(&output.stdout).unwrap()
 }
 #[test]
+fn proposal_scope_survives_new_wording_but_not_a_replaced_decision() {
+    let e = env();
+    let run = |engine: &Engine, task: Option<&str>, command: Value| {
+        let mut args = json!({"workspace_id":e.wid,"command":command});
+        if let Some(task) = task {
+            args["task_id"] = json!(task);
+        }
+        engine.task_context(&task_context::parse(args)?, &Control::unbounded())
+    };
+    let engine = Engine::open_existing(&e.store).unwrap();
+    let ask = json!({"op":"propose_change","text":"  Can orchard cleanup preserve the golden harvest?","author":"Jo","source":"Planning chat"});
+    let empty = run(&engine, None, ask.clone()).unwrap();
+    assert_eq!(empty["candidates"], json!([]));
+    assert!(run(&engine, Some("wrong"), ask.clone()).is_err());
+    let receipt = empty["task_id"].as_str().unwrap();
+    let origin = create(&engine);
+    let original = add(
+        "keep",
+        "decision",
+        "Require orchard cleanup to wait for the growers.",
+    );
+    let owner = apply(&engine, origin, json!([original])).unwrap();
+    let proposal = run(&engine, None, ask.clone()).unwrap();
+    assert_eq!(proposal["revision"], empty["revision"]);
+    assert_eq!(proposal["proposal"]["quote"], ask["text"]);
+    assert_eq!(proposal["proposal"]["author"], "Jo");
+    let candidate = &proposal["candidates"][0];
+    assert_eq!(candidate["basis"], "wording_match");
+    assert_eq!(candidate["selected"], false);
+    assert_eq!(candidate["impact"]["dependents"], json!([]));
+    assert!(proposal["clarification"].as_str().unwrap().ends_with('?'));
+    let accept = json!({"op":"clarify_proposal","expected_revision":proposal["revision"],
+        "disposition":"accept","scope_token":candidate["scope_token"],"author":"Jo","text":"Assess the growers' rule."});
+    let ack = run(&engine, Some(receipt), accept.clone()).unwrap();
+    assert!(run(&engine, Some(receipt), accept.clone()).is_err());
+    let newer = run(
+        &engine,
+        Some("newer"),
+        json!({"op":"create","title":"New harvest feature"}),
+    )
+    .unwrap();
+    run(
+        &engine,
+        Some("newer"),
+        json!({"op":"apply","expected_revision":newer["revision"],"edits":[
+            add("first","decision","Orchard cleanup should preserve the golden harvest."),
+            add("second","decision","Preserve the golden harvest during orchard cleanup as agreed.")
+        ]}),
+    )
+    .unwrap();
+    drop(engine);
+    let engine = Engine::open_existing(&e.store).unwrap();
+    let read = || run(&engine, Some(receipt), json!({"op":"proposal_impact"})).unwrap();
+    let confirmed = read();
+    assert_eq!(confirmed["scope_status"], "confirmed_scope");
+    assert_eq!(confirmed["policy_status"], "proposed");
+    assert_eq!(
+        confirmed["candidates"][0]["scope_token"],
+        candidate["scope_token"]
+    );
+    assert_eq!(
+        confirmed["last_answer"]["scope"]["decision"]["entry_id"],
+        "keep"
+    );
+    let mut replacement = add("new", "decision", "Require final clearance.");
+    replacement["entry"]["supersedes"] = json!("keep");
+    apply(
+        &engine,
+        owner["revision"].as_u64().unwrap(),
+        json!([replacement]),
+    )
+    .unwrap();
+    let changed = read();
+    assert_eq!(changed["scope_status"], "support_changed");
+    assert_eq!(changed["candidates"].as_array().unwrap().len(), 2);
+    assert!(
+        changed["candidates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|c| c["selected"] == false)
+    );
+    assert_eq!(changed["last_answer"]["text"], accept["text"]);
+    let mut stale = accept;
+    stale["expected_revision"] = ack["revision"].clone();
+    assert!(run(&engine, Some(receipt), stale).is_err());
+    run(&engine,Some(receipt),json!({"op":"clarify_proposal","expected_revision":ack["revision"],"author":"Jo","text":"Set this aside.","disposition":"dismiss"})).unwrap();
+    drop(engine);
+    let engine = Engine::open_existing(&e.store).unwrap();
+    let dismissed = run(&engine, None, ask).unwrap();
+    assert_eq!(dismissed["scope_status"], "dismissed");
+    assert_eq!(dismissed["last_answer"]["text"], "Set this aside.");
+    assert!(dismissed["clarification"].is_null());
+}
+
+#[test]
+fn only_exact_rule_bytes_neighboring_the_review_can_suggest_impact() {
+    let e = env();
+    let engine = Engine::open_existing(&e.store).unwrap();
+    let policy = "Seal the ledger. Orchard keys require two signatures. Unrelated policy. Archive the invoice.";
+    engine.replace_source("rules.md", policy).unwrap();
+    let mut feature = call(&engine, json!({"op":"create","title":"Ledger"})).unwrap();
+    for (id, quote, rule) in [
+        ("near", "Seal the ledger.", "Seal the ledger."),
+        ("far", "Archive the invoice.", "Archive the invoice."),
+        (
+            "paraphrase",
+            "Seal the ledger.",
+            "The account must be closed.",
+        ),
+    ] {
+        let start = policy.find(quote).unwrap();
+        let handle = context_foundry::SourceHandle {
+            workspace_id: e.wid.clone(),
+            path: "rules.md".into(),
+            sha256: context_foundry::digest(policy.as_bytes()),
+            start: start as u64,
+            end: (start + quote.len()) as u64,
+        }
+        .to_v2();
+        let mut edit = add(id, "decision", rule);
+        edit["entry"]["source_links"] = json!([handle]);
+        feature = apply(
+            &engine,
+            feature["revision"].as_u64().unwrap(),
+            json!([edit]),
+        )
+        .unwrap();
+    }
+    let spec = call(
+        &engine,
+        json!({"op":"capture","source":"rules.md","expected_revision":feature["revision"]}),
+    )
+    .unwrap();
+    let note=call(&engine,json!({"op":"capture","source":"Meeting","text":"Orchard keys require signatures. Alert violet penguins.","expected_revision":spec["revision"]})).unwrap();
+    let linked = call(
+        &engine,
+        json!({"op":"connections","entry_id":note["entry_id"]}),
+    )
+    .unwrap();
+    let prior = &linked["candidates"][0];
+    assert_eq!(prior["quote"], "Orchard keys require two signatures.");
+    let review = json!({"op":"review_connection","entry_id":note["entry_id"],"prior_id":prior["entry_id"],"prior_span":[prior["offset"],prior["end"]],"author":"Alex","disposition":"accept","expected_revision":note["revision"]});
+    call(&engine, review).unwrap();
+    let request=task_context::parse(json!({"workspace_id":e.wid,"command":{"op":"propose_change","text":"Who alerts the violet penguins?","source":"Planning","author":"Alex"}})).unwrap();
+    let read = || {
+        engine
+            .task_context(&request, &Control::unbounded())
+            .unwrap()
+    };
+    let found = read();
+    assert_eq!(found["candidates"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        found["candidates"][0]["basis"],
+        "adjacent_in_reviewed_source"
+    );
+    assert_eq!(
+        found["candidates"][0]["impact"]["decision"]["entry_id"],
+        "near"
+    );
+    assert_eq!(found["scope_status"], "needs_clarification");
+    let duplicate = task_context::parse(json!({"workspace_id":e.wid,"command":{"op":"propose_change","text":"Orchard keys require signatures. Alert violet penguins.","source":"Operator","author":"Alex"}})).unwrap();
+    let copied = engine
+        .task_context(&duplicate, &Control::unbounded())
+        .unwrap();
+    assert_eq!(
+        copied["candidates"][0]["lead"]["entry_id"],
+        note["entry_id"]
+    );
+    engine.replace_source("rules.md", "Replaced text.").unwrap();
+    assert_eq!(read()["candidates"], json!([]));
+}
+
+#[test]
 fn another_feature_requires_a_decision_only_with_current_evidence() {
     let e = env();
     let engine = Engine::open_existing(&e.store).unwrap();
@@ -1087,6 +1261,8 @@ async fn experimental_mcp_tool_is_opt_in_and_matches_cli_state() {
             );
             for (op, fields) in [
                 ("find_decisions", vec!["op", "text"]),
+                ("propose_change", vec!["op", "text", "source", "author"]),
+                ("proposal_impact", vec!["op"]),
                 ("connections", vec!["op", "entry_id"]),
                 (
                     "review_connection",

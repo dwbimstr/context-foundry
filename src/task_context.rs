@@ -9,8 +9,8 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 mod capture;
 mod connections;
-use connections::ConnectionReview;
-pub use connections::{ConnectionChoice, DecisionRef};
+pub use connections::{ConnectionChoice, DecisionRef, ProposalAnswer};
+use connections::{ConnectionReview, ProposalState};
 
 pub(crate) const TASKS: TableDefinition<&str, &str> = TableDefinition::new("task_context");
 pub const MAX_REQUEST_BYTES: usize = 1024 * 1024;
@@ -57,6 +57,17 @@ pub enum Command {
     },
     FindDecisions {
         text: String,
+    },
+    ProposeChange {
+        text: String,
+        source: String,
+        author: String,
+    },
+    ProposalImpact {},
+    ClarifyProposal {
+        expected_revision: u64,
+        #[serde(flatten)]
+        answer: ProposalAnswer,
     },
     Connections {
         entry_id: String,
@@ -264,6 +275,8 @@ struct Task {
     promotions: BTreeMap<String, Promotion>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     connection_reviews: Vec<ConnectionReview>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    proposal: Option<ProposalState>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -460,6 +473,9 @@ impl Task {
             }
         }
         self.validate_connection_reviews()?;
+        if let Some(proposal) = &self.proposal {
+            proposal.validate(self)?;
+        }
         for (name, checkpoint) in &self.checkpoints {
             id(name)?;
             for (entry_id, view) in checkpoint {
@@ -586,7 +602,7 @@ pub fn parse(value: Value) -> FResult<Request> {
     }
     if matches!(
         value["command"]["op"].as_str(),
-        Some("list" | "find_decisions")
+        Some("list" | "find_decisions" | "propose_change")
     ) && value.get("task_id").is_some()
     {
         return Err(invalid("workspace discovery omits task_id"));
@@ -595,7 +611,7 @@ pub fn parse(value: Value) -> FResult<Request> {
         serde_json::from_value(value).map_err(|_| invalid("invalid task request fields"))?;
     if !matches!(
         request.command,
-        Command::List { .. } | Command::FindDecisions { .. }
+        Command::List { .. } | Command::FindDecisions { .. } | Command::ProposeChange { .. }
     ) {
         id(&request.task_id)?;
     }
@@ -739,6 +755,29 @@ impl Engine {
         if crate::json_len(request)? > MAX_REQUEST_BYTES {
             return Err(invalid("task request exceeds 1 MiB"));
         }
+        if let Command::ProposeChange {
+            text: original,
+            source,
+            author,
+        } = &request.command
+        {
+            if !request.task_id.is_empty() {
+                return Err(invalid("propose_change uses workspace_id without task_id"));
+            }
+            let task_id = ProposalState::task_id(original, source, author)?;
+            let scoped = Request {
+                task_id,
+                ..request.clone()
+            };
+            self.task_mutate(&scoped, control)?;
+            return self.task_context(
+                &Request {
+                    command: Command::ProposalImpact {},
+                    ..scoped
+                },
+                control,
+            );
+        }
         if let Command::FindDecisions { text } = &request.command {
             if !request.task_id.is_empty() {
                 return Err(invalid("workspace discovery omits task_id"));
@@ -756,6 +795,7 @@ impl Engine {
             Command::Create { .. }
             | Command::Apply { .. }
             | Command::Capture { .. }
+            | Command::ClarifyProposal { .. }
             | Command::ReviewConnection(_)
             | Command::Forget { .. }
             | Command::Promote { .. } => self.task_mutate(request, control),
@@ -982,6 +1022,7 @@ impl Engine {
                             return Err(invalid("advice envelope exceeds byte budget"));
                         }
                     }
+                    Command::ProposalImpact {} => return task.proposal_impact(&tx, control),
                     Command::DecisionUses {
                         expected_revision,
                         entry_id,
@@ -1120,8 +1161,26 @@ impl Engine {
                     "outcome":"existing","entry_id":entry.id,"sha256":existing.sha256,
                     "historical":task.superseded(&entry.id)}));
             }
+            if previous.as_ref().is_some_and(|t| t.proposal.is_some())
+                && !matches!(
+                    request.command,
+                    Command::ProposeChange { .. }
+                        | Command::ClarifyProposal { .. }
+                        | Command::Forget { .. }
+                )
+            {
+                return Err(invalid(
+                    "use clarify_proposal to record a proposal response",
+                ));
+            }
+            let title = match &request.command {
+                Command::Create { title } => Some(title.as_str()),
+                Command::ProposeChange { text, .. } => Some(connections::proposal_title(text)),
+                _ => None,
+            };
             let mut task = match (&request.command, previous) {
-                (Command::Create { title }, None) => {
+                (_, None) if title.is_some() => {
+                    let title = title.unwrap_or_default();
                     text(title, 1024)?;
                     if table.len()? >= 128 {
                         return Err(invalid(
@@ -1131,14 +1190,23 @@ impl Engine {
                     Task {
                         task_id: request.task_id.clone(),
                         workspace_id: request.workspace_id.clone(),
-                        title: title.clone(),
+                        title: title.to_owned(),
                         revision: 1,
                         entries: Vec::new(),
                         checkpoints: BTreeMap::new(),
                         dismissed: BTreeSet::new(),
                         promotions: BTreeMap::new(),
                         connection_reviews: Vec::new(),
+                        proposal: None,
                     }
+                }
+                (Command::ProposeChange { .. }, Some(task)) => {
+                    if task.proposal.is_none() {
+                        return Err(FoundryError::Conflict("proposal ID already in use".into()));
+                    }
+                    return Ok(
+                        json!({"task_id":task.task_id,"revision":task.revision,"outcome":"existing"}),
+                    );
                 }
                 (Command::Create { title }, Some(task)) => {
                     if &task.title == title {
@@ -1160,6 +1228,9 @@ impl Engine {
                     | Command::ReviewConnection(ConnectionChoice {
                         expected_revision, ..
                     })
+                    | Command::ClarifyProposal {
+                        expected_revision, ..
+                    }
                     | Command::Forget { expected_revision }
                     | Command::Promote {
                         expected_revision, ..
@@ -1177,6 +1248,18 @@ impl Engine {
                 _ => unreachable!(),
             };
             let original_count = task.entries.len();
+            if let Command::ProposeChange {
+                text: original,
+                source,
+                author,
+            } = &request.command
+            {
+                task.save_proposal(original, source, author)?;
+            }
+            if let Command::ClarifyProposal { answer, .. } = &request.command {
+                // The writer owns the transaction; this snapshot cannot race another writer.
+                task.answer_proposal(&self.db.begin_read()?, answer, control)?;
+            }
             let captured = capture
                 .as_ref()
                 .map(|entry| (entry.id.clone(), crate::digest(entry.text.as_bytes())));
