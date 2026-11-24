@@ -592,6 +592,16 @@ with the current `expected_revision`, the note's `entry_id`, the earlier
 `prior_id`, its `prior_span` of `[offset,end]`, the reviewer's `author` and `disposition` of `accept` or `dismiss`.
 The next session can read the outcome with `connections` or `inspect`.
 
+After accepting a connection, ask the feature question with the same scoped
+`context` call. In the task view’s `accepted_passages`, read the meeting note beside
+the exact earlier words and the name of the reviewer. The entry IDs identify
+their authors and originals in the view. Use the earlier passage's `handle`
+when present to reopen those exact indexed bytes. In `task-evidence.sources`,
+`reviewed_text_match:<revision>` identifies places found using that quotation.
+Read a cited implementation before reporting its behavior. Answer separately
+what the code does today, what the proposed change would affect, and which
+choice the operator still needs to make.
+
 Save the returned `revision`. Every mutation after creation names the current
 `expected_revision`; a conflict means inspect the live record before retrying. A
 single `apply` may combine up to 32 edits. For example, place this inside `command`,

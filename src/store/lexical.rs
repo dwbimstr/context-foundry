@@ -552,6 +552,35 @@ impl Engine {
         self.search_candidates_with(query, path, limit, control, None)
     }
 
+    /// A human-reviewed quotation is prose even when its punctuation resembles
+    /// resolver syntax. Keep the original unchanged in the task citation.
+    pub(crate) fn reviewed_passage_candidates(
+        &self,
+        passage: &str,
+        control: &crate::Control,
+    ) -> FResult<Option<CandidateBatch>> {
+        let words = passage
+            .split(|c: char| !c.is_alphabetic())
+            .filter(|word| !word.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase();
+        if words.is_empty() {
+            return Ok(None);
+        }
+        self.search_candidates_selected(
+            &words,
+            None,
+            4,
+            control,
+            SearchSelection {
+                anchors: Some(&[]),
+                prose: true,
+            },
+        )
+        .map(Some)
+    }
+
     /// Two-tier candidate selection for one store (context-v2 § Two-tier
     /// query, § Resolver order, § Hit materialization). Tier 1 is the
     /// anchors' resolver windows in anchor order or, without anchors, exact

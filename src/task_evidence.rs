@@ -182,6 +182,23 @@ fn facet(path: &str) -> &'static str {
         "implementation"
     }
 }
+struct TaskSearch<'a> {
+    entry_id: &'a str,
+    text: &'a str,
+    via: String,
+    reviewed: bool,
+}
+
+impl<'a> TaskSearch<'a> {
+    fn entry(e: &'a Entry, basis: &str) -> Self {
+        Self {
+            entry_id: &e.id,
+            text: &e.text,
+            via: format!("{basis}:{}", e.id),
+            reviewed: false,
+        }
+    }
+}
 struct Candidate {
     handle: SourceHandle,
     support: Support,
@@ -264,18 +281,6 @@ impl Engine {
         options: &ContextOptions,
         entries: &[Entry],
     ) -> FResult<crate::memory::MemoryContext> {
-        let goals: Vec<_> = entries
-            .iter()
-            .filter(|e| matches!(e.kind, Kind::Requirement | Kind::Question))
-            .map(|e| (e, "task"))
-            .chain(
-                entries
-                    .iter()
-                    .rev()
-                    .filter(|e| e.is_captured_source())
-                    .map(|e| (e, "text_match")),
-            )
-            .collect();
         let mut plan = Plan {
             compact: options.compact_evidence,
             support: vec![],
@@ -295,9 +300,9 @@ impl Engine {
             boundaries: None,
             boundary_requested: options.boundary_config.is_some(),
             queried_entries: vec![],
-            unqueried_entries: goals.len().saturating_sub(4),
+            unqueried_entries: 0,
             stale_links: 0,
-            discovery_limited: goals.len() > 4,
+            discovery_limited: false,
             constraints: entries
                 .iter()
                 .filter(|e| matches!(e.kind, Kind::Constraint))
@@ -401,29 +406,6 @@ impl Engine {
                 plan.discovery_limited |= !add(&mut candidates, h.clone(), facet(&h.path), "query");
             }
         }
-        for (e, basis) in goals.iter().take(4) {
-            control.check()?;
-            let mut end = e.text.len().min(1024);
-            while !e.text.is_char_boundary(end) {
-                end -= 1;
-            }
-            let text = e.text[..end].trim();
-            if text.is_empty() {
-                continue;
-            }
-            plan.queried_entries.push(e.id.clone());
-            plan.discovery_limited |= end < e.text.len();
-            let batch = self.search_candidates(text, None, 4, control)?;
-            plan.discovery_limited |= batch.counters.candidates_full;
-            let via = format!("{basis}:{}", e.id);
-            for i in batch.items {
-                if let Some(h) = i.handle {
-                    plan.discovery_limited |= compiler_seed(&h);
-                    let f = facet(&h.path);
-                    plan.discovery_limited |= !add(&mut candidates, h, f, &via);
-                }
-            }
-        }
         #[allow(unused_mut)]
         let mut brief_plan = options
             .briefs
@@ -439,8 +421,70 @@ impl Engine {
         // below belong to this final snapshot, after optional external routing.
         context.task_view = options
             .task
-            .map(|scope| self.task_view_in(&tx, scope))
+            .map(|scope| self.task_view_in(&tx, scope, true))
             .transpose()?;
+        // The reviewed words and both endpoints must still be current when we
+        // use them. Search leads are validated against this snapshot below.
+        let reviewed = context
+            .task_view
+            .as_ref()
+            .map(|v| v.reviewed.as_slice())
+            .unwrap_or_default();
+        let mut reviewed_via = BTreeSet::new();
+        let mut queries: Vec<_> = entries
+            .iter()
+            .filter(|e| matches!(e.kind, Kind::Requirement | Kind::Question))
+            .map(|e| TaskSearch::entry(e, "task"))
+            .collect();
+        queries.extend(reviewed.iter().map(|r| TaskSearch {
+            entry_id: &r.entry_id,
+            text: &r.passage,
+            via: format!("reviewed_text_match:{}", r.revision),
+            reviewed: true,
+        }));
+        queries.extend(
+            entries
+                .iter()
+                .rev()
+                .filter(|e| e.is_captured_source() && !reviewed.iter().any(|r| r.entry_id == e.id))
+                .map(|e| TaskSearch::entry(e, "text_match")),
+        );
+        plan.unqueried_entries = queries.len().saturating_sub(4);
+        plan.discovery_limited |= plan.unqueried_entries > 0;
+        queries.truncate(4);
+        for search in &queries {
+            control.check()?;
+            let original = search.text;
+            let mut end = original.len().min(1024);
+            while !original.is_char_boundary(end) {
+                end -= 1;
+            }
+            let text = original[..end].trim();
+            if text.is_empty() {
+                continue;
+            }
+            plan.discovery_limited |= end < original.len();
+            let batch = if search.reviewed {
+                let Some(batch) = self.reviewed_passage_candidates(text, control)? else {
+                    plan.unqueried_entries += 1;
+                    plan.discovery_limited = true;
+                    continue;
+                };
+                reviewed_via.insert(search.via.clone());
+                batch
+            } else {
+                self.search_candidates(text, None, 4, control)?
+            };
+            plan.queried_entries.push(search.entry_id.to_owned());
+            plan.discovery_limited |= batch.counters.candidates_full;
+            for i in batch.items {
+                if let Some(h) = i.handle {
+                    plan.discovery_limited |= compiler_seed(&h);
+                    let f = facet(&h.path);
+                    plan.discovery_limited |= !add(&mut candidates, h, f, &search.via);
+                }
+            }
+        }
         let sources = tx.open_table(SOURCES)?;
         let wid = self.workspace_id().ok_or(FoundryError::WorkspaceUnbound)?;
         let mut linked = 0;
@@ -753,9 +797,7 @@ impl Engine {
                 }
             }
             let mut test_words = BTreeSet::new();
-            for text in
-                std::iter::once(query).chain(goals.iter().take(4).map(|(e, _)| e.text.as_str()))
-            {
+            for text in std::iter::once(query).chain(queries.iter().map(|search| search.text)) {
                 let mut end = text.len().min(1024);
                 while !text.is_char_boundary(end) {
                     end -= 1;
@@ -947,6 +989,9 @@ impl Engine {
         // each group and keep the same source and delivery limits.
         if !supplied_passages.is_empty() {
             order.sort_by_key(|&i| candidates[i].support.via.is_disjoint(&supplied_passages));
+        }
+        if !reviewed_via.is_empty() {
+            order.sort_by_key(|&i| candidates[i].support.via.is_disjoint(&reviewed_via));
         }
         for i in order {
             control.check()?;

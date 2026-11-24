@@ -1038,8 +1038,23 @@ composed evidence missed a fact behind one of them
 extended to admitted roots by the continuation below. Ordinary and exact-name
 context remains byte-compatible without the new option.
 
+When a task has reviewed connections, its composed view includes up to two
+current accepted passages, newest review first, and the count omitted. Each pair
+identifies its reviewer, review revision and original entries. It quotes the first
+512 UTF-8 bytes or less of the meeting note and the exact byte range accepted in
+the earlier entry. Both originals and their attribution are recoverable by entry
+ID. An indexed capture whose original bytes match the current source also gets a
+handle for the exact earlier passage. A later dismissal, supersession, deselection
+or stale source on either end removes the pair from this view. A review records
+the relationship between passages. Within the existing four task searches, explicit
+requirements and questions take precedence, followed by the reviewed quotations
+and then the other captured sources. A reviewed quotation uses the local prose
+search. Its results carry `reviewed_text_match:<review revision>` and take
+precedence in source delivery. A policy change still requires a decision, and
+an implementation claim still requires reading the cited code.
+
 The planner starts with eight main-query candidates, at most four selected active
-requirements/questions (1,024 bytes each, four lexical candidates per query), eight
+task searches (1,024 bytes each, four lexical candidates per query), eight
 explicit source links, four source-bound briefs, eight boundary seed paths/eight
 relations and at most 32 final source units. It makes no extra model calls and writes
 no task state. Folded entries use the caller's selected summary; original bytes remain

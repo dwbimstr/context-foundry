@@ -24,10 +24,18 @@ pub struct Scope<'a> {
     pub expected_revision: u64,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct ReviewedQuery {
+    pub entry_id: String,
+    pub revision: u64,
+    pub passage: String,
+}
+
 /// Complete mandatory view, validated in the source batch's final read.
 #[derive(Clone, Debug)]
 pub struct ContextView {
     pub(crate) line: String,
+    pub(crate) reviewed: Vec<ReviewedQuery>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -593,10 +601,16 @@ fn source_links(tx: &redb::ReadTransaction, entry: &Entry) -> FResult<Vec<Value>
         })
         .collect()
 }
-fn render_view(tx: &redb::ReadTransaction, task: &Task) -> FResult<Value> {
-    let entries = task.entries.iter()
+fn render_view(
+    tx: &redb::ReadTransaction,
+    task: &Task,
+    reviewed: Option<&mut Vec<ReviewedQuery>>,
+) -> FResult<Value> {
+    let mut fresh_entries = BTreeMap::new();
+    let mut entries = task.entries.iter()
         .filter(|e| e.view.selected && !task.superseded(&e.entry.id))
-        .map(|e| -> FResult<Value> {
+        .enumerate()
+        .map(|(index, e)| -> FResult<Value> {
             let representation = if e.has_source_excerpt() {
                 "source_excerpt"
             } else if e.view.summary.is_some() {
@@ -605,7 +619,9 @@ fn render_view(tx: &redb::ReadTransaction, task: &Task) -> FResult<Value> {
                 "original"
             };
             let links = source_links(tx, &e.entry)?;
-            let fresh = links.iter().all(|link| link["status"] == "fresh");
+            if !task.connection_reviews.is_empty() && links.iter().all(|link| link["status"] == "fresh") {
+                fresh_entries.insert(e.entry.id.as_str(), (index, e));
+            }
             let mut value = e.with_assertions(json!({
                 "id": e.entry.id, "kind": e.entry.kind,
                 "author": e.entry.author, "provenance": e.entry.provenance, "sha256": e.sha256,
@@ -615,17 +631,15 @@ fn render_view(tx: &redb::ReadTransaction, task: &Task) -> FResult<Value> {
             if let Some(previous) = &e.entry.supersedes {
                 value["supersedes"] = json!(previous);
             }
-            if fresh {
-                let connected = task.accepted_priors(tx, &e.entry.id)?;
-                if !connected.is_empty() {
-                    value["accepted_connections"] = json!(connected);
-                }
-            }
+
             Ok(value)
         }).collect::<FResult<Vec<_>>>()?;
-    Ok(
-        json!({"workspace_id":task.workspace_id,"task_id":task.task_id,"revision":task.revision,"boundary":"foundry_task_context","host_application":"unknown","title":task.title,"entries":entries}),
-    )
+    let passages = task.attach_current_connections(tx, &fresh_entries, &mut entries, reviewed)?;
+    let mut view = json!({"workspace_id":task.workspace_id,"task_id":task.task_id,"revision":task.revision,"boundary":"foundry_task_context","host_application":"unknown","title":task.title,"entries":entries});
+    if let Some(passages) = passages {
+        view["accepted_passages"] = passages;
+    }
+    Ok(view)
 }
 
 impl Engine {
@@ -674,15 +688,17 @@ impl Engine {
         &self,
         tx: &redb::ReadTransaction,
         scope: Scope<'_>,
+        compose: bool,
     ) -> FResult<ContextView> {
         let task = self.task_in(tx, scope)?;
-        let view = render_view(tx, &task)?;
+        let mut reviewed = Vec::new();
+        let view = render_view(tx, &task, compose.then_some(&mut reviewed))?;
         let sha256 = crate::digest(&serde_json::to_vec(&view)?);
         let line = format!(
             "task-view: {}\n",
             serde_json::to_string(&json!({"sha256":sha256,"view":view}))?
         );
-        Ok(ContextView { line })
+        Ok(ContextView { line, reviewed })
     }
 }
 
@@ -993,7 +1009,7 @@ impl Engine {
                         if !(256..=MAX_REQUEST_BYTES).contains(max_bytes) {
                             return Err(invalid("render max_bytes must be 256..1048576"));
                         }
-                        result = render_view(&tx, &task)?;
+                        result = render_view(&tx, &task, None)?;
                         if crate::json_len(&result)? + 1 > *max_bytes {
                             return Err(invalid(
                                 "selected view exceeds byte budget; explicitly fold or deselect unprotected entries",
@@ -1017,7 +1033,7 @@ impl Engine {
                             .find(|e| &e.entry.id == entry_id)
                             .ok_or(FoundryError::NotFound)?;
                         let packet = crate::task_host::Packet::new(
-                            render_view(&tx, &task)?,
+                            render_view(&tx, &task, None)?,
                             entry_id.clone(),
                             tool_call_id.clone(),
                             entry.sha256.clone(),

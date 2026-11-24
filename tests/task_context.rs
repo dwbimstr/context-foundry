@@ -81,10 +81,18 @@ fn cli(e: &Env, command: Value) -> Value {
 #[test]
 fn later_note_finds_two_promises_and_reviews_only_the_connection() {
     let e = env();
-    let engine = Engine::open_existing(&e.store).unwrap();
+    let mut engine = Engine::open_existing(&e.store).unwrap();
     let r = create(&engine);
     let promise = "Café rules. Record the original task identity. Copy access is retained while edits are reviewed. Removing the original task preserves separately edited copies.";
     engine.replace_source("policy.md", promise).unwrap();
+    engine
+        .replace_source(
+            "cleanup.rs",
+            "/// Removing the original task preserves separately edited copies.
+fn keep_copy(edited: bool) -> bool { edited }",
+        )
+        .unwrap();
+    engine.refresh(&Control::unbounded()).unwrap();
     let spec = call(
         &engine,
         json!({"op":"capture","expected_revision":r,"source":"policy.md"}),
@@ -220,6 +228,81 @@ fn later_note_finds_two_promises_and_reviews_only_the_connection() {
             .clone()
     };
     assert_eq!(current_note(&view), json!([spec["entry_id"]]));
+    let impact = |revision: &Value| {
+        let context = engine
+            .context_candidates_with(
+                "What changes if we keep an edited copy?",
+                context_foundry::Strategy::Auto,
+                &Control::unbounded(),
+                &context_foundry::store::ContextOptions {
+                    task: Some(task_context::Scope {
+                        workspace_id: &e.wid,
+                        task_id: "investigation",
+                        expected_revision: revision.as_u64().unwrap(),
+                    }),
+                    compose_evidence: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let packed = context_foundry::response::pack_enriched_context(
+            &context,
+            None,
+            context_foundry::response::Budget::request(6000),
+            &context_foundry::response::stdout_bytes,
+        )
+        .unwrap();
+        let record = |prefix| {
+            let line = packed
+                .text
+                .lines()
+                .find_map(|l| l.strip_prefix(prefix))
+                .unwrap();
+            serde_json::from_str::<Value>(line).unwrap()
+        };
+        let evidence = record("task-evidence: ");
+        assert!(
+            evidence["discovery"]["queried_entries"]
+                .as_array()
+                .unwrap()
+                .len()
+                <= 4
+        );
+        let matches: std::collections::BTreeSet<_> = evidence["sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|s| {
+                s["handle"]
+                    .as_str()
+                    .is_some_and(|h| h.starts_with("cleanup.rs#"))
+            })
+            .flat_map(|s| s["via"].as_array().unwrap())
+            .filter_map(|v| v.as_str()?.strip_prefix("reviewed_text_match:"))
+            .map(|rev| rev.parse::<u64>().unwrap())
+            .collect();
+        (
+            record("task-view: ")["view"]["accepted_passages"].clone(),
+            matches,
+        )
+    };
+    let (accepted_passages, matches) = impact(&dismissed["revision"]);
+    assert_eq!(
+        matches.into_iter().collect::<Vec<_>>(),
+        [accepted["revision"].as_u64().unwrap()]
+    );
+    let items = accepted_passages["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(accepted_passages["omitted"], 0);
+    assert_eq!(items[0]["note"]["quote"], note);
+    assert_eq!(items[0]["prior"]["quote"], matched["quote"]);
+    assert_eq!(items[0]["reviewed_by"], "Reviewer");
+    assert_eq!(items[0]["review_revision"], accepted["revision"]);
+    let source = engine
+        .retrieve(items[0]["prior"]["handle"].as_str().unwrap(), None, 1024)
+        .unwrap();
+    assert_eq!(String::from_utf8(source.span).unwrap(), matched["quote"]);
+    assert!(view.get("accepted_passages").is_none());
     let reversed = call(
         &engine,
         review(&dismissed["revision"], &json!("notice"), "accept"),
@@ -245,6 +328,31 @@ fn later_note_finds_two_promises_and_reviews_only_the_connection() {
     );
     let view = call(&engine, render()).unwrap();
     assert_eq!(current_note(&view), json!(["notice"]));
+    let (current, matches) = impact(&reversed["revision"]);
+    assert!(!matches.contains(&accepted["revision"].as_u64().unwrap()));
+    assert_eq!(current["items"].as_array().unwrap().len(), 1);
+    assert_eq!(current["items"][0]["prior"]["entry_id"], "notice");
+    assert!(current["items"][0]["prior"].get("handle").is_none());
+    let dismissed = call(
+        &engine,
+        review(&reversed["revision"], &json!("notice"), "dismiss"),
+    )
+    .unwrap();
+    assert_eq!(
+        impact(&dismissed["revision"]),
+        (Value::Null, Default::default())
+    );
+    let restored = call(
+        &engine,
+        review(&dismissed["revision"], &json!("notice"), "accept"),
+    )
+    .unwrap();
+    let corrected = call(&engine, json!({"op":"capture","expected_revision":restored["revision"],
+        "supersedes":saved["entry_id"],"source":"meeting","text":"The editor will keep the original task open."})).unwrap();
+    assert_eq!(
+        impact(&corrected["revision"]),
+        (Value::Null, Default::default())
+    );
     let original = call(
         &engine,
         json!({"op":"peek","entry_id":spec["entry_id"],"offset":0,"bytes":4096}),

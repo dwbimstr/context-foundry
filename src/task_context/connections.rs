@@ -273,6 +273,34 @@ impl Engine {
     }
 }
 
+/// An ordinary task entry can cite supporting files whose bytes differ from
+/// its own text. Only narrow a capture handle after checking the original.
+fn reviewed_source_handle(
+    tx: &redb::ReadTransaction,
+    entry: &Entry,
+    start: usize,
+    end: usize,
+) -> FResult<Option<String>> {
+    let [link] = entry.source_links.as_slice() else {
+        return Ok(None);
+    };
+    if !entry.is_captured_source() {
+        return Ok(None);
+    }
+    let mut h = store::HandleRef::parse(link)?;
+    let Some((meta, body)) = crate::boundary::source_in(tx, &h.path)? else {
+        return Ok(None);
+    };
+    if !meta.hash.starts_with(&h.sha32)
+        || body.get(h.start as usize..h.end as usize) != Some(entry.text.as_str())
+    {
+        return Ok(None);
+    }
+    h.end = h.start + end as u64;
+    h.start += start as u64;
+    Ok(Some(h.to_string()))
+}
+
 impl Task {
     fn latest_review(&self, note: &str, prior: &str) -> Option<&ConnectionReview> {
         self.connection_reviews
@@ -281,33 +309,58 @@ impl Task {
             .find(|r| r.entry_id == note && r.prior_id == prior)
     }
 
-    pub(super) fn accepted_priors(
+    /// All endpoints here came from the same selected, current task view.
+    pub(super) fn attach_current_connections(
         &self,
         tx: &redb::ReadTransaction,
-        note: &str,
-    ) -> FResult<Vec<&str>> {
+        fresh: &BTreeMap<&str, (usize, &StoredEntry)>,
+        entries: &mut [Value],
+        mut queries: Option<&mut Vec<ReviewedQuery>>,
+    ) -> FResult<Option<Value>> {
         let mut seen = BTreeSet::new();
-        let mut accepted = Vec::new();
-        for r in self
-            .connection_reviews
-            .iter()
-            .rev()
-            .filter(|r| r.entry_id == note && seen.insert(&r.prior_id))
-        {
-            if r.disposition == Disposition::Accept
-                && !self.superseded(&r.prior_id)
-                && let Some(prior) = self
-                    .entries
-                    .iter()
-                    .find(|e| e.entry.id == r.prior_id && e.view.selected)
-                && source_links(tx, &prior.entry)?
-                    .iter()
-                    .all(|l| l["status"] == "fresh")
-            {
-                accepted.push(r.prior_id.as_str());
+        let mut accepted_by_note = BTreeMap::<usize, Vec<&str>>::new();
+        let mut passages = Vec::new();
+        let mut omitted = 0;
+        for r in self.connection_reviews.iter().rev() {
+            if !seen.insert((&r.entry_id, &r.prior_id)) || r.disposition != Disposition::Accept {
+                continue;
             }
+            let (Some(&(i, note)), Some(&(_, prior))) = (
+                fresh.get(r.entry_id.as_str()),
+                fresh.get(r.prior_id.as_str()),
+            ) else {
+                continue;
+            };
+            accepted_by_note.entry(i).or_default().push(&r.prior_id);
+            let Some(queries) = queries.as_mut() else {
+                continue;
+            };
+            if passages.len() == 2 {
+                omitted += 1;
+                continue;
+            }
+            let [start, end] = r.prior_span;
+            let quote = &prior.entry.text[start..end];
+            queries.push(ReviewedQuery {
+                entry_id: r.prior_id.clone(),
+                revision: r.revision,
+                passage: quote.into(),
+            });
+            let mut earlier = json!({"entry_id":r.prior_id,"offset":start,"end":end,
+                "quote":quote});
+            if let Some(handle) = reviewed_source_handle(tx, &prior.entry, start, end)? {
+                earlier["handle"] = json!(handle);
+            }
+            let excerpt = prefix(&note.entry.text, PASSAGE_BYTES);
+            passages.push(json!({"reviewed_by":r.author,"review_revision":r.revision,
+                "note":{"entry_id":r.entry_id,"offset":0,"end":excerpt.len(),
+                    "original_bytes":note.entry.text.len(),"quote":excerpt},
+                "prior":earlier}));
         }
-        Ok(accepted)
+        for (i, ids) in accepted_by_note {
+            entries[i]["accepted_connections"] = json!(ids);
+        }
+        Ok((!passages.is_empty()).then(|| json!({"items":passages,"omitted":omitted})))
     }
 
     fn note(&self, id: &str) -> FResult<(usize, &StoredEntry)> {
