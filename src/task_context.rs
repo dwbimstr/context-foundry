@@ -9,8 +9,8 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 mod capture;
 mod connections;
-pub use connections::ConnectionChoice;
 use connections::ConnectionReview;
+pub use connections::{ConnectionChoice, DecisionRef};
 
 pub(crate) const TASKS: TableDefinition<&str, &str> = TableDefinition::new("task_context");
 pub const MAX_REQUEST_BYTES: usize = 1024 * 1024;
@@ -60,6 +60,12 @@ pub enum Command {
     },
     Connections {
         entry_id: String,
+    },
+    DecisionUses {
+        expected_revision: u64,
+        entry_id: String,
+        #[serde(default)]
+        after_id: Option<String>,
     },
     ReviewConnection(ConnectionChoice),
     Create {
@@ -203,6 +209,8 @@ pub struct Entry {
     pub action_key: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub assertions: Vec<Assertion>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relies_on: Option<Box<DecisionRef>>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -226,11 +234,16 @@ struct StoredEntry {
     entry: Entry,
     sha256: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    decision_revision: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     assertions_sha256: Option<String>,
     view: View,
 }
 impl StoredEntry {
     fn with_assertions(&self, mut value: Value) -> Value {
+        if let Some(reference) = &self.entry.relies_on {
+            value["declared_relies_on"] = json!(reference);
+        }
         if let Some(digest) = &self.assertions_sha256 {
             value["assertions"] = json!(self.entry.assertions);
             value["assertions_sha256"] = json!(digest);
@@ -317,6 +330,9 @@ fn assertions_digest(assertions: &[Assertion]) -> FResult<Option<String>> {
 }
 fn entry_valid(entry: &Entry) -> FResult<()> {
     id(&entry.id)?;
+    if let Some(reference) = &entry.relies_on {
+        reference.validate(entry.kind)?;
+    }
     if !entry.assertions.is_empty()
         && !matches!(
             entry.kind,
@@ -390,6 +406,15 @@ impl Task {
         for item in &self.entries {
             let e = &item.entry;
             entry_valid(e)?;
+            if item
+                .decision_revision
+                .is_some_and(|rev| e.kind != Kind::Decision || rev == 0 || rev > self.revision)
+                || e.relies_on
+                    .as_ref()
+                    .is_some_and(|r| r.task_id == self.task_id)
+            {
+                return Err(invalid("invalid cross-feature decision identity"));
+            }
             for handle in &e.source_links {
                 if store::HandleRef::parse(handle)?.ws16 != self.workspace_id[..16] {
                     return Err(invalid("task source link names another workspace"));
@@ -469,6 +494,7 @@ impl Task {
                 }
                 self.entries.push(StoredEntry {
                     entry: entry.clone(),
+                    decision_revision: None,
                     sha256: crate::digest(entry.text.as_bytes()),
                     assertions_sha256: assertions_digest(&entry.assertions)?,
                     view: View {
@@ -956,6 +982,18 @@ impl Engine {
                             return Err(invalid("advice envelope exceeds byte budget"));
                         }
                     }
+                    Command::DecisionUses {
+                        expected_revision,
+                        entry_id,
+                        after_id,
+                    } => {
+                        if task.revision != *expected_revision {
+                            return Err(FoundryError::Conflict(
+                                "decision task revision changed; inspect before continuing".into(),
+                            ));
+                        }
+                        result = task.decision_uses(&tx, entry_id, after_id.as_deref(), control)?;
+                    }
                     Command::Connections { entry_id } => {
                         result = task.connections(&tx, entry_id, control)?;
                     }
@@ -1138,6 +1176,7 @@ impl Engine {
                 (_, None) => return Err(FoundryError::NotFound),
                 _ => unreachable!(),
             };
+            let original_count = task.entries.len();
             let captured = capture
                 .as_ref()
                 .map(|entry| (entry.id.clone(), crate::digest(entry.text.as_bytes())));
@@ -1182,6 +1221,25 @@ impl Engine {
                                         "explicitly forget promoted memory {memory_id} before superseding its task decision"
                                     )));
                                 }
+                            }
+                        }
+                        if let Some(reference) = &entry.relies_on {
+                            if reference.task_id == task.task_id {
+                                return Err(invalid("relies_on requires another feature"));
+                            }
+                            let raw = table
+                                .get(reference.task_id.as_str())?
+                                .ok_or(FoundryError::NotFound)?;
+                            let origin =
+                                decode(raw.value(), &reference.task_id, &request.workspace_id)?;
+                            let decision = origin.current_decision(&reference.entry_id)?;
+                            if &origin.decision_ref(decision)? != reference.as_ref() {
+                                return Err(FoundryError::Conflict(
+                                    "decision identity changed".into(),
+                                ));
+                            }
+                            for link in &decision.entry.source_links {
+                                store::validate_link_span(&tx, &request.workspace_id, link)?;
                             }
                         }
                         for handle in &entry.source_links {
@@ -1293,6 +1351,11 @@ impl Engine {
                 result = json!({"task_id":request.task_id,"revision":revision,"outcome":"deleted","forgotten_memory_ids":removed});
             } else {
                 task.revision = revision;
+                for item in &mut task.entries[original_count..] {
+                    if item.entry.kind == Kind::Decision {
+                        item.decision_revision = Some(revision);
+                    }
+                }
                 task.valid()?;
                 let encoded = serde_json::to_string(&task)?;
                 if encoded.len() > MAX_RECORD_BYTES {

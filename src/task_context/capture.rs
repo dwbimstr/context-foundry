@@ -86,6 +86,7 @@ impl Engine {
             supersedes: supersedes.clone(),
             source_links: links,
             assertions: Vec::new(),
+            relies_on: None,
             action_key: None,
         };
         entry.id = entry.capture_id();

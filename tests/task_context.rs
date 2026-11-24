@@ -79,6 +79,142 @@ fn cli(e: &Env, command: Value) -> Value {
     serde_json::from_slice(&output.stdout).unwrap()
 }
 #[test]
+fn another_feature_requires_a_decision_only_with_current_evidence() {
+    let e = env();
+    let engine = Engine::open_existing(&e.store).unwrap();
+    let send = |task_id: &str, command: Value| {
+        let request =
+            task_context::parse(json!({"workspace_id":e.wid,"task_id":task_id,"command":command}))
+                .unwrap();
+        engine.task_context(&request, &Control::unbounded())
+    };
+    let apply_one = |task: &str, rev: &Value, edit: Value| {
+        send(
+            task,
+            json!({"op":"apply","expected_revision":rev,"edits":[edit]}),
+        )
+    };
+    let rule = "Keep independently edited project copies until the editor resolves them.";
+    let why = "Cleanup must wait for the editor before removing a changed project copy.";
+    engine.replace_source("policy.md", rule).unwrap();
+    engine.replace_source("other.md", rule).unwrap();
+    let link = |path: &str| {
+        context_foundry::SourceHandle {
+            workspace_id: e.wid.clone(),
+            path: path.into(),
+            sha256: context_foundry::digest(rule.as_bytes()),
+            start: 0,
+            end: rule.len() as u64,
+        }
+        .to_v2()
+    };
+    let mut decision = add("policy", "decision", rule);
+    decision["entry"]["source_links"] = json!([link("policy.md")]);
+    let start = send(
+        "correction",
+        json!({"op":"create","title":"Correct a decision"}),
+    )
+    .unwrap();
+    let owner = apply_one("correction", &start["revision"], decision.clone()).unwrap();
+    let uses = |owner: &Value| {
+        send(
+            "correction",
+            json!({"op":"decision_uses","entry_id":"policy","expected_revision":owner["revision"]}),
+        )
+    };
+    let reference = uses(&owner).unwrap()["decision_ref"].clone();
+    let mut r = send("cleanup", json!({"op":"create","title":"Delete a task"})).unwrap();
+    let mut similar = add("wording", "requirement", rule);
+    similar["entry"]["source_links"] = json!([link("other.md")]);
+    r = apply_one("cleanup", &r["revision"], similar).unwrap();
+    let open = uses(&owner).unwrap();
+    assert_eq!(open["dependents"], json!([]));
+    assert_eq!(open["wording_matches"][0]["quote"], rule);
+    assert!(
+        open["wording_matches"][0]["clarification"]
+            .as_str()
+            .unwrap()
+            .ends_with('?')
+    );
+    let mut adopted = add("adopted", "constraint", rule);
+    adopted["entry"]["source_links"] = json!([link("policy.md")]);
+    r = apply_one("cleanup", &r["revision"], adopted).unwrap();
+    let automatic = uses(&owner).unwrap();
+    assert_eq!(
+        automatic["dependents"][0]["basis"],
+        "same_required_source_passage"
+    );
+    assert_eq!(
+        automatic["dependents"][0]["shared_source"],
+        link("policy.md")
+    );
+    assert_eq!(automatic["wording_matches"], json!([]));
+    let mut correction = add(
+        "released",
+        "constraint",
+        "This constraint has been withdrawn.",
+    );
+    correction["entry"]["supersedes"] = json!("adopted");
+    r = apply_one("cleanup", &r["revision"], correction).unwrap();
+    assert_eq!(uses(&owner).unwrap()["dependents"], json!([]));
+
+    let mut required = add("gate", "requirement", why);
+    required["entry"]["relies_on"] = reference.clone();
+    let mut wrong = required.clone();
+    wrong["entry"]["relies_on"]["token"] = json!("0".repeat(64));
+    assert!(apply_one("cleanup", &r["revision"], wrong).is_err());
+    assert!(apply_one("correction", &owner["revision"], required.clone()).is_err());
+    engine.replace_source("guide.md", why).unwrap();
+    let guide = context_foundry::SourceHandle {
+        workspace_id: e.wid.clone(),
+        path: "guide.md".into(),
+        sha256: context_foundry::digest(why.as_bytes()),
+        start: 0,
+        end: why.len() as u64,
+    }
+    .to_v2();
+    required["entry"]["source_links"] = json!([guide]);
+    apply_one("cleanup", &r["revision"], required.clone()).unwrap();
+    let bumped = apply_one(
+        "correction",
+        &owner["revision"],
+        add("another", "work", "Unrelated progress"),
+    )
+    .unwrap();
+    assert!(uses(&owner).is_err());
+    let found = uses(&bumped).unwrap();
+    assert_eq!(found["decision_ref"], reference);
+    assert_eq!(found["dependents"][0]["task_id"], "cleanup");
+    assert_eq!(found["dependents"][0]["quote"], why);
+    assert_eq!(found["dependents"][0]["basis"], "declared_dependency");
+    assert_eq!(found["wording_matches"], json!([]));
+    engine
+        .replace_source("guide.md", "Superseded guide")
+        .unwrap();
+    let stale = uses(&bumped).unwrap();
+    assert_eq!(stale["dependents"], json!([]));
+    assert_eq!(stale["stale_evidence_omitted"], 1);
+    engine.replace_source("guide.md", why).unwrap();
+    engine.replace_source("policy.md", "Updated rule").unwrap();
+    assert!(matches!(uses(&bumped), Err(FoundryError::StaleHandle)));
+    engine.replace_source("policy.md", rule).unwrap();
+    send(
+        "correction",
+        json!({"op":"forget","expected_revision":bumped["revision"]}),
+    )
+    .unwrap();
+    let new = send(
+        "correction",
+        json!({"op":"create","title":"Correct a decision"}),
+    )
+    .unwrap();
+    let new = apply_one("correction", &new["revision"], decision).unwrap();
+    let after = uses(&new).unwrap();
+    assert_ne!(after["decision_ref"], reference);
+    assert_eq!(after["dependents"], json!([]));
+}
+
+#[test]
 fn later_note_finds_two_promises_and_reviews_only_the_connection() {
     let e = env();
     let mut engine = Engine::open_existing(&e.store).unwrap();
@@ -934,6 +1070,21 @@ async fn experimental_mcp_tool_is_opt_in_and_matches_cli_state() {
             let command = &schema["properties"]["command"];
             assert_eq!(command["required"], json!(["op"]));
             let rules = command["allOf"].as_array().expect("per-operation rules");
+            let dependency = rules
+                .iter()
+                .find(|r| r["if"]["properties"]["op"]["const"] == "decision_uses")
+                .unwrap();
+            assert_eq!(
+                dependency["then"]["required"],
+                json!(["op", "entry_id", "expected_revision"])
+            );
+            assert!(dependency["then"]["properties"].get("after_id").is_some());
+            let reference = &command["properties"]["edits"]["items"]["properties"]["entry"]["properties"]
+                ["relies_on"];
+            assert_eq!(
+                reference["required"],
+                json!(["task_id", "entry_id", "token"])
+            );
             for (op, fields) in [
                 ("find_decisions", vec!["op", "text"]),
                 ("connections", vec!["op", "entry_id"]),

@@ -1053,6 +1053,35 @@ search. Its results carry `reviewed_text_match:<review revision>` and take
 precedence in source delivery. A policy change still requires a decision, and
 an implementation claim still requires reading the cited code.
 
+To answer which other saved feature relies on a decision, use the primary
+workspace's `task_context` operation `decision_uses` with the originating
+task, its current revision and the decision entry ID. This reads the existing
+008 task rows. A requirement or constraint can carry one typed `relies_on`
+reference returned by that operation. The entry's original words explain why
+the dependent feature needs the decision. Its author, supporting sources and
+original byte range travel with the answer. Record a reference only where
+the source documents the dependency or the operator has confirmed it. A second
+feature also adopts the decision when its active requirement contains the same
+original bytes and cites the same exact, fresh indexed source range. This path
+uses existing records without writing a relationship.
+
+The reference binds the workspace, task, immutable decision and its creation
+revision. Legacy decisions retain an identity derived from their original
+record. New decisions under reused IDs receive a new identity. Adding a
+reference checks the current decision and its source links in the consuming
+task's write transaction. Unrelated edits can advance either task's revision.
+Superseded, deselected or source-stale evidence cannot establish current use.
+There is one writer for each requirement and no separate reverse index.
+
+The read considers eight saved tasks per page and returns one cited reason per
+other feature, with a cursor for continuation. A matching declaration takes
+precedence. In its absence, shared wording in the first 4,096 bytes of an
+eligible active entry may produce a quoted clarification for the operator.
+Quotes span at most 512 UTF-8 bytes, with full originals available by `peek`.
+A page with no evidence establishes only that no qualifying entry was found
+on that page. Each page is a fresh snapshot and reports stale candidates
+encountered during selection. Restart pagination if the saved features change.
+
 The planner starts with eight main-query candidates, at most four selected active
 task searches (1,024 bytes each, four lexical candidates per query), eight
 explicit source links, four source-bound briefs, eight boundary seed paths/eight

@@ -1329,7 +1329,7 @@ impl FoundryMcp {
 
     #[tool(
         name = "task_context",
-        description = r#"Project task memory. Find earlier decisions for a new note with {"op":"find_decisions","text":"<original note>"} and workspace_id alone; list saved features with {"op":"list"}. Create the task if needed. With capture, give expected_revision and a source label plus original text, or an indexed file path as source with optional lines. After capture, use connections with its entry_id. Show the attributions and earlier promises. If two readings fit, use the passages to ask one focused question about the choice. Only on an explicit choice, call review_connection with expected_revision, entry_id, prior_id, prior_span [offset,end] from the candidate, disposition (accept or dismiss) and author. Add supersedes for an explicit correction. To assess impact, call context with task_id, the receipt revision as task_revision, and compose_evidence:true. To inspect a task, send exactly {"op":"inspect"} as command. To peek at an original, send {"op":"peek","entry_id":"<id from inspect>","offset":0,"bytes":4096}. Continue at next_offset until null. Review compares explicit structured assertions; export uses CLI."#,
+        description = r#"Project task memory. Find earlier decisions for a new note with {"op":"find_decisions","text":"<original note>"} and workspace_id alone; list saved features with {"op":"list"}. Create the task if needed. With capture, give expected_revision and a source label plus original text, or an indexed file path as source with optional lines. To find other features relying on a saved decision, call decision_uses with its entry_id and expected_revision. Quote the dependent requirement; follow next_after_id when present. For wording_matches ask the returned clarification. Save a documented or confirmed dependency with apply/add on the other feature: use a requirement or constraint with relies_on set to the returned decision_ref. After capture, use connections with its entry_id. Show the attributions and earlier promises. If two readings fit, use the passages to ask one focused question about the choice. Only on an explicit choice, call review_connection with expected_revision, entry_id, prior_id, prior_span [offset,end] from the candidate, disposition (accept or dismiss) and author. Add supersedes for an explicit correction. To assess impact, call context with task_id, the receipt revision as task_revision, and compose_evidence:true. To inspect a task, send exactly {"op":"inspect"} as command. To peek at an original, send {"op":"peek","entry_id":"<id from inspect>","offset":0,"bytes":4096}. Continue at next_offset until null. Review compares explicit structured assertions; export uses CLI."#,
         input_schema = schema(include_str!("task_context.schema.json")),
         annotations(read_only_hint = false, open_world_hint = false)
     )]
@@ -1365,6 +1365,7 @@ impl FoundryMcp {
             request.command,
             crate::task_context::Command::List { .. }
                 | crate::task_context::Command::FindDecisions { .. }
+                | crate::task_context::Command::DecisionUses { .. }
                 | crate::task_context::Command::Connections { .. }
                 | crate::task_context::Command::Search { .. }
                 | crate::task_context::Command::Advise { .. }

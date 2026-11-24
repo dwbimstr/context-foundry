@@ -16,7 +16,7 @@
       "required": ["op"],
       "properties": {
         "op": {
-          "enum": ["list", "find_decisions", "connections", "review_connection", "create", "capture", "apply", "inspect", "peek", "render", "forget", "advise", "review", "promote", "search"]
+          "enum": ["list", "find_decisions", "connections", "review_connection", "decision_uses", "create", "capture", "apply", "inspect", "peek", "render", "forget", "advise", "review", "promote", "search"]
         },
         "prior_span": {"type":"array","items":{"type":"integer","minimum":0},"minItems":2,"maxItems":2,"description":"The exact [offset,end] of the earlier passage shown to the operator."},
         "prior_id": {"type": "string", "description": "Earlier entry returned by connections."},
@@ -58,6 +58,11 @@
                   "author": {"type": "string"},
                   "provenance": {"type": "string"},
                   "source_links": {"type": "array", "items": {"type": "string"}},
+                  "relies_on": {
+                    "type": "object", "additionalProperties": false, "required": ["task_id", "entry_id", "token"],
+                    "description": "For a requirement or constraint, the decision_ref returned by decision_uses in another feature. Supply only for documented or explicitly confirmed reliance; quote the reason in the entry text.",
+                    "properties": {"task_id": {"type": "string"}, "entry_id": {"type": "string"}, "token": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+                  },
                   "supersedes": {"type": ["string", "null"]},
                   "action_key": {"type": ["string", "null"]},
                   "assertions": {
@@ -136,6 +141,7 @@
       },
       "allOf": [
         {"if": {"properties": {"op": {"const": "find_decisions"}}}, "then": {"required": ["op", "text"], "maxProperties": 2}},
+        {"if": {"properties": {"op": {"const": "decision_uses"}}}, "then": {"required": ["op", "entry_id", "expected_revision"], "additionalProperties": false, "properties": {"op": {}, "entry_id": {}, "expected_revision": {}, "after_id": {}}}},
         {"if": {"properties": {"op": {"const": "connections"}}}, "then": {"required": ["op", "entry_id"], "maxProperties": 2}},
         {"if": {"properties": {"op": {"const": "review_connection"}}}, "then": {"required": ["op", "expected_revision", "entry_id", "prior_id", "prior_span", "disposition", "author"], "maxProperties": 7}},
         {

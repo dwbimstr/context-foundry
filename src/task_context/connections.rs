@@ -1,6 +1,8 @@
 //! Candidate links from an ordinary note to earlier attributed passages.
 //! Only a human disposition is persisted; word matches never revise a source.
 use super::*;
+mod dependents;
+pub use dependents::DecisionRef;
 use rust_stemmers::{Algorithm, Stemmer};
 
 const QUERY_BYTES: usize = 4096;

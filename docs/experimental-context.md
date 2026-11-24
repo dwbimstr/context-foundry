@@ -602,6 +602,21 @@ Read a cited implementation before reporting its behavior. Answer separately
 what the code does today, what the proposed change would affect, and which
 choice the operator still needs to make.
 
+For “Which other feature relies on this decision?”, open the feature that owns
+the decision and call `task_context` with its task ID and a command like
+`{"op":"decision_uses","expected_revision":5,"entry_id":"chosen-backoff"}`.
+Follow `next_after_id` with `after_id` until it is null. Read the other feature’s
+requirement in `dependents` and quote its reason. Each `wording_matches` result
+includes a question to ask before treating it as a dependency. If both features
+already cite the exact same indexed rule and the other feature has saved it as a
+requirement, Foundry recognizes that use directly.
+
+When a source explicitly states reliance, or the operator confirms it, save
+the reason on the **dependent** feature. Use its existing `apply` / `add`
+operation, choose `requirement` or `constraint`, and set `relies_on` to the
+origin’s returned `decision_ref`. Keep the source wording, attribution and
+supporting handles. Supersede that entry when the requirement changes.
+
 Save the returned `revision`. Every mutation after creation names the current
 `expected_revision`; a conflict means inspect the live record before retrying. A
 single `apply` may combine up to 32 edits. For example, place this inside `command`,
