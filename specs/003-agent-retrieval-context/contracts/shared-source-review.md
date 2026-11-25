@@ -70,10 +70,26 @@ pasted text keep a stable source label and author on retries. Send supersedes
 with the old entry ID when explicitly recording an edited or renamed version.
 A project notebook can contain many independent originals.
 
-Use apply/add to record a feature requirement, constraint or decision in its
-own words. Once the supporting passage is documented or the operator confirms
-it, use the following command on that feature. Use the two receipt values for
-origin_entry_id and capture_revision. Use the feature's current expected_revision.
+On the feature task, put the decision inside `edits[].entry`. Use the
+feature's latest revision for `expected_revision` in each write.
+
+```json
+{
+  "op": "apply",
+  "expected_revision": 6,
+  "edits": [{"op": "add", "entry": {
+    "id": "preserve-copy", "kind": "decision",
+    "text": "Cleanup preserves the editor's separate amendments.",
+    "author": "Project owner", "provenance": "Feature decision", "source_links": []
+  }}]
+}
+```
+
+To declare reliance from another feature, use the same nesting with
+`kind: "requirement"` and set `entry.relies_on` to the complete
+`decision_ref` returned by `decision_uses`. Once a supporting passage is
+documented or confirmed, cite it on the feature. Take `origin_entry_id`
+and `capture_revision` from the original capture receipt.
 
 ```json
 {"op":"cite_source","expected_revision":7,"entry_id":"preserve-copy","origin_task_id":"notebook","origin_entry_id":"<capture entry>","capture_revision":3,"quote":"Preserve an independently edited copy.","author":"Project owner","wording":"Can we retire the parent?"}

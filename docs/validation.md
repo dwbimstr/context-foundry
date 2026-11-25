@@ -1,5 +1,43 @@
 # Validation
 
+## Shared-source review in a fresh desktop project chat — 2026-11-24
+
+A fresh ChatGPT desktop chat asked “When we retire the parent, what happens to
+the editor’s changes?” through the native project Foundry tools. Only the
+project's Foundry server was restarted. Its replacement opened the actual
+project store using the installed executable from the preceding qualification.
+The sibling MCP process kept its PID. Native status identified workspace
+`2f558a2157b9c452…`, source revision 554, with 421 sources and zero pending.
+
+The chat created one labeled notebook and two labeled features. It saved
+Mina's supplied meeting sentence at capture revision 5 and Ivo's supplied
+spec sentence at 6. At workspace task revision 12 both feature claims were
+current. The chat then used capture with supersedes to record Ivo’s edited
+spec at revision 13. The repository files and the existing feature task were
+outside the exercise. Each review fit on one page.
+
+| Feature | Why the edit reached it | Result after the edit |
+|---|---|---|
+| Desktop check — Cleanup | Its decision said “Cleanup keeps an edited copy when retiring its parent.” It directly cited the spec. | Needs review. The old quote was “Keep the separately edited copy when its parent is retired.” The new quote was “Request the editor’s approval before archiving a separately edited copy.” |
+| Desktop check — Editorial handoff | Its requirement said “Handoff relies on cleanup to preserve the editor’s separate amendments.” Its declared reliance on Cleanup remained current. | Needs review through Cleanup's revised spec. Mina’s independent meeting evidence remained current: “Handoff must preserve the editor’s independently amended copy.” |
+
+Both claims matched the previously confirmed wording. Foundry asked whether
+the feature still relied on the revised source. A separate question about a
+billing contact's parent account returned wording-only matches and a
+clarification. The revision stayed at 13. Native peek recovered both spec
+versions and marked the old one historical. The two review flags remain
+open in the labeled exercise tasks.
+
+The chat made 29 native calls, all to the project Foundry server. Three
+malformed apply requests and an unsupported schema request failed with
+`invalid_argument`. The desktop caller saw the task arguments as `unknown`.
+It completed the writes after receiving the nested add-entry shape. The
+[operator guide](../specs/003-agent-retrieval-context/contracts/shared-source-review.md#commands-and-output)
+now includes that example. All three source_review calls succeeded on their
+first attempt. The exercise launched no separate provider job and made no
+Prakarana calls. Process and native tool receipts are under
+`runs/shared-source-desktop-live/`.
+
 ## Which features need review after a specification edit? — 2026-11-24
 
 A local project notebook received two originals. Mina's supplied meeting
@@ -51,8 +89,7 @@ copy of the previously saved case. Provider spend was zero.
 The already-open desktop chat returned `invalid_argument` for source_review
 after installation. A second process using the exact live project settings
 returned `store_busy` during initialization while the earlier owner held
-the store. The current session needs its Foundry server reconnected to load
-the installed build. Local transcripts are in
+the store. The subsequent [fresh desktop project check](#shared-source-review-in-a-fresh-desktop-project-chat--2026-11-24) loaded the installed build. Local transcripts are in
 `runs/shared-source-review-2026-11-24/`.
 
 ## From an indirect request to the affected feature — 2026-11-24

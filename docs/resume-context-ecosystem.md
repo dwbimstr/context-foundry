@@ -74,6 +74,10 @@ and dated paragraphs below are history.
   proposal to the original evidence. Similar wording asks for confirmation.
   [Operator contract](../specs/003-agent-retrieval-context/contracts/shared-source-review.md)
   and [workflow receipt](validation.md#which-features-need-review-after-a-specification-edit--2026-11-24).
+  A fresh native ChatGPT desktop chat now verified the workflow on the actual
+  project store. Its two labeled acceptance features remain open for review
+  after the supplied spec was edited. Adding the first decision needed guidance
+  on the nested add-entry shape. [Desktop receipt](validation.md#shared-source-review-in-a-fresh-desktop-project-chat--2026-11-24).
 
 - **Finite desktop qualification complete, 2026-11-23.** A fresh ChatGPT
   desktop project chat verified the real project store and retrieved
