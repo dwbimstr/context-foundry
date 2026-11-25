@@ -565,6 +565,20 @@ have explicit source citations. A changed original marks the passage
 `needs_review`. An operator can open source_review for the full comparison.
 The task-scoped connection review and saved proposal operations retain their existing contracts.
 
+If a workspace lookup offers a `recovery_question`, a client helping the
+operator recover a saved decision asks it. After the operator supplies the
+feature title, repeat `find_decisions` with the original `text` and their
+`feature_title`. Match the whole title after trimming surrounding whitespace,
+ignoring ASCII case. A unique title scopes the read to at most two current
+decision options from that feature, with wording matches first. A missing
+or ambiguous title returns a clarification and an empty candidate list.
+Ask which quoted decision applies. A decision with changed supporting
+evidence includes one `changed_support` example from the existing review
+operation. Its current excerpt retains its role as an exact quote or position
+preview when available. The full set of supports remains in source_review. Naming
+a feature establishes the search scope. Applicability remains the operator's
+judgment. This lookup writes nothing.
+
 The second route applies the bounded candidate selection studied in
 [Hindsight’s fusion implementation](https://github.com/vectorize-io/hindsight/blob/550ef5e304623be2a456913acbac1b1a834fb2c3/hindsight-api-slim/hindsight_api/engine/search/fusion.py#L29)
 and its [cap tests](https://github.com/vectorize-io/hindsight/blob/550ef5e304623be2a456913acbac1b1a834fb2c3/hindsight-api-slim/tests/test_fusion_cap.py).

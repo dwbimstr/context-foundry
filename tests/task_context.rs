@@ -414,6 +414,60 @@ fn another_feature_requires_a_decision_only_with_current_evidence() {
 }
 
 #[test]
+fn named_feature_recovers_decisions_when_the_operator_remembers_only_the_title() {
+    let e = env();
+    let engine = Engine::open_existing(&e.store).unwrap();
+    let run = |request| {
+        engine
+            .task_context(
+                &task_context::parse(request).unwrap(),
+                &Control::unbounded(),
+            )
+            .unwrap()
+    };
+    let ask = |title: Option<&str>| {
+        let mut cmd =
+            json!({"op":"find_decisions","text":"Can the observatory postpone a lunar excursion?"});
+        if let Some(title) = title {
+            cmd["feature_title"] = json!(title);
+        }
+        run(json!({"workspace_id":e.wid,"command":cmd}))
+    };
+    let mut replacement = add("green", "decision", "Use green labels.");
+    replacement["entry"]["supersedes"] = json!("old");
+    let saved = apply(&engine,create(&engine),json!([
+        add("old","decision","Use violet labels."), replacement,
+        add("hidden","decision","Use blue labels."), {"op":"select","entry_id":"hidden","selected":false},
+        add("rule","requirement","Labels must be legible.")
+    ])).unwrap();
+    let miss = ask(None);
+    assert_eq!(miss["candidates"], json!([]));
+    assert!(miss["recovery_question"].is_string());
+    let scoped = ask(Some("  REPAIR A RETRY POLICY  "));
+    assert_eq!(scoped["basis"], "operator_named_feature");
+    assert!(scoped["clarification"].is_string());
+    assert_eq!(scoped["candidates"].as_array().unwrap().len(), 1);
+    assert_eq!(scoped["candidates"][0]["entry_id"], "green");
+    assert_eq!(scoped["candidates"][0]["quote"], "Use green labels.");
+    assert_eq!(ask(Some("Repair"))["candidates"], json!([]));
+    apply(
+        &engine,
+        saved["revision"].as_u64().unwrap(),
+        json!([
+            add("round", "decision", "Use round labels."),
+            add("thin", "decision", "Use thin labels.")
+        ]),
+    )
+    .unwrap();
+    let capped = ask(Some("Repair a retry policy"));
+    assert_eq!(capped["candidates"].as_array().unwrap().len(), 2);
+    run(
+        json!({"workspace_id":e.wid,"task_id":"duplicate","command":{"op":"create","title":"Repair a retry policy"}}),
+    );
+    assert_eq!(ask(Some("Repair a retry policy"))["candidates"], json!([]));
+}
+
+#[test]
 fn first_encounter_follows_only_current_declared_reasons_and_separates_loose_wording() {
     let e = env();
     let engine = Engine::open_existing(&e.store).unwrap();
@@ -506,6 +560,18 @@ fn first_encounter_follows_only_current_declared_reasons_and_separates_loose_wor
         ask(query)["candidates"][0]["directly_cited_originals"],
         "needs_review"
     );
+    let named = run(
+        None,
+        json!({"op":"find_decisions","text":query,"feature_title":"Repair a retry policy"}),
+    );
+    let changed = &named["candidates"][0]["changed_support"];
+    assert_eq!(changed["original"]["quote"], "Review each collection.");
+    assert_eq!(changed["current_excerpt"]["role"], "position_preview");
+    assert_eq!(
+        changed["current_excerpt"]["quote"],
+        "Skip the collection review."
+    );
+    assert_eq!(changed["quote_match"]["status"], "absent");
     run(
         Some("investigation"),
         json!({"op":"forget","expected_revision":cite["revision"]}),
@@ -1407,8 +1473,19 @@ async fn experimental_mcp_tool_is_opt_in_and_matches_cli_state() {
                 reference["required"],
                 json!(["task_id", "entry_id", "token"])
             );
+            let lookup = rules
+                .iter()
+                .find(|rule| rule["if"]["properties"]["op"]["const"] == "find_decisions")
+                .unwrap();
+            assert_eq!(lookup["then"]["required"], json!(["op", "text"]));
+            assert_eq!(lookup["then"]["maxProperties"], 3);
+            assert_eq!(lookup["then"]["additionalProperties"], false);
+            assert_eq!(
+                lookup["then"]["properties"],
+                json!({"op": {}, "text": {}, "feature_title": {}})
+            );
+            assert_eq!(command["properties"]["feature_title"]["type"], "string");
             for (op, fields) in [
-                ("find_decisions", vec!["op", "text"]),
                 ("propose_change", vec!["op", "text", "source", "author"]),
                 ("proposal_impact", vec!["op"]),
                 ("connections", vec!["op", "entry_id"]),

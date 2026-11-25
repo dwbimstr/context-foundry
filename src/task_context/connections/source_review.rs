@@ -441,11 +441,12 @@ impl SourceCitation {
 }
 
 /// Attach the status of this entry's own cited originals to a lookup result.
-/// Detailed comparisons remain available through source_review.
+/// A named-feature lookup also shows one changed original for the option.
 pub(super) fn mark_cited_originals(
     tx: &redb::ReadTransaction,
     workspace: &str,
     passage: &mut Value,
+    include_changed_support: bool,
     control: &Control,
 ) -> FResult<()> {
     let table = tx.open_table(TASKS)?;
@@ -460,8 +461,12 @@ pub(super) fn mark_cited_originals(
     {
         has_citations = true;
         control.check()?;
-        if link.evidence(tx, workspace, false)?["status"] != "current" {
+        let evidence = link.evidence(tx, workspace, include_changed_support)?;
+        if evidence["status"] != "current" {
             passage["directly_cited_originals"] = json!("needs_review");
+            if include_changed_support {
+                passage["changed_support"] = evidence;
+            }
             return Ok(());
         }
     }

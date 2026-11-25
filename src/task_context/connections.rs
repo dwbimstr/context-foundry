@@ -205,15 +205,24 @@ impl Suggestions {
             let (key, value) = row?;
             let task = decode(value.value(), key.value(), workspace)?;
             if task.proposal.is_none() {
+                if let Some(d) = &mut self.discovery
+                    && !d.has_saved_decision
+                {
+                    d.has_saved_decision = task.entries.iter().any(|item| {
+                        item.entry.kind == Kind::Decision
+                            && item.view.selected
+                            && !task.superseded(&item.entry.id)
+                    });
+                }
                 self.collect(tx, &task, words, None, None, control)?;
             }
         }
         if let Some(mut discovery) = self.discovery.take() {
             discovery.follow(tx, workspace, words, &mut self, control)?;
             for (_, _, lead) in &mut self.best {
-                source_review::mark_cited_originals(tx, workspace, lead, control)?;
+                source_review::mark_cited_originals(tx, workspace, lead, false, control)?;
                 if let Some(reason) = lead.get_mut("via_requirement") {
-                    source_review::mark_cited_originals(tx, workspace, reason, control)?;
+                    source_review::mark_cited_originals(tx, workspace, reason, false, control)?;
                 }
             }
             self.discovery = Some(discovery);
@@ -329,6 +338,13 @@ impl Suggestions {
                "stale_omitted":self.stale,"clarification":clarification});
         if let Some(discovery) = self.discovery {
             result["unchecked_declarations"] = json!(discovery.omitted);
+            if discovery.has_saved_decision
+                && self.matching == 0
+                && result["clarification"].is_null()
+            {
+                result["recovery_question"] =
+                    json!("What was the name of the feature where you saved the decision?");
+            }
         }
         result
     }
@@ -339,12 +355,17 @@ impl Engine {
         &self,
         workspace: &str,
         note: &str,
+        feature_title: Option<&str>,
         control: &Control,
     ) -> FResult<Value> {
         text(note, QUERY_BYTES)?;
         let tx = self.db.begin_read()?;
         let mut words = NoteWords::new(note);
         let discovery = DecisionDiscovery::new(note, &mut words);
+        if let Some(title) = feature_title {
+            text(title, 1024)?;
+            return discovery::in_named_feature(&tx, workspace, title.trim(), &words, control);
+        }
         let mut result = Suggestions {
             discovery: Some(discovery),
             ..Suggestions::default()

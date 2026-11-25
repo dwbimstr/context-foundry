@@ -33,6 +33,7 @@
         "lines": {"type": "string", "description": "Optional one-based line range of the indexed source, e.g. 319-335."},
         "supersedes": {"type": "string", "description": "For an explicit correction, the earlier captured entry ID."},
         "title": {"type": "string"},
+        "feature_title": {"type": "string", "minLength": 1, "maxLength": 1024, "description": "Optional exact saved feature title supplied by the operator. Retry with the original question in text."},
         "expected_revision": {"type": "integer", "minimum": 0},
         "edits": {
           "type": "array",
@@ -153,7 +154,7 @@
         {"if":{"properties":{"op":{"const":"propose_change"}}},"then":{"required":["op","text","source","author"],"maxProperties":4}},
         {"if":{"properties":{"op":{"const":"proposal_impact"}}},"then":{"required":["op"],"maxProperties":1}},
         {"if":{"properties":{"op":{"const":"clarify_proposal"}}},"then":{"required":["op","expected_revision","text","author","disposition"],"additionalProperties":false,"properties":{"op":{},"expected_revision":{},"text":{},"author":{},"disposition":{},"scope_token":{}},"if":{"properties":{"disposition":{"const":"accept"}}},"then":{"required":["scope_token"]},"else":{"not":{"required":["scope_token"]}}}},
-        {"if": {"properties": {"op": {"const": "find_decisions"}}}, "then": {"required": ["op", "text"], "maxProperties": 2}},
+        {"if": {"properties": {"op": {"const": "find_decisions"}}}, "then": {"required": ["op", "text"], "maxProperties": 3, "additionalProperties": false, "properties": {"op": {}, "text": {}, "feature_title": {}}}, "else": {"not": {"required": ["feature_title"]}}},
         {"if": {"properties": {"op": {"const": "decision_uses"}}}, "then": {"required": ["op", "entry_id", "expected_revision"], "additionalProperties": false, "properties": {"op": {}, "entry_id": {}, "expected_revision": {}, "after_id": {}}}},
         {"if": {"properties": {"op": {"const": "connections"}}}, "then": {"required": ["op", "entry_id"], "maxProperties": 2}},
         {"if": {"properties": {"op": {"const": "review_connection"}}}, "then": {"required": ["op", "expected_revision", "entry_id", "prior_id", "prior_span", "disposition", "author"], "maxProperties": 7}},

@@ -58,6 +58,8 @@ pub enum Command {
     },
     FindDecisions {
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        feature_title: Option<String>,
     },
     ProposeChange {
         text: String,
@@ -628,6 +630,12 @@ pub fn parse(value: Value) -> FResult<Request> {
     {
         return Err(invalid("workspace discovery omits task_id"));
     }
+    if value["command"]
+        .get("feature_title")
+        .is_some_and(Value::is_null)
+    {
+        return Err(invalid("feature_title must be a string when supplied"));
+    }
     let request: Request =
         serde_json::from_value(value).map_err(|_| invalid("invalid task request fields"))?;
     if !matches!(
@@ -808,11 +816,20 @@ impl Engine {
             }
             return self.source_review(&request.workspace_id, text, after_id.as_deref(), control);
         }
-        if let Command::FindDecisions { text } = &request.command {
+        if let Command::FindDecisions {
+            text,
+            feature_title,
+        } = &request.command
+        {
             if !request.task_id.is_empty() {
                 return Err(invalid("workspace discovery omits task_id"));
             }
-            return self.find_decisions(&request.workspace_id, text, control);
+            return self.find_decisions(
+                &request.workspace_id,
+                text,
+                feature_title.as_deref(),
+                control,
+            );
         }
         if let Command::List { after_id } = &request.command {
             if !request.task_id.is_empty() {

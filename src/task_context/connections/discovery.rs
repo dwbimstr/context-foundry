@@ -15,6 +15,7 @@ pub(super) struct DecisionDiscovery {
     reasons: Vec<Reason>,
     pub(super) omitted: usize,
     pub(super) weak_wording: bool,
+    pub(super) has_saved_decision: bool,
 }
 
 fn adjacent_words(text: &str) -> impl Iterator<Item = (&str, &str)> {
@@ -40,6 +41,7 @@ impl DecisionDiscovery {
             reasons: Vec::new(),
             omitted: 0,
             weak_wording: false,
+            has_saved_decision: false,
         }
     }
 
@@ -123,4 +125,76 @@ impl DecisionDiscovery {
         }
         Ok(())
     }
+}
+
+/// A title supplied by the operator narrows the scope; it makes no claim
+/// about which decision applies. Detect duplicate titles before showing text.
+pub(super) fn in_named_feature(
+    tx: &redb::ReadTransaction,
+    workspace: &str,
+    title: &str,
+    words: &NoteWords,
+    control: &Control,
+) -> FResult<Value> {
+    let mut feature = None;
+    let mut result = json!({"workspace_id": workspace, "basis": "operator_named_feature",
+        "candidates": [], "matching": 0, "stale_omitted": 0});
+    for row in tx.open_table(TASKS)?.iter()? {
+        control.check()?;
+        let (key, raw) = row?;
+        let task = decode(raw.value(), key.value(), workspace)?;
+        if task.proposal.is_some() || !task.title.trim().eq_ignore_ascii_case(title) {
+            continue;
+        }
+        if feature.is_some() {
+            result["clarification"] = json!(
+                "Several features have that title. What words do you remember from the decision itself?"
+            );
+            return Ok(result);
+        }
+        feature = Some(task);
+    }
+    let Some(task) = feature else {
+        result["clarification"] = json!(
+            "I couldn't find that exact feature title. What other title or words from the decision do you remember?"
+        );
+        return Ok(result);
+    };
+    let mut options = Suggestions::default();
+    for item in &task.entries {
+        control.check()?;
+        let e = &item.entry;
+        if e.kind != Kind::Decision || !item.view.selected || task.superseded(&e.id) {
+            continue;
+        }
+        let links = source_links(tx, e)?;
+        if links.iter().any(|l| l["status"] != "fresh") {
+            options.stale += 1;
+            continue;
+        }
+        let (at, passage, shared) = words
+            .passage_with_minimum(&e.text, 1)
+            .unwrap_or_else(|| (0, prefix(&e.text, PASSAGE_BYTES), Vec::new()));
+        let mut candidate = citation(&task, item, at, passage, links);
+        candidate["feature"] = json!(task.title);
+        candidate["kind"] = json!(PriorKind::Decision);
+        candidate["shared_words"] = json!(shared);
+        options.offer(shared.len(), true, candidate);
+        options.matching += 1;
+    }
+    let mut candidates = Vec::new();
+    for (_, _, mut option) in options.best {
+        source_review::mark_cited_originals(tx, workspace, &mut option, true, control)?;
+        candidates.push(option);
+    }
+    result["matching"] = json!(options.matching);
+    result["stale_omitted"] = json!(options.stale);
+    result["clarification"] = json!(match candidates.len() {
+        0 =>
+            "I couldn't offer a current decision from that feature. Do you remember another feature or a phrase from the decision?",
+        1 => "Is this the saved decision you meant?",
+        _ => "Which of these saved decisions did you mean, or do you remember other words from it?",
+    });
+    result["candidates"] = json!(candidates);
+    Ok(result)
 }
