@@ -98,6 +98,10 @@ and dated paragraphs below are history.
   decisions, ask which applies, and place one changed supporting passage
   beside each affected option. The cleanup walkthrough recovers the editor's
   approval condition in the same lookup. [Agent review and installed MCP results](validation.md#recovering-a-decision-by-its-feature-name--2026-11-25).
+  The operator can also give just a few remembered title words. Foundry
+  offers up to three matching names and waits for a choice before returning
+  any decisions. A fresh agent carried a “yes” confirming the sole named
+  option into the installed MCP lookup. [Partial-title walkthrough](validation.md#choosing-a-saved-feature-from-remembered-title-words--2026-11-25).
 
 - **Finite desktop qualification complete, 2026-11-23.** A fresh ChatGPT
   desktop project chat verified the real project store and retrieved

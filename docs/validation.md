@@ -1,5 +1,46 @@
 # Validation
 
+## Choosing a saved feature from remembered title words — 2026-11-25
+
+An operator remembered “cleanup” while looking for the decision about
+retiring a predecessor and keeping a collaborator’s revision. The earlier
+installed binary asked for another title and offered no choices. On the
+same five-task project snapshot (workspace `2f558a2157b9c452…`, source
+revision 554), the updated installed MCP offered **Desktop check — Cleanup**
+and asked whether that was the intended feature. It returned zero decision
+passages at this point.
+
+| Remembered words | Installed MCP response |
+|---|---|
+| cleanup | One title, with a confirmation question. |
+| desktop check | Four matching features. It showed three titles, asked the operator to select or narrow the list, and returned zero decisions. |
+| clean, the, or pressroom | Each yielded zero titles and zero decisions. |
+| Desktop check — Cleanup, after selection | The saved `keep-copy` decision at revision 9, with its changed supporting specification. |
+
+Three byte-range reads recovered the decision, original citation and
+current position preview. The saved decision says “Cleanup keeps an edited
+copy when retiring its parent.” The old spec sentence is absent. The preview
+says “Request the editor’s approval before archiving a separately edited
+copy.” The source still needs review. The five task revisions stayed equal.
+
+A fresh-context reviewer read the transcript and asked for confirmation even
+when only one title matched. We also simulated the operator replying “Yes,
+that's the one” to that named option. In a first agent-client attempt, the
+private transport instructions omitted the operation key and the generated
+request failed before reaching Foundry. A second fresh agent received the
+normal MCP command example, carried the original question and confirmed
+title into a single successful call, recovered `keep-copy`, and distinguished
+the position preview from a newly approved decision. The interaction used the
+installed server through local stdio MCP.
+
+The two focused tests covered lookup behavior
+and the SDK’s served catalog. They passed in 2.46 seconds of test execution,
+plus compilation. Formatting and documentation link checks passed. Candidate
+and installed MCP responses matched. The code is `cfa077c` and local
+transcripts are in `runs/partial-feature-2026-11-25/`. This was a no-spend
+local MCP exercise with agent review. Full suites and benchmarks were
+outside this iteration.
+
 ## Recovering a decision by its feature name — 2026-11-25
 
 An installed Foundry MCP looked up “Can we discard the predecessor and
