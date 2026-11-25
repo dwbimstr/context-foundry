@@ -93,6 +93,12 @@ and dated paragraphs below are history.
   saved tasks, two unrelated billing questions stopped surfacing cleanup.
   A paraphrase with no recognizable terms still missed. [Before and after on the project snapshot](validation.md#finding-a-decision-in-another-features-words--2026-11-25).
 
+  When the operator's question misses entirely, ChatGPT can ask for the
+  saved feature title. Foundry can then show up to two of that feature's
+  decisions, ask which applies, and place one changed supporting passage
+  beside each affected option. The cleanup walkthrough recovers the editor's
+  approval condition in the same lookup. [Agent review and installed MCP results](validation.md#recovering-a-decision-by-its-feature-name--2026-11-25).
+
 - **Finite desktop qualification complete, 2026-11-23.** A fresh ChatGPT
   desktop project chat verified the real project store and retrieved
   `apply_owned_block` at `src/bootstrap.rs:904`. Through the separate exercise

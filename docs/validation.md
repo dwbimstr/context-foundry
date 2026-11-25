@@ -1,5 +1,40 @@
 # Validation
 
+## Recovering a decision by its feature name — 2026-11-25
+
+An installed Foundry MCP looked up “Can we discard the predecessor and
+safeguard a collaborator's revision?” on a read-only exercise using a copy
+of the five saved project tasks (workspace `2f558a2157b9c452…`, ready,
+source revision 554). The baseline returned zero candidates and no question.
+
+The first edit asked where the decision had been saved. With the test-supplied
+reply **Desktop check — Cleanup**, Foundry returned revision 9, entry
+`keep-copy`, and asked whether it was the intended decision. A byte-range
+read confirmed “Cleanup keeps an edited copy when retiring its parent.”
+Two fresh-context agents read the MCP outputs. Both identified the saved
+decision as an option and flagged the need to check the revised original.
+The lookup requires the operator to supply the feature name in this case.
+
+The second edit put one changed source beside the decision. Ivo’s original
+said “Keep the separately edited copy when its parent is retired.” That exact
+sentence was absent from the revised spec. The position preview now read
+“Request the editor’s approval before archiving a separately edited copy.”
+Separate reads recovered the exact bytes of the decision, original and
+preview. A third fresh-context agent surfaced the approval condition, asked
+the operator to confirm the recovered decision and withheld authorization
+for permanent deletion. The preview provides current words at the cited
+position. The operator decides whether they govern the original question.
+
+The installed build on `f34a2e4` reproduced the candidate’s responses
+through fresh local stdio MCP. An unknown title returned no passages. The
+billing question continued to ask for clarification. The five tasks retained
+their revisions. Three focused Rust checks covered named-feature recovery,
+dependency discovery and source revision, and the SDK’s served tool schema.
+They passed in 2.19 seconds of test execution, plus compilation. Formatting
+and documentation links passed. Qualification used same-session agent
+judgments and local MCP, with no new desktop chat, long suite, benchmark or
+paid provider run. The transcripts are local in `runs/feature-title-2026-11-25/`.
+
 ## Finding a decision in another feature’s words — 2026-11-25
 
 “**What happens to separate amendments during handoff?**” previously surfaced
