@@ -548,6 +548,29 @@ discovery and retain the entire original. The task owns up to 128 review
 events. Older task records start with an empty history. Use the updated
 experimental reader for records containing reviews.
 
+Workspace decision discovery also follows one explicitly declared requirement
+or constraint to the saved decision it relies on. This lets someone find a
+decision using the dependent feature's explanation on their first encounter.
+Return both attributed passages with exact byte ranges. Recheck the declaration,
+decision identity, selection and indexed handles in the same transaction.
+A changed or forgotten decision cannot be revived by an old declaration.
+
+Keep the two-result limit. Check at most eight wording-matched declarations,
+report how many fell outside the shortlist, and count each admitted entry once.
+Prefer a lead covering more distinct query terms. Two terms in a long question
+need a matching phrase, sufficient query coverage, or additional evidence
+across the declared relationship. Weak wording alone asks for the relevant
+feature or rule. Both passages report `directly_cited_originals` when they
+have explicit source citations. A changed original marks the passage
+`needs_review`. An operator can open source_review for the full comparison.
+The task-scoped connection review and saved proposal operations retain their existing contracts.
+
+The second route applies the bounded candidate selection studied in
+[Hindsight’s fusion implementation](https://github.com/vectorize-io/hindsight/blob/550ef5e304623be2a456913acbac1b1a834fb2c3/hindsight-api-slim/hindsight_api/engine/search/fusion.py#L29)
+and its [cap tests](https://github.com/vectorize-io/hindsight/blob/550ef5e304623be2a456913acbac1b1a834fb2c3/hindsight-api-slim/tests/test_fusion_cap.py).
+Foundry ranks distinct question terms across one human-declared dependency
+and reopens the referenced decision locally. [Implementation](../../src/task_context/connections/discovery.rs).
+
 ### Shared originals across features
 
 A project notebook can hold a meeting and a specification independently of any

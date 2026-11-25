@@ -414,6 +414,114 @@ fn another_feature_requires_a_decision_only_with_current_evidence() {
 }
 
 #[test]
+fn first_encounter_follows_only_current_declared_reasons_and_separates_loose_wording() {
+    let e = env();
+    let engine = Engine::open_existing(&e.store).unwrap();
+    let run = |task: Option<&str>, cmd: Value| {
+        let mut req = json!({"workspace_id":e.wid,"command":cmd});
+        if let Some(id) = task {
+            req["task_id"] = json!(id);
+        }
+        engine
+            .task_context(&task_context::parse(req).unwrap(), &Control::unbounded())
+            .unwrap()
+    };
+    let ask = |q| run(None, json!({"op":"find_decisions","text":q}));
+    let origin = create(&engine);
+    let policy = "The depot retains the register after a transfer.";
+    let revision = apply(
+        &engine,
+        origin,
+        json!([add("register", "decision", policy)]),
+    )
+    .unwrap()["revision"]
+        .clone();
+    let reference = call(
+        &engine,
+        json!({"op":"decision_uses","entry_id":"register","expected_revision":revision}),
+    )
+    .unwrap()["decision_ref"]
+        .clone();
+    let reason = "Curators reconcile pigment slips before shipment.";
+    let feature = run(
+        Some("museum"),
+        json!({"op":"create","title":"Museum transfer"}),
+    );
+    let note = run(
+        Some("museum"),
+        json!({"op":"capture","source":"Curator minutes","text":"Review each collection.","expected_revision":feature["revision"]}),
+    );
+    // Two matching declarations to one target still yield a single decision.
+    let mut declarations = Vec::new();
+    for i in 0..9 {
+        let mut edit = add(&format!("curator-{i}"), "requirement", reason);
+        edit["entry"]["relies_on"] = reference.clone();
+        declarations.push(edit);
+    }
+    let feature = run(
+        Some("museum"),
+        json!({"op":"apply","expected_revision":note["revision"],"edits":declarations}),
+    );
+    let cite = run(
+        Some("investigation"),
+        json!({"op":"cite_source","expected_revision":revision,"entry_id":"register","origin_task_id":"museum","origin_entry_id":note["entry_id"],"capture_revision":note["capture_revision"],"quote":"Review each collection.","author":"Curator"}),
+    );
+    let query = "Which register governs a shipment?";
+    let report = ask(query);
+    assert_eq!(report["matching"], 1);
+    assert_eq!(report["unchecked_declarations"], 1);
+    let decision = &report["candidates"][0];
+    assert_eq!(decision["directly_cited_originals"], "current");
+    assert_eq!(decision["quote"], policy);
+    assert_eq!(decision["shared_words"], json!(["register"]));
+    let via = &decision["via_requirement"];
+    assert_eq!(via["quote"], reason);
+    assert_eq!(via["relies_on"], reference);
+    assert_eq!(via["shared_words"], json!(["shipment"]));
+    for c in [decision, via] {
+        let bytes = c["end"].as_u64().unwrap() - c["offset"].as_u64().unwrap();
+        assert_eq!(
+            run(
+                c["task_id"].as_str(),
+                json!({"op":"peek","entry_id":c["entry_id"],"offset":c["offset"],"bytes":bytes})
+            )["text"],
+            c["quote"]
+        );
+    }
+    let loose = ask("Does the depot authorize quarterly payroll transfer fees abroad?");
+    assert_eq!(loose["candidates"], json!([]));
+    assert!(loose["clarification"].is_string());
+    assert_eq!(
+        ask("depot register")["candidates"][0]["entry_id"],
+        "register"
+    );
+    let reason_only = ask("Who reconciles pigment slips?");
+    assert_eq!(reason_only["candidates"][0]["entry_id"], "register");
+    assert_eq!(reason_only["candidates"][0]["shared_words"], json!([]));
+    run(
+        Some("museum"),
+        json!({"op":"capture","source":"Curator minutes","text":"Skip the collection review.","expected_revision":feature["revision"],"supersedes":note["entry_id"]}),
+    );
+    assert_eq!(
+        ask(query)["candidates"][0]["directly_cited_originals"],
+        "needs_review"
+    );
+    run(
+        Some("investigation"),
+        json!({"op":"forget","expected_revision":cite["revision"]}),
+    );
+    assert_eq!(ask(query)["candidates"], json!([]));
+    let revision = create(&engine);
+    apply(
+        &engine,
+        revision,
+        json!([add("register", "decision", policy)]),
+    )
+    .unwrap();
+    assert_eq!(ask(query)["candidates"], json!([]));
+}
+
+#[test]
 fn later_note_finds_two_promises_and_reviews_only_the_connection() {
     let e = env();
     let mut engine = Engine::open_existing(&e.store).unwrap();

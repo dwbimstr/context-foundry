@@ -2,6 +2,8 @@
 //! Only a human disposition is persisted; word matches never revise a source.
 use super::*;
 mod dependents;
+mod discovery;
+use discovery::DecisionDiscovery;
 mod impact;
 mod source_review;
 pub use dependents::DecisionRef;
@@ -85,8 +87,16 @@ impl NoteWords {
     /// Score contiguous sentences so that a nearby exception can accompany
     /// its rule. Distant words in the same document cannot form a promise.
     fn best_passage<'a>(&self, original: &'a str) -> Option<(usize, &'a str, Vec<String>)> {
+        self.passage_with_minimum(original, 2)
+    }
+
+    fn passage_with_minimum<'a>(
+        &self,
+        original: &'a str,
+        minimum: usize,
+    ) -> Option<(usize, &'a str, Vec<String>)> {
         let mut best = None;
-        let mut best_rank = (1, std::cmp::Reverse(0));
+        let mut best_rank = (minimum - 1, std::cmp::Reverse(0));
         let mut consider = |start: usize, end: usize| {
             let raw = &original[start..end];
             let quote = raw.trim();
@@ -178,30 +188,37 @@ struct Suggestions {
     matching: usize,
     stale: usize,
     include_identical_captures: bool,
+    discovery: Option<DecisionDiscovery>,
 }
 
 impl Suggestions {
     fn workspace(
+        mut self,
         tx: &redb::ReadTransaction,
         workspace: &str,
         words: &NoteWords,
-        include_identical_captures: bool,
         control: &Control,
     ) -> FResult<Self> {
         let tasks = tx.open_table(TASKS)?;
-        let mut matches = Self {
-            include_identical_captures,
-            ..Self::default()
-        };
         for row in tasks.iter()? {
             control.check()?;
             let (key, value) = row?;
             let task = decode(value.value(), key.value(), workspace)?;
             if task.proposal.is_none() {
-                matches.collect(tx, &task, words, None, None, control)?;
+                self.collect(tx, &task, words, None, None, control)?;
             }
         }
-        Ok(matches)
+        if let Some(mut discovery) = self.discovery.take() {
+            discovery.follow(tx, workspace, words, &mut self, control)?;
+            for (_, _, lead) in &mut self.best {
+                source_review::mark_cited_originals(tx, workspace, lead, control)?;
+                if let Some(reason) = lead.get_mut("via_requirement") {
+                    source_review::mark_cited_originals(tx, workspace, reason, control)?;
+                }
+            }
+            self.discovery = Some(discovery);
+        }
+        Ok(self)
     }
     fn collect(
         &mut self,
@@ -242,7 +259,9 @@ impl Suggestions {
             let Some(kind) = prior_kind(e) else {
                 continue;
             };
-            let Some((offset, quote, shared)) = words.best_passage(&e.text) else {
+            let declaration = self.discovery.is_some() && e.relies_on.is_some();
+            let minimum = if declaration { 1 } else { 2 };
+            let Some((offset, quote, shared)) = words.passage_with_minimum(&e.text, minimum) else {
                 continue;
             };
             let links = source_links(tx, e)?;
@@ -250,18 +269,41 @@ impl Suggestions {
                 self.stale += 1;
                 continue;
             }
-            self.matching += 1;
             let mut source = citation(task, item, offset, quote, links);
             source["kind"] = json!(kind);
             source["shared_words"] = json!(shared);
             source["feature"] = json!(task.title);
-            self.best
-                .push((shared.len(), kind != PriorKind::AttributedAccount, source));
-            self.best
-                .sort_by_key(|(score, grounded, _)| std::cmp::Reverse((*score, *grounded)));
-            self.best.truncate(2);
+            if let Some(discovery) = &mut self.discovery {
+                if let Some(reference) = &e.relies_on {
+                    discovery.consider(reference, &source, &shared);
+                }
+                if !discovery.admits(words, quote, shared.len()) {
+                    discovery.weak_wording |= shared.len() >= 2;
+                    continue;
+                }
+            }
+            self.matching += 1;
+            self.offer(shared.len(), kind != PriorKind::AttributedAccount, source);
         }
         Ok(())
+    }
+
+    fn offer(&mut self, score: usize, grounded: bool, source: Value) {
+        let rank = |(score, grounded, v): &(usize, bool, Value)| {
+            (*score, v.get("via_requirement").is_some(), *grounded)
+        };
+        let candidate = (score, grounded, source);
+        if let Some(i) = self.best.iter().position(|(_, _, v)| {
+            v["task_id"] == candidate.2["task_id"] && v["entry_id"] == candidate.2["entry_id"]
+        }) {
+            if rank(&self.best[i]) >= rank(&candidate) {
+                return;
+            }
+            self.best.remove(i);
+        }
+        self.best.push(candidate);
+        self.best.sort_by_key(|v| std::cmp::Reverse(rank(v)));
+        self.best.truncate(2);
     }
 
     fn result(self) -> Value {
@@ -278,10 +320,17 @@ impl Suggestions {
                 "Which of these two passages does the note affect, or does it apply to both?"
                     .into(),
             ),
+            [] if self.discovery.as_ref().is_some_and(|d| d.weak_wording) => Some(
+                "Which feature or rule do you mean? The passages share too little of your question to identify a decision.".into(),
+            ),
             _ => None,
         };
-        json!({"basis":"shared_word_stems","candidates":candidates,"matching":self.matching,
-               "stale_omitted":self.stale,"clarification":clarification})
+        let mut result = json!({"basis":"shared_word_stems","candidates":candidates,"matching":self.matching,
+               "stale_omitted":self.stale,"clarification":clarification});
+        if let Some(discovery) = self.discovery {
+            result["unchecked_declarations"] = json!(discovery.omitted);
+        }
+        result
     }
 }
 
@@ -294,8 +343,14 @@ impl Engine {
     ) -> FResult<Value> {
         text(note, QUERY_BYTES)?;
         let tx = self.db.begin_read()?;
-        let mut result =
-            Suggestions::workspace(&tx, workspace, &NoteWords::new(note), false, control)?.result();
+        let mut words = NoteWords::new(note);
+        let discovery = DecisionDiscovery::new(note, &mut words);
+        let mut result = Suggestions {
+            discovery: Some(discovery),
+            ..Suggestions::default()
+        }
+        .workspace(&tx, workspace, &words, control)?
+        .result();
         result["workspace_id"] = json!(workspace);
         Ok(result)
     }

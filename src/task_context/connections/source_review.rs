@@ -318,7 +318,12 @@ fn excerpt_at(body: &str, offset: usize) -> (usize, &str) {
 }
 
 impl SourceCitation {
-    fn evidence(&self, tx: &redb::ReadTransaction, workspace: &str) -> FResult<Value> {
+    fn evidence(
+        &self,
+        tx: &redb::ReadTransaction,
+        workspace: &str,
+        include_excerpt: bool,
+    ) -> FResult<Value> {
         let mut v = json!({"origin_task_id":self.origin_task_id,"origin_entry_id":self.origin_entry_id,
             "capture_revision":self.capture_revision,"citation_revision":self.revision,"confirmed_by":self.author,
             "wording":self.wording,"status":"missing_original"});
@@ -374,6 +379,9 @@ impl SourceCitation {
             }
         };
         v["status"] = json!(status);
+        if !include_excerpt {
+            return Ok(v);
+        }
         let (mut excerpt, comparison) = if let Some(link) = latest.entry.source_links.first() {
             let parsed = store::HandleRef::parse(link)?;
             let Some((meta, body)) = crate::boundary::source_in(tx, &parsed.path)? else {
@@ -432,6 +440,37 @@ impl SourceCitation {
     }
 }
 
+/// Attach the status of this entry's own cited originals to a lookup result.
+/// Detailed comparisons remain available through source_review.
+pub(super) fn mark_cited_originals(
+    tx: &redb::ReadTransaction,
+    workspace: &str,
+    passage: &mut Value,
+    control: &Control,
+) -> FResult<()> {
+    let table = tx.open_table(TASKS)?;
+    let id = passage["task_id"].as_str().expect("constructed citation");
+    let row = table.get(id)?.ok_or(FoundryError::NotFound)?;
+    let task = decode(row.value(), id, workspace)?;
+    let active = task.active_citations();
+    let mut has_citations = false;
+    for link in active
+        .values()
+        .filter(|link| passage["entry_id"] == link.entry_id)
+    {
+        has_citations = true;
+        control.check()?;
+        if link.evidence(tx, workspace, false)?["status"] != "current" {
+            passage["directly_cited_originals"] = json!("needs_review");
+            return Ok(());
+        }
+    }
+    if has_citations {
+        passage["directly_cited_originals"] = json!("current");
+    }
+    Ok(())
+}
+
 /// Follow the feature's existing documented decision reference. A recreated
 /// same-name decision has a different token and cannot inherit the old support.
 fn decision_supports(
@@ -473,7 +512,7 @@ fn decision_supports(
         .filter(|c| c.entry_id == reference.entry_id)
     {
         control.check()?;
-        let mut support = link.evidence(tx, workspace)?;
+        let mut support = link.evidence(tx, workspace, true)?;
         support["via_decision"] = json!(reference);
         supports.push(support);
     }
@@ -557,7 +596,7 @@ impl Engine {
                 let mut supports = Vec::new();
                 for link in active.values().filter(|c| c.entry_id == entry.entry.id) {
                     control.check()?;
-                    supports.push(link.evidence(&tx, workspace)?);
+                    supports.push(link.evidence(&tx, workspace, true)?);
                 }
                 let mut dependency = Value::Null;
                 if let Some(reference) = &entry.entry.relies_on {

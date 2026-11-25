@@ -279,7 +279,11 @@ impl Routes {
             }
             leads
         } else {
-            Suggestions::workspace(tx, &proposal.workspace_id, &words, true, control)?
+            Suggestions {
+                include_identical_captures: true,
+                ..Suggestions::default()
+            }
+            .workspace(tx, &proposal.workspace_id, &words, control)?
         };
         let mut routes = Self {
             items: Vec::new(),

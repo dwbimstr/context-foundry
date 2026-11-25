@@ -588,7 +588,12 @@ which supplied words led to a source. Use `peek` to inspect an earlier account.
 
 When a later meeting note arrives and you do not know which feature it
 belongs to, send `{"op":"find_decisions","text":"<meeting note>"}` with only
-the workspace ID. Use the returned feature and revision to capture the note.
+the workspace ID. A decision found through another feature includes
+`via_requirement`. Quote the decision and the requirement that led to it.
+Either passage can flag its directly cited originals as `needs_review`;
+use `source_review` for the changed support before acting on the policy.
+If Foundry returns only a clarification, ask which feature or rule the
+operator means. Once the feature is identified, use its revision to capture the note.
 Read `{"op":"connections","entry_id":"<captured note ID>"}` to see the note
 beside the earlier promises. Show their authors, exact passages and the
 clarification to the operator. After their choice, send `review_connection`
