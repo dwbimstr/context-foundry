@@ -1,5 +1,42 @@
 # Validation
 
+## Following a reviewed quote after an edit — 2026-11-25
+
+An operator asked “When we retire the parent, what happens to the editor’s
+changes?” Task cleanup directly cited the specification. Editorial handoff
+relied on that decision and also cited Mina's meeting statement. The spec
+passage they relied on was “Keep the separately edited copy when its parent
+is retired.”
+
+Fresh local MCP clients reopened the same isolated notebook after each
+indexed edit. Both features needed review in every row. The separate meeting
+citation stayed current.
+
+| Change to the spec | What Foundry returned |
+|---|---|
+| Prefixed the sentence with “Préface. ” | Unique, moved. Retrieve reopened just the original sentence at UTF-8 byte range [10, 69). |
+| Added an appendix after the sentence | Unique, same position. Retrieve reopened the sentence at [0, 59). |
+| Added a second copy of the sentence | Repeated. Foundry labeled the excerpt as a position preview. |
+| Replaced the sentence with a request for the editor’s approval | Absent. The preview showed the replacement at the former position. |
+| Removed the file and reindexed | Source missing. Foundry returned neither a comparison nor a current excerpt. |
+
+We then supplied corrected meeting minutes with a new introduction. Peek of
+the cited capture at [17, 87) recovered Mina’s exact sentence, “Mina: Handoff
+must preserve the editor’s independently amended copy.” The reviewed original
+and its author stayed available. A unique byte match helps the operator find
+the passage again. Meaning and reconfirmation still require a review.
+
+The two extended store tests cover overlapping repetitions, UTF-8 offsets,
+and a fresh indexed line selection whose original passage moved outside the
+selection. Local transcripts are under `runs/revised-quote-2026-11-25/`.
+
+All eight offline gates passed on `2a8461e`. The default suite passed
+1,328 tests with 35 ignored. The pilot suite passed 133 with 1 ignored.
+Both had zero failures. The installed desktop executable matched the gated
+binary by SHA-256 (`57d9414eb6fc0c68…`). The same local
+MCP exercise passed against the installed executable with a second isolated
+store. This run used local stdio clients and incurred no provider spend.
+
 ## First-try decision write in a fresh desktop project chat — 2026-11-25
 
 The earlier desktop chat made three unsuccessful decision writes before it

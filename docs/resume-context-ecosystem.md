@@ -81,6 +81,12 @@ and dated paragraphs below are history.
   chat saved a new decision on its first attempt and recovered the exact
   words and attribution. [First-write receipt](validation.md#first-try-decision-write-in-a-fresh-desktop-project-chat--2026-11-25).
 
+  After an edit, Foundry now tells the reviewer whether the cited words
+  appear once, appear more than once, or have disappeared. A unique match
+  reopens the exact passage even when it moved. A missing file stays
+  unresolved. The operator still decides whether the words carry the same
+  meaning. [Revised quote walkthrough](validation.md#following-a-reviewed-quote-after-an-edit--2026-11-25).
+
 - **Finite desktop qualification complete, 2026-11-23.** A fresh ChatGPT
   desktop project chat verified the real project store and retrieved
   `apply_owned_block` at `src/bootstrap.rs:904`. Through the separate exercise
