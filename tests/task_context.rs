@@ -449,7 +449,49 @@ fn named_feature_recovers_decisions_when_the_operator_remembers_only_the_title()
     assert_eq!(scoped["candidates"].as_array().unwrap().len(), 1);
     assert_eq!(scoped["candidates"][0]["entry_id"], "green");
     assert_eq!(scoped["candidates"][0]["quote"], "Use green labels.");
-    assert_eq!(ask(Some("Repair"))["candidates"], json!([]));
+    let partial = ask(Some("RETRY policy"));
+    assert_eq!(partial["candidates"], json!([]));
+    assert_eq!(
+        partial["feature_title_options"],
+        json!(["Repair a retry policy"])
+    );
+    assert_eq!(partial["matching_feature_titles"], 1);
+    assert!(partial["clarification"].is_string());
+    assert!(!partial.to_string().contains("Use green labels."));
+    let confirmed = ask(partial["feature_title_options"][0].as_str());
+    assert_eq!(confirmed["candidates"][0]["quote"], "Use green labels.");
+    for fragment in ["retr", "repair policy", "a", "other"] {
+        let miss = ask(Some(fragment));
+        assert_eq!(miss["candidates"], json!([]));
+        assert!(
+            miss["feature_title_options"]
+                .as_array()
+                .is_none_or(Vec::is_empty)
+        );
+    }
+    for (id, title) in [
+        ("batch", "Batch retry policy"),
+        ("jobs", "Jobs retry policy"),
+        ("uplink", "Uplink retry policy"),
+        ("audit", "Backup audit"),
+    ] {
+        let feat =
+            run(json!({"workspace_id":e.wid,"task_id":id,"command":{"op":"create","title":title}}));
+        run(
+            json!({"workspace_id":e.wid,"task_id":id,"command":{"op":"apply","expected_revision":feat["revision"],"edits":[add("private","decision","Inspect the full run first.")]}}),
+        );
+    }
+    let several = ask(Some("retry policy"));
+    assert_eq!(several["matching_feature_titles"], 4);
+    assert_eq!(several["candidates"], json!([]));
+    let options = several["feature_title_options"].as_array().unwrap();
+    assert_eq!(options.len(), 3);
+    let distinct: std::collections::BTreeSet<_> =
+        options.iter().map(|name| name.as_str().unwrap()).collect();
+    assert_eq!(distinct.len(), 3);
+    assert!(distinct.iter().all(|name| name.ends_with("retry policy")));
+    assert!(!several.to_string().contains("Backup audit"));
+    assert!(!several.to_string().contains("Inspect the full run first."));
     apply(
         &engine,
         saved["revision"].as_u64().unwrap(),

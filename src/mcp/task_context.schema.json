@@ -33,7 +33,7 @@
         "lines": {"type": "string", "description": "Optional one-based line range of the indexed source, e.g. 319-335."},
         "supersedes": {"type": "string", "description": "For an explicit correction, the earlier captured entry ID."},
         "title": {"type": "string"},
-        "feature_title": {"type": "string", "minLength": 1, "maxLength": 1024, "description": "Optional exact saved feature title supplied by the operator. Retry with the original question in text."},
+        "feature_title": {"type": "string", "minLength": 1, "maxLength": 1024, "description": "Operator-supplied saved feature title or remembered consecutive title words. Keep the original question in text. If feature_title_options are returned, ask which exact title to use, even for one option."},
         "expected_revision": {"type": "integer", "minimum": 0},
         "edits": {
           "type": "array",

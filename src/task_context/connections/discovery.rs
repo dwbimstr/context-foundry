@@ -127,6 +127,16 @@ impl DecisionDiscovery {
     }
 }
 
+const TITLE_OPTION_LIMIT: usize = 3;
+
+fn title_words(title: &str) -> Vec<String> {
+    title
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_lowercase)
+        .collect()
+}
+
 /// A title supplied by the operator narrows the scope; it makes no claim
 /// about which decision applies. Detect duplicate titles before showing text.
 pub(super) fn in_named_feature(
@@ -137,27 +147,64 @@ pub(super) fn in_named_feature(
     control: &Control,
 ) -> FResult<Value> {
     let mut feature = None;
+    let fragment = title_words(title);
+    let distinctive = fragment
+        .iter()
+        .any(|word| word.chars().count() >= 3 && !crate::store::prose_stopword(word));
+    let mut partial_count = 0;
+    // Only offer titles that can be selected unambiguously on the next call.
+    let mut partial: Vec<(String, bool)> = Vec::new();
     let mut result = json!({"workspace_id": workspace, "basis": "operator_named_feature",
         "candidates": [], "matching": 0, "stale_omitted": 0});
     for row in tx.open_table(TASKS)?.iter()? {
         control.check()?;
         let (key, raw) = row?;
         let task = decode(raw.value(), key.value(), workspace)?;
-        if task.proposal.is_some() || !task.title.trim().eq_ignore_ascii_case(title) {
+        if task.proposal.is_some() {
             continue;
         }
-        if feature.is_some() {
-            result["clarification"] = json!(
-                "Several features have that title. What words do you remember from the decision itself?"
-            );
-            return Ok(result);
+        let saved = task.title.trim();
+        if saved.eq_ignore_ascii_case(title) {
+            if feature.is_some() {
+                result["clarification"] = json!(
+                    "Several features have that title. What words do you remember from the decision itself?"
+                );
+                return Ok(result);
+            }
+            feature = Some(task);
+        } else if feature.is_none()
+            && distinctive
+            && title_words(saved)
+                .windows(fragment.len())
+                .any(|w| w == fragment)
+        {
+            partial_count += 1;
+            if let Some((_, duplicate)) = partial
+                .iter_mut()
+                .find(|(name, _)| name.trim().eq_ignore_ascii_case(saved))
+            {
+                *duplicate = true;
+            } else if partial.len() < TITLE_OPTION_LIMIT {
+                partial.push((task.title, false));
+            }
         }
-        feature = Some(task);
     }
     let Some(task) = feature else {
-        result["clarification"] = json!(
-            "I couldn't find that exact feature title. What other title or words from the decision do you remember?"
-        );
+        let titles: Vec<_> = partial
+            .into_iter()
+            .filter_map(|(name, duplicate)| (!duplicate).then_some(name))
+            .collect();
+        result["clarification"] = json!(match (titles.len(), partial_count) {
+            (0, 0) =>
+                "I couldn't find a feature with those title words. What other title words or phrase from the decision do you remember?",
+            (0, _) =>
+                "Several matching features have the same title. What other title words or phrase from the decision do you remember?",
+            (1, 1) => "Is this the feature you meant?",
+            _ =>
+                "Which of these features did you mean? If yours isn't shown, what other title word do you remember?",
+        });
+        result["matching_feature_titles"] = json!(partial_count);
+        result["feature_title_options"] = json!(titles);
         return Ok(result);
     };
     let mut options = Suggestions::default();

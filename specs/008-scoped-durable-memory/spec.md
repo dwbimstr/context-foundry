@@ -567,11 +567,22 @@ The task-scoped connection review and saved proposal operations retain their exi
 
 If a workspace lookup offers a `recovery_question`, a client helping the
 operator recover a saved decision asks it. After the operator supplies the
-feature title, repeat `find_decisions` with the original `text` and their
-`feature_title`. Match the whole title after trimming surrounding whitespace,
-ignoring ASCII case. A unique title scopes the read to at most two current
-decision options from that feature, with wording matches first. A missing
-or ambiguous title returns a clarification and an empty candidate list.
+title or the part they remember, repeat `find_decisions` with the original
+`text` and their words in `feature_title`. An exact title takes priority,
+ignoring surrounding whitespace and ASCII case. A unique exact title scopes
+the read to at most two current decisions, with wording matches first.
+Duplicate exact titles remain unresolved.
+
+When there is no exact match, a fragment can match a contiguous sequence of
+whole title words in order, ignoring case. It must include a distinctive
+word. Short or common function words alone cannot suggest a title. The
+response gives the total `matching_feature_titles`, up to three saved title
+strings in `feature_title_options`, and an empty decision candidate list.
+Ask the operator to choose an exact title, even when only one is offered.
+If the desired title is outside the shown options, ask for a longer fragment.
+Retry with the original question and the title the operator selected.
+An unknown title returns a clarification and an empty decision candidate list.
+
 Ask which quoted decision applies. A decision with changed supporting
 evidence includes one `changed_support` example from the existing review
 operation. Its current excerpt retains its role as an exact quote or position
