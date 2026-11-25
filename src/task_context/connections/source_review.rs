@@ -181,20 +181,15 @@ impl Task {
                     }
                     offset
                 } else {
-                    let start = body
-                        .find(&pick.quote)
-                        .ok_or_else(|| invalid("quote is absent from the original"))?;
-                    let next = start
-                        + pick
-                            .quote
-                            .chars()
-                            .next()
-                            .expect("nonempty quote")
-                            .len_utf8();
-                    if body[next..].contains(&pick.quote) {
-                        return Err(invalid("repeated quote requires its byte offset"));
+                    match locate_quote(body, &pick.quote) {
+                        QuoteMatch::Unique(start) => start,
+                        QuoteMatch::Absent => {
+                            return Err(invalid("quote is absent from the original"));
+                        }
+                        QuoteMatch::Repeated => {
+                            return Err(invalid("repeated quote requires its byte offset"));
+                        }
                     }
-                    start
                 };
                 let link = SourceCitation {
                     entry_id: pick.entry_id.clone(),
@@ -277,6 +272,43 @@ impl Task {
     }
 }
 
+enum QuoteMatch {
+    Absent,
+    Unique(usize),
+    Repeated,
+}
+
+// Both callers have a validated, nonempty quote. The first and last matches
+// distinguish overlapping repetitions too (e.g. "aba" in "ababa").
+fn locate_quote(body: &str, quote: &str) -> QuoteMatch {
+    match body.find(quote) {
+        None => QuoteMatch::Absent,
+        Some(first) if body.rfind(quote) == Some(first) => QuoteMatch::Unique(first),
+        Some(_) => QuoteMatch::Repeated,
+    }
+}
+
+fn revised_excerpt<'a>(
+    body: &'a str,
+    quote: &str,
+    previous_offset: Option<usize>,
+) -> (usize, &'a str, Value) {
+    let status = match locate_quote(body, quote) {
+        QuoteMatch::Unique(at) => {
+            let moved = previous_offset.map(|old| at != old);
+            return (
+                at,
+                &body[at..at + quote.len()],
+                json!({"status":"unique","moved":moved}),
+            );
+        }
+        QuoteMatch::Absent => "absent",
+        QuoteMatch::Repeated => "repeated",
+    };
+    let (at, preview) = excerpt_at(body, previous_offset.unwrap_or(0));
+    (at, preview, json!({"status":status}))
+}
+
 fn excerpt_at(body: &str, offset: usize) -> (usize, &str) {
     let mut start = if offset < body.len() { offset } else { 0 };
     while !body.is_char_boundary(start) {
@@ -331,35 +363,71 @@ impl SourceCitation {
             return Ok(v);
         }
         let links = source_links(tx, &latest.entry)?;
-        if let Some(link) = links.iter().find(|l| l["status"] != "fresh") {
-            v["status"] = json!(if link["status"] == "missing" {
-                "indexed_source_missing"
-            } else {
-                "indexed_source_changed"
-            });
-            let parsed = store::HandleRef::parse(&latest.entry.source_links[0])?;
-            // Return a window at the old position, explicitly a preview, never
-            // an assertion that a sentence newly at this position is equivalent.
-            if let Some((meta, body)) = crate::boundary::source_in(tx, &parsed.path)? {
-                let (offset, preview) =
-                    excerpt_at(&body, (parsed.start as usize).saturating_add(self.offset));
-                let handle = crate::SourceHandle {
-                    workspace_id: workspace.into(),
-                    path: parsed.path,
-                    sha256: meta.hash,
-                    start: offset as u64,
-                    end: (offset + preview.len()) as u64,
-                };
-                v["current_excerpt"] =
-                    json!({"handle":handle.to_v2(),"offset":offset,"text":preview});
+        let stale = links.iter().find(|l| l["status"] != "fresh");
+        let status = match stale {
+            Some(link) if link["status"] == "missing" => "indexed_source_missing",
+            Some(_) => "indexed_source_changed",
+            None if latest.entry.id != old.entry.id => "source_revised",
+            None => {
+                v["status"] = json!("current");
+                return Ok(v);
             }
-        } else if latest.entry.id != old.entry.id {
-            v["status"] = json!("source_revised");
-            let (offset, preview) = excerpt_at(&latest.entry.text, self.offset);
-            v["current_excerpt"] = citation(&origin, latest, offset, preview, links);
+        };
+        v["status"] = json!(status);
+        let (mut excerpt, comparison) = if let Some(link) = latest.entry.source_links.first() {
+            let parsed = store::HandleRef::parse(link)?;
+            let Some((meta, body)) = crate::boundary::source_in(tx, &parsed.path)? else {
+                return Ok(v);
+            };
+            let previous_offset = old
+                .entry
+                .source_links
+                .first()
+                .map(|link| store::HandleRef::parse(link))
+                .transpose()?
+                .filter(|h| h.path == parsed.path)
+                .map(|h| h.start as usize + self.offset);
+            let (offset, passage, comparison) = revised_excerpt(&body, quote, previous_offset);
+            let handle = crate::SourceHandle {
+                workspace_id: workspace.into(),
+                path: parsed.path,
+                sha256: meta.hash,
+                start: offset as u64,
+                end: (offset + passage.len()) as u64,
+            };
+            // A fresh capture can also be reopened with peek if it contains
+            // the returned span. Peek uses capture-relative byte offsets.
+            let mut excerpt =
+                if stale.is_none() && handle.start >= parsed.start && handle.end <= parsed.end {
+                    citation(
+                        &origin,
+                        latest,
+                        (handle.start - parsed.start) as usize,
+                        passage,
+                        links,
+                    )
+                } else {
+                    json!({"offset":offset})
+                };
+            excerpt["handle"] = json!(handle.to_v2());
+            excerpt["text"] = json!(passage);
+            (excerpt, comparison)
         } else {
-            v["status"] = json!("current");
-        }
+            let previous_offset = old.entry.source_links.is_empty().then_some(self.offset);
+            let (offset, passage, comparison) =
+                revised_excerpt(&latest.entry.text, quote, previous_offset);
+            (
+                citation(&origin, latest, offset, passage, links),
+                comparison,
+            )
+        };
+        excerpt["role"] = json!(if comparison["status"] == "unique" {
+            "exact_quote"
+        } else {
+            "position_preview"
+        });
+        v["current_excerpt"] = excerpt;
+        v["quote_match"] = comparison;
         Ok(v)
     }
 }

@@ -2428,6 +2428,8 @@ fn shared_originals_report_direct_and_inherited_impact_after_an_indexed_edit() {
     assert_eq!(changed["status"], "indexed_source_changed");
     assert_eq!(changed["original"]["quote"], old);
     assert_eq!(changed["current_excerpt"]["text"], new);
+    assert_eq!(changed["quote_match"], json!({"status":"absent"}));
+    assert_eq!(changed["current_excerpt"]["role"], "position_preview");
     assert_eq!(changed["via_decision"], decision["decision_ref"]);
     let collision = report("Can we retire the parent account after billing closes?");
     assert!(collision["clarification"].is_string());
@@ -2438,7 +2440,76 @@ fn shared_originals_report_direct_and_inherited_impact_after_an_indexed_edit() {
             .iter()
             .any(|r| r["feature"] == "billing" && r["review_status"] == "no_confirmed_source")
     );
-    let revised=send(&engine,Some("notebook"),json!({"op":"capture","source":"spec.md","author":"Li","supersedes":spec["entry_id"],"expected_revision":spec["revision"]})).unwrap();
+    for (body, expected, offset) in [
+        (
+            format!("{old} New appendix."),
+            json!({"status":"unique","moved":false}),
+            0,
+        ),
+        (
+            format!("Préface. {old} New appendix."),
+            json!({"status":"unique","moved":true}),
+            "Préface. ".len(),
+        ),
+        (
+            format!("{old} Also: {old}"),
+            json!({"status":"repeated"}),
+            0,
+        ),
+    ] {
+        engine.replace_source("spec.md", &body).unwrap();
+        let review = report("What requires review?");
+        let row = review["claims"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["feature"] == "handoff")
+            .unwrap();
+        assert_eq!(row["review_status"], "needs_review");
+        assert_eq!(row["supports"][0]["status"], "current");
+        let support = &row["supports"][1];
+        assert_eq!(support["quote_match"], expected);
+        let excerpt = &support["current_excerpt"];
+        assert_eq!(excerpt["offset"], offset);
+        let read = engine
+            .retrieve(excerpt["handle"].as_str().unwrap(), None, 1024)
+            .unwrap();
+        let wanted = if expected["status"] == "unique" {
+            old
+        } else {
+            &body
+        };
+        assert_eq!(read.span, wanted.as_bytes());
+    }
+    // A corrected line selection can exclude the original quote even when
+    // it survives elsewhere in the current indexed file.
+    engine
+        .replace_source("spec.md", &format!("{new}\n{old}"))
+        .unwrap();
+    let revised=send(&engine,Some("notebook"),json!({"op":"capture","source":"spec.md","lines":"1-1","author":"Li","supersedes":spec["entry_id"],"expected_revision":spec["revision"]})).unwrap();
+    let queue = report("Can we retire the parent?");
+    let handoff = queue["claims"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["feature"] == "handoff")
+        .unwrap();
+    let support = &handoff["supports"][1];
+    assert_eq!(support["status"], "source_revised");
+    assert_eq!(
+        support["quote_match"],
+        json!({"status":"unique","moved":true})
+    );
+    assert_eq!(support["current_excerpt"]["role"], "exact_quote");
+    assert!(support["current_excerpt"]["entry_id"].is_null());
+    let read = engine
+        .retrieve(
+            support["current_excerpt"]["handle"].as_str().unwrap(),
+            None,
+            1024,
+        )
+        .unwrap();
+    assert_eq!(read.span, old.as_bytes());
     assert!(
         send(
             &engine,
@@ -2492,7 +2563,7 @@ fn shared_original_identity_survives_a_pasted_revision_but_never_resurrects_afte
     let new =
         || send("notes", json!({"op":"create","title":"Notebook"})).unwrap()["revision"].clone();
     let capture = |rev: Value| {
-        send("notes",json!({"op":"capture","expected_revision":rev,"source":"Meeting","author":"Ada","text":"Résumé. Go. Go."})).unwrap()
+        send("notes",json!({"op":"capture","expected_revision":rev,"source":"Meeting","author":"Ada","text":"Résumé. ha ha ha!"})).unwrap()
     };
     let old = capture(new());
     let f = create(&engine);
@@ -2502,7 +2573,7 @@ fn shared_original_identity_survives_a_pasted_revision_but_never_resurrects_afte
         json!([add("rule", "constraint", "Operator confirmation required.")]),
     )
     .unwrap();
-    let mut cite = json!({"op":"cite_source","entry_id":"rule","expected_revision":f["revision"],"origin_task_id":"notes","origin_entry_id":old["entry_id"],"capture_revision":old["capture_revision"],"quote":"Go.","author":"Ada"});
+    let mut cite = json!({"op":"cite_source","entry_id":"rule","expected_revision":f["revision"],"origin_task_id":"notes","origin_entry_id":old["entry_id"],"capture_revision":old["capture_revision"],"quote":"ha ha","author":"Ada"});
     assert!(send("investigation", cite.clone()).is_err());
     cite["offset"] = json!(1);
     assert!(send("investigation", cite.clone()).is_err());
@@ -2519,12 +2590,28 @@ fn shared_original_identity_survives_a_pasted_revision_but_never_resurrects_afte
     };
     assert_eq!(impact()["status"], "source_revised");
     assert_eq!(impact()["current_excerpt"]["quote"], "Stop.");
+    assert_eq!(impact()["quote_match"], json!({"status":"absent"}));
+    let correction=send("notes",json!({"op":"capture","source":"Renamed minutes","author":"Ada","text":"Édition finale. ha ha. Final decision.","supersedes":changed["entry_id"],"expected_revision":changed["revision"]})).unwrap();
+    let support = impact();
+    assert_eq!(
+        support["quote_match"],
+        json!({"status":"unique","moved":true})
+    );
+    let current = &support["current_excerpt"];
+    assert_eq!(current["entry_id"], correction["entry_id"]);
+    assert_eq!(current["quote"], "ha ha");
+    assert_eq!(current["offset"], "Édition finale. ".len());
+    assert_eq!(current["end"], "Édition finale. ha ha".len());
+
+    let repeated=send("notes",json!({"op":"capture","source":"Renamed minutes","author":"Ada","text":"Chorus: ha ha ha!","supersedes":correction["entry_id"],"expected_revision":correction["revision"]})).unwrap();
+    assert_eq!(impact()["quote_match"], json!({"status":"repeated"}));
     send(
         "notes",
-        json!({"op":"forget","expected_revision":changed["revision"]}),
+        json!({"op":"forget","expected_revision":repeated["revision"]}),
     )
     .unwrap();
     assert_eq!(impact()["status"], "missing_original");
+    assert!(impact()["quote_match"].is_null());
     let recreated = capture(new());
     assert_eq!(old["entry_id"], recreated["entry_id"]);
     assert_ne!(old["capture_revision"], recreated["capture_revision"]);

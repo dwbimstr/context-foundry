@@ -111,11 +111,21 @@ task records or indexed sources requires a new first page. Each claim names
 its feature and review status, the basis of a question match, any declared
 dependency and the quoted sources for direct and inherited support. A needs_review
 row without a question match belongs to the workspace queue. Current describes
-the recorded source revision. A changed quote's current_excerpt is a preview
-at the old position, which can shift across edits. Follow the handle or use
-peek for the original. A missing or recreated original cannot provide a quote.
-A changed document conservatively reopens its citations, including when the
-textual change might be elsewhere in that document.
+the recorded source revision.
+
+After an edit, compare the exact bytes of the originally cited passage with
+the current supplied capture or the complete current indexed file at its path.
+A unique occurrence returns `quote_match.status = unique` and a current
+excerpt limited to those exact bytes. Its handle or capture byte range lets
+the operator reopen it. `moved` compares the byte positions within the two
+supplied captures, or within the same indexed file. A change of origin with no
+comparable position leaves `moved` null. Zero occurrences give `absent` and
+multiple occurrences, including overlaps, give `repeated`. In those two cases
+the current excerpt has role `position_preview`. A unique match has role
+`exact_quote`. Missing or inaccessible evidence
+cannot establish absence. Each independently cited source retains its own
+status. Every changed source still needs review because intervening edits
+can change the meaning of a verbatim passage.
 
 Each claim can cite four distinct source lineages directly and inherit the
 cited decision's direct sources. A new confirmation on the same lineage
