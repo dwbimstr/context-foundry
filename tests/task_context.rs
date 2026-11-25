@@ -1260,12 +1260,27 @@ async fn experimental_mcp_tool_is_opt_in_and_matches_cli_state() {
             enabled
         );
         if enabled {
-            let schema = &catalog
+            let tool = catalog
                 .tools
                 .iter()
                 .find(|t| t.name == "task_context")
+                .unwrap();
+            // Desktop clients can see the description even when arguments render as unknown.
+            let mut example = tool
+                .description
+                .as_deref()
                 .unwrap()
-                .input_schema;
+                .lines()
+                .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+                .find(|request| request["command"]["op"] == "apply")
+                .expect("catalog includes a complete apply request");
+            example["workspace_id"] = json!(e.wid);
+            let request = task_context::parse(example).expect("advertised decision request parses");
+            assert!(
+                matches!(request.command, task_context::Command::Apply { ref edits, .. }
+                if matches!(edits.as_slice(), [task_context::Edit::Add { entry }] if entry.kind == task_context::Kind::Decision))
+            );
+            let schema = &tool.input_schema;
             let command = &schema["properties"]["command"];
             assert_eq!(command["required"], json!(["op"]));
             let rules = command["allOf"].as_array().expect("per-operation rules");
