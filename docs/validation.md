@@ -1,5 +1,39 @@
 # Validation
 
+## First-try decision write in a fresh desktop project chat — 2026-11-25
+
+The earlier desktop chat made three unsuccessful decision writes before it
+received the nested command shape. The project Foundry tool now advertises a
+complete request with the workspace and task IDs, the revision from create or
+inspect, and the decision under `command.edits[].entry`. The SDK catalog
+test reads the example out of the running server's description and checks
+that the request parser accepts a single decision addition.
+
+A new local ChatGPT project chat received an ordinary-language request to
+save Nila's decision from the dispatch review and read it back. Its prompt
+supplied the words and attribution. The chat saw the advertised example in
+its tool lookup and used native Foundry calls for the entire task. The seven
+calls, in order, were status, list, create, apply, inspect, peek and list.
+All seven succeeded in one turn without follow-up syntax guidance.
+
+On the actual project store (`2f558a2157b9c452…`, source revision 554), create
+returned revision 14 for **Desktop check — Dispatch manifest**. The only
+apply used that revision and committed revision 15. Inspect returned entry
+`sealed-dispatch-manifest`, kind `decision`, author `Nila` and provenance
+`dispatch review`. Peek recovered the exact sentence “A sealed dispatch
+manifest keeps the destination approved at handoff.” The four existing tasks
+kept their revisions. The labeled acceptance decision remains available.
+
+Only the project Foundry server was restarted. The exercise used the
+existing desktop session and launched no separate provider job. Both
+Prakarana registrations were disabled. A separate status probe from the
+earlier chat failed during initialization while the fresh chat owned the
+store. Local receipts are under `runs/desktop-decision-first-write-2026-11-25/`.
+
+All eight offline local gates passed on `a070522`. The default suite passed 1,328
+tests with 35 ignored. The pilot suite passed 133 with 1 ignored. Both had
+zero failures. The installed binary matched the default-suite binary by SHA-256.
+
 ## Shared-source review in a fresh desktop project chat — 2026-11-24
 
 A fresh ChatGPT desktop chat asked “When we retire the parent, what happens to

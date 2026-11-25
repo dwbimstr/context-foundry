@@ -2,7 +2,7 @@
 
 ## Current status — 2026-11-06
 
-Updated 2026-11-24. This section owns current status; other documents link here,
+Updated 2026-11-25. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
 - **Product goal, 2026-11-23.** An operator can give Foundry project context
@@ -76,8 +76,10 @@ and dated paragraphs below are history.
   and [workflow receipt](validation.md#which-features-need-review-after-a-specification-edit--2026-11-24).
   A fresh native ChatGPT desktop chat now verified the workflow on the actual
   project store. Its two labeled acceptance features remain open for review
-  after the supplied spec was edited. Adding the first decision needed guidance
-  on the nested add-entry shape. [Desktop receipt](validation.md#shared-source-review-in-a-fresh-desktop-project-chat--2026-11-24).
+  after the supplied spec was edited. [Desktop receipt](validation.md#shared-source-review-in-a-fresh-desktop-project-chat--2026-11-24).
+  The tool now includes a complete decision-write example. A fresh project
+  chat saved a new decision on its first attempt and recovered the exact
+  words and attribution. [First-write receipt](validation.md#first-try-decision-write-in-a-fresh-desktop-project-chat--2026-11-25).
 
 - **Finite desktop qualification complete, 2026-11-23.** A fresh ChatGPT
   desktop project chat verified the real project store and retrieved
