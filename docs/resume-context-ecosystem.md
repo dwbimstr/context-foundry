@@ -65,6 +65,16 @@ and dated paragraphs below are history.
   [Plan and commands](../specs/003-agent-retrieval-context/contracts/indirect-change-impact.md)
   and [walkthrough](validation.md#from-an-indirect-request-to-the-affected-feature--2026-11-24).
 
+  **From shared originals to a feature review, 2026-11-24.** Save a meeting
+  and specification once in a project notebook. A fresh client can ask in
+  the team's terms which claims need review. Each feature can cite a passage
+  directly or rely on a decision that cites it. An edit to the indexed spec
+  surfaced both affected features with their reasons and preserved the
+  independently cited meeting. Previously clarified words can lead a new
+  proposal to the original evidence. Similar wording asks for confirmation.
+  [Operator contract](../specs/003-agent-retrieval-context/contracts/shared-source-review.md)
+  and [workflow receipt](validation.md#which-features-need-review-after-a-specification-edit--2026-11-24).
+
 - **Finite desktop qualification complete, 2026-11-23.** A fresh ChatGPT
   desktop project chat verified the real project store and retrieved
   `apply_owned_block` at `src/bootstrap.rs:904`. Through the separate exercise

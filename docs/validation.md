@@ -1,5 +1,60 @@
 # Validation
 
+## Which features need review after a specification edit? — 2026-11-24
+
+A local project notebook received two originals. Mina's supplied meeting
+export said “Handoff must preserve the editor’s independently amended copy.”
+The indexed specification said “Keep the separately edited copy when its
+parent is retired.” Replaying capture produced the same receipt. Inspect
+showed two originals.
+
+Task cleanup cited the spec in its retention decision. Editorial handoff
+declared that it relied on that decision and cited the meeting directly.
+The feature's stated reason was “Handoff promises the editor that
+independently amended work will survive cleanup.” A new client asked
+“When we retire the parent, what happens to the editor’s changes?” It
+recovered both features and the previously confirmed team wording.
+
+The actual spec file was then edited to read “Request the editor’s approval
+before archiving a separately edited copy.” After indexing the file, a fresh
+client asked the same question. Both Task cleanup and Editorial handoff
+needed review. The latter showed the old spec quote, a retrievable current
+excerpt, the declared decision and the still-current meeting passage. The
+client retrieved the fixture's Rust implementation through the decision's code
+handle and reopened the original spec bytes with peek. Billing contacts shared
+some words and had no confirmed source for this dependency. The response
+asked the operator to clarify. Recording the correction and explicitly
+reconfirming its passage cleared both review flags on another fresh read.
+
+The separate replay of the previously saved real project used an isolated
+copy and an explicitly attributed exercise answer. “May I retire the parent
+while preserving a colleague's amendment?” previously returned zero leads.
+The new proposal found the saved clarification, named “Forget a task and its
+promoted project memory” and recovered the cited operator guide. The billing
+parent-account question also surfaced that example. Both required a new
+scope choice. A payroll question returned zero candidates. Withdrawing the
+old passage review removed the suggestion.
+
+The [plan, command contract and limits](../specs/003-agent-retrieval-context/contracts/shared-source-review.md)
+define source freshness and review scope. The fixtures establish this local
+workflow. They supply no population-level language-recall, model-cost or
+code-search accuracy estimate.
+
+All eight gates passed on `112bee0`. The default suite passed 1,328 tests
+with 35 ignored, counting the final result from each test executable and the
+doc tests. The pilot-feature suite passed 133 with one ignored. Both had zero
+failures. The artifact installed at the configured desktop path (SHA-256
+prefix `13fb12aef3411e44`) passed the four fresh MCP sessions above and the
+saved-case replay. The walkthrough used an isolated project and a separate
+copy of the previously saved case. Provider spend was zero.
+
+The already-open desktop chat returned `invalid_argument` for source_review
+after installation. A second process using the exact live project settings
+returned `store_busy` during initialization while the earlier owner held
+the store. The current session needs its Foundry server reconnected to load
+the installed build. Local transcripts are in
+`runs/shared-source-review-2026-11-24/`.
+
 ## From an indirect request to the affected feature — 2026-11-24
 
 “Someone rewrote the team's shared guidance. Can I clean up the original
