@@ -3,7 +3,7 @@
   "additionalProperties": false,
   "required": ["workspace_id", "command"],
   "allOf": [{
-    "if": {"properties": {"command": {"properties": {"op": {"enum": ["list", "find_decisions", "propose_change"]}}}}},
+    "if": {"properties": {"command": {"properties": {"op": {"enum": ["list", "find_decisions", "source_review", "propose_change"]}}}}},
     "then": {"not": {"required": ["task_id"]}},
     "else": {"required": ["task_id"]}
   }],
@@ -16,8 +16,14 @@
       "required": ["op"],
       "properties": {
         "op": {
-          "enum": ["list", "find_decisions", "propose_change", "proposal_impact", "clarify_proposal", "connections", "review_connection", "decision_uses", "create", "capture", "apply", "inspect", "peek", "render", "forget", "advise", "review", "promote", "search"]
+          "enum": ["list", "find_decisions", "source_review", "propose_change", "proposal_impact", "clarify_proposal", "cite_source", "withdraw_citation", "connections", "review_connection", "decision_uses", "create", "capture", "apply", "inspect", "peek", "render", "forget", "advise", "review", "promote", "search"]
         },
+        "origin_task_id": {"type": "string", "description": "Task that holds the original, such as the project notebook."},
+        "origin_entry_id": {"type": "string", "description": "Original entry_id from capture."},
+        "capture_revision": {"type": "integer", "description": "Stable capture_revision from capture or inspect. Legacy captures use zero."},
+        "quote": {"type": "string", "description": "Exact UTF-8 passage from the chosen original, up to 512 bytes."},
+        "wording": {"type": "string", "description": "Optional team wording explicitly associated with this claim by the operator."},
+        "citation_revision": {"type": "integer", "description": "Revision of the citation being withdrawn."},
         "scope_token": {"type":"string","pattern":"^[0-9a-f]{64}$","description":"The scope_token of the current interpretation explicitly selected by the operator."},
         "prior_span": {"type":"array","items":{"type":"integer","minimum":0},"minItems":2,"maxItems":2,"description":"The exact [offset,end] of the earlier passage shown to the operator."},
         "prior_id": {"type": "string", "description": "Earlier entry returned by connections."},
@@ -141,6 +147,9 @@
         }
       },
       "allOf": [
+        {"if":{"properties":{"op":{"const":"source_review"}}},"then":{"required":["op","text"],"additionalProperties":false,"properties":{"op":{},"text":{},"after_id":{}}}},
+        {"if":{"properties":{"op":{"const":"cite_source"}}},"then":{"required":["op","expected_revision","entry_id","origin_task_id","origin_entry_id","capture_revision","quote","author"],"additionalProperties":false,"properties":{"op":{},"expected_revision":{},"entry_id":{},"origin_task_id":{},"origin_entry_id":{},"capture_revision":{},"quote":{},"author":{},"offset":{},"wording":{}}}},
+        {"if":{"properties":{"op":{"const":"withdraw_citation"}}},"then":{"required":["op","expected_revision","citation_revision","author"],"additionalProperties":false,"properties":{"op":{},"expected_revision":{},"citation_revision":{},"author":{}}}},
         {"if":{"properties":{"op":{"const":"propose_change"}}},"then":{"required":["op","text","source","author"],"maxProperties":4}},
         {"if":{"properties":{"op":{"const":"proposal_impact"}}},"then":{"required":["op"],"maxProperties":1}},
         {"if":{"properties":{"op":{"const":"clarify_proposal"}}},"then":{"required":["op","expected_revision","text","author","disposition"],"additionalProperties":false,"properties":{"op":{},"expected_revision":{},"text":{},"author":{},"disposition":{},"scope_token":{}},"if":{"properties":{"disposition":{"const":"accept"}}},"then":{"required":["scope_token"]},"else":{"not":{"required":["scope_token"]}}}},

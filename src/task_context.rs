@@ -9,8 +9,9 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 mod capture;
 mod connections;
+pub use connections::CitationChoice;
 pub use connections::{ConnectionChoice, DecisionRef, ProposalAnswer};
-use connections::{ConnectionReview, ProposalState};
+use connections::{ConnectionReview, ProposalState, SourceCitation};
 
 pub(crate) const TASKS: TableDefinition<&str, &str> = TableDefinition::new("task_context");
 pub const MAX_REQUEST_BYTES: usize = 1024 * 1024;
@@ -64,6 +65,17 @@ pub enum Command {
         author: String,
     },
     ProposalImpact {},
+    SourceReview {
+        text: String,
+        #[serde(default)]
+        after_id: Option<String>,
+    },
+    CiteSource(CitationChoice),
+    WithdrawCitation {
+        expected_revision: u64,
+        citation_revision: u64,
+        author: String,
+    },
     ClarifyProposal {
         expected_revision: u64,
         #[serde(flatten)]
@@ -247,11 +259,16 @@ struct StoredEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     decision_revision: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    capture_revision: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     assertions_sha256: Option<String>,
     view: View,
 }
 impl StoredEntry {
     fn with_assertions(&self, mut value: Value) -> Value {
+        if self.entry.is_captured_source() {
+            value["capture_revision"] = json!(self.capture_revision.unwrap_or(0));
+        }
         if let Some(reference) = &self.entry.relies_on {
             value["declared_relies_on"] = json!(reference);
         }
@@ -275,6 +292,8 @@ struct Task {
     promotions: BTreeMap<String, Promotion>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     connection_reviews: Vec<ConnectionReview>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    source_citations: Vec<SourceCitation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     proposal: Option<ProposalState>,
 }
@@ -473,6 +492,7 @@ impl Task {
             }
         }
         self.validate_connection_reviews()?;
+        self.validate_source_citations()?;
         if let Some(proposal) = &self.proposal {
             proposal.validate(self)?;
         }
@@ -511,6 +531,7 @@ impl Task {
                 self.entries.push(StoredEntry {
                     entry: entry.clone(),
                     decision_revision: None,
+                    capture_revision: None,
                     sha256: crate::digest(entry.text.as_bytes()),
                     assertions_sha256: assertions_digest(&entry.assertions)?,
                     view: View {
@@ -602,7 +623,7 @@ pub fn parse(value: Value) -> FResult<Request> {
     }
     if matches!(
         value["command"]["op"].as_str(),
-        Some("list" | "find_decisions" | "propose_change")
+        Some("list" | "find_decisions" | "propose_change" | "source_review")
     ) && value.get("task_id").is_some()
     {
         return Err(invalid("workspace discovery omits task_id"));
@@ -611,7 +632,10 @@ pub fn parse(value: Value) -> FResult<Request> {
         serde_json::from_value(value).map_err(|_| invalid("invalid task request fields"))?;
     if !matches!(
         request.command,
-        Command::List { .. } | Command::FindDecisions { .. } | Command::ProposeChange { .. }
+        Command::List { .. }
+            | Command::FindDecisions { .. }
+            | Command::ProposeChange { .. }
+            | Command::SourceReview { .. }
     ) {
         id(&request.task_id)?;
     }
@@ -778,6 +802,12 @@ impl Engine {
                 control,
             );
         }
+        if let Command::SourceReview { text, after_id } = &request.command {
+            if !request.task_id.is_empty() {
+                return Err(invalid("source_review uses workspace scope"));
+            }
+            return self.source_review(&request.workspace_id, text, after_id.as_deref(), control);
+        }
         if let Command::FindDecisions { text } = &request.command {
             if !request.task_id.is_empty() {
                 return Err(invalid("workspace discovery omits task_id"));
@@ -796,6 +826,8 @@ impl Engine {
             | Command::Apply { .. }
             | Command::Capture { .. }
             | Command::ClarifyProposal { .. }
+            | Command::CiteSource(_)
+            | Command::WithdrawCitation { .. }
             | Command::ReviewConnection(_)
             | Command::Forget { .. }
             | Command::Promote { .. } => self.task_mutate(request, control),
@@ -1042,6 +1074,9 @@ impl Engine {
                         if !task.connection_reviews.is_empty() {
                             result["connection_reviews"] = json!(task.connection_reviews);
                         }
+                        if !task.source_citations.is_empty() {
+                            result["source_citations"] = json!(task.source_citations);
+                        }
                         result["dismissed"] = json!(task.dismissed);
                         result["promotions"] = json!(task.promotions);
                         result["title"] = json!(task.title);
@@ -1159,7 +1194,7 @@ impl Engine {
                 }
                 return Ok(json!({"task_id":task.task_id,"revision":task.revision,
                     "outcome":"existing","entry_id":entry.id,"sha256":existing.sha256,
-                    "historical":task.superseded(&entry.id)}));
+                    "historical":task.superseded(&entry.id),"capture_revision":existing.capture_revision.unwrap_or(0)}));
             }
             if previous.as_ref().is_some_and(|t| t.proposal.is_some())
                 && !matches!(
@@ -1197,6 +1232,7 @@ impl Engine {
                         dismissed: BTreeSet::new(),
                         promotions: BTreeMap::new(),
                         connection_reviews: Vec::new(),
+                        source_citations: Vec::new(),
                         proposal: None,
                     }
                 }
@@ -1208,6 +1244,7 @@ impl Engine {
                         json!({"task_id":task.task_id,"revision":task.revision,"outcome":"existing"}),
                     );
                 }
+                (Command::CiteSource(_) | Command::WithdrawCitation { .. }, Some(task)) => task,
                 (Command::Create { title }, Some(task)) => {
                     if &task.title == title {
                         return Ok(
@@ -1402,6 +1439,20 @@ impl Engine {
             let revision = store::read_counter(&meta, "task_revision")?
                 .checked_add(1)
                 .ok_or(FoundryError::RevisionExhausted)?;
+            if matches!(
+                request.command,
+                Command::CiteSource(_) | Command::WithdrawCitation { .. }
+            ) {
+                let receipt = task.record_source_citation(
+                    &self.db.begin_read()?,
+                    &request.command,
+                    revision,
+                )?;
+                if let Some(existing) = receipt {
+                    return Ok(json!({"task_id":task.task_id,"revision":task.revision,
+                        "outcome":"existing","citation_revision":existing}));
+                }
+            }
             if let Command::ReviewConnection(choice) = &request.command
                 && !task.record_connection(&tx, choice, revision)?
             {
@@ -1435,6 +1486,9 @@ impl Engine {
             } else {
                 task.revision = revision;
                 for item in &mut task.entries[original_count..] {
+                    if item.entry.is_captured_source() {
+                        item.capture_revision = Some(revision);
+                    }
                     if item.entry.kind == Kind::Decision {
                         item.decision_revision = Some(revision);
                     }
@@ -1459,6 +1513,13 @@ impl Engine {
                 result["entry_id"] = json!(id);
                 result["sha256"] = json!(sha256);
                 result["historical"] = json!(false);
+                result["capture_revision"] = json!(revision);
+            }
+            if matches!(
+                request.command,
+                Command::CiteSource(_) | Command::WithdrawCitation { .. }
+            ) {
+                result["citation_revision"] = json!(revision);
             }
             meta.insert("task_revision", revision.to_string().as_str())?;
         }

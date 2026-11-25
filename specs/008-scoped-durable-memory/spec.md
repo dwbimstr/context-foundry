@@ -547,3 +547,12 @@ counts. Captures longer than the query limit use the first 4,096 bytes for
 discovery and retain the entire original. The task owns up to 128 review
 events. Older task records start with an empty history. Use the updated
 experimental reader for records containing reviews.
+
+### Shared originals across features
+
+A project notebook can hold a meeting and a specification independently of any
+feature. Each feature can retain its own attributed reliance on a quoted range
+of a shared original. Preserve the original capture, supersession history and
+confirmed wording. Resolve each support separately on read so an operator can
+see both an edited specification and a still-current independent meeting
+record. See the [operator contract and implementation plan](../003-agent-retrieval-context/contracts/shared-source-review.md).

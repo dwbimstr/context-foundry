@@ -1353,3 +1353,7 @@ entry IDs, with `basis: explicit_source_link_overlap` and satisfaction not estab
 Text similarity, an observing-test link alone and stale/foreign source identities do
 not produce a join. All original endpoint/test bodies must still fit atomically.
 This supplies traceability, not requirement correctness or exhaustive coverage.
+
+The [shared-source review workflow](contracts/shared-source-review.md) extends
+experimental task-context delivery to project originals, team vocabulary and
+the features requiring review after an edit.

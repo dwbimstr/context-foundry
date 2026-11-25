@@ -104,6 +104,20 @@ struct Route {
     lead: Value,
     basis: &'static str,
     review: Option<Value>,
+    example: Option<Value>,
+}
+
+impl Route {
+    fn token_for(&self, proposal: &Task) -> FResult<String> {
+        Ok(crate::digest(&serde_json::to_vec(&(
+            &proposal.task_id,
+            &self.scope.decision,
+            &self.lead["entry_id"],
+            &self.lead["sha256"],
+            self.basis,
+            self.review.as_ref().map(|r| &r["review_revision"]),
+        ))?))
+    }
 }
 
 struct Routes {
@@ -111,6 +125,7 @@ struct Routes {
     matching: usize,
     stale: usize,
     omitted: usize,
+    omitted_examples: usize,
 }
 
 impl Routes {
@@ -129,7 +144,97 @@ impl Routes {
                 return Ok(routes);
             }
         }
-        Self::discover(tx, proposal, None, control)
+        let mut routes = Self::discover(tx, proposal, None, control)?;
+        if routes.items.len() < 2 {
+            routes.add_confirmed_examples(tx, proposal, control)?;
+        }
+        Ok(routes)
+    }
+
+    // Prior confirmations supply vocabulary only. Recheck the specific
+    // decision/review, then issue a distinct token for this new question.
+    fn add_confirmed_examples(
+        &mut self,
+        tx: &redb::ReadTransaction,
+        proposal: &Task,
+        control: &Control,
+    ) -> FResult<()> {
+        let query = &proposal.entries[0].entry.text;
+        let words = NoteWords::new(query);
+        let table = tx.open_table(TASKS)?;
+        let mut examples = Vec::new();
+        for row in table.iter()? {
+            control.check()?;
+            let (key, raw) = row?;
+            if !key.value().starts_with("proposal-") || key.value() == proposal.task_id {
+                continue;
+            }
+            let prior = decode(raw.value(), key.value(), &proposal.workspace_id)?;
+            let Some(saved) = prior
+                .proposal
+                .as_ref()
+                .and_then(|p| p.answers.last())
+                .filter(|a| a.scope.is_some())
+            else {
+                continue;
+            };
+            let score = [&saved.answer.text, &prior.entries[0].entry.text]
+                .into_iter()
+                .map(|v| {
+                    if v.trim().eq_ignore_ascii_case(query.trim()) {
+                        usize::MAX
+                    } else {
+                        words.best_passage(v).map_or(0, |(_, _, s)| s.len())
+                    }
+                })
+                .max()
+                .unwrap_or(0);
+            if score > 0 {
+                examples.push((score, prior));
+                examples.sort_by_key(|(s, _)| std::cmp::Reverse(*s));
+                if examples.len() > 4 {
+                    examples.pop();
+                    self.omitted_examples += 1;
+                }
+            }
+        }
+        for (_, prior) in examples {
+            control.check()?;
+            let saved = prior
+                .proposal
+                .as_ref()
+                .and_then(|p| p.answers.last())
+                .expect("confirmed example");
+            let checked = Self::discover(tx, &prior, saved.scope.as_ref(), control)?;
+            let Some(mut route) = checked
+                .items
+                .into_iter()
+                .find(|r| Some(&r.token) == saved.answer.scope_token.as_ref())
+            else {
+                self.stale += 1;
+                continue;
+            };
+            if self
+                .items
+                .iter()
+                .any(|r| r.scope.decision == route.scope.decision)
+            {
+                continue;
+            }
+            if self.items.len() == 2 {
+                self.omitted += 1;
+                continue;
+            }
+            route.token = route.token_for(proposal)?;
+            let question = &prior.entries[0].entry;
+            route.example = Some(
+                json!({"proposal_id":prior.task_id,"revision":prior.revision,
+                "question":prefix(&question.text,PASSAGE_BYTES),"question_author":question.author,"source":question.provenance,
+                "answer":prefix(&saved.answer.text,PASSAGE_BYTES),"answered_by":saved.answer.author}),
+            );
+            self.items.push(route);
+        }
+        Ok(())
     }
 
     fn discover(
@@ -147,7 +252,30 @@ impl Routes {
             };
             if let Some(row) = table.get(scope.decision.task_id.as_str())? {
                 let origin = decode(row.value(), &scope.decision.task_id, &proposal.workspace_id)?;
-                leads.collect(tx, &origin, &words, None, Some(&scope.lead_id), control)?;
+                // A saved choice binds identity; the new proposal may use only
+                // team vocabulary. Recover the referenced current lead directly.
+                if let Some(item) = origin.entries.iter().find(|e| {
+                    e.entry.id == scope.lead_id
+                        && e.view.selected
+                        && !origin.superseded(&e.entry.id)
+                }) && let Some(kind) = prior_kind(&item.entry)
+                {
+                    let links = source_links(tx, &item.entry)?;
+                    if links.iter().all(|l| l["status"] == "fresh") {
+                        let (offset, quote, shared) =
+                            words.best_passage(&item.entry.text).unwrap_or_else(|| {
+                                (0, prefix(&item.entry.text, PASSAGE_BYTES), Vec::new())
+                            });
+                        let mut lead = citation(&origin, item, offset, quote, links);
+                        lead["kind"] = json!(kind);
+                        lead["feature"] = json!(origin.title);
+                        lead["shared_words"] = json!(shared);
+                        leads.best.push((shared.len(), true, lead));
+                        leads.matching = 1;
+                    } else {
+                        leads.stale = 1;
+                    }
+                }
             }
             leads
         } else {
@@ -158,6 +286,7 @@ impl Routes {
             matching: leads.matching,
             stale: leads.stale,
             omitted: 0,
+            omitted_examples: 0,
         };
         let mut seen = BTreeSet::new();
         for (_, _, lead) in leads.best {
@@ -208,16 +337,8 @@ impl Routes {
                 let reference = origin.decision_ref(item)?;
                 // A new review of the same words requires a new answer. Unrelated
                 // feature revisions do not invalidate this particular interpretation.
-                let token = crate::digest(&serde_json::to_vec(&(
-                    &proposal.task_id,
-                    &reference,
-                    &lead["entry_id"],
-                    &lead["sha256"],
-                    basis,
-                    review.as_ref().map(|r| &r["review_revision"]),
-                ))?);
-                routes.items.push(Route {
-                    token,
+                let mut route = Route {
+                    token: String::new(),
                     origin: origin.clone(),
                     scope: SavedScope {
                         decision: reference,
@@ -228,7 +349,10 @@ impl Routes {
                     lead: lead.clone(),
                     basis,
                     review,
-                });
+                    example: None,
+                };
+                route.token = route.token_for(proposal)?;
+                routes.items.push(route);
             }
         }
         Ok(routes)
@@ -439,7 +563,7 @@ impl Task {
             impact["implementation_context"] = json!({"query":query,"task_id":route.origin.task_id,"task_revision":route.origin.revision,
                 "compose_evidence":true,"compact_evidence":true,"tokens":6000});
             candidates.push(json!({"scope_token":route.token,"selected":selected,"basis":route.basis,"lead":route.lead,
-                "reviewed_passage":route.review,"impact":impact}));
+                "reviewed_passage":route.review,"previous_clarification":route.example,"impact":impact}));
             confirmed |= selected;
         }
         let (status, question) = if confirmed {
@@ -460,7 +584,7 @@ impl Task {
         result["scope_status"] = json!(status);
         result["clarification"] = json!(question);
         result["candidates"] = json!(candidates);
-        result["discovery"] = json!({"wording_matches":routes.matching,"lead_limit":2,"additional_decisions":routes.omitted,"stale_omitted":routes.stale});
+        result["discovery"] = json!({"wording_matches":routes.matching,"lead_limit":2,"additional_decisions":routes.omitted,"unchecked_wording_examples":routes.omitted_examples,"stale_omitted":routes.stale});
         Ok(result)
     }
 }

@@ -552,6 +552,10 @@ existing synthetic checks, and network-filesystem event behavior remains unverif
 
 ## Recoverable task context
 
+To save a meeting and specification once and ask which features need review
+after an edit, follow the [shared-source workflow and commands](../specs/003-agent-retrieval-context/contracts/shared-source-review.md#commands-and-output).
+
+
 This branch adds recoverable task state beside retrieval. Start with a disposable
 store. New stores use schema 12; an older store needs an explicit
 `foundry --store STORE upgrade-store --to 12`. Take a closed-store backup first if

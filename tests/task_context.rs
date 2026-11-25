@@ -143,6 +143,27 @@ fn proposal_scope_survives_new_wording_but_not_a_replaced_decision() {
         confirmed["last_answer"]["scope"]["decision"]["entry_id"],
         "keep"
     );
+    let taught = run(
+        &engine,
+        None,
+        json!({"op":"propose_change","text":accept["text"],"author":"Dana","source":"Later chat"}),
+    )
+    .unwrap();
+    assert_eq!(taught["scope_status"], "needs_clarification");
+    assert_eq!(
+        taught["candidates"][0]["previous_clarification"]["proposal_id"],
+        receipt
+    );
+    assert_eq!(
+        taught["candidates"][0]["previous_clarification"]["answered_by"],
+        "Jo"
+    );
+    let later = taught["task_id"].as_str().unwrap();
+    run(&engine,Some(later),json!({"op":"clarify_proposal","expected_revision":taught["revision"],"disposition":"accept","scope_token":taught["candidates"][0]["scope_token"],"author":"Dana","text":"Yes."})).unwrap();
+    assert_eq!(
+        run(&engine, Some(later), json!({"op":"proposal_impact"})).unwrap()["scope_status"],
+        "confirmed_scope"
+    );
     let mut replacement = add("new", "decision", "Require final clearance.");
     replacement["entry"]["supersedes"] = json!("keep");
     apply(
@@ -152,6 +173,10 @@ fn proposal_scope_survives_new_wording_but_not_a_replaced_decision() {
     )
     .unwrap();
     let changed = read();
+    assert_eq!(
+        run(&engine, Some(later), json!({"op":"proposal_impact"})).unwrap()["scope_status"],
+        "support_changed"
+    );
     assert_eq!(changed["scope_status"], "support_changed");
     assert_eq!(changed["candidates"].as_array().unwrap().len(), 2);
     assert!(
@@ -2297,4 +2322,231 @@ fn exported_host_packet_binds_a_folded_observation_and_recovers_original_after_r
         call(&engine, export(r, "output")).is_err(),
         "an unfolded entry is not an admitted replacement"
     );
+}
+
+#[test]
+fn shared_originals_report_direct_and_inherited_impact_after_an_indexed_edit() {
+    let e = env();
+    let send = |engine: &Engine, task: Option<&str>, command: Value| {
+        let mut args = json!({"workspace_id":e.wid,"command":command});
+        if let Some(task) = task {
+            args["task_id"] = json!(task);
+        }
+        engine.task_context(&task_context::parse(args)?, &Control::unbounded())
+    };
+    let engine = Engine::open_existing(&e.store).unwrap();
+    let old = "Preserve the independent amendment.";
+    let new = "Archive the independent amendment.";
+    engine.replace_source("spec.md", old).unwrap();
+    let create =
+        |name: &str| send(&engine, Some(name), json!({"op":"create","title":name})).unwrap();
+    let notebook = create("notebook");
+    let meeting=send(&engine,Some("notebook"),json!({"op":"capture","source":"Planning","author":"Mo","text":"Keep the separately edited copy.","expected_revision":notebook["revision"]})).unwrap();
+    let capture = json!({"op":"capture","source":"spec.md","author":"Li","expected_revision":meeting["revision"]});
+    let spec = send(&engine, Some("notebook"), capture.clone()).unwrap();
+    let replay = send(&engine, Some("notebook"), capture).unwrap();
+    assert_eq!(replay["capture_revision"], spec["capture_revision"]);
+    assert_eq!(replay["outcome"], "existing");
+    let feature = create("cleanup");
+    let feature=send(&engine,Some("cleanup"),json!({"op":"apply","expected_revision":feature["revision"],"edits":[add("keep","decision","Retain a separately edited child when deleting its original.")]})).unwrap();
+    let cite = |entry: &str, revision: &Value, receipt: &Value, quote: &str| json!({"op":"cite_source","entry_id":entry,"expected_revision":revision,"origin_task_id":"notebook","origin_entry_id":receipt["entry_id"],"capture_revision":receipt["capture_revision"],"quote":quote,"author":"Ari","wording":"Can we retire the parent?"});
+    let request = cite("keep", &feature["revision"], &spec, old);
+    let accepted = send(&engine, Some("cleanup"), request.clone()).unwrap();
+    assert_eq!(
+        send(&engine, Some("cleanup"), request).unwrap()["outcome"],
+        "existing"
+    );
+    let decision = send(
+        &engine,
+        Some("cleanup"),
+        json!({"op":"decision_uses","entry_id":"keep","expected_revision":accepted["revision"]}),
+    )
+    .unwrap();
+    let other = create("handoff");
+    let mut rule = add(
+        "independent",
+        "requirement",
+        "Handoff relies on cleanup preserving the editor’s changes.",
+    );
+    rule["entry"]["relies_on"] = decision["decision_ref"].clone();
+    let other = send(
+        &engine,
+        Some("handoff"),
+        json!({"op":"apply","expected_revision":other["revision"],"edits":[rule]}),
+    )
+    .unwrap();
+    send(
+        &engine,
+        Some("handoff"),
+        cite(
+            "independent",
+            &other["revision"],
+            &meeting,
+            "Keep the separately edited copy.",
+        ),
+    )
+    .unwrap();
+    let bill = create("billing");
+    send(&engine,Some("billing"),json!({"op":"apply","expected_revision":bill["revision"],"edits":[add("bill","requirement","Retire a parent account after billing closes.")]})).unwrap();
+    engine.replace_source("spec.md", new).unwrap();
+    drop(engine);
+    let engine = Engine::open_existing(&e.store).unwrap();
+    let report =
+        |query: &str| send(&engine, None, json!({"op":"source_review","text":query})).unwrap();
+    let review = report("Can we retire the parent?");
+    let rows = review["claims"].as_array().unwrap();
+    assert_eq!(
+        rows.iter()
+            .filter(|r| r["review_status"] == "needs_review")
+            .count(),
+        2
+    );
+    let handoff = rows.iter().find(|r| r["feature"] == "handoff").unwrap();
+    assert_eq!(handoff["question_match"], "previously_confirmed_wording");
+    assert_eq!(
+        handoff["claim"]["quote"],
+        "Handoff relies on cleanup preserving the editor’s changes."
+    );
+    assert_eq!(handoff["supports"][0]["original"]["author"], "Mo");
+    assert_eq!(handoff["supports"][0]["status"], "current");
+    let changed = &handoff["supports"][1];
+    assert_eq!(changed["status"], "indexed_source_changed");
+    assert_eq!(changed["original"]["quote"], old);
+    assert_eq!(changed["current_excerpt"]["text"], new);
+    assert_eq!(changed["via_decision"], decision["decision_ref"]);
+    let collision = report("Can we retire the parent account after billing closes?");
+    assert!(collision["clarification"].is_string());
+    assert!(
+        collision["claims"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["feature"] == "billing" && r["review_status"] == "no_confirmed_source")
+    );
+    let revised=send(&engine,Some("notebook"),json!({"op":"capture","source":"spec.md","author":"Li","supersedes":spec["entry_id"],"expected_revision":spec["revision"]})).unwrap();
+    assert!(
+        send(
+            &engine,
+            Some("cleanup"),
+            cite("keep", &accepted["revision"], &spec, old)
+        )
+        .is_err()
+    );
+    let repaired = send(
+        &engine,
+        Some("cleanup"),
+        cite("keep", &accepted["revision"], &revised, new),
+    )
+    .unwrap();
+    assert!(
+        report("Can we retire the parent?")["claims"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|r| r["review_status"] != "needs_review")
+    );
+    let hist = send(&engine, Some("cleanup"), json!({"op":"inspect"})).unwrap();
+    assert_eq!(hist["source_citations"].as_array().unwrap().len(), 2);
+    let withdraw = json!({"op":"withdraw_citation","expected_revision":repaired["revision"],"citation_revision":repaired["citation_revision"],"author":"Ari"});
+    send(&engine, Some("cleanup"), withdraw.clone()).unwrap();
+    assert_eq!(
+        send(&engine, Some("cleanup"), withdraw).unwrap()["outcome"],
+        "existing"
+    );
+    let handoff = report("Can we retire the parent?")["claims"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["feature"] == "handoff")
+        .unwrap()
+        .clone();
+    assert_eq!(handoff["supports"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn shared_original_identity_survives_a_pasted_revision_but_never_resurrects_after_forget() {
+    let e = env();
+    let engine = Engine::open_existing(&e.store).unwrap();
+    let send = |task: &str, cmd: Value| {
+        let mut request = json!({"workspace_id":e.wid,"command":cmd});
+        if !task.is_empty() {
+            request["task_id"] = json!(task);
+        }
+        engine.task_context(&task_context::parse(request)?, &Control::unbounded())
+    };
+    let new =
+        || send("notes", json!({"op":"create","title":"Notebook"})).unwrap()["revision"].clone();
+    let capture = |rev: Value| {
+        send("notes",json!({"op":"capture","expected_revision":rev,"source":"Meeting","author":"Ada","text":"Résumé. Go. Go."})).unwrap()
+    };
+    let old = capture(new());
+    let f = create(&engine);
+    let f = apply(
+        &engine,
+        f,
+        json!([add("rule", "constraint", "Operator confirmation required.")]),
+    )
+    .unwrap();
+    let mut cite = json!({"op":"cite_source","entry_id":"rule","expected_revision":f["revision"],"origin_task_id":"notes","origin_entry_id":old["entry_id"],"capture_revision":old["capture_revision"],"quote":"Go.","author":"Ada"});
+    assert!(send("investigation", cite.clone()).is_err());
+    cite["offset"] = json!(1);
+    assert!(send("investigation", cite.clone()).is_err());
+    cite["offset"] = json!("Résumé. ".len());
+    send("investigation", cite.clone()).unwrap();
+    let changed=send("notes",json!({"op":"capture","source":"Renamed minutes","author":"Ada","text":"Résumé. Stop.","supersedes":old["entry_id"],"expected_revision":old["revision"]})).unwrap();
+    let impact = || {
+        send(
+            "",
+            json!({"op":"source_review","text":"What requires review?"}),
+        )
+        .unwrap()["claims"][0]["supports"][0]
+            .clone()
+    };
+    assert_eq!(impact()["status"], "source_revised");
+    assert_eq!(impact()["current_excerpt"]["quote"], "Stop.");
+    send(
+        "notes",
+        json!({"op":"forget","expected_revision":changed["revision"]}),
+    )
+    .unwrap();
+    assert_eq!(impact()["status"], "missing_original");
+    let recreated = capture(new());
+    assert_eq!(old["entry_id"], recreated["entry_id"]);
+    assert_ne!(old["capture_revision"], recreated["capture_revision"]);
+    assert_eq!(impact()["status"], "recreated_original");
+    assert!(impact()["original"].is_null());
+    assert!(send("investigation", cite).is_err());
+}
+
+#[test]
+fn source_review_pages_all_claims_and_rejects_changed_snapshot_or_question() {
+    let e = env();
+    let engine = Engine::open_existing(&e.store).unwrap();
+    let r = create(&engine);
+    let edits = (0..7)
+        .map(|i| add(&format!("c{i}"), "requirement", "Return orchard receipts."))
+        .collect::<Vec<_>>();
+    apply(&engine, r, json!(edits)).unwrap();
+    let page = |query: &str, cursor: Option<&Value>| {
+        let mut cmd = json!({"op":"source_review","text":query});
+        if let Some(cursor) = cursor {
+            cmd["after_id"] = cursor.clone();
+        }
+        let request = task_context::parse(json!({"workspace_id":e.wid,"command":cmd}))?;
+        engine.task_context(&request, &Control::unbounded())
+    };
+    let query = "Are orchard receipts required?";
+    let first = page(query, None).unwrap();
+    let cursor = &first["next_after_id"];
+    assert_eq!(first["claims"].as_array().unwrap().len(), 4);
+    let next = page(query, Some(cursor)).unwrap();
+    assert_eq!(next["claims"].as_array().unwrap().len(), 3);
+    assert_eq!(next["claims"][0]["claim"]["entry_id"], "c4");
+    assert!(next["next_after_id"].is_null());
+    assert!(page("Another question", Some(cursor)).is_err());
+    engine.replace_source("fresh.md", "Changed").unwrap();
+    assert!(matches!(
+        page(query, Some(cursor)),
+        Err(FoundryError::Conflict(_))
+    ));
 }

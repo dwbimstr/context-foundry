@@ -3,10 +3,13 @@
 use super::*;
 mod dependents;
 mod impact;
+mod source_review;
 pub use dependents::DecisionRef;
 pub use impact::ProposalAnswer;
 pub(super) use impact::{ProposalState, proposal_title};
 use rust_stemmers::{Algorithm, Stemmer};
+pub use source_review::CitationChoice;
+pub(super) use source_review::SourceCitation;
 
 const QUERY_BYTES: usize = 4096;
 const PASSAGE_BYTES: usize = 512;
