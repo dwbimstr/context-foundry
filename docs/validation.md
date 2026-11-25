@@ -1,5 +1,52 @@
 # Validation
 
+## Finding a decision in another feature’s words — 2026-11-25
+
+“**What happens to separate amendments during handoff?**” previously surfaced
+the handoff requirement and meeting. The installed Foundry now leads with the
+cleanup decision, “Cleanup keeps an edited copy when retiring its parent.”
+The result explains why by quoting the saved requirement, “Handoff relies on
+cleanup to preserve the editor’s separate amendments.” The requirement
+explicitly names that decision. No one taught Foundry the question. The
+decision’s directly cited spec needs review. The handoff’s own meeting
+citation remains current.
+
+The comparison used the same local snapshot of the actual project store
+(`2f558a2157b9c452…`, index revision 554). All five task IDs and revisions
+matched the native server and remained equal before and after the read-only
+exercise. A fresh stdio MCP client used the original installed binary for the
+baseline and reopened each returned passage with `peek`. The candidate and
+updated installed executable used the same operations and six fixed questions.
+
+| Question | Earlier result | Updated result |
+|---|---|---|
+| Retire the parent while preserving a colleague’s amendment? | Three wording matches. Cleanup and handoff appeared as separate leads. | One decision with the handoff requirement that explains the amendment. |
+| A colleague amended the published version. Is retiring its predecessor safe? | Cleanup appeared on “its” and “retiring.” | Cleanup appeared on “retiring” and the linked requirement supplied “amended.” The revised spec still needs review. |
+| What happens to separate amendments during handoff? | The two returned passages omitted the decision. | Cleanup appears first via the requirement, with zero shared words in the decision passage. |
+| Should we retire the parent account after billing closes? | Cleanup appeared as the sole lead. | No candidate. Foundry asks which feature or rule the operator means. |
+| edited promoted copy task forget | Two leading passages from the correction feature. | The same two passages and order. Three passages qualified across the project, down from five. |
+| Move payroll to Thursday. | No lead. | No lead. |
+
+All cited byte ranges reopened exactly, including both ends of each
+declared relationship. Every fixed question fit within the eight-declaration
+lookup limit. Two additional questions checked the boundary. A second billing
+formulation also stopped surfacing cleanup. A question about discarding a
+predecessor and safeguarding a collaborator’s revision still found nothing
+in either version. First encounters need some recognizable wording in the
+decision or its declared dependent. This exercise measures these saved cases.
+
+A separate museum-records regression covers duplicate declarations, the
+shortlist limit, weak wording, a revised original and a forgotten decision
+recreated under the same ID. The full evidence is local under
+`runs/decision-discovery-2026-11-25/`.
+
+All eight offline gates passed on `9cacf69`. The default suite passed
+1,329 tests with 35 ignored. The pilot suite passed 133 with 1 ignored.
+Both had zero failures. The installed desktop binary matched the gated
+artifact by SHA-256 (`9c78f2f4554fc80c…`). A fresh
+local MCP process verified the installed binary against the project snapshot.
+The run incurred no provider spend.
+
 ## Following a reviewed quote after an edit — 2026-11-25
 
 An operator asked “When we retire the parent, what happens to the editor’s

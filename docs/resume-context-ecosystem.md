@@ -87,6 +87,12 @@ and dated paragraphs below are history.
   unresolved. The operator still decides whether the words carry the same
   meaning. [Revised quote walkthrough](validation.md#following-a-reviewed-quote-after-an-edit--2026-11-25).
 
+  A first-time question about editorial amendments can now find cleanup's
+  decision through the handoff requirement that names it. The response
+  quotes both ends and flags the revised specification. On the same five
+  saved tasks, two unrelated billing questions stopped surfacing cleanup.
+  A paraphrase with no recognizable terms still missed. [Before and after on the project snapshot](validation.md#finding-a-decision-in-another-features-words--2026-11-25).
+
 - **Finite desktop qualification complete, 2026-11-23.** A fresh ChatGPT
   desktop project chat verified the real project store and retrieved
   `apply_owned_block` at `src/bootstrap.rs:904`. Through the separate exercise
