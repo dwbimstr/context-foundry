@@ -1,5 +1,56 @@
 # Validation
 
+## Keeping earlier decisions through a Rust maintenance review — 2026-11-27
+
+A ChatGPT desktop project chat reviewed a concrete regression in
+`rust-lang/rust` 1.99.0 at `b940084d7eb6`. The checkout had 62,035 tracked
+files. Foundry served a private copy of its existing index with 60,739 sources,
+source revision 60,741 and zero pending sources. The task notebook was private
+to the run. All desktop calls used Foundry's authenticated loopback transport.
+
+The maintainer saved a decision about `Vec::retain_mut`, traced the panic guard
+and compared the nearby regression tests. The assertion counted one destructor
+call per original element ID after the vector was dropped. The operator left
+surviving contents, order and capacity unspecified. An existing test covered a
+predicate panic after creating a hole through `retain`. The proposed regression
+adds payload mutation before the panic and counts destruction by immutable ID.
+[Implementation](https://github.com/rust-lang/rust/blob/b940084d7eb6a299eb4bfeb8e34901bc051e7ac4/library/alloc/src/vec/mod.rs#L2507) · [Existing tests](https://github.com/rust-lang/rust/blob/b940084d7eb6a299eb4bfeb8e34901bc051e7ac4/library/alloctests/tests/vec.rs#L317).
+
+| Checkpoint | Observed behavior |
+| --- | --- |
+| Sign-off in the working chat | After inspecting the source and saving a second decision about duplicate fixture values, the chat recalled both decisions. It declined a reviewer's suggestion to compare the surviving values. Its standalone Rust test passed. |
+| Handoff to a fresh chat | The first `find_decisions` call returned only the accounting decision. The reader recovered the fixture choice and coverage finding by inspecting the task and opening four entries individually. Its final answer correctly identified both decisions. |
+| Fixture correction | The operator changed the setup to start with distinct payloads and overwrite visited payloads with the same value. The working chat superseded the old fixture choice at task revision 6 and updated its coverage note. The previously briefed reader reopened the task with `inspect` and three `peek` calls and recovered the correction and the independent accounting decision. The corrected standalone test passed. |
+
+The first miss was a partial lookup during handoff. No final answer lost the
+earlier accounting rule. The working chat's largest recorded model input was
+76,290 tokens against a reported 258,400-token window. The session recorded
+no compaction event. These measurements describe this task only. Both test
+programs ran with the installed Rust 1.97.1 standard library. The 1.99.0
+checkout supplied the reviewed source and was left untouched.
+
+The MCP tool now directs a handoff reader to locate the work item and use
+`render` to read its selected decisions and notes together. Its schema
+requires the byte limit. The user can still request historical originals or
+reopen individual entries when a necessary detail is missing.
+[Task view contract](../specs/008-scoped-durable-memory/spec.md) · [Operator guide](experimental-context.md#recoverable-task-context).
+
+The first wording change led a fresh reader to the current view, but it also
+opened historical entries. After clarifying when the view is sufficient,
+another fresh chat received the same handoff question at revision 6 without a
+feature title, task ID or tool instructions beyond the server name. It called
+`status`, `list` and `render`. With an 8,192-byte budget, the view contained
+both current decisions and the corrected coverage finding. The chat cited their
+entry IDs, identified the former fixture choice as historical and preserved all
+three exclusions. It issued no individual entry or source reads. This verifies
+one shorter handoff. The run used the existing desktop account and local tools.
+All 37 task-context integration tests passed, including the opt-in catalog
+schema check. Formatting, library Clippy and documentation links passed. The
+installed desktop binary exposed the new catalog over stdio and returned both
+current decisions. The temporary review registration was removed and its
+project configuration restored byte for byte. The private notebook export
+and runnable test were retained locally.
+
 ## Two missed decisions in a fresh desktop chat — 2026-11-27
 
 The earlier [15-question replay](#inkling-2-mini-decision-judging-gemma-leads--2026-11-27)

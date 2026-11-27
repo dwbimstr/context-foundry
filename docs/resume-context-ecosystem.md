@@ -154,6 +154,13 @@ experimental tip through `ac43ed2`. [Merge and local gates](validation.md#local-
   configuration, all five stdio lookups returned the same results.
   [Repair and desktop evidence](validation.md#two-missed-decisions-in-a-fresh-desktop-chat--2026-11-27).
 
+  A desktop maintenance review on the indexed Rust checkout retained the
+  operator's test boundary while the fixture decision changed. The first
+  handoff search returned only one of the two decisions. The MCP catalog now
+  explains how to reopen the current work item in one bounded read. A fresh
+  chat used that route to recover both decisions and the coverage finding.
+  [Rust maintenance review and handoff](validation.md#keeping-earlier-decisions-through-a-rust-maintenance-review--2026-11-27).
+
 - **Finite desktop qualification complete, 2026-11-23.** A fresh ChatGPT
   desktop project chat verified the real project store and retrieved
   `apply_owned_block` at `src/bootstrap.rs:904`. Through the separate exercise

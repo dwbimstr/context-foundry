@@ -1482,10 +1482,9 @@ async fn experimental_mcp_tool_is_opt_in_and_matches_cli_state() {
                 .find(|t| t.name == "task_context")
                 .unwrap();
             // Desktop clients can see the description even when arguments render as unknown.
-            let mut example = tool
-                .description
-                .as_deref()
-                .unwrap()
+            let description = tool.description.as_deref().unwrap();
+            assert!(description.contains(r#"{"op":"render","max_bytes":"#));
+            let mut example = description
                 .lines()
                 .filter_map(|line| serde_json::from_str::<Value>(line).ok())
                 .find(|request| request["command"]["op"] == "apply")
@@ -1544,6 +1543,7 @@ async fn experimental_mcp_tool_is_opt_in_and_matches_cli_state() {
                     ],
                 ),
                 ("inspect", vec!["op"]),
+                ("render", vec!["op", "max_bytes"]),
                 ("peek", vec!["op", "entry_id", "offset", "bytes"]),
             ] {
                 let rule = rules

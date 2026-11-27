@@ -684,6 +684,12 @@ the same kind may name `supersedes`; older evidence stays available through `pee
 but is historical and excluded from the current view. Unlinked conflicting claims
 coexist until the caller explicitly resolves them.
 
+For a handoff, find the work item with `list` or `find_decisions`. Once you have
+its task ID, `{"op":"render","max_bytes":8192}` returns the current selected
+decisions and notes together. Check each entry’s representation. If you need
+the original behind a folded summary, or the working view exceeds the budget,
+use `inspect` and `peek` for the specific entries you need.
+
 | Command inside `command` | Effect |
 | --- | --- |
 | `{"op":"inspect"}` | List entry identities, hashes, byte lengths, provenance, source freshness, view state, checkpoints, dismissals and promotions. |

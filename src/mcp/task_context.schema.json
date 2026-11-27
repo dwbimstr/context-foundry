@@ -172,6 +172,7 @@
           }
         },
         {"if": {"properties": {"op": {"const": "inspect"}}}, "then": {"required": ["op"], "maxProperties": 1}},
+        {"if": {"properties": {"op": {"const": "render"}}}, "then": {"required": ["op", "max_bytes"], "maxProperties": 2}},
         {
           "if": {"properties": {"op": {"const": "peek"}}},
           "then": {"required": ["op", "entry_id", "offset", "bytes"], "maxProperties": 4}

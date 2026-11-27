@@ -276,7 +276,10 @@ This adds one migration and one record validator, without another index or queue
   and use the returned `next_offset` for the next UTF-8 page of the original.
   Each page carries the payload digest. `render` returns the selected working view
   within a complete serialized **byte** budget, or refuses without truncating protected
-  entries. It does not claim a provider token allowance or conversation replacement.
+  entries. For a handoff, locate the work item, then use its `task_id` and
+  `{"op":"render","max_bytes":8192}` to read its selected decisions and notes
+  together. An over-budget view can be inspected and individual originals
+  reopened with `peek`. The byte allowance applies to Foundry output.
 - Entry kinds distinguish requirement, constraint, observation, hypothesis, decision,
   rejected attempt, question, work and artifact. Author/provenance and optional exact
   source handles accompany each entry. Entries are immutable; a new entry may
