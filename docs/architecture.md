@@ -1,42 +1,98 @@
 # Architecture
 
-Experimental branch update (2026-10-09): schema 7 adds one bounded `task_context`
-record table and a monotonic revision counter in the existing redb owner. Explicit
-CLI/opt-in MCP operations retain task evidence, edit reversible views, advise on exact
-repeated failures and promote selected decisions into ordinary project memory. No
-worker, model call, source-index owner or host-conversation rewrite is added. See the
-[experimental workflow](experimental-context.md) and 008 T003/T004 / 003 T007.
+## Current architecture
 
-Task-aware retrieval (008 T005 / 003 T008) validates the selected task revision and
-source evidence in one primary-store read, packs them under one delivery budget and
-retains ordinary per-root snapshots for multi-root queries. Recovery search scans
-one bounded task's original observations; it adds no index or schema change.
+Context Foundry is a local Rust crate with one store owner per admitted repository.
+It serves two kinds of questions. “Where is this defined and who uses it?” draws on
+indexed source and graph evidence. “What did we decide, and which feature needs
+review after this edit?” draws on attributed originals, decisions and their citations.
+ChatGPT desktop is the primary client for the second workflow. A fresh chat can reopen
+the same records by workspace and task ID. The project store supplies the memory.
 
-Status reconciled 2026-10-09: the [spec portfolio](../specs/README.md) and
-[validation](validation.md) record implemented/accepted 001, 003, 005, 007 and 008
-work and 009's development acceptance. Gemma is the selected semantic profile;
-semantic retrieval remains optional and off by default, with installed-artifact
-checks pending signing. 013 is frozen off and excluded from the release package.
-The product is not released. This is a design and ownership contract, not a
-performance claim; historical decisions below remain subordinate to the current
-owning spec's amendments.
+This describes `experimental/context-ecosystem` through 2026-11-27. The core and
+the original task-state tool are also on `main`. The desktop adapter, shared-source
+review and saved-decision fallback followed the November 20 merge. The handoff owns
+current acceptance and open work. [Current status](resume-context-ecosystem.md) ·
+[Portfolio](../specs/README.md) · [Release boundary](release.md).
 
-The [context ecosystem plan](context-ecosystem-plan.md) proposes retrieval repairs
-first, followed by task state, reversible working context and memory lifecycle work.
-The owner activated the first retrieval tranche on 2026-10-09. Bounded diagnostic
-capture and lexical behavioral selection are implemented; 001 T010's lexical
-default is accepted at its written scope
-([current status](resume-context-ecosystem.md#current-status--2026-11-06),
-[dated evidence](validation.md#t010-singleton-qualification--2026-11-11)).
-Semantic retrieval quality belongs to 009; real-agent outcomes belong to 003 T006.
-The experimental branch also
-implements task-state, reversible views, exact-failure reminders and explicit decision
-promotion; applied host control and broader intervention policies remain future work.
+```mermaid
+flowchart TD
+    Chat["ChatGPT desktop project"] --> MCP["MCP owner · stdio or shared loopback HTTP"]
+    Other["Codex / OMP"] --> MCP
+    MCP --> Engine["Rust Engine"]
+    CLI["foundry CLI"] --> Engine
+    Files["Admitted files"] --> Ingest["Explicit index or optional watcher"]
+    Ingest --> DB[("redb · source bytes, revisions, graph facts, task records and memory")]
+    Engine --> DB
+    DB --> Index["Tantivy · rebuildable lexical index"]
+    Index --> Pack["Cited source, graph evidence and bounded text"]
+    DB --> Pack
+    Source["Prepared source vectors · optional"] --> Pack
+    DB --> Review["Task lookup, dependencies and source review"]
+    Review -. "Eligible title-blind miss" .-> Gemma["Optional local Gemma ranks saved quotations"]
+    Gemma --> Check["Recheck identities and citations"]
+    Review --> Reply["Task result with originals, review state or clarification"]
+    Check --> Reply
+    Reply --> Reader["Client reads evidence and asks when support is insufficient"]
+    Pack --> Reader
+```
 
-The [spec portfolio](../specs/README.md) now owns planned capability sequencing;
-the [constitution](../.specify/memory/constitution.md) owns evidence policy. Sections
-marked implemented describe the current boundary. Future specs do not retroactively
-make planned features implemented or approved.
+### From an original to a feature review
+
+1. **Save it once.** The client explicitly captures supplied text or a passage from
+   an indexed file. The primary store keeps original bytes, attribution and revision.
+   Features can cite that same original. A correction records what it supersedes.
+   [Capture](../src/task_context/capture.rs) · [Task state and edits](../src/task_context.rs).
+2. **Record why a feature depends on a decision.** A requirement or constraint on
+   the dependent feature can carry a `relies_on` decision reference. `decision_uses`
+   returns the reason in the feature's own words. Wording alone prompts a question.
+   [Dependency lookup](../src/task_context/connections/dependents.rs).
+3. **Review an edit.** Ask `source_review` which claims need review. Follow pagination,
+   distinguish matches to the question from other open reviews, and compare each
+   original quotation with its current evidence. A unique byte match can move.
+   An absent or repeated quote yields a labeled position preview when available.
+   An independent citation can still support the dependent feature.
+   [Source review](../src/task_context/connections/source_review.rs) · [Operator workflow](../specs/003-agent-retrieval-context/contracts/shared-source-review.md).
+4. **Find a decision in the operator's words.** Ordinary `find_decisions` uses the
+   saved records and can ask for a feature title. A partial title offers up to three
+   titles for the operator to choose from. With the decision profile enabled, a
+   title-blind lookup that returns a `recovery_question` can rank original quotations
+   locally. The owner checks revision, selection, identity and source links again.
+   ChatGPT reads the returned evidence, including changed support, and asks if
+   nothing governs the request. An ordinary result containing only an attributed
+   account can leave the relevant decision outside the shortlist.
+   [Discovery](../src/task_context/connections/discovery.rs) · [Semantic fallback](../src/task_context/connections/semantic_decisions.rs).
+5. **Plan a change.** `propose_change` saves the request, `proposal_impact` reopens
+   its evidence, and task-aware `context` can connect it to cited implementation.
+   The operator's explicit answer can confirm or dismiss the proposed scope.
+   [Impact contract](../specs/003-agent-retrieval-context/contracts/indirect-change-impact.md) · [Evidence composition](../src/task_evidence.rs).
+
+For example, the saved Cleanup decision says “Cleanup keeps an edited copy when
+retiring its parent.” A fresh desktop chat recovered it without the feature name,
+showed the changed spec as a position preview, and asked for clarification on
+billing and payroll. The later Inkling trial used the same project evidence in
+a standalone local replay. [Desktop result](validation.md#native-title-blind-decision-recovery-in-chatgpt--2026-11-26) · [Inkling comparison](validation.md#inkling-2-mini-decision-judging-gemma-leads--2026-11-27).
+
+### Capability map
+
+| Capability | Entry point and operating boundary |
+| --- | --- |
+| Source discovery and recovery | `index`, `refresh`, `status`, `repair-index`, `upgrade-store`. Optional `mcp --watch` maintains the primary root. redb owns source bytes and pending versions. Tantivy accelerates lexical lookup. [Storage](../src/store.rs) · [Watcher](../src/watch.rs) |
+| Cited retrieval | `search` locates, `context` packs definitions, namesakes, uses and outlines, `retrieve` reopens exact spans, and `references` reads imported compiler occurrences. The v2 text budget covers the emitted payload. [Wire contract](../specs/001-source-state-recovery/contracts/context-v2.md) |
+| Code relationships | Explicit graph bundles, SCIP definitions/references, completed execution artifacts and optional static Python HTTP relationships have distinct provenance and freshness checks. Up to eight admitted reference roots can contribute source evidence to one budget. [Graph guide](graph.md) · [Multi-root contract](../specs/007-multi-workspace-context/spec.md) |
+| Client access | `bootstrap` inspects or explicitly indexes a root. `connect` configures ChatGPT desktop, Codex or OMP. The default MCP catalog contains seven tools. `--experimental-task-context` adds `task_context`; `--no-memory` removes `memory`. The CLI and MCP share the Rust engine. [Deployment](deployment.md) |
+| Durable project and task memory | `memory` stores explicit workspace records. `task-context` owns original captures, reversible views, checkpoints, original-text search, structured assertion review and explicit decision promotion. CLI export and a pinned OMP host-view adapter have their own delivery boundaries. [Task operations](experimental-context.md#recoverable-task-context) · [Host views](experimental-context.md#exported-task-views-in-omp-requests) |
+| Semantic source retrieval | `--semantic-profile FILE` serves prepared source candidates for anchorless queries. EmbeddingGemma 2 runs in the separate `foundry-embed` worker. The vector cache and USearch generations are derived. Preparation, incremental maintenance and audit are explicit. [Semantic contract](../specs/009-optional-semantic-retrieval/spec.md) |
+| Semantic decision lookup | `mcp --experimental-task-context --decision-semantic-profile FILE` uses the embedding worker on demand to score saved passages. It needs no prepared source index of vectors. The two semantic flags are mutually exclusive on one MCP owner. [Bounds and fallback](../specs/003-agent-retrieval-context/contracts/shared-source-review.md#optional-semantic-recovery-of-a-saved-decision) |
+| Derived knowledge | Experimental `brief` and `knowledge` produce source-bound briefs and area summaries. Generation uses an explicitly configured endpoint or owned local worker. Maintenance and resource admission are opt-in. A knowledge profile adds preparation controls to `index` and `include_briefs` to `context`. Real-model task utility is deferred. [Generation guide](experimental-context.md#selective-knowledge-generation) |
+| Usage and host instrumentation | Delivery budgets and retrieval traces describe Foundry output. `usage` imports observed host receipts offline. The optional OMP pilot capture and meter-only gateway have separate evidence and release scopes. [Economics contract](../specs/003-agent-retrieval-context/contracts/adapter-economics.md) · [Pilot contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md) |
+| Training and model trials | Explicit feedback, training export and the owned ModernBERT policy workflow are available for research. Policy serving is frozen off. Laya, Mapika and Inkling decision readers were evaluated locally; ChatGPT remains the reader in the desktop workflow. [Owned learning](learning.md) · [Decision-reader trials](references/laya-decision-ecosystem.md) |
+
+The paid real-host task and economics pilot (003 T006) remains unfunded and open.
+The authoritative store schema is 12, the Tantivy search format is 9, the source-unit
+grammar is 7 and the semantic generation format is 6. Each has its own recovery
+procedure. Developer ID signing, notarization and installed-package acceptance
+remain release gates. [Compatibility and recovery](release.md#what-is-compatible).
 
 ## Product contract
 
@@ -86,9 +142,7 @@ same quality and safety contract. KISS does not freeze the first release forever
 
 ### Rules across feature boundaries
 
-The specs share these rules. 001 and 003 implement those that concern source state,
-repair and delivery (2026-10-01); rules about graph, neural, memory and policy features
-are proposed with those features:
+The store, retrieval and optional workers share these rules. Each spec owns its acceptance boundary.
 
 - Explicit initialization and writes own durable changes. A query never creates a
   missing store, records access heat, enrolls a root, repairs an index or starts training.
@@ -136,7 +190,7 @@ flowchart TD
     Hook -- "first identifier search in an admitted root" --> Refused["Refused once: call Foundry search first"]
     Refused --> Search
     Hook -- "identical repeat, regex, outside root, compound shell, other host" --> HostTool["Host tool runs"]
-    Index --> Store[("redb sources and Tantivy schema v2")]
+    Index --> Store[("redb sources and derived Tantivy index")]
     Index --> Report["index JSON counts and report (unchanged)"]
     Store -. "indexed snapshot read by later search and context queries" .-> Rank
     Search --> Rank["Two-tier ranking per root: exact definitions, then lexical; 007 merges roots"]
@@ -218,7 +272,7 @@ there is still no resolved cross-repo graph, global snapshot or registry.
 | File is outside shell CWD but inside the bound root | Ordinary workspace source, subject to admission/ignore policy | Same explicit scan and future root-scoped work | Same explicit feedback policy |
 | Query mentions an outside path | Ordinary query text; no source enrollment or graph target resolution | No new watch root or embedding job for that file | If explicitly enabled, inference sees the query text only; no automatic feedback/training |
 | Host reads an outside file | Host context only; Foundry cannot claim its freshness | No automatic indexing, watching or embedding | Quoted content is not automatically training-approved |
-| Operator explicitly indexes B in a separate store | B owns its source versions; A remains unchanged | Current prototype scans explicitly; future neural work is confined to admitted B sources | Feedback stays in its own store; training permission is per exact row |
+| Operator explicitly indexes B in a separate store | B owns its source versions; A remains unchanged | B can be indexed explicitly and prepared under its own semantic profile | Feedback stays in its own store; training permission is per exact row |
 | Operator admits B as a reference at owner launch (007, approved) | B keeps its own store, revision and handles; one response can cite A and B under one budget; no cross-root edges | Nothing new is watched; re-indexing B touches only B | Feedback and training stay per store; no cross-root consent change |
 | B is re-indexed after an edit/deletion | Only B's reconciliation updates/deletes B's indexed sources | Old derived B facts become ineligible under their freshness rules | Existing weights do not update or forget automatically |
 
@@ -286,7 +340,7 @@ flowchart LR
     Search --> Retrieval
     DB --> Retrieval
     Retrieval --> Pack[Cited context under a declared token budget]
-    Policy[Optional isolated policy head] -. strategy only .-> Retrieval
+    Policy[Frozen research policy head] -. strategy only .-> Retrieval
     Feedback[Opted-in task feedback] --> DB
     DB -. dataset export .-> Trainer[Owned isolated Rust training]
     Pack --> Host[Configured coding host]
@@ -296,14 +350,14 @@ flowchart LR
 
 ## Module boundaries
 
-Keep one crate and one shipped command-line binary until separate packages have real
-users. The default agent adapter is direct stdio MCP through a maintained SDK (rmcp
-3.5.0), with one engine/store owner. Optional per-root Streamable HTTP MCP (owner-
-approved 2026-10-01) lets independent OMP/Codex clients share that same persistent
+One crate builds the `foundry` CLI and MCP owner. Feature-gated binaries provide
+embedding, generation, learning and pilot capture. The normal source path uses
+direct stdio MCP through rmcp 3.10.0 with one engine/store owner. Optional per-root Streamable HTTP MCP (owner-
+approved 2026-10-01) lets independent configured clients share that same persistent
 owner. No custom MCP socket carrier, forwarding shim, rotating writer or global fleet.
 Both transports keep one-active/zero-queued engine admission and immutable scope.
 
-Implemented modules (2026-10-01): `store` (authoritative redb state, derived Tantivy,
+Core modules include `store` (authoritative redb state, derived Tantivy,
 repair/upgrade), `ingest` (held-root paged reconciliation), `response` (handles,
 packing and exact counting against a caller-supplied final renderer), `control`
 (cooperative cancellation/deadlines), `error` (contract codes), `graph` (manual bundles
@@ -341,7 +395,7 @@ resolution and traversal share an examination budget and disclose unknown result
 One selected artifact/configuration identity per compiler producer also prevents
 partial imports from mixing builds at the same source revision. The importer freezes
 its input copies once for hashing and both parsing passes, with bounded scratch work.
-005's proposed import runs through the existing MCP `index` tool
+005's serving-owner import runs through the existing MCP `index` tool
 (`index {scip: {index_file, snapshot_file}}`, with no separate import tool) on the
 serving writer, from explicitly staged artifacts; agents can refresh graph facts
 without stopping that owner or trying a competing CLI writer. Foundry does not run the
@@ -444,13 +498,13 @@ fusion. Evidence remains verbatim or deterministically outlined and exactly budg
 The source owner validates freshness throughout. 001 T010 owns lexical behavioral
 selection, now enabled by default with explicit opt-out. Supplied dense windows and
 semantic model admission keep their existing behavior. See the
-[current disposition](resume-context-ecosystem.md#current-status--2026-11-06) and
+[current disposition](resume-context-ecosystem.md#current-status) and
 [dated evidence](validation.md#t010-singleton-qualification--2026-11-11).
 Keep the roles narrow:
 
 | Component | Responsibility | What does not follow from enabling it |
 | --- | --- | --- |
-| Selected Gemma embedding runtime | Similarity candidates from prepared source inputs | No automatic training, graph creation or mandatory second ranking model |
+| Selected Gemma embedding runtime | Similarity candidates from prepared source inputs or bounded saved quotations, according to the chosen MCP profile | No automatic training, graph creation or mandatory second ranking model |
 | Core ranking and packer | Merge, deduplicate, order and deliver cited evidence | No learned-model requirement; truncation cannot masquerade as localization |
 | Compiler graph | Current supported definition/reference relationships | No vector per occurrence or autonomous producer execution |
 | Frozen research policy head | Study whether graph expansion benefits a task | No released routing, passage reranking, chunk selection, embedder fine-tuning or source admission |
@@ -465,7 +519,7 @@ It is not a remedy for missing input, cold preparation or excessively coarse uni
 No reranker framework or endpoint is prebuilt. Optional inference shares the request's
 existing deadline; separate per-model ceilings do not add up into a longer allowance.
 
-Proposed [009](../specs/009-optional-semantic-retrieval/spec.md) preserves a narrow
+[009](../specs/009-optional-semantic-retrieval/spec.md) preserves a narrow
 model-profile boundary: exact model/recipe/dimension identity and rebuildable derived
 vectors. Do not make the authoritative store's format or source ledger depend on a
 global "2048 or higher" choice. Same dimensions do not imply compatible vector spaces.
@@ -473,62 +527,24 @@ The selected profile is EmbeddingGemma 2 on the pinned llama.cpp worker (009 T00
 chosen on 2026-10-08 by G2, G1 with the profile and vector parity. Nemotron's G2 runs
 were INVALID and the owner closed it. Owner decision, 2026-11-06, "Close it; Gemma
 only": the Nemotron long-context comparison that a 2026-10-09 plan line had reopened is
-closed too, and the Nemotron artifacts are kept as historical evidence. The next two
-paragraphs record the original, superseded selection.
+closed too. The [feasibility record](review/feasibility.md) preserves the
+superseded Nemotron/MLX design and measurements.
 
-The owner originally selected **`nvidia/Nemotron-3-Embed-1B-BF16`**, with
-**`mlx-community/Nemotron-3-Embed-1B-BF16-4bit`** for local serving. Keep native 2048
-output dimensions and float32 vector caching, with a float16 USearch index derived from
-that cache; the MLX weights use 4-bit quantization.
-Its 32768-token input ceiling does not prescribe chunk size or override a lower
-runtime limit. Follow its query/document prompting, pooling and normalization recipe
-([official model card](https://huggingface.co/nvidia/Nemotron-3-Embed-1B-BF16), checked
-2026-09-28). The model uses OpenMDW-1.1; Foundry code remains MIT. The subsequent
-[feasibility pass](review/feasibility.md) pins the MLX artifact/bridge and records a
-real bounded query run; complete recipe and package acceptance remain open. The earlier Llama
-Nemotron recommendation is superseded, and no cross-model comparison is required.
-
-The [MLX conversion](https://huggingface.co/mlx-community/Nemotron-3-Embed-1B-BF16-4bit)
-uses a bundled embedding loader; it is an external model runtime, not a change of the
-Rust application language. 009 owns its pinned integration and explicit local-only
-loading. The loader defaults to 4096 tokens with truncation; preflight length checks
-and a serving limit of 2048 tokens, tested at the limit and one past it, replace that
-implicit default. The publisher reports
-lower weight memory but slower quantized throughput in its tests; no local speed claim.
-Separate variant/loader identities prevent BF16 and quantized vectors from mixing.
-
-Keep complete source identity, embedding units and delivered evidence separate. 009
-D001 fixes embedding units at 1024 model tokens: 001 delivery units (or, for other
-files, paragraphs and lines) combined greedily in source order, so a small file is one
-vector and a large one becomes grouped units with bounded fallback splits. Storage
-blocks and compiler occurrences do not each get vectors. Use no overlapping copies or
-second whole-file embedding alongside unit vectors. Byte coordinates retain exact
-citation and retrieval even when a document's embedding covers more than the response
-can hold. An unlocalized excerpt is labeled a preview; retrieving a filename does not
-prove the useful lines were delivered. Long-document tail cases check the chosen unit
-size before corpus preparation, without a separate benchmark program.
-
-A unit covering a whole small file means an edit re-encodes that unit; unchanged unit
-inputs in larger files reuse the existing cache across offset shifts. Longer inputs
-can cost more inference despite fewer vectors; input tokens, actual calls, preparation
-and edit costs are distinct from the agent's delivered-token budget. Policy outcome
-records include the retrieval recipe; storage chunks do not create training examples.
-
-Compare candidate coverage, delivered relevant spans and task correctness before
-attributing a miss to dimension. At float32, 768 values consume 3072 bytes versus
-8192 for 2048, excluding index/metadata/model overhead; that arithmetic says nothing
-about retrieval quality or provider token savings. Reuse evidence and run a bounded
-comparison only when it can choose the model, dimension or ranking change. Token
-economics still concerns complete consumed context and actual provider usage.
+The selected source recipe, `hierarchy-v1`, represents definition bodies,
+enclosing units and file overviews. Address cards remain selectable. The
+embedding input key binds the rendered document, tokenizer and model recipe.
+Moving an unchanged input can reuse its vector. After retrieval, the source
+owner must still locate a current span under the delivery budget. The decision
+profile instead embeds the current question and short saved passages for
+that lookup. [Representation guide](experimental-context.md#model-aware-bodyparent-chunking) ·
+[Decision profile](deployment.md#desktop-decision-lookup).
 
 ### Preparation is part of the neural feature
 
-Design the lifecycle now; 009 D001 records the selected model's pins and chosen
-recipe values, and its remaining limit checks run before implementation or
-full-corpus preparation. Current profile metadata
-alone is insufficient. The concrete interface stories are explicit preparation,
-visible partial coverage, continued baseline queries, pause/resume, unchanged warm
-restart, indexed edit catch-up and derived-index repair without document inference.
+Source preparation can run cold, publish partial coverage, pause, resume and
+catch up after an edit. An unchanged restart can reuse the publication. The
+accepted scale replay used one pinned Rust corpus on the owner's Mac.
+[Replay and changed-input evidence](validation.md#semantic-scale-replay-and-changed-input-acceptance--2026-11-10).
 
 Expensive vectors live in a workspace-scoped cache table in the existing transactional
 library; the search index can be rebuilt from them. Cache identity includes the full
@@ -543,10 +559,9 @@ explicit stop/configure/restart and derived-index preparation, preserving the ca
 Baseline retrieval remains available during that interval. No concurrent old/new
 profile preparation, live swap controller or instant-rollback promise is required.
 
-One bounded model worker can prepare immutable input batches outside the MCP engine
-slot; the existing store owner alone publishes validated results. This is an explicit
-extension to 003, whose current proposed single operation slot would otherwise block
-queries for the whole warm-up. A capacity-one handoff and committed-cache lookup make
+The embedding worker processes immutable input batches outside the MCP engine
+slot. The store owner publishes validated results, allowing foreground requests
+to run between preparation steps. A capacity-one handoff and committed-cache lookup make
 restart safe without durable job states. Slow providers may still cause a query's
 model deadline to expire; baseline fallback and visible degradation remain required.
 The runtime, not just the Rust client, must enforce one active embedding request with
@@ -580,19 +595,17 @@ ranges are explicit and recoverable; selection and deduplication come before any
 other compression, and no compression model is used. Expose further retrieval for
 omitted spans.
 
-Implemented 2026-10-01 (001 T003, 003 T002): CLI context/retrieve count complete
-stdout, and the MCP adapter counts its whole serialized tool result, envelope and JSON
-escaping included. Direct search has hit and byte caps but no token budget. Source
-handles, not bare paths and line spans, are the follow-up locators. The approved
-[v2 wire](../specs/001-source-state-recovery/contracts/context-v2.md) (001 T004, not
-yet implemented) replaces these JSON envelopes with compact text, counts the final MCP
-text block and budgets search too.
+The current [v2 wire](../specs/001-source-state-recovery/contracts/context-v2.md)
+budgets the final text of `search`, `context`, `retrieve` and `references`.
+CLI output and the MCP text block include handles and omission notices.
+Transport envelopes, host prompts and provider billing have different
+accounting boundaries.
 
 ## Commit and failure ordering
 
 This table describes the implementation verified on 2026-10-01 (001 T001–T003).
-005's proposed compiler importer will publish bounded document scopes with the
-snapshot eligibility rules above.
+The subsequent SCIP importer publishes compiler facts under the indexed
+snapshot eligibility rules described above.
 
 | Operation | Durable owner and failure behavior |
 | --- | --- |
@@ -740,11 +753,11 @@ prerequisite chain.
 
 ## Scale without recreating a database
 
-The first implementation is useful for a bounded repository snapshot. Its path
-set, whole-producer bundle replacement, fixed candidate window and single-process
-CLI are known constraints. Large repositories require paged reconciliation,
-per-source producer updates and stable symbol identity. A long-lived owner is useful
-for repeated agent requests, not an assumed requirement for every CLI command.
+The source owner reconciles an admitted root in pages, with bounded parallel
+reads and transactional file batches. MCP keeps the owner warm for repeated
+requests. Manual graph imports replace a producer's complete bundle. Static
+HTTP boundaries can update one source scope. Compiler references use imported
+symbol identities. Query candidate windows remain bounded.
 Those changes stay above library transactions. The selected 009 dense index addresses
 conceptual retrieval with its own preparation/lifecycle checks and requires no further
 general model comparison. This text once said it did not gate an earlier lexical
@@ -759,16 +772,16 @@ large-repository support, quality or economics. The [roadmap](roadmap.md) assign
 those goals to independently usable releases.
 
 Library references: [redb](https://docs.rs/redb/4.3.0/redb/),
-[Tantivy](https://docs.rs/tantivy/0.26.2/tantivy/).
+[Tantivy](https://docs.rs/tantivy/0.27.0/tantivy/).
 
-The experimental schema-9 continuation adds independent bounded semantic and knowledge
+Schema 12 retains independent bounded semantic and knowledge
 obligations to source transactions. The existing semantic preparation owner consumes
 exact changed paths only when continuous maintenance is explicitly enabled, waits on
 commit notifications when caught up, and acknowledges versions after publication.
 Ordinary status reads the last recorded publication and transactional cache totals;
 source/profile mismatch is stale or unknown, and full audit remains explicit.
 See [009 T008](../specs/009-optional-semantic-retrieval/spec.md#t008--maintain-and-publish-only-changed-semantic-work).
-Generation v5 retains one immutable ANN base and at most one bounded delta, committed
+Generation v6 retains one immutable ANN base and at most one bounded delta, committed
 through one atomic manifest. Immutable membership and location bases are reused; one
 location overlay holds at most 4,096 changes / 32 MiB. Location rebasing preserves both
 ANN segments. Queries filter retired keys before selecting their bounded windows.
@@ -801,15 +814,13 @@ buffer in cancellation-aware MiB chunks.
 Cold source ingestion uses the existing read/parse pool and at most eight reads/results.
 The owner commits up to four supported files atomically, preserving per-source revisions
 and derivation obligations. Source counts advance after commit; failed groups roll back.
-Watcher updates remain single-path transactions. No new queue or thread pool is added.
+Reconciliation walks also commit up to four files after rechecking each path. A targeted file event follows the single-path update path. No new queue or thread pool is added.
 
 ### Experimental boundary relationships and task composition
 
 [005 T005](../specs/005-graph-evidence-lifecycle/spec.md#t005--connect-repository-behavior-across-process-boundaries)
 uses two redb indexes in [`boundary.rs`](../src/boundary.rs): one source/config-bound
-scope and one normalized-key posting list. This avoids whole-producer replacement,
-compiler-fact misclassification and materialized endpoint pairs. The first producer
-parses explicitly admitted static FastAPI routes and literal HTTP clients. It reuses
+scope and one normalized-key posting list. The producer parses explicitly admitted static FastAPI and Flask routes and literal HTTP clients. It reuses
 unchanged scopes, revalidates before atomic publication, and suppresses stale facts
 on every read. A bounded configured-set metadata check accounts for missing providers
 before any unique join. Extraction is explicit; source watching alone starts no boundary

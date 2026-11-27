@@ -5,7 +5,7 @@ Draft date: **2026-11-11**. **Not frozen; execution locked.**
 
 This is the draft selected by owner decision 1 on 2026-11-06. It owns the v2
 design; [T006](../spec.md#t006--validate-retrieval-repairs-in-real-coding-tasks)
-owns acceptance and the [handoff](../../../docs/resume-context-ecosystem.md#current-status--2026-11-06)
+owns acceptance and the [handoff](../../../docs/resume-context-ecosystem.md#current-status)
 owns current status. It does not reuse v1's credential, budget, launch manifest or
 four-category usage exception. [V1](bounded-pilot-v1.md) remains byte-for-byte frozen.
 No provider request, credential access, training or execution is authorized here.

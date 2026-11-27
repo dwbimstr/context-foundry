@@ -1,5 +1,12 @@
 # 008 — Explicit project memory
 
+On the experimental branch, the primary store also owns original captures,
+feature decisions, explicitly confirmed relationships and per-claim citation
+history. The client can inspect, peek, promote and forget under the existing
+task and memory lifecycle. 003 owns the desktop delivery and optional semantic
+lookup. T004 structured assertion review remains deterministic.
+[Shared-source contract](../003-agent-retrieval-context/contracts/shared-source-review.md) · [Operator guide](../../docs/experimental-context.md#recoverable-task-context).
+
 Status: T001 and T002 implemented locally 2026-10-04 and unreleased (see
 [validation](../../docs/validation.md)). T003–T005 are experimental and unaccepted.
 Owner decision, 2026-11-06, "Measure them in pilot v2": their acceptance bar stays,
@@ -16,7 +23,8 @@ Spec-pass decisions recorded 2026-10-03: one MCP `memory` tool, compact memory l
 context and search, content-free forget/export reports and refusal of contradictory
 input before commit. No external prerequisite.
 
-Implementation decisions (2026-10-04, captain, after cross-lab review):
+The following schema-3 implementation decisions are historical. The current
+upgrade target is 12. [Compatibility table](../../docs/release.md#what-is-compatible).
 
 - **Store schema 3.**
   - `upgrade-store --to 3` upgrades a v1 or v2 store in one write transaction, and

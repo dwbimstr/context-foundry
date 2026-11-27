@@ -1,6 +1,6 @@
 # Owned continuous learning
 
-Status, 2026-10-05: [013](../specs/013-owned-learning/spec.md) owns the design and
+Owned learning is frozen off and excluded from the release package. [013](../specs/013-owned-learning/spec.md) owns the design and
 acceptance. T001 (exact permitted examples), T002 (fitting, calibration, evaluation and
 the candidate) and T003 (serving, selection and rollback) are implemented and accepted
 locally, with the model worker under development isolation only. The code:
@@ -11,8 +11,11 @@ locally, with the model worker under development isolation only. The code:
   serving workflow;
 - `src/policy.rs`: config, routing and selection.
 
-T004 (a second round and deployment) and every real-data measurement are deferred to the
-measurement and packaging phase.
+Two research training rounds ran on permitted Rust rows in October. The owner
+froze 013 off after its policy changed one route on the 71 held-out rows with
+identical evidence. EmbeddingGemma 2 retrieves passages independently. The later
+Laya, Mapika and Inkling comparisons judged saved decisions offline and did
+not select a serving policy. [Portfolio disposition](../specs/README.md#task-detail-and-remaining-execution-inputs) · [Decision-reader evidence](references/laya-decision-ecosystem.md).
 
 A `learning prepare` whose process died after publishing its output but before
 recording it leaves a dataset that is not yet a valid parent (`lineage_missing`).

@@ -1,5 +1,12 @@
 # 003 — Context inside coding agents
 
+On the experimental branch ChatGPT desktop uses the project MCP owner for
+source discovery and feature memory. The operator-facing contracts cover
+[shared originals and decision recovery](contracts/shared-source-review.md)
+and [proposed changes and impact](contracts/indirect-change-impact.md).
+The [current handoff](../../docs/resume-context-ecosystem.md) owns readiness,
+including the outstanding T006 pilot. Earlier planning and measurements follow.
+
 Planning addition, 2026-10-09: [T006](#t006--validate-retrieval-repairs-in-real-coding-tasks)
 is authorized for execution by the owner on 2026-10-09 under the [ecosystem plan](../../docs/context-ecosystem-plan.md).
 The 2026-10-10 continuation now permits explicit frozen task-view application at the
@@ -152,14 +159,19 @@ receipt requires a call from the project chat with the indexed result returned
 to the chat. Configuration generation and a scripted MCP client measure earlier
 steps in the connection. See the [desktop quickstart](../../README.md#chatgpt-desktop-on-your-mac).
 
+The current default catalog includes `search`, `context`, `retrieve`, `references`,
+`status`, `index` and `memory`. The task flag adds `task_context` and the
+task-aware schema fields. `--no-memory` removes the `memory` tool. The token counts
+and descriptions below record earlier catalog revisions. [Tool definitions](../../src/mcp/tools.rs).
+
 Approved 2026-10-03 for T005; it landed with 001 T004 (committed in `5edf32c`) because
 both change `src/mcp.rs` and `src/bootstrap.rs`, and an MCP test pins these strings
 exactly. `lines`, `view` and outlines are live since 001 T004/T006, `root`/`roots`
 since 007 T001 (2026-10-04, `cc402e0`), and the sixth tool `memory` with `context`'s
-`include_memory` since 008 (2026-10-04). The serialized `tools/list` is 793 o200k
+`include_memory` since 008 (2026-10-04). At that revision the serialized `tools/list` was 793 o200k
 tokens with 008 (661 after 007 T001; 598 after T006; ceiling 800).
-`mcp --no-memory` serves the five-tool catalog: 669 tokens, where `context`'s static
-schema still lists `include_memory`. Tool descriptions, exactly:
+At that revision, `mcp --no-memory` served five tools at 669 tokens. The static
+`context` schema listed `include_memory`. The recorded descriptions were:
 
 ~~~text
 search: Use BEFORE grep/rg for indexed code: one line per hit with handle, line, symbol and match. Follow handles with retrieve. Indexed snapshot, not live disk.
@@ -787,7 +799,7 @@ and a no-provider preflight, removing the Anthropic-only author restriction.
 The full actual installed-host fixture preflight now passes; both earlier failed
 attempts and the original calibration evidence are retained. See the
 [receipt](../../docs/validation.md#no-provider-apparatus-preflight--2026-10-29)
-and [current handoff](../../docs/resume-context-ecosystem.md#current-status--2026-11-06).
+and [current handoff](../../docs/resume-context-ecosystem.md#current-status).
 The guard remains fixture-only. This does not authorize another coding comparison,
 establish live-provider capture or amend T006's acceptance.
 

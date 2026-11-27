@@ -6,6 +6,9 @@ recorded results before measuring anything. Background is in the
 [context packet](context-packet.md); the measurements themselves are in the
 [measurement handoff](measurement-handoff.md).
 
+For an ordinary project chat on the current branch, use the [desktop quickstart](../README.md#chatgpt-desktop-on-your-mac) and [decision-profile setup](deployment.md#desktop-decision-lookup). The private corpus restoration
+below is for reproducing the historical measurement environments.
+
 ## Requirements
 
 - **macOS on Apple silicon.** The embedding worker needs Metal, and the stores, binaries

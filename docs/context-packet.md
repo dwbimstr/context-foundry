@@ -1,6 +1,10 @@
 # Context packet: restarting this work elsewhere
 
-**Latest continuation, 2026-10-17:** current status lives only in the [resumable implementation handoff](resume-context-ecosystem.md); evidence is in [G2 restored as the retrieval instrument](validation.md#g2-restored-as-the-retrieval-instrument--2026-10-17). Paragraphs below are dated history.
+Start with the [current architecture](architecture.md#current-architecture) and
+[resumable implementation handoff](resume-context-ecosystem.md) when taking
+over this project. The dated setup and measurements below describe the
+October baseline. [Validation](validation.md) includes subsequent desktop and
+local-model evidence.
 
 Written 2026-10-08 so that a fresh agent (for example a cloud agent) can continue
 without the original sessions, their memory store or their temporary directories. Read

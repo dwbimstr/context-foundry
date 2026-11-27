@@ -22,8 +22,11 @@ Context Foundry is a local tool for an operator-controlled workspace. It does no
 execute indexed source, load repository plugins or collect telemetry. It opens a
 network listener only when explicitly run as a shared MCP owner
 (`mcp --transport streamable-http`) or as the model gateway (`foundry gateway`), and
-only the gateway connects to a remote service. The legacy Laya HTTP client has been
-removed. Training feedback is retained locally; export is explicit.
+ordinary source and memory lookups run locally. The gateway forwards requests to
+its configured provider. Experimental knowledge generation can also send selected
+source material to an explicitly configured HTTPS endpoint with `allow_remote`.
+A connected host receives the tool results it requests. Training feedback is retained
+locally and export is explicit. [Generation boundary](docs/experimental-context.md#selective-knowledge-generation).
 
 Indexed source and imported graph text are untrusted data. Their presence in a cited
 bundle does not turn them into instructions. This tool cannot guarantee that a
@@ -44,12 +47,14 @@ The shared MCP owner binds IPv4 loopback only and requires a bearer token, read 
 named environment variable, on every request before any session is allocated; it
 rejects a mismatched `Host`, any `Origin`, oversized bodies and newer stateless protocol
 requests. Printed host configuration carries the variable name, never the token. This
-is a same-machine boundary, not multi-user isolation: the bearer token grants the
-owner's seven tools (`search`, `context`, `retrieve`, `index`, `status`, `memory`,
-`references`; six with `--no-memory`) across every explicitly admitted root. `index`
-can update the primary store or an admitted reference store (`root` selects it; the
-default is the primary); `memory` operates only on the primary store. No tool modifies
-indexed workspace files. Opt-in usage receipt logs are created `0600` and refused if
+is a same-machine boundary. The bearer grants access to the owner's enabled
+catalog. The seven default tools are `search`, `context`, `retrieve`,
+`references`, `status`, `index` and `memory`. Source operations can address
+explicitly admitted roots. `memory` and optional `task_context` operate on
+the primary workspace. Its task IDs and revisions scope operations within that
+workspace. `--no-memory` removes `memory` and refuses promotion from a task
+into project memory. Original captures and quoted decisions may contain
+operator-supplied text. Tools leave indexed workspace files untouched. Opt-in usage receipt logs are created `0600` and refused if
 readable by others; they carry identities and counts, not bodies.
 
 ### Model workers
@@ -66,6 +71,11 @@ follows from Rust, process separation or the development profile alone. Workers 
 receive the live store, the operator's home directory or credentials. Baseline indexing
 executes no workspace code and loads no model. See
 [deployment § Isolation is an enforced profile](docs/deployment.md#isolation-is-an-enforced-profile).
+
+The optional `foundry-generate` binary has a separate development profile
+for local generation. The core supplies bounded selected source and validates
+generated output before publication. The HTTP generation profile is a separate
+operator choice. [Generation controls and platform limits](docs/deployment.md#experimental-owned-generation-controls).
 
 ### Model gateway
 

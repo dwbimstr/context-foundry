@@ -8,10 +8,24 @@ was never published and is not a release.
 
 ## [Unreleased]
 
-Every entry below is on `main`: the `experimental/context-ecosystem` branch, which
-`main` receives only through a pull request that the owner approves, last merged on
-2026-11-20 ([record](docs/validation.md#merge-of-the-experimental-line-to-main--2026-11-20)).
-Current status is in the [handoff](docs/resume-context-ecosystem.md).
+### Experimental branch since November 20, 2026
+
+- ChatGPT desktop project configuration and the opt-in `task_context` tool support
+  saving an attributed decision and reopening it in a fresh chat. [Desktop workflow](README.md#chatgpt-desktop-on-your-mac).
+- Capture a supplied meeting or indexed spec once. Features can cite shared
+  originals, declare reliance on a decision, record corrections and review
+  changed passages. A change proposal can recover earlier evidence and ask for
+  a scope decision. [Shared-source review](specs/003-agent-retrieval-context/contracts/shared-source-review.md) · [Change proposals](specs/003-agent-retrieval-context/contracts/indirect-change-impact.md).
+- Saved decisions can be found through a dependent requirement, a feature title
+  or, on eligible misses, the optional local Gemma decision profile. Readers
+  see original quotes and review status. [Decision lookup](docs/deployment.md#desktop-decision-lookup).
+
+- The no-provider OMP pilot startup probe fails closed on network denials apart
+  from the documented system logging socket. Startup owner inventory and admission
+  remain open. [Startup evidence](docs/resume-context-ecosystem.md#current-status).
+
+The entries under Added, Changed, Fixed and Known limitations below describe
+the baseline merged to `main` on November 20. [Merge record](docs/validation.md#merge-of-the-experimental-line-to-main--2026-11-20) · [Current handoff](docs/resume-context-ecosystem.md).
 
 ### Added
 

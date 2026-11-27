@@ -1,5 +1,11 @@
 # Experimental task context
 
+Start with [recoverable task context](#recoverable-task-context) to save a meeting,
+a spec and the decisions that cite them. For implementation evidence use
+[boundary relationships and task evidence](#boundary-relationships-and-task-evidence).
+The [capability map](architecture.md#capability-map) identifies which optional worker,
+profile or host each workflow needs.
+
 ## Pipelined source ingestion
 
 Ordinary CLI/MCP `index` now overlaps source reads and hashing with ordered source
@@ -556,12 +562,15 @@ For a small project, add `--decision-semantic-profile FILE` to an MCP owner
 already using `--experimental-task-context` to help find saved decisions in
 the operator's own words. A local development worker also requires
 `--development-isolation`. Check `status.decision_semantic` for readiness.
-Use the ordinary `find_decisions` command without a title. If the first
-lookup misses, read any `semantic_leads` and quote a decision only if it
+Use the ordinary `find_decisions` command without a title. When the ordinary lookup returns a `recovery_question`, read any
+`semantic_leads` and quote a decision only if it
 addresses the question. For example, a decision about keeping edited copies
 cannot establish a payroll date. Ask for the relevant rule when none fits.
-This profile serves task decisions; `--semantic-profile` selects source
-retrieval instead. [Scope and limits](../specs/003-agent-retrieval-context/contracts/shared-source-review.md#optional-semantic-recovery-of-a-saved-decision).
+The owner ranks up to eight eligible decisions across at most 32 task records
+and can return two leads. An ordinary wording match can bypass this lookup,
+including a match on an attributed account. `--semantic-profile` is the
+mutually exclusive source-retrieval mode. ChatGPT reads the decision passages.
+The Laya, Mapika and Inkling trials ran outside the product. [Desktop setup](deployment.md#desktop-decision-lookup) · [Reader trials](validation.md#inkling-2-mini-decision-judging-gemma-leads--2026-11-27). [Scope and limits](../specs/003-agent-retrieval-context/contracts/shared-source-review.md#optional-semantic-recovery-of-a-saved-decision).
 
 To save a meeting and specification once and ask which features need review
 after an edit, follow the [shared-source workflow and commands](../specs/003-agent-retrieval-context/contracts/shared-source-review.md#commands-and-output).

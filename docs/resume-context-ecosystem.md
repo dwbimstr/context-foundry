@@ -1,9 +1,17 @@
-# Experimental ecosystem checkpoint — 2026-10-11
+# Experimental ecosystem handoff
 
-## Current status — 2026-11-06
+<a id="experimental-ecosystem-checkpoint--2026-10-11"></a>
+<a id="current-status--2026-11-06"></a>
 
-Updated 2026-11-27. This section owns current status; other documents link here,
-and dated paragraphs below are history.
+## Current status
+
+**Updated 2026-11-27.** This section owns current status. Dated entries below
+record the scope and limitations of each run.
+
+For the current system layout, start with the [architecture](architecture.md#current-architecture).
+It maps each capability to its runtime owner, client entry point and operating
+limits. The [desktop setup](deployment.md#desktop-decision-lookup) covers both
+the ordinary task workspace and its optional decision profile.
 
 - **Product goal, 2026-11-23.** An operator can give Foundry project context
   from any source they choose, in the form they already have it. Foundry saves
@@ -1601,7 +1609,7 @@ provides a Linux host.
 ## Resume in this order
 
 This is the order as of the 2026-10-11 checkpoint; it is superseded. Take next steps
-from [Current status](#current-status--2026-11-06). What became of each step:
+from [Current status](#current-status). What became of each step:
 
 - Step 1 now runs on the owner's Mac (M5 Max, 64 GiB), not the sandbox.
 - Step 2 was measured as F9 on 2026-10-14; its capsule is lost with the archive.

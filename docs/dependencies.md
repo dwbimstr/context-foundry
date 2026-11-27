@@ -9,6 +9,11 @@ The 008 regression `later_note_finds_two_promises_and_reviews_only_the_connectio
 checks that comparisons preserve the original bytes and their attribution.
 The locked crate uses the existing serde dependencies.
 
+The experimental saved-decision fallback reuses `foundry-embed` and the
+selected local EmbeddingGemma 2 profile. The standalone Laya, Mapika and Inkling
+decision-reader trials introduce no runtime or weight dependency into the
+Foundry binary or desktop configuration. [Model roles and evidence](references/laya-decision-ecosystem.md).
+
 One section is not about a dependency. The
 [oh-my-pi reference patches](#oh-my-pi-reference-patches) are tracked files that
 carry lines of upstream source, and that section records their license and notices.

@@ -1,5 +1,25 @@
 # Validation
 
+## Architecture and capability documentation — 2026-11-27
+
+The documentation review used experimental tip `810f934` and main tip
+`37a3cd8`. The installed Foundry MCP owner opened the project store at schema
+12 and source revision 554. Search, context and handle retrieval worked on that
+snapshot. Its indexed source predates the latest task changes, so the checkout
+and tool schemas supplied the current implementation details. Offline Cargo
+metadata confirmed one crate, the default semantic build feature and the
+feature gates on the embedding, generation, learning and pilot binaries.
+
+Four read-only catalog checks returned seven tools by default, eight with
+task context, six with project memory disabled and seven with both switches.
+The task flag also exposed task-aware context arguments. All three host
+profiles printed a launch configuration containing the requested task flag.
+Argument parsing required task context for the decision profile and rejected
+combining it with the source semantic profile. The store, search, source-unit
+and semantic-generation format constants matched the compatibility table.
+These checks cover interfaces and documentation. Desktop, model, scale and
+signed-package evidence retain their own dated scopes. [Architecture](architecture.md#current-architecture) · [Compatibility](release.md#what-is-compatible) · [Handoff](resume-context-ecosystem.md#current-status).
+
 ## Inkling 2 Mini Decision judging Gemma leads — 2026-11-27
 
 Inkling recovered the original Cleanup decision and asked on the billing and
@@ -8159,7 +8179,7 @@ a new bounded selection and unexposed acceptance evidence. Source, executable,
 closed development bundle, final private artifacts and correction receipts are
 retained under `runs/t005-header-candidate-2026-11-13/`,
 `runs/t005-heldout-final-2026-11-13/` and their named owned dataset roots. The
-[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+[handoff](resume-context-ecosystem.md#current-status) owns current status.
 The complete final bundle then passes two full snapshot readbacks: **807 files /
 7,112,164,903 bytes** across two roots, manifest
 `f11ec99734cb5167346f8e1cd627310e592c609a29334fea66c8b30678ad7969`.
@@ -8253,7 +8273,7 @@ bounds; the bundle is immutable after `evidence-readback.json`. Final-harness wo
 has a separate private run and does not amend the closed development evidence.
 
 T005 is not accepted, the candidate is not enabled/integrated/published, and the
-[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+[handoff](resume-context-ecosystem.md#current-status) owns current status.
 
 ## T005 exact body-input reconstruction — 2026-11-13
 
@@ -8305,7 +8325,7 @@ code changed, no new full Rust gate run or retrieval score is claimed, and no
 private source/context payload is added to Git. The helper source, original
 compile failure, fixed source, native receipts, exact contexts and aggregate
 remain private in `runs/t005-input-reconstruction-2026-11-13/`. The
-[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+[handoff](resume-context-ecosystem.md#current-status) owns current status.
 
 ## T005 retained candidate-coverage census — 2026-11-13
 
@@ -8356,7 +8376,7 @@ workers, and unchanged selected inputs/source. The selected stage is 900 seconds
 per-process RSS ceiling. No paid request or new Rust gate run is claimed.
 Private cases, source excerpts, pins and receipts remain in
 `runs/t005-coverage-diagnostic-2026-11-13/`; the
-[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+[handoff](resume-context-ecosystem.md#current-status) owns current status.
 
 ## T005 fragment-order candidate no promotion — 2026-11-13
 
@@ -8427,7 +8447,7 @@ Its source commits, binary, source bundle, native receipts, failed attempts and
 private raw evidence are retained in `runs/t005-fragment-candidate-2026-11-13/`
 and its named owned dataset directories. This K = 1 experiment is closed without
 promotion. T005 remains unaccepted at its broader retrieval goal; the
-[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+[handoff](resume-context-ecosystem.md#current-status) owns current status.
 
 ## Approved experimental publication and evidence closure — 2026-11-13
 
@@ -8451,7 +8471,7 @@ not just their earlier runtime outputs. Their `evidence-readback.json` receipts
 are finalized; neither authenticated encrypted restoration nor off-machine
 retention is newly established. Newer local commits need their own publication
 intent; this receipt does not authorize a larger payload. Current status remains
-with the [handoff](resume-context-ecosystem.md#current-status--2026-11-06).
+with the [handoff](resume-context-ecosystem.md#current-status).
 
 ## T005 actual same-file admission pressure — 2026-11-13
 
@@ -8489,7 +8509,7 @@ Only dated records and links change. No model, retrieval/scorer, store API,
 source-program execution, provider access or spend occurs. No new Rust gate run
 is claimed. Private receipts, exact occupant identities and the failed fixture
 are retained in `runs/t005-file-pressure-2026-11-13/`; the
-[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+[handoff](resume-context-ecosystem.md#current-status) owns current status.
 
 ## T005 retained cap-decision census — 2026-11-13
 
@@ -8546,7 +8566,7 @@ remains unused. No spend, model search, provider access, source-program executio
 or production change occurs. Private evidence is in
 `runs/t005-cap-census-2026-11-13/`. Only records change, so link/diff checks apply;
 the previous Rust gates are not presented as a new run. The
-[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+[handoff](resume-context-ecosystem.md#current-status) owns current status.
 
 ## Worker scratch creation defaults — 2026-11-13
 
@@ -8598,7 +8618,7 @@ by these named writes. Closed producer-tree checks remain separate. Pilot v2/T00
 current installed-host compatibility, complete startup observation and signed
 package acceptance remain open. Private receipts and failed attempts are retained
 in `runs/worker-scratch-permissions-2026-11-13/`; the
-[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+[handoff](resume-context-ecosystem.md#current-status) owns current status.
 
 ## Private full pipeline and preview archival — 2026-11-13
 
@@ -8669,7 +8689,7 @@ model search occurred. Current installed-host compatibility, complete startup
 observation, transient worker scratch-file modes and v2's declared task/arm/host
 qualification remain open. Private receipts and the original failure are retained
 in `runs/pilot-full-pipeline-2026-11-13/`; the
-[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+[handoff](resume-context-ecosystem.md#current-status) owns current status.
 
 ## Pilot semantic-producer permissions — 2026-11-13
 
@@ -8726,7 +8746,7 @@ This is not a global artifact-absence claim. Current installed-host compatibilit
 complete startup-network observation, the broader private pipeline, pilot v2/T006
 and release remain open. Private protocol, control, producer, gate and readback
 receipts are in `runs/pilot-semantic-permissions-2026-11-13/`; the
-[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+[handoff](resume-context-ecosystem.md#current-status) owns current status.
 
 ## T005 compact candidate: no promotion — 2026-11-11
 
@@ -8805,7 +8825,7 @@ Private receipts: `runs/t005-packing-candidate-2026-11-11/`,
 G1 runtime receipt SHA-256:
 `f9ff337583e4f54efa22e211f7408a4a646ca69667bc9ef1211ba349199669aa`.
 These were local, no-spend measurements; signed-package and task/economic acceptance
-remain separate. The [handoff](resume-context-ecosystem.md#current-status--2026-11-06)
+remain separate. The [handoff](resume-context-ecosystem.md#current-status)
 owns current status.
 
 ## T005 sealed holdout encrypted retention — 2026-11-11

@@ -1,49 +1,21 @@
 # Roadmap
 
-The [portfolio](../specs/README.md) owns task scope and order; the
-[resumable handoff](resume-context-ecosystem.md) owns current status. Release useful workflows:
+The product goal is for a project to retain the context its operator supplies,
+show how decisions depend on original evidence, and answer which features need
+review after a change. ChatGPT desktop is the primary place to use that workflow.
+The [capability map](architecture.md#capability-map) describes the implementation.
+The [portfolio](../specs/README.md) owns task scope and the [handoff](resume-context-ecosystem.md)
+owns acceptance and remaining work.
 
-1. Reliable cited CLI context, including source update and interrupted-index recovery (001).
-2. Explicit repo bootstrap, direct stdio MCP, native source discovery before eligible
-   grep/ripgrep, and honest adapter budget/usage boundaries (003). The actual agent
-   workflow verifies default tool order and named fallback, not just MCP availability.
-   Its optional T004 adds a Rust forwarding/metering gateway for a verified host/API;
-   gateway work does not gate the independently useful MCP release.
-3. Fewest delivered tokens for the same cited evidence, so agents use Foundry instead
-   of grep/ripgrep and exploratory reads: compact v2 text, syntax-unit search with
-   exact definitions first and deterministic outlines (001 T004–T006); trigger-first
-   tool text, the opt-in OMP first-call hook, usage import and measured economics
-   (003 T005); one budgeted response across explicitly admitted repositories (007 T001).
-4. One real code-relationship workflow on a declared large workspace (005).
-5. Progressive neural preparation, semantic retrieval and retained work across restart/edit (009).
-6. Explicit project memory as an independent feature (008).
-7. (Frozen off 2026-10-07; not a release condition) Repeated owned Rust policy
-   fine-tuning with isolated execution, selection and rollback (013).
+| Workstream | What is available or still gated |
+| --- | --- |
+| Source, graph and delivery (001, 003, 005, 007) | Cited search and retrieval, explicit graph and compiler imports, opt-in watching and bounded multi-root context. The Python HTTP boundary has a specific accepted static scope. |
+| Project memory and change impact (003, 008) | Recoverable task records, shared originals, reviewed dependencies and changed-source review are implemented on the experimental branch. Broader real-host task outcomes and economics remain tied to the unfunded pilot. |
+| Semantic retrieval (009) | EmbeddingGemma 2 is the selected optional source profile. The experimental saved-decision lookup reuses its worker. The 009 T005 anchorless source-retrieval investigation closed at the existing baseline. |
+| Generation, learning and metering (010, 013, 003) | Generated knowledge is experimental with real-model utility deferred. Owned learning is frozen off. A new live proof belongs to the gateway's separate release. |
+| Distribution | The first release requires all active tasks, including 003 T006, and the signed semantic package with its installed-artifact checks. Paid trials and signing require their existing authorization. [Release checklist](release.md) |
 
-Items 1–6 are planned work (013 is frozen off); a release waits until every active spec
-is complete (owner policy 2026-10-04). As of
-2026-10-01, 001 T001–T003 and 003 T001–T003 (including the optional shared owner) are
-implemented and verified locally ([validation](validation.md)). The owner selected
-item 3 on 2026-10-03 as the current core work, ahead of the optional features; it is
-implemented locally: 001 T004–T006 are accepted and committed (`5edf32c`); 003 T005 and
-007 T001 were accepted and committed locally on 2026-10-04, as were 008 T001–T002
-(explicit memory) and 003 T004 (the owned model gateway, verified live against Z.ai).
-None is released, and the [release checklist](release.md) runs only after every active
-spec is complete. At that point 005, 009 and 013 were open; the 2026-10-03 spec pass
-classified their remaining unknowns as settled decisions, owned decisions (both decided
-2026-10-04) or external prerequisites, all listed in the portfolio. Since then 013 has
-been frozen off (2026-10-07); 005 T005 is accepted at its written scope
-([receipt](validation.md#boundary-scope-acceptance-005-t005--2026-11-10)), and 009 remains open
-([owner decisions, 2026-11-06](validation.md#owner-decisions--2026-11-06)). Within 009,
-the anchorless retrieval task T005 closed without promotion on 2026-11-19 ("Close, no
-promotion"): its diagnostic and candidate checkpoints are closed, the current baseline
-stays, anchorless quality beyond it is a named limitation and T005 is no longer a
-release condition ([owner decisions, 2026-11-19](validation.md#owner-decisions--2026-11-19)). 003
-T006–T009 and 008 T003–T005 retain their task-outcome requirements. See the
-[resumable handoff](resume-context-ecosystem.md) for current acceptance and remaining
-release checks. 001 D001 stays resolved: redb/Tantivy. Optional model choices do not reopen that decision by default.
-
-Plan 009's cache/profile/chunk lifecycle alongside 001. EmbeddingGemma 2 on the pinned
+009's cache, profile and chunk lifecycle follows 001 source identity. EmbeddingGemma 2 on the pinned
 llama.cpp worker is the only selected profile (G2, G1 and vector parity, 2026-10-08).
 The owner closed the Nemotron comparison on 2026-11-06 ("Close it; Gemma only") and
 keeps the Nemotron files only as historical evidence.
