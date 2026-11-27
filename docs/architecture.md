@@ -14,10 +14,14 @@ decisions, their original wording and the features that rely on them.
 flowchart LR
     Chat["ChatGPT desktop project chat"] <--> Host["Desktop app server"]
     Host <-->|"MCP over stdio"| Owner["foundry mcp · project owner"]
-    Owner <-->|"sources, graph, memory and decisions"| DB[("project store / knowledge.redb")]
-    Owner <-->|"lexical lookup and index updates"| Index[("project store / search")]
+    Owner <--> Store[("Project store · knowledge.redb and search/")]
     Root["Admitted repository files"] -->|"explicit index"| Owner
 ```
+
+The project store is one directory. Its `knowledge.redb` database holds indexed
+source, graph facts, memory and decisions. Its `search/` directory holds the
+Tantivy index that speeds up text lookup. Foundry can rebuild that index from
+the database while preserving saved decisions. [Storage and recovery](#commit-and-failure-ordering).
 
 The desktop host selects the registration for the trusted project. On the
 inspected Mac its `codex app-server` process launched Foundry. The Rust engine, task operations
@@ -35,11 +39,11 @@ found no Foundry launchd job. Check the project's `workspace_id` with MCP
 `status` before using a result from a similarly named registration.
 [Process and store observations](validation.md#desktop-mcp-process-and-store-ownership--2026-11-27) · [Demo launcher](../examples/task-handoff/serve-demo.py).
 
-The observed project process had `--experimental-task-context` enabled. Refresh
-source after edits through the owner's `index` tool. Continuous indexing requires
-`--watch`, which was absent. The project configuration on disk also requested the
-Gemma decision profile, but the running process lacked that argument. A saved
-configuration takes effect on the next server launch. [Decision-profile setup and status](deployment.md#desktop-decision-lookup).
+The project owner runs with `--experimental-task-context`. Refresh source through
+its `index` tool after edits, or enable `--watch` for continuous indexing. The
+November 27 project-only restart loaded the configured Gemma decision profile.
+A fresh chat verified `decision_semantic: ready` on the same project store.
+[Restart and lookup results](validation.md#project-only-gemma-restart-and-desktop-lookup--2026-11-27) · [Decision-profile setup](deployment.md#desktop-decision-lookup).
 
 ### Store ownership by transport
 
