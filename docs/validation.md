@@ -1,5 +1,27 @@
 # Validation
 
+## Project-only Gemma restart and desktop lookup — 2026-11-27
+
+The old project process held the real project's `knowledge.redb` and lacked
+the decision-profile argument. Only that process was signalled. After its file
+handle closed, a fresh desktop project chat launched a new owner with the
+configured local EmbeddingGemma 2 BF16 profile and development isolation.
+The native `status` response matched the workspace ID derived from the canonical
+project path, with 421 sources at revision 554 and `decision_semantic: ready`.
+
+The chat received each of the following requests without a feature title or
+expected answer. All three `find_decisions` calls succeeded. The chat also used
+`source_review` to check the first answer.
+
+| Request | Observed result |
+| --- | --- |
+| Can we discard the predecessor and safeguard a collaborator's revision? | Ordinary lookup missed. The local fallback returned two leads. The chat quoted “Cleanup keeps an edited copy when retiring its parent.” It identified the decision as `keep-copy` at revision 9, flagged the changed source and asked whether Cleanup governed this case. |
+| Should we retire the parent account after billing closes? | Foundry returned zero matches. The chat asked which feature or rule covered the account and billing closure. |
+| Move payroll to Thursday. | The local fallback offered two leads. The chat found neither applicable and asked where the payroll scheduling decision had been saved. |
+
+The in-chat operations were read-only. The check used the existing desktop
+account and local inference, with no separately billed provider call.
+
 ## Desktop MCP process and store ownership — 2026-11-27
 
 On the project Mac, a read-only inspection matched the configured root and store
