@@ -231,6 +231,10 @@ foundry --store /tmp/foundry-demo graph src/main.rs --depth 1
 
 ### ChatGPT desktop on your Mac
 
+The desktop host launches `foundry mcp` over stdio and the child holds the project
+store. Later chats can recover the same records when connected to that store.
+[Desktop process layout](docs/architecture.md#what-runs-on-the-desktop) · [Identify the running owner](docs/deployment.md#identify-the-running-desktop-owner).
+
 Open the indexed repository as a trusted local project in the ChatGPT desktop
 app. From that repository, use a Foundry executable installed outside Cargo's
 build cache. The following commands configure this project only.
@@ -285,8 +289,8 @@ primary or admitted reference store, and `memory`, which reads and writes
 primary-workspace records. The opt-in `task_context` tool reads and writes revisioned task records in the primary workspace. Keep
 `.context-foundry/` out of version control.
 
-A managed coding agent with shell access can also call this CLI directly, using
-its existing model and authentication:
+When the store is free, a coding agent with shell access can open it directly
+with the CLI. While the desktop owner holds it, use the MCP tools for that store.
 
 ```sh
 foundry --store ~/src/repo/.context-foundry context 'parse_record callers' --tokens 2048
@@ -315,8 +319,9 @@ unaccepted. The semantic budget starts after indexing. Incomplete preparation ex
 An unchanged prepared repository requires zero embedding calls. Lexical context
 remains usable after optional preparation fails. See [deployment](docs/deployment.md).
 
-**Several sessions on one repository.** By default one host session owns the store and
-others get `store_busy`. For concurrent hosts, run one shared owner on IPv4 loopback
+**Several sessions on one repository.** The default stdio process holds the store
+until its connection closes. A second process opening that store gets `store_busy`.
+For concurrent hosts, run one shared owner on IPv4 loopback
 with a bearer token read from an environment variable, and print matching host
 configuration. The variable (here `FOUNDRY_TOKEN`) must hold the same secret in the
 owner's and the host's environment; configuration carries only its name.

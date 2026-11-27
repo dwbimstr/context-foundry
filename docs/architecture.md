@@ -2,38 +2,56 @@
 
 ## Current architecture
 
-Context Foundry is a local Rust crate with one store owner per admitted repository.
-It serves two kinds of questions. “Where is this defined and who uses it?” draws on
-indexed source and graph evidence. “What did we decide, and which feature needs
-review after this edit?” draws on attributed originals, decisions and their citations.
-ChatGPT desktop is the primary client for the second workflow. A fresh chat can reopen
-the same records by workspace and task ID. The project store supplies the memory.
+In the desktop project, ChatGPT's local app server launches the installed
+`foundry` executable with the `mcp` command. They exchange requests and replies through stdin
+and stdout. The Foundry process opens the project store and holds it while the
+connection lives. A later chat that connects to the same store can reopen saved
+decisions, their original wording and the features that rely on them.
 
-This describes the implementation as of 2026-11-27. The handoff tracks
-acceptance and open work. [Current status](resume-context-ecosystem.md) ·
-[Portfolio](../specs/README.md) · [Release boundary](release.md).
+### What runs on the desktop
 
 ```mermaid
-flowchart TD
-    Chat["ChatGPT desktop project"] --> MCP["MCP owner · stdio or shared loopback HTTP"]
-    Other["Codex / OMP"] --> MCP
-    MCP --> Engine["Rust Engine"]
-    CLI["foundry CLI"] --> Engine
-    Files["Admitted files"] --> Ingest["Explicit index or optional watcher"]
-    Ingest --> DB[("redb · source bytes, revisions, graph facts, task records and memory")]
-    Engine --> DB
-    DB --> Index["Tantivy · rebuildable lexical index"]
-    Index --> Pack["Cited source, graph evidence and bounded text"]
-    DB --> Pack
-    Source["Prepared source vectors · optional"] --> Pack
-    DB --> Review["Task lookup, dependencies and source review"]
-    Review -. "Eligible title-blind miss" .-> Gemma["Optional local Gemma ranks saved quotations"]
-    Gemma --> Check["Recheck identities and citations"]
-    Review --> Reply["Task result with originals, review state or clarification"]
-    Check --> Reply
-    Reply --> Reader["Client reads evidence and asks when support is insufficient"]
-    Pack --> Reader
+flowchart LR
+    Chat["ChatGPT desktop project chat"] <--> Host["Desktop app server"]
+    Host <-->|"MCP over stdio"| Owner["foundry mcp · project owner"]
+    Owner <-->|"sources, graph, memory and decisions"| DB[("project store / knowledge.redb")]
+    Owner <-->|"lexical lookup and index updates"| Index[("project store / search")]
+    Root["Admitted repository files"] -->|"explicit index"| Owner
 ```
+
+The desktop host selects the registration for the trusted project. On the
+inspected Mac its `codex app-server` process launched Foundry. The Rust engine, task operations
+and store writer run inside its Foundry child. The child validates the canonical
+root against the workspace ID in the store before serving. A source search reads
+the indexed snapshot. A task lookup reads the saved records. Both return evidence
+on the same connection, and the chat interprets it. [Owner startup](../src/mcp/startup.rs) · [MCP transport and shutdown](../src/mcp/transport.rs).
+
+One process owns a **store**, and a repository may have separately prepared
+stores. On November 27, the desktop host had one owner for the real project,
+one for the case-review exercise, and three synthetic demo owners. Each demo
+launcher copied its seed into a temporary store for that connection. All five
+used pipes and held distinct store files. None listened on TCP. The inspection
+found no Foundry launchd job. Check the project's `workspace_id` with MCP
+`status` before using a result from a similarly named registration.
+[Process and store observations](validation.md#desktop-mcp-process-and-store-ownership--2026-11-27) · [Demo launcher](../examples/task-handoff/serve-demo.py).
+
+The observed project process had `--experimental-task-context` enabled. Refresh
+source after edits through the owner's `index` tool. Continuous indexing requires
+`--watch`, which was absent. The project configuration on disk also requested the
+Gemma decision profile, but the running process lacked that argument. A saved
+configuration takes effect on the next server launch. [Decision-profile setup and status](deployment.md#desktop-decision-lookup).
+
+### Store ownership by transport
+
+| How the client connects | Who owns the store and when it closes |
+| --- | --- |
+| Desktop or another stdio MCP client | The host launches one Foundry child for the connection. On stdin EOF, the server shuts down its active work and releases the store. A later owner reopens the durable records. |
+| Several independent MCP clients | The operator starts one `foundry mcp --transport streamable-http` process on IPv4 loopback. Clients authenticate to its `/mcp` endpoint and share the engine. Ending a client session leaves the listener serving others until the owner shuts down. |
+| Direct CLI | A store-backed command opens the store for the duration of that command. If another process holds it, the competing open returns `store_busy`. Use the running owner's tools for the project or close that owner before an offline CLI operation. |
+
+ChatGPT desktop, Codex and OMP are clients of the same MCP implementation.
+The optional OMP routing hook, pilot bridge and metering gateway are specific
+to that host. The desktop request path is shown above. [Connection profiles](../src/bootstrap.rs) · [Shared HTTP setup](../README.md#other-local-clients) · [Disposition of the proposed custom daemon](../specs/002-single-owner-serving/spec.md).
 
 ### From an original to a feature review
 
@@ -86,6 +104,7 @@ a standalone local replay. [Desktop result](validation.md#native-title-blind-dec
 | Usage and host instrumentation | Delivery budgets and retrieval traces describe Foundry output. `usage` imports observed host receipts offline. The optional OMP pilot capture and meter-only gateway have separate evidence and release scopes. [Economics contract](../specs/003-agent-retrieval-context/contracts/adapter-economics.md) · [Pilot contract](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md) |
 | Training and model trials | Explicit feedback, training export and the owned ModernBERT policy workflow are available for research. Policy serving is frozen off. Laya, Mapika and Inkling decision readers were evaluated locally; ChatGPT remains the reader in the desktop workflow. [Owned learning](learning.md) · [Decision-reader trials](references/laya-decision-ecosystem.md) |
 
+The [current handoff](resume-context-ecosystem.md#current-status) tracks acceptance and open work.
 The paid real-host task and economics pilot (003 T006) remains unfunded and open.
 The authoritative store schema is 12, the Tantivy search format is 9, the source-unit
 grammar is 7 and the semantic generation format is 6. Each has its own recovery
@@ -164,18 +183,11 @@ owning tasks, not a separate whole-portfolio acceptance stage.
 
 ## Token-economics flow
 
-Approved 2026-10-03 (001 T004–T006, 003 T005, 007 T001). The v2 wire and accounting,
-syntax-unit ranking and outlines (001 T004–T006) are committed; the multi-root merge,
-hook, usage import and economics tests below were implemented and accepted locally on
-2026-10-04 and committed locally. All of it is unreleased; real-host results are in
-[validation](validation.md).
-The goal is that an agent reaches for Foundry instead of grep/ripgrep and exploratory
-file reads, and receives the same cited evidence in the fewest delivered tokens. The normative
-owners are the [v2 contract](../specs/001-source-state-recovery/contracts/context-v2.md)
-(wire, two-tier ranking, outlines and ladder), 003's
-[catalog, instructions and hook](../specs/003-agent-retrieval-context/spec.md#optional-omp-first-call-hook)
-and [delivered-token economics](../specs/003-agent-retrieval-context/contracts/adapter-economics.md#delivered-token-economics),
-and [007](../specs/007-multi-workspace-context/spec.md) for several admitted roots.
+For source discovery, every MCP host uses the same Rust retrieval and packing
+path. The final text block is the boundary where Foundry can count delivered
+tokens. Host prompt assembly and provider usage have their own accounting.
+[Wire contract](../specs/001-source-state-recovery/contracts/context-v2.md) ·
+[Delivery and host accounting](../specs/003-agent-retrieval-context/contracts/adapter-economics.md#delivered-token-economics).
 
 ```mermaid
 flowchart TD
@@ -184,10 +196,6 @@ flowchart TD
     Need -- "understand a subsystem" --> Context["context"]
     Need -- "read cited source" --> Retrieve["retrieve: v2 handle, lines or outline view"]
     Need -- "refresh after edits" --> Index["index: bound root or admitted root"]
-    Grep["Host grep or rg call"] --> Hook{"OMP team-kit hook enabled and call eligible?"}
-    Hook -- "first identifier search in an admitted root" --> Refused["Refused once: call Foundry search first"]
-    Refused --> Search
-    Hook -- "identical repeat, regex, outside root, compound shell, other host" --> HostTool["Host tool runs"]
     Index --> Store[("redb sources and derived Tantivy index")]
     Index --> Report["index JSON counts and report (unchanged)"]
     Store -. "indexed snapshot read by later search and context queries" .-> Rank
@@ -201,15 +209,15 @@ flowchart TD
     Ladder --> Wire
     Views --> Wire
     Wire --> Count["Exact o200k count; one session reservation, charge and refund"]
-    Count --> Host["Host receives tool results; forwards them unchanged below its own limits, may spill, truncate or compact"]
+    Count --> Host["MCP client receives the bounded result"]
     Report --> Host
 ```
 
 - **Routing.** Tool descriptions and project instructions make Foundry the preferred
-  first call. Enforcement exists only in OMP with the opt-in operator team-kit hook,
+  first call in a configured project. OMP also has an opt-in operator team-kit hook,
   which refuses the first identifier-like grep/rg per signature inside admitted roots.
   The identical repeat, regex patterns, paths outside admitted roots, compound shell
-  commands, the HTTP heuristic scope and other hosts pass through.
+  commands and the HTTP heuristic scope pass through that hook. [OMP hook contract](../specs/003-agent-retrieval-context/spec.md#optional-omp-first-call-hook).
 - **Compression.** Deterministic elision only: a unit's signature form, or a file
   outline whose elided ranges render as `⋯ a-b` and are recoverable exactly through
   `retrieve` with `lines`. There is no compression model and no cross-call
@@ -341,18 +349,17 @@ flowchart LR
     Policy[Frozen research policy head] -. strategy only .-> Retrieval
     Feedback[Opted-in task feedback] --> DB
     DB -. dataset export .-> Trainer[Owned isolated Rust training]
-    Pack --> Host[Configured coding host]
-    Host --> Gateway[Optional Rust request gateway]
-    Gateway --> API[One supported model API]
+    Pack --> Host[Requesting client]
+    Host -->|Explicit capture or decision| Memory[Task and project memory operations]
+    Memory --> DB
 ```
 
 ## Module boundaries
 
 One crate builds the `foundry` CLI and MCP owner. Feature-gated binaries provide
-embedding, generation, learning and pilot capture. The normal source path uses
-direct stdio MCP through rmcp 3.10.0 with one engine/store owner. Optional per-root Streamable HTTP MCP (owner-
-approved 2026-10-01) lets independent configured clients share that same persistent
-owner. No custom MCP socket carrier, forwarding shim, rotating writer or global fleet.
+embedding, generation, learning and pilot capture. The [desktop process layout](#what-runs-on-the-desktop)
+shows the default stdio transport.
+The same rmcp 3.10.0 server can instead start as a shared loopback HTTP owner.
 Both transports keep one-active/zero-queued engine admission and immutable scope.
 
 Core modules include `store` (authoritative redb state, derived Tantivy,
