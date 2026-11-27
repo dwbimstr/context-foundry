@@ -105,6 +105,18 @@ Read with workspace_id alone and the following command.
 {"op":"source_review","text":"Can we retire the parent?"}
 ```
 
+When the operator starts with one recovered decision, `decision_uses`
+shows its directly cited originals' status and one changed source when
+available. Each confirmed dependent quotes its own requirement. If the
+requirement directly cites a current original, show one `current_support`
+with its attribution and exact range. Prefer a capture lineage the decision
+does not already cite. `same_capture_lineage_as_decision` compares the
+notebook and original capture lineage. Distinct lineages alone do not
+establish independent authorship. `needs_source_review` flags a change in
+the decision's direct citations or the returned requirement's direct
+citations. Wording-only leads remain clarification questions. The complete
+support comparison is available in `source_review`.
+
 Read every page using next_after_id. Each page examines up to eight tasks and
 sixteen claims and returns up to four claims. A change to the question,
 task records or indexed sources requires a new first page. Each claim names

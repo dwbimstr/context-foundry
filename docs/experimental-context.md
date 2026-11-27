@@ -620,6 +620,14 @@ includes a question to ask before treating it as a dependency. If both features
 already cite the exact same indexed rule and the other feature has saved it as a
 requirement, Foundry recognizes that use directly.
 
+If a decision’s source changed, quote the change from `decision.changed_support`.
+An excerpt marked `position_preview` shows what the source says at that position
+today. The saved decision still needs review. A dependent can also have a
+`current_support.original` with its own author and words. Quote it alongside
+the dependency. When `same_capture_lineage_as_decision` is true, both cite
+the same saved source. A current meeting quote can explain why a feature
+still needs protection while the team reviews the change.
+
 When a source explicitly states reliance, or the operator confirms it, save
 the reason on the **dependent** feature. Use its existing `apply` / `add`
 operation, choose `requirement` or `constraint`, and set `relies_on` to the

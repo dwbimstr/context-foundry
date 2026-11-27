@@ -558,10 +558,13 @@ impl Task {
         let mut confirmed = false;
         for route in routes.items {
             let selected = Some(route.token.as_str()) == chosen;
-            let mut impact =
-                route
-                    .origin
-                    .decision_uses(tx, &route.scope.decision.entry_id, None, control)?;
+            let mut impact = route.origin.decision_uses(
+                tx,
+                &route.scope.decision.entry_id,
+                None,
+                false,
+                control,
+            )?;
             let decision = &impact["decision"];
             let query = prefix(decision["quote"].as_str().unwrap_or_default(), 256);
             impact["implementation_context"] = json!({"query":query,"task_id":route.origin.task_id,"task_revision":route.origin.revision,

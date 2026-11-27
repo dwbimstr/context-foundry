@@ -2617,7 +2617,7 @@ fn shared_originals_report_direct_and_inherited_impact_after_an_indexed_edit() {
         json!({"op":"apply","expected_revision":other["revision"],"edits":[rule]}),
     )
     .unwrap();
-    send(
+    let meeting_link = send(
         &engine,
         Some("handoff"),
         cite(
@@ -2635,6 +2635,34 @@ fn shared_originals_report_direct_and_inherited_impact_after_an_indexed_edit() {
     let engine = Engine::open_existing(&e.store).unwrap();
     let report =
         |query: &str| send(&engine, None, json!({"op":"source_review","text":query})).unwrap();
+    let uses = |revision: &Value| {
+        send(
+            &engine,
+            Some("cleanup"),
+            json!({"op":"decision_uses","entry_id":"keep","expected_revision":revision}),
+        )
+        .unwrap()
+    };
+    let impact = uses(&accepted["revision"]);
+    assert_eq!(
+        impact["decision"]["directly_cited_originals"],
+        "needs_review"
+    );
+    assert_eq!(
+        impact["decision"]["changed_support"]["quote_match"]["status"],
+        "absent"
+    );
+    let dependent = &impact["dependents"][0];
+    assert_eq!(dependent["needs_source_review"], true);
+    assert_eq!(dependent["directly_cited_originals"], "current");
+    assert_eq!(
+        dependent["current_support"]["original"]["quote"],
+        "Keep the separately edited copy."
+    );
+    assert_eq!(
+        dependent["current_support"]["same_capture_lineage_as_decision"],
+        false
+    );
     let review = report("Can we retire the parent?");
     let rows = review["claims"].as_array().unwrap();
     assert_eq!(
@@ -2774,6 +2802,89 @@ fn shared_originals_report_direct_and_inherited_impact_after_an_indexed_edit() {
         .unwrap()
         .clone();
     assert_eq!(handoff["supports"].as_array().unwrap().len(), 1);
+
+    // The same meeting cited by both features is one capture lineage.
+    let owner = send(&engine, Some("cleanup"), json!({"op":"inspect"})).unwrap();
+    let shared = send(
+        &engine,
+        Some("cleanup"),
+        cite(
+            "keep",
+            &owner["revision"],
+            &meeting,
+            "Keep the separately edited copy.",
+        ),
+    )
+    .unwrap();
+    let read = || uses(&shared["revision"])["dependents"][0].clone();
+    assert_eq!(
+        read()["current_support"]["same_capture_lineage_as_decision"],
+        true
+    );
+    assert_eq!(read()["needs_source_review"], false);
+
+    // Prefer the other original while it is current. Once edited, the
+    // surviving meeting cannot clear the requirement's own review flag.
+    let extra = send(
+        &engine,
+        Some("handoff"),
+        cite("independent", &meeting_link["revision"], &revised, new),
+    )
+    .unwrap();
+    assert_eq!(read()["current_support"]["original"]["quote"], new);
+    assert_eq!(
+        read()["current_support"]["same_capture_lineage_as_decision"],
+        false
+    );
+    engine.replace_source("spec.md", "Newer revision.").unwrap();
+    let mixed = read();
+    assert_eq!(mixed["needs_source_review"], true);
+    assert_eq!(mixed["directly_cited_originals"], "needs_review");
+    assert_eq!(
+        mixed["current_support"]["same_capture_lineage_as_decision"],
+        true
+    );
+    send(&engine, Some("handoff"), json!({"op":"withdraw_citation","expected_revision":extra["revision"],"citation_revision":meeting_link["citation_revision"],"author":"Ari"})).unwrap();
+    assert!(read()["current_support"].is_null());
+
+    // A new notebook can hold identical bytes under the same IDs; the old
+    // decision citation must not claim the new capture as its own.
+    send(
+        &engine,
+        Some("notebook"),
+        json!({"op":"forget","expected_revision":revised["revision"]}),
+    )
+    .unwrap();
+    let notebook = send(
+        &engine,
+        Some("notebook"),
+        json!({"op":"create","title":"notebook"}),
+    )
+    .unwrap();
+    let recreated = send(&engine, Some("notebook"), json!({"op":"capture","source":"Planning","author":"Mo","text":"Keep the separately edited copy.","expected_revision":notebook["revision"]})).unwrap();
+    assert_eq!(meeting["entry_id"], recreated["entry_id"]);
+    assert_ne!(meeting["capture_revision"], recreated["capture_revision"]);
+    let handoff = send(&engine, Some("handoff"), json!({"op":"inspect"})).unwrap();
+    send(
+        &engine,
+        Some("handoff"),
+        cite(
+            "independent",
+            &handoff["revision"],
+            &recreated,
+            "Keep the separately edited copy.",
+        ),
+    )
+    .unwrap();
+    let recreated_use = uses(&shared["revision"]);
+    assert_eq!(
+        recreated_use["decision"]["changed_support"]["status"],
+        "recreated_original"
+    );
+    assert_eq!(
+        recreated_use["dependents"][0]["current_support"]["same_capture_lineage_as_decision"],
+        false
+    );
 }
 
 #[test]

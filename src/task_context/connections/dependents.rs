@@ -91,6 +91,7 @@ impl Task {
         tx: &redb::ReadTransaction,
         entry_id: &str,
         after: Option<&str>,
+        include_source_review: bool,
         control: &Control,
     ) -> FResult<Value> {
         let decision = self.current_decision(entry_id)?;
@@ -98,6 +99,19 @@ impl Task {
         if links.iter().any(|l| l["status"] != "fresh") {
             return Err(FoundryError::StaleHandle);
         }
+        let quote = prefix(&decision.entry.text, PASSAGE_BYTES);
+        let mut original = citation(self, decision, 0, quote, links);
+        original["original_bytes"] = json!(decision.entry.text.len());
+        let decision_sources = if include_source_review {
+            Some(self.describe_cited_originals(
+                tx,
+                &mut original,
+                source_review::SourceExamples::DecisionAndLineages,
+                control,
+            )?)
+        } else {
+            None
+        };
         let reference = self.decision_ref(decision)?;
         let words = NoteWords::new(&decision.entry.text);
         let exact = exact_rule_sources(tx, &decision.entry)?;
@@ -126,6 +140,18 @@ impl Task {
             {
                 reason["feature"] = json!(other.title);
                 if confirmed {
+                    if let Some(owner_sources) = &decision_sources {
+                        other.describe_cited_originals(
+                            tx,
+                            &mut reason,
+                            source_review::SourceExamples::CurrentForDependent(owner_sources),
+                            control,
+                        )?;
+                        reason["needs_source_review"] = json!(
+                            original["directly_cited_originals"] == "needs_review"
+                                || reason["directly_cited_originals"] == "needs_review"
+                        );
+                    }
                     dependents.push(reason);
                 } else {
                     reason["clarification"] = json!(format!(
@@ -141,9 +167,6 @@ impl Task {
         } else {
             None
         };
-        let quote = prefix(&decision.entry.text, PASSAGE_BYTES);
-        let mut original = citation(self, decision, 0, quote, links);
-        original["original_bytes"] = json!(decision.entry.text.len());
         Ok(
             json!({"workspace_id":self.workspace_id,"feature":self.title,"decision":original,
             "decision_ref":reference,"dependents":dependents,"wording_matches":possible,"stale_evidence_omitted":stale,"next_after_id":next}),

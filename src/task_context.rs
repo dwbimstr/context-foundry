@@ -1082,7 +1082,8 @@ impl Engine {
                                 "decision task revision changed; inspect before continuing".into(),
                             ));
                         }
-                        result = task.decision_uses(&tx, entry_id, after_id.as_deref(), control)?;
+                        result =
+                            task.decision_uses(&tx, entry_id, after_id.as_deref(), true, control)?;
                     }
                     Command::Connections { entry_id } => {
                         result = task.connections(&tx, entry_id, control)?;

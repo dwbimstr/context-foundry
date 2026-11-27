@@ -453,27 +453,90 @@ pub(super) fn mark_cited_originals(
     let id = passage["task_id"].as_str().expect("constructed citation");
     let row = table.get(id)?.ok_or(FoundryError::NotFound)?;
     let task = decode(row.value(), id, workspace)?;
-    let active = task.active_citations();
-    let mut has_citations = false;
-    for link in active
-        .values()
-        .filter(|link| passage["entry_id"] == link.entry_id)
-    {
-        has_citations = true;
-        control.check()?;
-        let evidence = link.evidence(tx, workspace, include_changed_support)?;
-        if evidence["status"] != "current" {
-            passage["directly_cited_originals"] = json!("needs_review");
-            if include_changed_support {
-                passage["changed_support"] = evidence;
+    let examples = if include_changed_support {
+        SourceExamples::Changed
+    } else {
+        SourceExamples::StatusOnly
+    };
+    task.describe_cited_originals(tx, passage, examples, control)
+        .map(|_| ())
+}
+
+pub(super) type CaptureLineages<'a> = BTreeSet<(&'a str, &'a str)>;
+
+pub(super) enum SourceExamples<'a> {
+    StatusOnly,
+    Changed,
+    DecisionAndLineages,
+    CurrentForDependent(&'a CaptureLineages<'a>),
+}
+
+impl Task {
+    pub(super) fn describe_cited_originals(
+        &self,
+        tx: &redb::ReadTransaction,
+        passage: &mut Value,
+        examples: SourceExamples<'_>,
+        control: &Control,
+    ) -> FResult<CaptureLineages<'_>> {
+        let mut lineages = CaptureLineages::new();
+        let entry_id = passage["entry_id"]
+            .as_str()
+            .expect("constructed citation")
+            .to_owned();
+        let mut status = None;
+        let mut current = None;
+        let mut separate_lineage = false;
+        for link in self
+            .active_citations()
+            .into_values()
+            .filter(|c| entry_id == c.entry_id)
+        {
+            control.check()?;
+            let show_change = matches!(
+                examples,
+                SourceExamples::Changed | SourceExamples::DecisionAndLineages
+            ) && passage.get("changed_support").is_none();
+            let mut evidence = link.evidence(tx, &self.workspace_id, show_change)?;
+            let lineage = (link.origin_task_id.as_str(), link.root_entry_id.as_str());
+            // Missing and recreated captures have no verified original. A
+            // later capture under reused IDs cannot inherit this identity.
+            if matches!(examples, SourceExamples::DecisionAndLineages)
+                && evidence.get("original").is_some()
+            {
+                lineages.insert(lineage);
             }
-            return Ok(());
+            if evidence["status"] != "current" {
+                status = Some("needs_review");
+                if show_change {
+                    passage["changed_support"] = evidence;
+                }
+                if matches!(
+                    examples,
+                    SourceExamples::Changed | SourceExamples::StatusOnly
+                ) {
+                    break;
+                }
+                continue;
+            }
+            status.get_or_insert("current");
+            if let SourceExamples::CurrentForDependent(owner) = examples {
+                let shared = owner.contains(&lineage);
+                if current.is_none() || (!shared && !separate_lineage) {
+                    evidence["same_capture_lineage_as_decision"] = json!(shared);
+                    current = Some(evidence);
+                    separate_lineage = !shared;
+                }
+            }
         }
+        if let Some(status) = status {
+            passage["directly_cited_originals"] = json!(status);
+        }
+        if let Some(current) = current {
+            passage["current_support"] = current;
+        }
+        Ok(lineages)
     }
-    if has_citations {
-        passage["directly_cited_originals"] = json!("current");
-    }
-    Ok(())
 }
 
 /// Follow the feature's existing documented decision reference. A recreated
