@@ -3,6 +3,8 @@
 use super::*;
 mod dependents;
 mod discovery;
+#[cfg(feature = "semantic")]
+mod semantic_decisions;
 use discovery::DecisionDiscovery;
 mod impact;
 mod source_review;

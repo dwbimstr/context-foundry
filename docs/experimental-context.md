@@ -552,6 +552,17 @@ existing synthetic checks, and network-filesystem event behavior remains unverif
 
 ## Recoverable task context
 
+For a small project, add `--decision-semantic-profile FILE` to an MCP owner
+already using `--experimental-task-context` to help find saved decisions in
+the operator's own words. A local development worker also requires
+`--development-isolation`. Check `status.decision_semantic` for readiness.
+Use the ordinary `find_decisions` command without a title. If the first
+lookup misses, read any `semantic_leads` and quote a decision only if it
+addresses the question. For example, a decision about keeping edited copies
+cannot establish a payroll date. Ask for the relevant rule when none fits.
+This profile serves task decisions; `--semantic-profile` selects source
+retrieval instead. [Scope and limits](../specs/003-agent-retrieval-context/contracts/shared-source-review.md#optional-semantic-recovery-of-a-saved-decision).
+
 To save a meeting and specification once and ask which features need review
 after an edit, follow the [shared-source workflow and commands](../specs/003-agent-retrieval-context/contracts/shared-source-review.md#commands-and-output).
 

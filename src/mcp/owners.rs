@@ -103,20 +103,21 @@ impl crate::knowledge::maintenance::Owner for Shared {
             return Ok(None);
         };
         #[cfg(feature = "semantic")]
-        let runtime = if let Some(Ok(runtime)) = &self.semantic {
-            match runtime.admit_knowledge() {
-                Ok(permit) => Some(permit),
-                Err(crate::neural::provider::ProviderError::Busy) => return Ok(None),
-                Err(error) => {
-                    return Err(crate::knowledge::fail(
-                        "knowledge_admission",
-                        &error.to_string(),
-                    ));
+        let runtime =
+            if let Some(Ok(runtime)) = self.semantic.as_ref().or(self.decision_semantic.as_ref()) {
+                match runtime.admit_knowledge() {
+                    Ok(permit) => Some(permit),
+                    Err(crate::neural::provider::ProviderError::Busy) => return Ok(None),
+                    Err(error) => {
+                        return Err(crate::knowledge::fail(
+                            "knowledge_admission",
+                            &error.to_string(),
+                        ));
+                    }
                 }
-            }
-        } else {
-            None
-        };
+            } else {
+                None
+            };
         Ok(Some(crate::knowledge::maintenance::Permit {
             _model: model,
             #[cfg(feature = "semantic")]

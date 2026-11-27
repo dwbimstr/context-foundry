@@ -64,6 +64,33 @@ correction. Source text outside those boundaries is unknown.
 
 ## Commands and output
 
+### Optional semantic recovery of a saved decision
+
+After an ordinary workspace `find_decisions` returns a recovery question,
+an MCP owner launched with `--experimental-task-context` and
+`--decision-semantic-profile FILE` may offer up to two `semantic_leads`.
+The owner ranks only selected, current decisions with valid indexed links.
+It compares the operator’s unchanged question to the first 512 UTF-8 bytes
+of each decision, ending at a character boundary. The local profile supplies
+the tokenizer, query and document templates, and a single resident worker.
+This mode leaves source retrieval on its ordinary path and needs no prepared
+source vectors, task vector store, network request or write to project memory.
+
+For this small-project experiment discovery stops at 32 task records or eight
+eligible decisions. Exceeding either bound, a busy worker or an unavailable
+model leaves the ordinary clarification available. Model work shares one
+1.5-second ceiling. Before returning a quote, validate its saved identity,
+feature revision, selected state, linked sources and changed support again.
+The reader can reopen it through `peek`. Wording matches, explicit feature
+selections and other existing clarifications take their ordinary paths.
+
+A lead is a suggestion for the reader. Show a quote only when it addresses
+both the proposed action and the thing the operator is asking about. Ask the
+operator which feature or rule they mean when none fits. Preserve source
+review flags and ask for confirmation before treating a lead as applicable.
+Acceptance uses the predecessor/collaborator question with its feature name
+withheld, plus separate billing and payroll questions in a fresh project chat.
+
 Choose a notebook task ID and create it once. For each original use capture
 with its title or indexed path in source. Preserve its receipt. For local
 pasted text keep a stable source label and author on retries. Send supersedes
