@@ -19,9 +19,9 @@ still requires the signed semantic package and its installed-artifact checks. [A
    [native-discovery guidance](../specs/003-agent-retrieval-context/spec.md#native-source-discovery-and-fallback).
    The configured agent uses Foundry before grep/ripgrep for eligible discovery;
    exact-pattern/current-file and unavailable-retrieval fallbacks remain explicit.
-   Setup alone is not real-host adoption proof. Default stdio lets one host session
-   own the store; explicit shared-owner HTTP lets independent clients use that same
-   owner. Refresh through `index`, not another CLI writer. Each repository gets a
+   With default stdio, the Foundry child owns the store for the life of its
+   transport connection. Shared loopback HTTP lets independent clients connect
+   to one owner. Send refreshes to the active owner through `index`. Each repository gets a
    separate store/configuration; shared mode is not a federation service. One owner
    may also admit outside repositories as references at launch for one budgeted
    multi-root response ([007](../specs/007-multi-workspace-context/spec.md),
@@ -118,6 +118,23 @@ gateway run; `connect` configures MCP retrieval. Never print a
 bearer/API key, transplant subscription credentials or silently change existing
 provider/model settings. Refer to the gateway's exact
 [protocol and accounting contract](../specs/003-agent-retrieval-context/contracts/adapter-economics.md).
+
+### Identify the running desktop owner
+
+In the project chat, ask the Foundry `status` tool for its `workspace_id` and
+compare it with the project's bootstrap report. On macOS, the store file also
+identifies the owner when the chat's tool catalog is unavailable. Set `STORE`
+to the project's configured store directory, then run:
+
+```sh
+lsof -nP "$STORE/knowledge.redb"
+```
+
+Use the reported PID in `ps -p PID -o pid=,ppid=,comm=` to identify the process
+and its parent. `lsof -nP -a -p PID -d 0,1` shows the desktop owner's stdin and
+stdout pipes. For an explicitly shared HTTP owner, `lsof -nP -a -p PID -iTCP -sTCP:LISTEN`
+shows the loopback listener. A synthetic demo opens a different database file.
+[Observed desktop layout and lifecycle](architecture.md#what-runs-on-the-desktop).
 
 ### Desktop decision lookup
 

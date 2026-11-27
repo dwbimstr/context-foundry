@@ -1,5 +1,35 @@
 # Validation
 
+## Desktop MCP process and store ownership — 2026-11-27
+
+On the project Mac, a read-only inspection matched the configured root and store
+arguments to live process command lines. Parent process IDs traced each Foundry
+instance to ChatGPT desktop through its local app server. `lsof` showed pipes on
+file descriptors 0 and 1, an open `knowledge.redb` and a Tantivy writer lock in
+each instance's store.
+
+| Registration or launcher | Live owners | Store binding |
+| --- | ---: | --- |
+| Trusted project's `context-foundry` | 1 | The real checkout and its persistent `.context-foundry` store |
+| Project's `foundry-case-review` | 1 | The exercise source and its separate replay store |
+| User's synthetic fallback | 3 | The same demo source, with a distinct temporary copy of the seed store per launcher |
+
+No inspected Foundry process had a listening TCP socket. The user launchd job
+list and the inspected user and system LaunchAgent/LaunchDaemon definitions
+showed no Foundry service. The desktop app server directly parented the project
+and case-review processes. The three demo owners each had a Python
+`serve-demo.py` launcher between them and the app server.
+
+The project process had `--experimental-task-context` and no `--watch` or
+semantic profile. Its observed command, with local paths replaced by variables, was
+`"$FOUNDRY" --store "$PROJECT/.context-foundry" mcp --root "$PROJECT" --experimental-task-context`.
+The trusted project configuration on disk included
+`--decision-semantic-profile` and `--development-isolation`. The earlier Gemma
+result belongs to its [November 26 desktop run](#native-title-blind-decision-recovery-in-chatgpt--2026-11-26).
+This inspection covered processes, launch arguments and open files. The auditing
+chat had no Foundry tool registration available for an in-chat status call.
+[Runtime architecture](architecture.md#what-runs-on-the-desktop).
+
 ## Local merge gates for desktop project memory — 2026-11-27
 
 All eight gates in `scripts/gates.sh` passed on the clean experimental commit
