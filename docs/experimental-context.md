@@ -249,10 +249,16 @@ inputs refuse; nothing silently truncates. The hard ceiling is 32,768 input/call
 and 32 sequences, not a promise that any selected model supports those values. Larger
 contexts also consume more device memory under the existing supervised memory limit.
 
-No default model profile is enlarged by this change. Sandbox evidence uses real
-partitioning/tokenization/storage/retrieval with deterministic provider vectors;
-long-context Metal parity, throughput and task quality are still unexecuted. Source
-plans are bounded by 2 MiB per source, 16,384 windows and 16 MiB accumulated context
+The default model profile keeps its original geometry. The initial sandbox check
+used deterministic vectors to exercise partitioning, tokenization, storage and
+retrieval. A later hosted CPU/Metal comparison passed on Apple Paravirtual Metal.
+The physical Mac subsequently embedded an 8,192-token input. Cross-host numerical
+parity on physical Metal, sustained long-context throughput and downstream task
+quality remain open at this geometry.
+[Hosted comparison](validation.md#realistic-acceptance-continuation--2026-10-11) ·
+[Physical Mac run](validation.md#native-macos-acceptance--2026-11-10).
+
+Source plans are bounded by 2 MiB per source, 16,384 windows and 16 MiB accumulated context
 text, plus parser/tokenizer/array overhead. Fresh-card retention remains 2 MiB per source
 with bounded fallback. Independent representations are now available through the
 hierarchy recipe below, the default since F4 (2026-10-22); late chunking remains unimplemented. See [009 T009](../specs/009-optional-semantic-retrieval/spec.md#t009--use-model-owned-geometry-and-contextual-representations)

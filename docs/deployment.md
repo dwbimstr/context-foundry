@@ -194,7 +194,7 @@ cannot be advertised as an isolated production worker.
 | Policy inference | Pinned ModernBERT/tokenizer/head assets read-only, bounded admitted state/question/options via private IPC | Bounded reply; no repository traversal, home, live store, credentials, network or child execution |
 | Policy training | Frozen permitted input/label/group files and exact base assets read-only | New private output/scratch; no ambient source access, live store, home or network |
 | Embedding | Pinned model/tokenizer/loader assets and explicit input batch | Private scratch and bounded vectors; no ambient root discovery, store writes or downloads |
-| Experimental local generation | Hash-pinned worker/GGUF, read-only model descriptor and bounded selected source text through private pipes | Strict brief JSON; Linux descriptor-only seccomp profile denies path opens, network, process creation/exec; macOS development App Sandbox remains hardware-unverified |
+| Experimental local generation | Hash-pinned worker/GGUF, read-only model descriptor and bounded selected source text through private pipes | Returns a structured brief. Linux seccomp denies path opens, network access, process creation and exec. The macOS development App Sandbox ran the native generation smoke check. [Controls and evidence](#experimental-owned-generation-controls) |
 | Explicit compiler production | Immutable admitted source/config snapshot and pinned toolchain/dependencies | Private build/artifact scratch; no live workspace mutation or network; build scripts/proc macros execute only within this separately authorized profile |
 
 The policy rows describe the clarified ModernBERT plus decision-head target, not a
@@ -279,7 +279,8 @@ the development profile, which works as follows:
   verifies actual context, per-sequence, batch, microbatch and sequence capacities
   before Ready. IPC byte caps remain unchanged. Existing model profiles are not
   enlarged automatically; see [body/parent profile settings](experimental-context.md#model-aware-bodyparent-chunking).
-  Long-context Metal execution/parity remains unverified in the Linux sandbox.
+  The physical Mac produced a vector for an 8,192-token input. Numerical parity
+  against Linux CPU on physical Metal remains open. [Native receipt](validation.md#native-macos-acceptance--2026-11-10).
 - **Resources.** Process count is `hard`. Memory is `supervised`: the supervisor
   polls the physical footprint every 250 ms against the profile's ceiling (3 GiB by
   default), and a breach stops the worker with `resource_limit`.
@@ -764,7 +765,7 @@ does not provide descriptor-execution atomicity against a same-user concurrent r
 
 | Control | Linux CPU | macOS CPU / Metal development |
 | --- | --- | --- |
-| Isolation | `linux-seccomp-fd-v1`, x86_64/aarch64 allowlist, `no_new_privs`; no path opens, sockets, external process access, exec or fork after initialization | Existing App Sandbox entitlement required; network denial checked at startup; minimal ad-hoc bundle script supplied; native acceptance unexecuted here |
+| Isolation | `linux-seccomp-fd-v1`, x86_64/aarch64 allowlist, `no_new_privs`; no path opens, sockets, external process access, exec or fork after initialization | The development bundle requires the App Sandbox entitlement and checks network denial at startup. Adversarial isolation of the generator remains unverified. |
 | CPU | Backend thread counts plus hard inherited CPU affinity, nice 10; hard all-thread worker-lifetime `RLIMIT_CPU` | Backend thread counts and hard lifetime `RLIMIT_CPU`; no hard affinity claim |
 | RAM | Hard `RLIMIT_AS`, plus parent RSS observation; includes mapped model and virtual allocations | Parent physical-footprint monitoring with 20 ms checks while active; supervised termination, not a hard allocation quota |
 | GPU | Refuses Metal/CUDA; CPU model/context offload disabled | Explicit Metal device/layers; 20 ms process-allocation monitor during load/inference, allocation ceiling and reserve under recommended working-set size; no global VRAM or hard GPU quota |
@@ -789,4 +790,7 @@ bound, not a replacement for native enforcement or a quota on total machine cons
 and prints its signed executable hash. It does not notarize, install or establish GPU,
 filesystem, process or owner-death acceptance. Use the [profile/build instructions](experimental-context.md#owned-local-generation)
 and [executed Linux evidence](validation.md#owned-local-generation-and-resource-controls).
-Production distribution and macOS negative/hardware tests remain required follow-up work.
+On the physical Mac, the ad-hoc generation worker produced cited briefs for initial
+and changed source. Restart and revert reused prior results with zero model calls.
+Adversarial isolation, real-model owner death under pressure and signed-package
+acceptance remain open. [Native receipt](validation.md#native-macos-acceptance--2026-11-10).
