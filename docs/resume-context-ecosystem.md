@@ -112,7 +112,14 @@ and dated paragraphs below are history.
   On the previous title-blind miss, a fresh reader found Cleanup’s exact
   decision in a local Gemma search over nine saved passages. It was sixth
   on the intended question and ranked higher on both unrelated controls.
-  Native task lookup still asks for the feature name. [Gemma comparison](validation.md#trying-local-embeddinggemma-2-on-a-missed-decision--2026-11-26).
+  In that earlier run, native task lookup still asked for the feature name. [Gemma comparison](validation.md#trying-local-embeddinggemma-2-on-a-missed-decision--2026-11-26).
+
+  The native, opt-in decision profile now handles that missed question in
+  the project’s ChatGPT chat. It recovered the original decision, flagged
+  the revised spec and asked for clarification on billing and payroll.
+  The first turn saw the tool catalog before Foundry was ready. After startup the chat
+  succeeded without a feature hint. A separate Laya trial made batched
+  judging faster but missed the intended decision. [Native walkthrough](validation.md#native-title-blind-decision-recovery-in-chatgpt--2026-11-26).
 
 - **Finite desktop qualification complete, 2026-11-23.** A fresh ChatGPT
   desktop project chat verified the real project store and retrieved

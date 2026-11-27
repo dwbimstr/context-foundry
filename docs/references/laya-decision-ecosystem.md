@@ -15,6 +15,82 @@ Variable-choice, boolean (`noul`) and ordinal-score decisions remain extension t
 their workflow/data/output contracts must be selected before implementation. KISS means
 one existing learning loop with a concrete consumer, not three new model services.
 
+## Which model belongs in decision recovery? — 2026-11-26
+
+For 003's saved-decision lookup, the local embedder ranks current, attributed
+decisions after an ordinary miss. The reader checks whether a passage answers
+the question and can ask for clarification. A decision model would judge that
+second step. Generation is a third job, already supplied by the ChatGPT client.
+Changing the model used to generate prose does not make saved entries searchable.
+[Native lookup contract](../../specs/003-agent-retrieval-context/contracts/shared-source-review.md#optional-semantic-recovery-of-a-saved-decision).
+
+### Decision models
+
+All six local model families below support typed choices, yes/no and ordinal
+scores. A score on one benchmark uses that benchmark's labels, population and
+decision rule. Only Laya was exercised here on Foundry’s three questions.
+The other measurements are reported by their publishers or benchmark authors.
+
+| Candidate | Workload, footprint and evidence |
+|---|---|
+| Laya | English and typed checkpoints use a 421M dense ModernBERT. English is limited to 512 tokens, the typed variant to 1,024. English scored 36.2% zero-shot on Typed Decisions. The specialized checkpoint scored 76.6% in-task. An MLX port reports 804 MiB FP16 weights. This run of the pinned typed checkpoint with PyTorch MPS reached 2.73 GiB process RSS. [Model](https://huggingface.co/convaiinnovations/laya/blob/246177e5cb70334c9831c0730864a93c836aac8f/README.md) · [MLX measurements](https://github.com/mizorewww/laya-mlx/blob/main/BENCHMARKS.md) |
+| Mapika Decider 2B / 4B | Compact local comparators with a published GGUF decision readout. The 4B v3 Q4_K_M is 2.71 GB vs 8.4 GB BF16, with 96.46% agreement with the BF16 decisions on its publisher's suite. The 2B Q4_K_M is 1.27 GB vs 3.8 GB BF16 and reports 95.08% agreement. The runtime and decision head matter when verifying a quant. [4B](https://huggingface.co/Mapika/decider-4b-GGUF/blob/d3a78581751d518bbfa9e871a6d84059554d53c5/README.md) · [2B](https://huggingface.co/Mapika/decider-2b-GGUF/blob/0df001b8fe4e5298c5dd45d875d3795fcdaea0ab/README.md) |
+| Strands Decider 2B | About 1.9B dense parameters. BF16 weights alone imply roughly 3.8 GB. The publisher reports 180/231 on public JevBench, with a 4,096-token benchmark configuration. [Pinned card](https://huggingface.co/StrandsAgents/strands-decider-2B-qwen3.5-v1-2610/blob/4d27d8d7edcfd6616806c8684e20e2673684e283/README.md) |
+| Kev-4B | Dense 4B with a trained option head. The publisher reports 75.8% on 231 public JevBench cases, and 11.9 GB process memory at 8K on an M5 Mac with 8.4 GB of weights. Its 1,200-item decision-v7 result uses a different sample from Inkling’s. [Pinned card](https://huggingface.co/jaredpalmer/kev-4b/blob/6cfce5c2fa4b4bd64026336ab649c5ca78857d52/README.md) |
+| CLM-8B | Contrastive state and option encoders allow option representations to be reused. The service defaults to a 2,048-token cut; raw BF16 weights imply about 16 GB before runtime memory. The historical JevBench run reports 40.69% public and 24.03% sealed for the tested version. [Implementation](https://github.com/Contrastive-LM/CLM) · [Benchmark results](https://github.com/fstandhartinger/jevbench/blob/main/results/v1.4.2.2/jevbench-v1.4.2.2-results.json) |
+| Inkling 2 Mini Decision | 26.4B physical MoE parameters with a reused 12-layer core. Base computation uses about 3.4B active parameters in one pass or 5.4B effective across three passes. The v5.1 decision wrapper defaults to an 8,192-token state. Its published BF16 weights, heads and scratchpad total about 51.67 GB. The original three-loop adapter reported 85.56% on decision-v7/test and 54.2% first-loop exits at 0.90. Its 81.4 vs 136.8 ms medians used 60 short inputs on RTX PRO 6000 Blackwell. Current v5.1 supports up to five passes. Its balanced preset reports 86.11% on decision-v7 and 72.52% on hard-v1/test. Its 217.4 ms balanced median used a different BF16 harness. [Current card and eval](https://huggingface.co/eltokh7/inkling-2-mini-decision/blob/dc334283b9a69ef68622fae41317ba9c698ab7f6/README.md) · [Decision code](https://huggingface.co/eltokh7/inkling-2-mini-decision/blob/dc334283b9a69ef68622fae41317ba9c698ab7f6/modeling.py) |
+| Hosted Jev 1.14 | OpenRouter lists a structured Decisions API, 262K context, $0.042 per million input tokens and free output. Parameter count, local weights and local residency are unavailable from that listing. This run made zero Jev requests. [Provider listing](https://openrouter.ai/typesafe/jev-1.14) · [Decisions API](https://openrouter.ai/blog/insights/what-is-jev/) |
+
+### Generation, quantization and hardware choice
+
+For **base Inkling generation**, published BF16 GGUF is roughly 52 GB, upcast
+from a mixed checkpoint of about 20 GB. In one WikiText-2 run on three AMD
+R9700s, Q8_0 (27.8 GB) raised perplexity 0.03%. Q4_K_M (17.5 GB) raised it
+0.71%. A separate top-token comparison reported 95.04% agreement for Q4_K_M.
+Atomic's independent run found 96.32% top-token agreement at 16.53 GB for
+AD-Q4_K and 95.83% at 15.00 GB for AD-IQ4_XS. Kernel and artifact revisions
+must match. Atomic flags a layout issue in one older Q4_K_M release. These
+metrics concern generated token distributions. Deploying the quantized
+**decision** lane also requires its numeric heads, scratchpad and exit logic
+to reproduce decisions. [GGUF conversion](https://huggingface.co/ggml-org/Inkling-2-Mini-GGUF) · [PPL method](https://huggingface.co/askthesultans/Inkling-2-Mini-GGUF/blob/faa8606835daa35dec6d47bd9a8ef2ca29a71f5d/README.md) · [Atomic results](https://huggingface.co/datasets/AtomicChat/Inkling-2-Mini-GGUF-metrics/blob/main/results/summary.tsv).
+
+| Available memory | Decision lane to evaluate | Generation when local prose is required | Capacity estimate |
+|---|---|---|---|
+| 16–24 GB | For the shipped workflow use the existing reader. For an offline challenger, try Mapika 2B Q4 with its typed readout. Laya FP16 is a cheap parallel-scoring reference. | At 16 GB start with a 4B Q4 model via llama.cpp. Around 24 GB, test a compatible Inkling AD-Q4_K on NVIDIA or a smaller MLX quant on Mac with short context. | Mapika 2B plus a 4B Q4 generator is about 4 GB in weight files. With Inkling AD-Q4_K it is about 17.8 GB before KV cache, runtime and OS. Measure peak under the intended context. [4B generator files](https://huggingface.co/unsloth/Qwen3.5-4B-GGUF) |
+| 32–64 GB, including this 64 GiB M5 Max | First local challenger for this lookup would be Mapika 4B Q4. Keep one reader and let it abstain. Inkling Decision is a separate high-capacity experiment after Mac head parity. | On Apple Silicon, the base Inkling MLX 4/8-bit release is a reasonable generation candidate. On NVIDIA, use a supported llama.cpp build for GGUF or vLLM/SGLang for concurrent serving. | 19.5 GB base MLX weights plus 2.71 GB Mapika weights gives a 22.2 GB file total. A publisher measured 21.6 GB peak for generation alone with an 8K prompt and 256-token prefill chunks on a 128 GB M5 Max. Joint peak on this Mac is unmeasured. [Mac measurements](https://netprojects.com/insights/thinking-machines-inkling-2-mini-mlx-dspark) |
+
+The base model publisher lists llama.cpp, vLLM and SGLang. MLX has a
+Mac-specific implementation. DSpark speeds up autoregressive decoding. It has no output tokens to accelerate in a head-only decision. Astral
+reports 172.0 generated tokens/s at batch one on an H100 PCIe for its
+published workload. Infernix documents LoRA support for NVIDIA generation.
+Neither result demonstrates serving v5.1's custom decision readout alongside
+a base generator in a shared instance. Two unshared weight sets at 51.67 GB
+and 19.5 GB already exceed 64 GiB before OS and runtime. Favor a small
+decider or load the larger lane separately if a task justifies it.
+[Base model and engines](https://thinkingmachines.ai/news/inkling-2-mini/) · [Astral workload](https://github.com/syntheticminds-lab/Astral-Inference-Server/blob/ed0e1af98120/docs/benchmarks/inkling2_mini.md) · [Infernix LoRA](https://github.com/Wallawalla47/Infernix/blob/8d380de552e3/docs/lora.md).
+
+### Trying parallel activation on the project example
+
+Represent each proposed relation as a typed, source-bound question about a
+stable record. A decision, a dependent requirement and a revised-spec preview
+have different authority. Ask several independent questions against one state
+in a batch. Multiple relations may apply and all may be irrelevant. A positive
+score can offer a citation to the reader. Only the original or an explicit
+operator confirmation establishes the relation.
+
+On this Mac the pinned local Laya reference scored four such questions for
+each of three operator requests. At the preselected 0.80 cutoff it activated
+zero of three relevant relations and zero of nine irrelevant ones. At 0.50
+it found all three relevant relations and six false positives. Even the
+unrelated billing and payroll requests scored higher for the Cleanup decision
+than the genuine paraphrase. Batching all 12 judgments took 119.7 ms median
+vs 326.7 ms serially over five warm repeats. This supports batching as an
+execution technique. The observed scores cannot decide which links to trust.
+For a further model trial, reuse the same cited candidates with fresh
+paraphrases and unrelated cases, compare mistaken activations and abstentions,
+and keep the existing reader on worker failure. A confidence cascade would
+need calibrated uncertainty on this workload before it could route cases.
+
 ## Source identities and scope
 
 | Reference | Fixed identity and review use |

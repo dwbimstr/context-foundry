@@ -1,5 +1,46 @@
 # Validation
 
+## Native title-blind decision recovery in ChatGPT — 2026-11-26
+
+Code `6a8f9ef` adds an opt-in local decision profile. The project MCP owner
+feeds the question and current saved decision passages to the existing
+EmbeddingGemma 2 worker, then rechecks each returned identity and its
+sources. Two scoped suggestions fit in the ordinary lookup response. A
+client can ask the existing clarification whenever the passages do not
+support an answer. This path needs no source vector rebuild. The earlier
+separate Markdown passage index played no part in this run.
+
+A fresh ChatGPT project chat received three questions with no feature title
+or expected answer. Its first attempt found no Foundry tools while the app
+catalog reported the optional server pending. The chat retried after startup
+with the same questions and no content hint. Five native tool calls then
+succeeded: project status, three `find_decisions` calls and `source_review`.
+Status reported 421 sources at revision 554 and `decision_semantic: ready`.
+Both Prakarana registrations were disabled.
+
+| Question | Desktop answer |
+|---|---|
+| Can we discard the predecessor and safeguard a collaborator's revision? | Quoted “Cleanup keeps an edited copy when retiring its parent.” Identified `keep-copy` at revision 9, showed the old supporting spec, labeled the new editor-approval wording a position preview, and asked whether the decision applied. |
+| Should we retire the parent account after billing closes? | The ordinary lookup asked which feature or rule governs account retirement. |
+| Move payroll to Thursday. | The model ranked both saved decisions as possible leads. The reader found that neither governed payday and asked where the scheduling decision was saved. |
+
+The test project held two current decisions. The fallback offered both on
+the first and third questions. The observed distinction came from reading
+the quotations. Three focused Rust tests passed, including a source-owner
+test that revises a decision during scoring, checks worker refusal and
+declines to rank a pool larger than the limit. The lexical-only build check,
+formatting and documentation links passed. Project activation used the
+installed binary and a development-isolated local worker. The exercise used
+the existing ChatGPT session and zero separately billed provider calls.
+Private native responses and the desktop transcript checks are in
+`runs/native-semantic-decisions-2026-11-26/`.
+
+An offline Laya comparison batched four relation questions across these
+three operator requests. The pinned typed checkpoint missed the intended
+decision and abstained on the two unrelated controls at the threshold
+selected before the run. Its batching and quality receipts are in the same
+run directory. [Local evidence, model alternatives and hardware choices](references/laya-decision-ecosystem.md#which-model-belongs-in-decision-recovery--2026-11-26).
+
 ## Trying local EmbeddingGemma 2 on a missed decision — 2026-11-26
 
 “Can we discard the predecessor and safeguard a collaborator's revision?”
