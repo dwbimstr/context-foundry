@@ -20,6 +20,17 @@ impl Engine {
         control: &Control,
         score: impl FnOnce(&[&str]) -> Result<Vec<f64>, String>,
     ) -> FResult<Value> {
+        let Some(candidates) = lookup["candidates"].as_array() else {
+            return Ok(lookup);
+        };
+        let needs_decision = if candidates.is_empty() {
+            lookup["recovery_question"].is_string() || lookup["clarification"].is_string()
+        } else {
+            candidates.iter().all(|c| c["kind"] == "attributed_account")
+        };
+        if !needs_decision {
+            return Ok(lookup);
+        }
         let mut passages = Vec::new();
         {
             let tx = self.db.begin_read()?;
@@ -166,6 +177,26 @@ mod tests {
         assert_eq!(result["semantic_leads"][0]["task_revision"], rev);
         assert_eq!(result["candidates"], json!([]));
         assert_eq!(result["recovery_question"], "Which feature?");
+        for ordinary in [
+            json!({"candidates": [], "clarification":"Which rule?"}),
+            json!({"candidates":[{"kind":"attributed_account","quote":"The meeting account."}], "clarification":null}),
+        ] {
+            let recovered = engine
+                .semantic_decision_leads(&workspace, ordinary.clone(), &ctl, |_| Ok(vec![0.1, 0.9]))
+                .unwrap();
+            assert_eq!(recovered["semantic_leads"][0]["entry_id"], "second");
+            assert_eq!(recovered["candidates"], ordinary["candidates"]);
+            assert_eq!(recovered["clarification"], ordinary["clarification"]);
+        }
+        for kind in ["decision", "indexed_passage", "explicit_promise"] {
+            let ordinary = json!({"candidates":[{"kind":"attributed_account"},{"kind":kind}]});
+            let unchanged = engine
+                .semantic_decision_leads(&workspace, ordinary.clone(), &ctl, |_| {
+                    panic!("a grounded result keeps its ordinary route")
+                })
+                .unwrap();
+            assert_eq!(unchanged, ordinary);
+        }
         let unavailable = engine
             .semantic_decision_leads(&workspace, lookup.clone(), &ctl, |_| {
                 Err("provider_busy".into())
@@ -200,7 +231,7 @@ mod tests {
         let limited = engine
             .semantic_decision_leads(
                 &workspace,
-                json!({"recovery_question":"Which feature?"}),
+                json!({"candidates":[],"recovery_question":"Which feature?"}),
                 &ctl,
                 |_| panic!("partial pools cannot go to the model"),
             )

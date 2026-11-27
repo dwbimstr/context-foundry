@@ -145,6 +145,15 @@ experimental tip through `ac43ed2`. [Merge and local gates](validation.md#local-
   desktop workflow keeps Gemma retrieval and the ChatGPT reader.
   [Local Inkling results and the two misses](validation.md#inkling-2-mini-decision-judging-gemma-leads--2026-11-27).
 
+  The November 27 repair lets Gemma offer saved decisions when ordinary
+  matching finds only a meeting account or asks for clarification without
+  returning a candidate. A fresh desktop chat recovered the edited-copy and
+  sealed-manifest decisions without feature names and asked on billing and
+  payroll. It used the shared loopback transport after concurrent stdio
+  connections contended for the real store. After restoring the usual desktop
+  configuration, all five stdio lookups returned the same results.
+  [Repair and desktop evidence](validation.md#two-missed-decisions-in-a-fresh-desktop-chat--2026-11-27).
+
 - **Finite desktop qualification complete, 2026-11-23.** A fresh ChatGPT
   desktop project chat verified the real project store and retrieved
   `apply_owned_block` at `src/bootstrap.rs:904`. Through the separate exercise

@@ -81,9 +81,11 @@ It is **not**:
 3. **Doors.** A usage question gets door lines for its first anchor: exact ones from an
    imported [SCIP](https://github.com/scip-code/scip) artifact (rust-analyzer today),
    otherwise approximate ones from identifiers and per-file import keys.
-4. **Budgeted packing.** Each candidate takes the first form that fits the remaining
-   budget. The budget is the exact `o200k_base` token count of the bytes emitted (CLI
-   stdout or the MCP text block), and CLI and MCP emit the same text.
+4. **Budgeted packing.** Each retrieval candidate takes the first form that fits
+   the remaining budget. The CLI counts its complete stdout text, including the
+   final newline. MCP counts the returned text block and caps the serialized
+   result at 256 KiB. Task decisions use byte-capped JSON.
+   [Token accounting](docs/architecture.md#token-economics-flow).
 5. **Memory and multiple roots.** Explicit project memory records can be added to
    context. One MCP owner can admit up to 8 other repositories and answer across all
    of them in one budgeted response.

@@ -182,11 +182,11 @@ status: Revision, pending work, index/scan state and coverage for each admitted 
 memory: Explicit project memory records.
 ~~~
 
-The serialized `tools/list` result stays within 800 o200k tokens, asserted by a test.
-v1's catalog measured 711 tokens on 2026-10-03; see [validation](../../docs/validation.md).
-Owner decisions 2026-10-04: when 005 T003 adds the `references` tool, the ceiling becomes
-900 and then 1000 tokens (full schemas measured about 971), keeping these descriptions
-unchanged.
+The [MCP catalog test](../../tests/mcp.rs) caps the serialized default seven-tool
+`tools/list` at 1,000 o200k tokens. The opt-in task catalog has different schemas
+and is outside that measurement. The v1 catalog measured 711 tokens on October 3
+under the original 800-token ceiling. With the addition of `references`, the
+owner raised the ceiling to 900 and then 1,000 on October 4. [Validation](../../docs/validation.md).
 `INIT_INSTRUCTIONS` in `src/mcp.rs`, exactly:
 
 ~~~text

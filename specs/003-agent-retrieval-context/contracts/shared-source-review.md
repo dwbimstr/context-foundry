@@ -66,9 +66,12 @@ correction. Source text outside those boundaries is unknown.
 
 ### Optional semantic recovery of a saved decision
 
-After an ordinary workspace `find_decisions` returns a recovery question,
-an MCP owner launched with `--experimental-task-context` and
-`--decision-semantic-profile FILE` may offer up to two `semantic_leads`.
+For a title-blind workspace `find_decisions`, an MCP owner launched with
+`--experimental-task-context` and `--decision-semantic-profile FILE` may add
+up to two `semantic_leads` when ordinary lookup asks for more information
+with zero candidates, or when every candidate is an attributed account.
+Keep the ordinary candidates and clarification intact. A returned decision,
+explicit promise or indexed passage keeps the ordinary route.
 The owner ranks only selected, current decisions with valid indexed links.
 It compares the operator’s unchanged question to the first 512 UTF-8 bytes
 of each decision, ending at a character boundary. The local profile supplies
@@ -78,11 +81,11 @@ source vectors, task vector store, network request or write to project memory.
 
 For this small-project experiment discovery stops at 32 task records or eight
 eligible decisions. Exceeding either bound, a busy worker or an unavailable
-model leaves the ordinary clarification available. Model work shares one
+model leaves the ordinary lookup result available. Model work shares one
 1.5-second ceiling. Before returning a quote, validate its saved identity,
 feature revision, selected state, linked sources and changed support again.
-The reader can reopen it through `peek`. Wording matches, explicit feature
-selections and other existing clarifications take their ordinary paths.
+The reader can reopen it through `peek`. An explicit feature or title fragment
+always uses the ordinary scoped lookup.
 
 A lead is a suggestion for the reader. Show a quote only when it addresses
 both the proposed action and the thing the operator is asking about. Ask the

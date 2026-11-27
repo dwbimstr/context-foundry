@@ -172,9 +172,11 @@ Portfolio inventory, all 15 specs:
 | [014](../specs/014-migration-coexistence/spec.md) | Deferred, re-entry criteria unchanged |
 | [015](../specs/015-open-source-release-lifecycle/spec.md) | Superseded (release checklist); release destination is an external prerequisite |
 
-Also carried by this pass: the [token-economics flow](architecture.md#token-economics-flow)
-with measured v1 payload ranges beside labeled v2 targets; the portfolio and roadmap
-order; and the [Laya upstream drift note](references/laya-decision-ecosystem.md#upstream-drift-recorded-2026-10-03).
+This planning pass also set the portfolio and roadmap order and recorded
+[upstream Laya changes](references/laya-decision-ecosystem.md#upstream-drift-recorded-2026-10-03).
+The [economics contract](../specs/003-agent-retrieval-context/contracts/adapter-economics.md)
+preserves its v1 measurements and v2 targets. The [architecture diagram](architecture.md#token-economics-flow)
+shows how the current server accounts for a response.
 The historical [subtraction review](review/subtraction.md) row that names a separate
 `import_scip` tool predates this pass and is left as history; 005 now imports through
 `index`.

@@ -76,11 +76,11 @@ to that host. The desktop request path is shown above. [Connection profiles](../
 4. **Find a decision in the operator's words.** Ordinary `find_decisions` uses the
    saved records and can ask for a feature title. A partial title offers up to three
    titles for the operator to choose from. With the decision profile enabled, a
-   title-blind lookup that returns a `recovery_question` can rank original quotations
+   title-blind lookup with no candidates and a clarification or recovery question,
+   or with only attributed accounts, can rank original quotations
    locally. The owner checks revision, selection, identity and source links again.
    ChatGPT reads the returned evidence, including changed support, and asks if
-   nothing governs the request. An ordinary result containing only an attributed
-   account can leave the relevant decision outside the shortlist.
+   nothing governs the request. Existing promises, indexed passages and decision candidates keep their ordinary route.
    [Discovery](../src/task_context/connections/discovery.rs) · [Semantic fallback](../src/task_context/connections/semantic_decisions.rs).
 5. **Plan a change.** `propose_change` saves the request, `proposal_impact` reopens
    its evidence, and task-aware `context` can connect it to cited implementation.
@@ -187,80 +187,46 @@ owning tasks, not a separate whole-portfolio acceptance stage.
 
 ## Token-economics flow
 
-For source discovery, every MCP host uses the same Rust retrieval and packing
-path. The final text block is the boundary where Foundry can count delivered
-tokens. Host prompt assembly and provider usage have their own accounting.
-[Wire contract](../specs/001-source-state-recovery/contracts/context-v2.md) ·
-[Delivery and host accounting](../specs/003-agent-retrieval-context/contracts/adapter-economics.md#delivered-token-economics).
+Foundry can count the text it returns to a chat. What it counts depends on the
+tool. A source `search` uses the token budget. The desktop's `task_context`
+decision lookup takes a different path, even when Gemma helps find the quote.
 
 ```mermaid
 flowchart TD
-    Intent["Agent intent in a configured host"] --> Need{"What is needed?"}
-    Need -- "locate a symbol or text" --> Search["search"]
-    Need -- "understand a subsystem" --> Context["context"]
-    Need -- "read cited source" --> Retrieve["retrieve: v2 handle, lines or outline view"]
-    Need -- "refresh after edits" --> Index["index: bound root or admitted root"]
-    Index --> Store[("redb sources and derived Tantivy index")]
-    Index --> Report["index JSON counts and report (unchanged)"]
-    Store -. "indexed snapshot read by later search and context queries" .-> Rank
-    Search --> Rank["Two-tier ranking per root: exact definitions, then lexical; 007 merges roots"]
-    Context --> Rank
-    Rank -- "search" --> Locators["Locator lines: handle, best line, symbol, excerpt"]
-    Rank -- "context" --> Ladder["Ladder: each unit verbatim, else signature; graph edges; up to 3 file outlines"]
-    Retrieve --> Validate["Handle validation: syntax, workspace, existence, digest, range"]
-    Validate --> Views["Text view: prefix fit with next; outline view: outline, else outline-min"]
-    Locators --> Wire["v2 text: one header line, handles, fenced bodies"]
-    Ladder --> Wire
-    Views --> Wire
-    Wire --> Count["Exact o200k count; one session reservation, charge and refund"]
-    Count --> Host["MCP client receives the bounded result"]
-    Report --> Host
+    Call["Desktop app sends an MCP tool call"] --> Tool{"Which operation?"}
+    Tool -->|"search, context, retrieve, references, memory search"| Reserve["Choose effective token limit and reserve optional session allowance"]
+    Reserve --> Pack["Read evidence and pack within token and serialized-byte limits"]
+    Pack -->|"success"| Charge["Charge actual text tokens and return unused allowance"]
+    Pack -->|"refusal"| Refund["Return the reservation"]
+    Tool -->|"task_context or memory get/write"| Json["Return compact JSON within the serialized-byte cap"]
+    Tool -->|"index or status"| Report["Return the operation report"]
+    Charge --> Client["Desktop app receives the MCP result"]
+    Refund --> Client
+    Json --> Client
+    Report --> Client
+    Client --> Host["ChatGPT chooses what to include in its next model request"]
 ```
 
-- **Routing.** Tool descriptions and project instructions make Foundry the preferred
-  first call in a configured project. OMP also has an opt-in operator team-kit hook,
-  which refuses the first identifier-like grep/rg per signature inside admitted roots.
-  The identical repeat, regex patterns, paths outside admitted roots, compound shell
-  commands and the HTTP heuristic scope pass through that hook. [OMP hook contract](../specs/003-agent-retrieval-context/spec.md#optional-omp-first-call-hook).
-- **Compression.** Deterministic elision only: a unit's signature form, or a file
-  outline whose elided ranges render as `⋯ a-b` and are recoverable exactly through
-  `retrieve` with `lines`. There is no compression model and no cross-call
-  suppression, because host compaction drops earlier tool results and a forced extra
-  retrieve turn costs more than resending.
-- **Accounting.** The counted boundary is the final MCP text block the server emits
-  (or complete CLI stdout); the serialized result is capped at 256 KiB. That is
-  Foundry's delivered payload, not host or provider cost: hosts forward the block
-  unchanged only below their own size limits and may spill, truncate or compact it
-  ([pinned host citations](../specs/003-agent-retrieval-context/contracts/adapter-economics.md#evidence-behind-the-rules)).
-  One atomic session reservation per response; a refusal changes no counter. Only
-  `search`, `context` and `retrieve` use the v2 text; `index` and `status` keep their
-  bounded JSON reports.
-
-The table retains measured v1 payloads beside the v2 request defaults and full-tranche
-targets, not full-tranche acceptance. Separate fixture measurements are recorded in
-[validation](validation.md): handles 33 versus 94 o200k tokens (68 versus 207 bytes,
-T004), and the serialized catalog: 793 tokens for six tools after 008 added `memory`
-and `include_memory`; 661 for five after 007 T001 added `root`/`roots` (598 after
-T005/T006 grew the `search` and `retrieve` schemas; 568 at T004; v1 711; ceiling 800).
-The twelve-query payload comparison and real-host runs belong to
-003 T005.
-
-| Agent intent | Tool and v2 form | v1 measured 2026-10-03 (text-block o200k tokens) | v2 request default | v2 target (not a measurement) |
-| --- | --- | --- | --- | --- |
-| Locate an identifier | `search`, locator lines | 1337–4640 per 10-hit search (six identifier queries) | `tokens` 1024, `limit` 10 | at most 20% of the v1 search tokens for the same identifier query; the definition is hit #1 |
-| Read the definition found | `search` then `retrieve` of that handle | search plus retrieve of hit #1 (one 2048-byte v1 block): 2123–5434 for those six queries | `retrieve` `tokens` 2048 | search plus unit retrieve at most 35% of the v1 pair; the whole unit verbatim within 2048 |
-| Understand a subsystem | `context` | 1439–1853 at `tokens` 2048 (all twelve queries) | `tokens` 2048 | v2 header at most 40 tokens; each expected unit present, verbatim or as a signature |
-| Every request | `tools/list` catalog | 711 for five tools | — | at most 800 |
-
-The 40-token header target was set against v1's minimum context envelope of 199
-tokens, measured in the 2026-10-01 allowance run at v1's own boundary — the whole
-serialized tool result — not at the text-block boundary of this table, so the two
-numbers are not a like-for-like comparison. Meeting the targets would show smaller
-delivered payloads, not net savings for a whole host session.
-
-Real-host results will carry the label "bundled Foundry adoption (v2 + instructions +
-hook), n=1 per task/arm, these tasks only; not an isolated v2 causal or general
-savings result".
+- **Packed retrieval.** The effective token limit is the smallest of the requested
+  amount, the configured per-call ceiling and the remaining session allowance
+  when one is configured. Foundry counts the packed text in `o200k_base` tokens.
+  It also checks the serialized MCP result, including JSON escaping and the
+  envelope, against 256 KiB. A handled refusal refunds the reservation. The
+  optional retrieval trace records what Foundry returned. [Reservation and byte measure](../src/mcp.rs) · [Tool dispatch, packing and settlement](../src/mcp/tools.rs).
+- **Decisions and other reports.** `task_context` returns compact JSON using the
+  primary engine. Its serialized result has a 256 KiB cap. A semantic suggestion
+  is part of that same result. This path does not debit the retrieval token
+  allowance. `memory get` and memory writes also use the JSON path. `index` and
+  `status` return operation-specific reports. [Tool implementations](../src/mcp/tools.rs).
+- **What the host spends.** ChatGPT owns prompt assembly and its model call.
+  The MCP server sees its own response. Establishing total use or savings requires
+  a host or provider usage receipt for the request. The optional OMP meter covers
+  only traffic routed through it. [Accounting boundaries](../specs/003-agent-retrieval-context/contracts/adapter-economics.md#delivered-token-economics).
+- **Catalog size.** `tools/list` describes the configured catalog. The default
+  seven-tool catalog has a 1,000-token fixture ceiling. Enabling task context
+  changes that catalog. The October v1/v2 size comparisons and their original
+  targets are recorded in the [measurement contract](../specs/003-agent-retrieval-context/contracts/adapter-economics.md)
+  and [catalog spec](../specs/003-agent-retrieval-context/spec.md#catalog-and-instruction-text).
 
 ## Workspace scope and outside references
 
@@ -311,52 +277,33 @@ a second truth ledger or discover roots. Source bookkeeping, rebuildable derived
 indexes and consented training manifests have distinct purposes; none authorizes the
 other’s work. No globally atomic multi-repo snapshot is promised.
 
-## Two storage alternatives
+## Project store and index recovery
 
-**One SQLite database with FTS and relational adjacency.** Source replacement,
-metadata, graph facts, and lexical search share a transaction. A caller uses
-`replace_source(input)` and `context(query, budget)` without index coordination.
-This has the simplest application consistency story. It introduces a C database
-dependency, and graph queries and FTS tokenization need workload validation.
-
-**One Rust transactional store plus a rebuildable Rust search index.** A `redb`
-transaction owns source versions, content, graph adjacency, explicit memories,
-and pending index work. Tantivy owns only lexical search acceleration. After a
-source commit, an idempotent indexer deletes/replaces that source's search documents,
-commits the search index, then clears only the matching pending version. A crash
-repeats that work. Queries validate candidate source versions against authoritative
-state and report indexing lag; they never label a behind index as complete.
-
-**Selected for 001: retain the implemented redb plus Tantivy baseline.** The read-only
-comparison in [001 D001](../specs/001-source-state-recovery/spec.md) is complete: its
-existing source/pending transaction and version-checked replay can support the bounded
-repair contract with one rebuild marker. A SQLite replacement would change query,
-graph and v1-data handling before those behaviors are proven. Reconsider only if the
-retained design needs additional durability machinery beyond that bound. SQLite uses
-a C dependency, not C++ application code. No parity/performance result or newly passed
-recovery test is claimed; there is no second backend or storage-plugin interface.
-The current two stores do not jointly constitute one atomic commit. Neither choice
-needs an application-owned WAL, checkpoint format, generation allocator, or mutation-specific
-fast path. Library implementation details remain the libraries' responsibility.
+Each admitted store has one authoritative redb database and a derived Tantivy
+index under the same directory. The owner commits source bytes, their version
+and pending index work together in redb. It then replaces the source's search
+documents, commits Tantivy and clears the matching pending version. An interruption
+between those commits leaves work the owner can replay. Retrieval checks candidate
+versions against redb and reports index lag. [Storage implementation](../src/store.rs) · [Original storage choice](../specs/001-source-state-recovery/spec.md).
 
 ```mermaid
 flowchart LR
-    Files[Workspace files] --> Ingest[Bounded ingestion]
-    Ingest --> DB[redb: sources, chunks, hashes, pending work]
-    DB --> Indexer[Idempotent index refresh]
-    Indexer --> Search[Tantivy: derived search index]
-    Providers[Explicit semantic producer bundles] --> DB
-    Agent[CLI or MCP agent adapter] --> Retrieval[Search and bounded graph traversal]
-    Search --> Retrieval
-    DB --> Retrieval
-    Retrieval --> Pack[Cited context under a declared token budget]
-    Policy[Frozen research policy head] -. strategy only .-> Retrieval
-    Feedback[Opted-in task feedback] --> DB
-    DB -. dataset export .-> Trainer[Owned isolated Rust training]
-    Pack --> Host[Requesting client]
-    Host -->|Explicit capture or decision| Memory[Task and project memory operations]
-    Memory --> DB
+    Change["Source edit admitted by index or watcher"] --> Commit["Owner commits source version and pending work"]
+    subgraph Store["One project store"]
+        DB["knowledge.redb · authoritative data and pending versions"]
+        Index["search/ · rebuildable lexical index"]
+    end
+    Commit --> DB
+    DB -->|"pending source"| Refresh["Owner refreshes search documents"]
+    Refresh -->|"commit documents"| Index
+    Refresh -->|"clear matching pending version after index commit"| DB
+    Index -->|"candidate locations"| Read["Owner verifies candidates against current source versions"]
+    DB --> Read
+    Read --> Result["Cited source result"]
 ```
+
+Explicit memory and decision records also live in redb. A saved-decision lookup
+can read them without a prepared source-vector index. [Desktop decision workflow](#from-an-original-to-a-feature-review).
 
 ## Module boundaries
 
@@ -604,11 +551,11 @@ ranges are explicit and recoverable; selection and deduplication come before any
 other compression, and no compression model is used. Expose further retrieval for
 omitted spans.
 
-The current [v2 wire](../specs/001-source-state-recovery/contracts/context-v2.md)
-budgets the final text of `search`, `context`, `retrieve` and `references`.
-CLI output and the MCP text block include handles and omission notices.
-Transport envelopes, host prompts and provider billing have different
-accounting boundaries.
+The [v2 wire contract](../specs/001-source-state-recovery/contracts/context-v2.md)
+defines the final text for source retrieval. Handles and omission notices count
+toward its token limit. The [token-economics flow](#token-economics-flow) shows
+how the server handles packed retrieval, task decisions and operation reports,
+and where the host takes over.
 
 ## Commit and failure ordering
 
@@ -625,7 +572,7 @@ snapshot eligibility rules described above.
 | Graph import | Validate all endpoints and bounds before replacing a producer's old bundle in one transaction. A rejected bundle leaves the prior bundle intact. |
 | Compiler (SCIP) import | Freeze copies of the artifact and manifest in owned scratch, check their digests and the manifest's workspace, revision and input hashes, then build a disk-backed definition lookup before selecting the snapshot tuple. Each source scope `(producer, path)` is replaced in its own transaction with its coverage row. A failed or cancelled run keeps committed scopes and retires none; scopes retire only when a completed run with no failed document proves their source absent. |
 | Incomplete workspace scan | Keep unseen sources because absence was not established; report failures. Known unsupported inputs are explicit exclusions and retire their previous indexed content. |
-| Legacy prototype Laya failure | Timeout, invalid response, unknown action or confidence below threshold selects a deterministic strategy and reports the reason. Retrieval remains available. |
+| Decision embedding worker unavailable | The opt-in lookup preserves its ordinary evidence and reports why local scoring was unavailable. |
 
 Child-process recovery tests (001 T001) exit at named fault points around source
 commit, search commit, repair enqueue, quarantine and marker clear, then reopen and

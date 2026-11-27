@@ -214,10 +214,10 @@ token on each later turn while a missed answer costs about one extra turn.
 | v2 handles carry `sha32` and `ws16` prefixes | v2 § Source handles | T004 fixture measurement: 33 rather than 94 o200k tokens per handle (68 versus 207 bytes), not a universal fixed cost |
 | Deduplicate within one response only; no cross-call suppression; deterministic elision only | v2 § Deduplication, no cross-call suppression | Compaction drops earlier results, and a forced extra retrieve turn costs more than resending (prakarana T008) |
 
-Catalog ceiling: the serialized `tools/list` result stays within 800 o200k tokens,
-asserted by a test. It rises to 1000 when 005 T003 adds `references` (owner decisions
-2026-10-04: first 900, then 1000 after measuring full schemas). The exact descriptions and instruction text are owned by
-[003](../spec.md) (§ Catalog and instruction text).
+The [MCP catalog test](../../../tests/mcp.rs) caps the serialized default
+seven-tool `tools/list` at 1,000 o200k tokens. The original 800-token ceiling
+predates `references`. The optional task catalog differs from the measured
+default. [Catalog and instruction text](../spec.md#catalog-and-instruction-text).
 
 ### Usage import
 

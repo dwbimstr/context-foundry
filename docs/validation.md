@@ -1,5 +1,56 @@
 # Validation
 
+## Two missed decisions in a fresh desktop chat — 2026-11-27
+
+The earlier [15-question replay](#inkling-2-mini-decision-judging-gemma-leads--2026-11-27)
+missed an edited folder copy and a sealed shipping manifest. In the first
+lookup, ordinary matching returned only a meeting account. In the second, it
+returned zero candidates and a weak-wording clarification. Neither response
+set `recovery_question`, so neither reached Gemma. With the same local
+EmbeddingGemma 2 BF16 profile, the repair admits those two response shapes
+to the existing two-quotation fallback. The ordinary response and its
+clarification stay available. [Lookup contract](../specs/003-agent-retrieval-context/contracts/shared-source-review.md#optional-semantic-recovery-of-a-saved-decision).
+
+The installed baseline and candidate ran against the same five-task snapshot.
+The applicable saved decision appeared in the ordinary or semantic results
+for 5 of 7 positive questions before the change and 7 of 7 after it. The two
+recovered decisions ranked first. All 15 original ordinary responses matched
+field for field. Of three new positive paraphrases, the baseline returned the
+decision for one and the candidate returned it for all three. These counts
+measure whether a reader received the quotation.
+
+A fresh ChatGPT desktop project chat then confirmed the real workspace ID,
+source revision 554 and `decision_semantic: ready`. It submitted five separate
+title-blind queries verbatim and reopened source review for Cleanup and
+shipping. All five returned semantic leads and zero ordinary candidates.
+
+| Fresh question or control | What the chat answered |
+| --- | --- |
+| The original folder is going away. What happens to the version our reviewer edited independently? | Quoted “Cleanup keeps an edited copy when retiring its parent.” (`keep-copy`, revision 9). It distinguished the missing original spec quote from the current position preview, found the surviving handoff requirement and asked whether the decision still applies. |
+| With the shipping paperwork now sealed and the trucks waiting outside, who picks the destination? | Found the dispatch rule about preserving an approved destination. It asked who has approval authority because the saved rule identifies no chooser. |
+| The shipping paperwork is sealed. How do we know where to send the load? | Quoted “A sealed dispatch manifest keeps the destination approved at handoff.” (`sealed-dispatch-manifest`, revision 15). It asked whether the rule applies to the load. |
+| Should we retire the parent account after billing closes? | Asked which rule governs closing the account. |
+| Move payroll to Thursday. | Asked where the payroll scheduling decision had been saved. |
+
+Gemma also offered unrelated quotations on both controls. ChatGPT checked their
+applicability. Two earlier desktop chats failed during stdio initialization
+while a competing connection held the project store. The successful fresh chat
+used Foundry's authenticated loopback transport against that same store. The
+temporary project registration was removed, the listener stopped and the
+ordinary desktop configuration restored byte for byte. The same chat then
+called ordinary stdio `status` and confirmed the same workspace, revision and
+ready decision profile. It repeated all five exact lookups sequentially over
+stdio. Each full result matched its loopback counterpart. This second pass
+checked transport parity in a chat that had already seen the questions.
+The check was read-only and used local inference and the existing desktop account.
+
+The focused semantic-routing regression, all 37 task-context integration tests,
+formatting and library Clippy passed. Tests for concurrent token reservations
+and the byte cap on escaped MCP results also passed. The default seven-tool catalog test
+measured 996 o200k tokens against its 1,000-token ceiling. The three diagrams
+in the [architecture](architecture.md) rendered locally. The token flow now
+distinguishes packed retrieval, byte-capped task results and host accounting.
+
 ## Project-only Gemma restart and desktop lookup — 2026-11-27
 
 The old project process held the real project's `knowledge.redb` and lacked
