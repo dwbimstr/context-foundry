@@ -166,12 +166,13 @@ experimental tip through `ac43ed2`. [Merge and local gates](validation.md#local-
   current operator decisions. The host carried both decisions verbatim into the
   replacement history. [Compaction receipt and limits](validation.md#real-desktop-compaction-during-the-rust-review--2026-11-27).
 
-  On a later compaction the chat missed a decision saved only in Foundry.
-  The task-enabled profile now prompts a resuming chat to reopen its current
-  work item. On the identical neutral prompt, the same chat reopened the
-  notebook and applied the unseen decision. The guidance was loaded after
-  compaction. Its retention across another compaction remains unverified.
-  [Notebook-only decision and checks](validation.md#reopening-a-rust-review-decision-saved-only-in-foundry--2026-11-27).
+  After a missed notebook-only decision, the task-enabled profile gained
+  guidance to reopen saved work. The original Rust chat subsequently crossed
+  its automatic compaction limit during ordinary source review. On a neutral
+  request to continue, its first tool call reopened the current notebook via
+  the local Foundry CLI. It applied an unseen decision to a passing regression
+  and preserved the earlier constraints.
+  [Automatic compaction and mutation results](validation.md#foundry-decision-recovery-after-automatic-desktop-compaction--2026-11-27).
 
 - **Finite desktop qualification complete, 2026-11-23.** A fresh ChatGPT
   desktop project chat verified the real project store and retrieved

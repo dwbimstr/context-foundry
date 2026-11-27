@@ -1,5 +1,50 @@
 # Validation
 
+## Foundry decision recovery after automatic desktop compaction — 2026-11-27
+
+With the resume guidance from `590fcf9` already loaded, the coordinator saved
+a new decision directly in revision 10 of the private Rust review notebook.
+Readback preserved the five earlier decisions. The original desktop chat then
+completed nine source reviews on the pinned Rust index. Those included tracing
+two MIR callers of `Vec::retain_mut`, testing a wrapped `VecDeque`, checking
+unwind-safety captures, and reviewing libtest's panic-abort behavior. Before
+the replay, both the original history and the replacement history lacked the
+new decision's ID and wording.
+
+During the ninth review, on `String::retain` and UTF-8 validity, the host
+logged `token_limit_reached=true` at 22:19:24 UTC. It counted 248,419 tokens
+against its existing 244,800-token automatic compaction limit. At 22:22:24 UTC
+the host wrote the replacement history and marked `ContextCompaction` complete
+in that same source-review turn. The chat then finished its answer. Request input
+fell from 243,268 tokens before compaction to 40,031 on the first request
+afterward. These are host observations on one chat. The run used the ordinary
+context settings and no manual compaction command.
+
+The coordinator then sent the same neutral request to finish the standalone
+regression, without mentioning Foundry, a revision, or any decision. **The
+chat's first tool call reopened its work item.** The installed Foundry CLI
+rendered revision 10 within an 8,192-byte budget. The new decision first
+appeared in that successful tool result. The chat returned two executable
+tests. One preserved the typed callback panic and the unchanged, unvisited
+tail. The new normal-return control kept the element that would have panicked,
+visited and rejected the tail, and verified that every original element's
+destructor saw the mutated payload exactly once.
+
+| Standalone Rust check | Unwind case | Normal-return control |
+| --- | --- | --- |
+| Chat's answer compiled unchanged | Passed | Passed |
+| Skip the tail element's mutation in the callback | Passed | Failed on the tail payload |
+| Overwrite the tail payload in its destructor | Failed on the tail payload | Passed |
+| Raise an unrelated panic payload | Failed at the downcast | Passed |
+| Record two drops for one retained element | Failed on the drop count | Failed on the drop count |
+
+The original and the four mutations ran against the installed Rust 1.97.1
+standard library. Four focused Foundry checks passed for the task-enabled and
+default instruction surfaces. The result establishes recovery on this desktop
+chat through an automatic compaction, using the local CLI to access Foundry.
+The run used the existing desktop account and local tools. No additional
+product change, Rust compiler build, or paid API run was needed.
+
 ## Reopening a Rust review decision saved only in Foundry — 2026-11-27
 
 After the [earlier compaction run](#real-desktop-compaction-during-the-rust-review--2026-11-27),
@@ -39,9 +84,32 @@ Four focused checks passed for the task-enabled and default MCP startup text
 and generated host configuration. The run used the existing desktop account
 and local tools. The native compaction preceded the missed answer. The
 operator reported that the manual command was unavailable for another
-compaction after the guidance changed. The blind replay establishes recovery
-in the same already-compacted chat. Retention of the revised instructions
-across a subsequent compaction remains unverified.
+compaction after the guidance changed. That replay established recovery in
+the same already-compacted chat.
+
+### Blind replay after a subsequent desktop compaction
+
+During ordinary source work the chat reopened revision 8 before compaction.
+The coordinator then saved a fresh decision in revision 9. The chat's later
+recap still identified revision 8 and repeated the general reminder to reopen
+the work item. The host subsequently recorded a standalone `Compact` operation
+with no parent turn and completed it at 20:58:49 UTC. The revision-9 decision
+was absent from the chat, including the replacement history, before the replay.
+
+The coordinator sent the same neutral continuation prompt. The chat's first
+tool call rendered the saved work item through the local Foundry CLI. That
+successful read was the first appearance of the new decision in the chat.
+Its standalone regression checked what each destructor observed after the
+callback mutated the visited elements. It also checked that the unvisited
+tail kept its initial payload and preserved the earlier panic and drop checks.
+
+The unedited answer passed on the installed Rust 1.97.1 standard library.
+Skipping the retained element's mutation failed its payload assertion.
+Changing the unvisited tail's payload failed the tail assertion. Substituting
+an unrelated panic failed the downcast. This verifies recovery after a
+standalone compaction with the revised guidance loaded. The [later automatic
+compaction run](#foundry-decision-recovery-after-automatic-desktop-compaction--2026-11-27)
+tested the case during ordinary work.
 
 ## Real desktop compaction during the Rust review — 2026-11-27
 
@@ -75,8 +143,7 @@ in the earlier task messages carried into the replacement history. The chat had
 also written its own recap beforehand. This run establishes recall across one
 manual compaction in this desktop integration. The [subsequent notebook-only
 run](#reopening-a-rust-review-decision-saved-only-in-foundry--2026-11-27)
-exercised a decision absent from chat history. Automatic context-window
-exhaustion remains unmeasured.
+exercised a decision absent from chat history.
 
 After the unaided answer, the chat tried its earlier native review registration.
 It still pointed to the temporary loopback address retired after the previous
