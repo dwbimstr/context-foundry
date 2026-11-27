@@ -2,7 +2,7 @@
 
 ## Current status — 2026-11-06
 
-Updated 2026-11-25. This section owns current status; other documents link here,
+Updated 2026-11-27. This section owns current status; other documents link here,
 and dated paragraphs below are history.
 
 - **Product goal, 2026-11-23.** An operator can give Foundry project context
@@ -125,6 +125,13 @@ and dated paragraphs below are history.
   original Cleanup wording after Gemma found its decision. Adding the
   linked sources still missed it. Keep the current ChatGPT reader.
   [Local Mapika comparison](validation.md#mapika-4b-q4-judging-gemma-decision-leads--2026-11-27).
+
+  Inkling 2 Mini Decision recovered the original Cleanup paraphrase and
+  asked on billing and payroll. With linked evidence it recovered all five
+  applicable decisions available to the reader in the 15-question replay.
+  Two applicable decisions never appeared in the native shortlist. The
+  desktop workflow keeps Gemma retrieval and the ChatGPT reader.
+  [Local Inkling results and the two misses](validation.md#inkling-2-mini-decision-judging-gemma-leads--2026-11-27).
 
 - **Finite desktop qualification complete, 2026-11-23.** A fresh ChatGPT
   desktop project chat verified the real project store and retrieved

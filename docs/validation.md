@@ -1,5 +1,67 @@
 # Validation
 
+## Inkling 2 Mini Decision judging Gemma leads — 2026-11-27
+
+Inkling recovered the original Cleanup decision and asked on the billing and
+payroll controls. With linked evidence it recovered five of seven applicable
+decisions through Foundry, including every applicable decision the native
+lookup offered. It asked on all eight unrelated requests. The two remaining
+misses keep the trial below the frozen acceptance rule. Gemma and the
+ChatGPT reader remain the experimental desktop workflow.
+
+| Same 15 requests | Recovered with both eligible decisions supplied | Recovered through native lookup | Unrelated requests correctly sent to clarification | Wrong links shown |
+|---|---:|---:|---:|---:|
+| Inkling, saved quote | 5/7 | 4/7 | 8/8 | 0 |
+| Inkling, quote and linked evidence | 6/7 | 5/7 | 8/8 | 0 |
+| Mapika Q4, saved quote (previous run) | 3/7 | 3/7 | 8/8 | 0 |
+| Mapika Q4, quote and linked evidence (previous run) | 2/7 | 2/7 | 8/8 | 0 |
+
+On “Can we discard the predecessor and safeguard a collaborator's revision?”,
+the Cleanup quote scored 0.898 and 0.892 with the options reversed. The saved
+decision was “Cleanup keeps an edited copy when retiring its parent.” Its
+spec citation still needs review. Adding the linked evidence also recovered
+“If the master is retired, what becomes of the version a teammate changed
+separately?” The lower of its two scores rose from 0.326 to 0.899.
+
+Two misses explain the difference between judging a link and delivering it.
+For the reviewer's independently edited version of a retiring folder, the
+ordinary lookup returned an attributed account with no decision candidate.
+Inkling selected Cleanup when given the decision directly (0.920 with linked
+evidence). For the sealed shipping paperwork question, the native lookup
+returned no decision and Inkling also asked when given Dispatch directly
+(0.285). The other Dispatch wording succeeded in both arms.
+
+The installed Foundry MCP server replayed all 15 questions from the Mapika
+trial against the same five-task project snapshot. The Gemma profile returned
+identical lookup responses. Both eligible decision records, their revisions,
+quote digests and linked evidence also matched.
+
+Each request was paired with both saved decisions, including when the native
+lookup already asked. One arm used only the saved quote. The other added the
+same cited passages and declared dependency used in the Mapika trial. The
+decision question and answer wording were fixed. A link needed an applies
+probability of at least 0.80 in **both** option orders. Exactly one qualifying
+link from the native candidates could be shown to the operator. Reusing
+identical inputs across arms reduced 120 ordered comparisons to 90 distinct
+inputs. Model inputs omitted the expected answers and feature-title hints.
+
+The run used the publisher's v5.1 `System15Engine.decide_batch` with its
+balanced halting threshold (0.969), fitted exit temperatures and up to five
+passes. The operator cutoff was applied to the unrounded Choice probabilities.
+The M5 Max used PyTorch 2.13.0 on Metal and Transformers 5.24.0 with network
+access denied during inference. The 13 BF16 backbone shards, decision heads
+and scratchpad totaled 51,667,890,326 bytes. Each matched its published
+SHA-256. The local loader used the bare Transformers text model and brought
+each layer's full expert matrices into memory as needed. The standard
+Transformers loader reported zero missing, unexpected or mismatched keys.
+The three 30-input batches took 87, 81 and 105 seconds (4 min 32 s combined).
+During the last batch macOS reported a 32 GiB peak footprint so far. This
+run measured batched inference. Interactive ChatGPT latency with Inkling is
+unmeasured. The dated local evidence under `runs/inkling-decision-2026-11-27/`
+includes the frozen inputs, per-order scores and checked native responses.
+The trial made zero paid requests.
+[Pinned decision code](https://huggingface.co/eltokh7/inkling-2-mini-decision/blob/dc334283b9a69ef68622fae41317ba9c698ab7f6/modeling.py) · [Earlier desktop walkthrough](#native-title-blind-decision-recovery-in-chatgpt--2026-11-26).
+
 ## Mapika 4B Q4 judging Gemma decision leads — 2026-11-27
 
 The local Mapika judge asked for clarification on the original Cleanup question
