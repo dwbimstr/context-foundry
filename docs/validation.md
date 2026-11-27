@@ -1,5 +1,51 @@
 # Validation
 
+## Trying local EmbeddingGemma 2 on a missed decision — 2026-11-26
+
+“Can we discard the predecessor and safeguard a collaborator's revision?”
+was replayed verbatim, with no feature name, suggested synonym or task ID.
+In the connected project, `find_decisions` returned zero candidates and asked
+which feature held the decision. A fresh installed MCP server on the saved
+five-task snapshot gave the same answer with the local semantic profile
+enabled. The task lookup matches saved words and declared relationships.
+It has no embedding search over task entries. We also tried project
+`context` with memory inclusion. The snapshot's source vectors used the
+older `units6` recipe. The installed `units7` reader reported
+`profile_mismatch` and served lexical evidence on those requests.
+
+To test what the model could contribute, we read every selected,
+nonhistorical entry with current or absent indexed links from the five
+live project tasks. Nine passages qualified, including two decisions.
+Each became one local Markdown document named by its content hash. Both
+arms saw identical original bytes and opaque paths. Task titles, entry
+IDs and the historical superseded spec stayed out of the search inputs.
+The installed BF16 EmbeddingGemma 2 hierarchy profile prepared the nine
+documents in 9.15 seconds and published all 18 units. Each question then
+went to the same MCP `context` operation with a 2,048-token budget.
+
+| Operator question | Position of the saved Cleanup decision with lexical search | Position with Gemma enabled | Fresh reader of the Gemma results |
+|---|---|---|---|
+| Discard the predecessor and safeguard a collaborator's revision? | Absent from eight delivered passages | 6 of 9 | Selected the exact decision as a candidate. |
+| Should we retire the parent account after billing closes? | 1 of 2 | 1 of 9 | Asked for the governing billing decision. |
+| Move payroll to Thursday. | No passages | 2 of 9 | Asked for the governing scheduling decision. |
+
+The fresh-context reader received the questions, delivered passages and their
+saved entry kinds. It had no expected answer, feature titles or previous chat.
+It chose “Cleanup keeps an edited copy when retiring its parent.” In the live
+project we mapped the returned passage digest to `keep-copy` at revision 9
+and reopened the exact bytes. Its cited spec still needs review. The current
+position preview asks for the editor’s approval before archiving. All five
+task revisions were unchanged.
+
+This was a local MCP replay and a fresh agent reading its output. The
+temporary passage index made the decision visible to that reader and also
+returned all nine passages on both unrelated questions. The result supports
+neither automatic selection by rank nor a retrieval-default change. A fresh
+desktop GUI chat and a native semantic task-memory lookup were outside the
+demonstrated path. The run used the installed weights and local worker,
+without a paid endpoint or a project reindex. Local receipts are in
+`runs/gemma-cleanup-2026-11-26/`.
+
 ## Which feature still relies on the edited Cleanup decision? — 2026-11-26
 
 On the saved five-task project snapshot, the previous installed server named

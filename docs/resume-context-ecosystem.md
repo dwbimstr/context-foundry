@@ -109,6 +109,11 @@ and dated paragraphs below are history.
   Mina’s meeting requirement while Ivo’s revised spec needs review.
   [Installed decision-impact walkthrough](validation.md#which-feature-still-relies-on-the-edited-cleanup-decision--2026-11-26).
 
+  On the previous title-blind miss, a fresh reader found Cleanup’s exact
+  decision in a local Gemma search over nine saved passages. It was sixth
+  on the intended question and ranked higher on both unrelated controls.
+  Native task lookup still asks for the feature name. [Gemma comparison](validation.md#trying-local-embeddinggemma-2-on-a-missed-decision--2026-11-26).
+
 - **Finite desktop qualification complete, 2026-11-23.** A fresh ChatGPT
   desktop project chat verified the real project store and retrieved
   `apply_owned_block` at `src/bootstrap.rs:904`. Through the separate exercise
