@@ -1,5 +1,71 @@
 # Validation
 
+## Mapika 4B Q4 judging Gemma decision leads — 2026-11-27
+
+The local Mapika judge asked for clarification on the original Cleanup question
+even though native Foundry had returned the exact `keep-copy` decision. It
+correctly asked on billing and payroll. Across 15 questions it selected 3 of
+7 applicable decisions using their saved wording and asked on all 8 unrelated
+requests. Adding the saved source and dependent-feature evidence reduced the
+selections to 2 of 7. The experimental branch retains the native Gemma shortlist
+and ChatGPT’s reading of the citations.
+
+**Method.** The installed MCP server reopened the five-task project snapshot
+and ran each query without a feature-title argument. Both current decisions
+were scored separately, including as a control when the ordinary lookup
+already asked. Only a decision returned by the native lookup could reach the
+operator. The questions, expected IDs and rule were frozen before scoring.
+Each typed Choice asked whether the quote governed the specific action and
+subject. Its alternatives were “This decision applies to the request” and
+“The record is insufficient; ask for clarification.” Each link had to score
+at least 0.80 in both option orders. Exactly one accepted link was needed
+to show a decision. A quoted decision still required the reader to honor its
+source-review status.
+
+| Cases | Relevant decisions / unrelated requests | Saved quote only | With linked evidence |
+|---|---:|---|---|
+| Original Cleanup, billing and payroll | 1 / 2 | Missed Cleanup, asked on both controls | Same |
+| Six fresh paraphrases, two per intent | 2 / 4 | Recovered one Cleanup decision, asked on all four controls | Same |
+| Different feature, sealed shipping paperwork | 1 / 0 | Asked. The native lookup offered no decision | Same |
+| Five additional questions frozen before the linked-evidence comparison | 3 / 2 | Recovered one Cleanup and one Dispatch decision, asked on both controls | Recovered Dispatch, asked on both controls |
+| **All cases** | **7 / 8** | **3 recovered, 8 correct asks, 0 wrong links** | **2 recovered, 8 correct asks, 0 wrong links** |
+
+On “Can we discard the predecessor and safeguard a collaborator's revision?”
+the less favorable of the two quote-only probabilities for Cleanup was 0.280.
+On “Someone revised their own duplicate. Do we keep that work when the item
+it came from is removed?” it was 0.941. Of four Cleanup questions that
+omitted the word “cleanup”, only that second wording recovered the decision.
+The native result mapped to revision 9 and the exact saved quote “Cleanup
+keeps an edited copy when retiring its parent.” Its spec still needs review.
+
+The follow-up kept the decision question, cutoff and option reversal fixed.
+It added the prior spec citation, the labeled preview of its revision,
+the Handoff requirement and its current meeting citation where available.
+It replayed the original ten cases and included five newly frozen ones.
+The overlap is a paired comparison. Even in this small set, lowering the
+cutoff cannot recover every intended link while keeping all controls clear:
+one billing paraphrase scored 0.310 for Cleanup with linked evidence,
+higher than the original Cleanup question’s 0.276.
+
+**Runtime.** The M5 Max ran Mapika v3 Q4_K_M on Metal with network denied
+during inference. The 2,708,804,000-byte GGUF matched its published SHA-256.
+The publisher’s standalone readout used decider-ai 1.5.0, llama-cpp-python
+0.3.38 and fitted Choice temperature 2.098. Median call time was 57 ms for
+one decision and one option order, or 69 ms with linked evidence. Peak judge
+process RSS was about 3.33 GiB. The first run wrote its scores and aborted
+at Metal teardown. Explicitly freeing the native batch, context, model and
+backend produced clean exits with the same initial selections. Separate
+MCP reads checked every decision ID, revision and quote digest. Private
+inputs, per-order scores, model identity and replay checks are under
+`runs/mapika-decision-2026-11-27/`. This exercise made no paid requests.
+[Mapika weights and readout](https://huggingface.co/Mapika/decider-4b-GGUF/tree/d3a78581751d518bbfa9e871a6d84059554d53c5).
+
+The retrieval model in this profile is EmbeddingGemma 2's 270M-parameter
+text backbone. Its installed BF16 GGUF is 557,950,176 bytes (532.1 MiB).
+With its 32,170,510-byte tokenizer the two files total 562.8 MiB on disk.
+The full text, vision and audio model has 740M parameters. The profile emits
+768-dimensional vectors. [Pinned Google model card](https://huggingface.co/google/embeddinggemma-2/blob/914f7f89142e33e77833254d9c9b90c3cef7303b/README.md).
+
 ## Native title-blind decision recovery in ChatGPT — 2026-11-26
 
 Code `6a8f9ef` adds an opt-in local decision profile. The project MCP owner

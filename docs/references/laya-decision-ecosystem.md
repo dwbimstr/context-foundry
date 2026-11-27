@@ -28,7 +28,7 @@ Changing the model used to generate prose does not make saved entries searchable
 
 All six local model families below support typed choices, yes/no and ordinal
 scores. A score on one benchmark uses that benchmark's labels, population and
-decision rule. Only Laya was exercised here on Foundry’s three questions.
+decision rule. The initial three-question run exercised Laya. The subsequent Mapika trial used the same questions and fresh paraphrases. [Local Mapika results](../validation.md#mapika-4b-q4-judging-gemma-decision-leads--2026-11-27).
 The other measurements are reported by their publishers or benchmark authors.
 
 | Candidate | Workload, footprint and evidence |
@@ -57,7 +57,7 @@ to reproduce decisions. [GGUF conversion](https://huggingface.co/ggml-org/Inklin
 | Available memory | Decision lane to evaluate | Generation when local prose is required | Capacity estimate |
 |---|---|---|---|
 | 16–24 GB | For the shipped workflow use the existing reader. For an offline challenger, try Mapika 2B Q4 with its typed readout. Laya FP16 is a cheap parallel-scoring reference. | At 16 GB start with a 4B Q4 model via llama.cpp. Around 24 GB, test a compatible Inkling AD-Q4_K on NVIDIA or a smaller MLX quant on Mac with short context. | Mapika 2B plus a 4B Q4 generator is about 4 GB in weight files. With Inkling AD-Q4_K it is about 17.8 GB before KV cache, runtime and OS. Measure peak under the intended context. [4B generator files](https://huggingface.co/unsloth/Qwen3.5-4B-GGUF) |
-| 32–64 GB, including this 64 GiB M5 Max | First local challenger for this lookup would be Mapika 4B Q4. Keep one reader and let it abstain. Inkling Decision is a separate high-capacity experiment after Mac head parity. | On Apple Silicon, the base Inkling MLX 4/8-bit release is a reasonable generation candidate. On NVIDIA, use a supported llama.cpp build for GGUF or vLLM/SGLang for concurrent serving. | 19.5 GB base MLX weights plus 2.71 GB Mapika weights gives a 22.2 GB file total. A publisher measured 21.6 GB peak for generation alone with an 8K prompt and 256-token prefill chunks on a 128 GB M5 Max. Joint peak on this Mac is unmeasured. [Mac measurements](https://netprojects.com/insights/thinking-machines-inkling-2-mini-mlx-dspark) |
+| 32–64 GB, including this 64 GiB M5 Max | Mapika 4B Q4 was tried locally. It missed the original paraphrase, so ChatGPT retains the final reading. Inkling Decision is a separate high-capacity experiment after Mac head parity. | On Apple Silicon, the base Inkling MLX 4/8-bit release is a reasonable generation candidate. On NVIDIA, use a supported llama.cpp build for GGUF or vLLM/SGLang for concurrent serving. | 19.5 GB base MLX weights plus 2.71 GB Mapika weights gives a 22.2 GB file total. A publisher measured 21.6 GB peak for generation alone with an 8K prompt and 256-token prefill chunks on a 128 GB M5 Max. Joint peak on this Mac is unmeasured. [Mac measurements](https://netprojects.com/insights/thinking-machines-inkling-2-mini-mlx-dspark) |
 
 The base model publisher lists llama.cpp, vLLM and SGLang. MLX has a
 Mac-specific implementation. DSpark speeds up autoregressive decoding. It has no output tokens to accelerate in a head-only decision. Astral

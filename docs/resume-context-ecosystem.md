@@ -121,6 +121,11 @@ and dated paragraphs below are history.
   succeeded without a feature hint. A separate Laya trial made batched
   judging faster but missed the intended decision. [Native walkthrough](validation.md#native-title-blind-decision-recovery-in-chatgpt--2026-11-26).
 
+  Mapika 4B Q4 correctly asked on every unrelated request but missed the
+  original Cleanup wording after Gemma found its decision. Adding the
+  linked sources still missed it. Keep the current ChatGPT reader.
+  [Local Mapika comparison](validation.md#mapika-4b-q4-judging-gemma-decision-leads--2026-11-27).
+
 - **Finite desktop qualification complete, 2026-11-23.** A fresh ChatGPT
   desktop project chat verified the real project store and retrieved
   `apply_owned_block` at `src/bootstrap.rs:904`. Through the separate exercise
