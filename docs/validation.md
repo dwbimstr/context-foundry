@@ -1,5 +1,37 @@
 # Validation
 
+## Which feature still relies on the edited Cleanup decision? — 2026-11-26
+
+On the saved five-task project snapshot, the previous installed server named
+Editorial handoff and quoted its reason for relying on Cleanup. To find out
+whether Handoff still had its own support, the reader needed another operation.
+With code `e88be0d`, the same `decision_uses` call returned the following.
+
+| Question | Evidence in the installed MCP response |
+|---|---|
+| Which feature needs review, and why? | Editorial handoff has a declared requirement. “Handoff relies on cleanup to preserve the editor’s separate amendments.” |
+| What changed for Cleanup? | Ivo’s cited spec said “Keep the separately edited copy when its parent is retired.” Those words are absent from the revision. The preview at that position says “Request the editor’s approval before archiving a separately edited copy.” The saved decision still says to keep it. |
+| What still supports Handoff? | Mina’s current meeting record says “Handoff must preserve the editor’s independently amended copy.” It is a separate saved source from Ivo’s spec. Handoff remains flagged for review. |
+
+Five byte-range reads reopened the decision, dependent requirement, old spec,
+revised preview and meeting quote. The candidate and installed impact responses
+matched byte for byte. Both returned one confirmed dependency and two
+wording-only leads. The revisions of all five tasks stayed the same.
+
+A fresh-context agent read only the installed impact response in this session.
+Asked whether the copy could be archived, it answered “Review Editorial
+handoff and keep the edited copy for now.” It quoted Mina, identified Ivo’s
+new wording as a preview, and kept both wording-only matches unconfirmed.
+This exercised a reader of the MCP response. Desktop GUI interaction was
+outside this iteration.
+
+Five focused tests passed in 2.70 seconds of test execution, plus compilation.
+They covered shared and separate source histories, withdrawal, reused capture
+IDs, dependency discovery, proposal impact and the served MCP tool description.
+Formatting and documentation links passed. The replay used a fresh local stdio
+MCP client and the installed desktop binary against a copy of the project store.
+The no-spend transcript is in `runs/decision-use-sources-2026-11-26/`.
+
 ## Choosing a saved feature from remembered title words — 2026-11-25
 
 An operator remembered “cleanup” while looking for the decision about

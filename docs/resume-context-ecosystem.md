@@ -103,6 +103,12 @@ and dated paragraphs below are history.
   any decisions. A fresh agent carried a “yes” confirming the sole named
   option into the installed MCP lookup. [Partial-title walkthrough](validation.md#choosing-a-saved-feature-from-remembered-title-words--2026-11-25).
 
+  After recovering a decision, ChatGPT can ask which other feature relies on it
+  and get both the changed decision source and a still-current citation for the
+  dependent feature. In the Cleanup example, Editorial handoff still cites
+  Mina’s meeting requirement while Ivo’s revised spec needs review.
+  [Installed decision-impact walkthrough](validation.md#which-feature-still-relies-on-the-edited-cleanup-decision--2026-11-26).
+
 - **Finite desktop qualification complete, 2026-11-23.** A fresh ChatGPT
   desktop project chat verified the real project store and retrieved
   `apply_owned_block` at `src/bootstrap.rs:904`. Through the separate exercise
