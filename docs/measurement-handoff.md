@@ -1,6 +1,6 @@
 # Measurement handoff
 
-The experimental branch now includes an explicit
+The repository includes a
 [native macOS workflow](../.github/workflows/native-macos.yml) and
 [reproducible runner](../scripts/native-macos-acceptance.py). It runs the native CPU
 checks and synthetic worker lifecycle checks, then requires a successful Metal
@@ -497,10 +497,10 @@ batches, finite/unit-norm checks, repeated full-window queries and limit+1 refus
 Record the printed descriptor, dimensions, card/input/batch limits, device and bundle
 identity. Run separately for every proposed geometry/dimension; a small card limit only
 certifies small-card batching. Compare held-out retrieval/task outcomes before selecting
-a profile. macOS generation still needs native denial/owner-death, memory and Metal
-allocation/reserve checks on the real target. No result from Linux closes those rows or
-the signed installed-artifact requirement. GPU access and artifacts are prerequisites,
-not a reason to add an unvalidated backend or infer a hardware pass from a mock.
+a profile. The November 10 physical Mac run subsequently measured the development
+generator's memory footprint and process GPU allocation during generation. Generator
+adversarial isolation, real-model owner death under pressure, global GPU headroom and
+signed installation remain open. [Native measurements and limits](validation.md#native-macos-acceptance--2026-11-10).
 
 On 2026-10-08 the owner first moved the remaining real-model and timing measurements
 to a cloud agent, then reversed that decision the same day: the baseline stores are too

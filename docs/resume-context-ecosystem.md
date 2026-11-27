@@ -13,6 +13,10 @@ It maps each capability to its runtime owner, client entry point and operating
 limits. The [desktop setup](deployment.md#desktop-decision-lookup) covers both
 the ordinary task workspace and its optional decision profile.
 
+The November 27 merge brought ChatGPT desktop project memory, shared-source
+review and opt-in Gemma decision lookup to `main`. A fresh clone matched the
+experimental tip through `ac43ed2`. [Merge and local gates](validation.md#local-merge-gates-for-desktop-project-memory--2026-11-27).
+
 - **Product goal, 2026-11-23.** An operator can give Foundry project context
   from any source they choose, in the form they already have it. Foundry saves
   the original, organizes related material as it arrives, and uses those

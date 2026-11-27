@@ -7,9 +7,12 @@ All eight gates in `scripts/gates.sh` passed on the clean experimental commit
 1.90.0. The default Rust test harness reported 1,331 passed, 0 failed and 35
 ignored. The separate recovery harness passed all 21 cases. The opt-in pilot
 unit suite reported 133 passed, 0 failed and 1 ignored.
-The documentation follow-up updates the source-install instructions for the
-default branch. The PR records each gate, its log digest and the documentation
-checks. [PR #57](https://github.com/dwbimstr/context-foundry/pull/57).
+
+[PR #57](https://github.com/dwbimstr/context-foundry/pull/57) merged the
+43 commits through `ac43ed2` into `main` as `9d13144`. The changes after
+the gated commit were documentation only. A fresh clone of `main` had the
+same Git tree as `ac43ed2` and passed all 2,037 relative-link checks. The PR
+contains the individual gate results and their log digests.
 
 ## Architecture and capability documentation — 2026-11-27
 

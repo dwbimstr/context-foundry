@@ -72,10 +72,11 @@ Maintainers run the merge gates once per merge with
 scripts/gates.sh TREE OUTDIR
 ```
 
-It runs fmt, clippy and the full suite on the default toolchain, then `cargo check` and
-clippy under the installed 1.90.0 toolchain, and prints one `GATE <name> exit=<n>` line
-per gate, with logs in `OUTDIR`. You may run it yourself; it is not required for a pull
-request.
+On the default toolchain the script runs formatting, Clippy and the full test
+suite, followed by Clippy and the pilot unit tests with `pilot-capture` enabled.
+On Rust 1.90.0 it runs the default build check and Clippy, then a build check with
+`pilot-capture`. It records the exit status and log for each of the eight gates
+in the console output and `OUTDIR`, respectively.
 
 Documentation changes need the link check instead of a Rust build. Run it from the
 repository root; it checks every relative link and heading anchor in `README.md`,

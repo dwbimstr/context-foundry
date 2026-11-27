@@ -163,12 +163,12 @@ success or cost with a real model.
 - **Network on the first build:** Cargo fetches crates and three grammar forks pinned
   by git revision in `Cargo.toml` (`[patch.crates-io]`, Ruby, Perl and Rust, under
   `github.com/dwbimstr`). See [dependencies](docs/dependencies.md).
-- **Platforms:** macOS arm64 is where everything is developed, gated and measured.
-  GitHub Actions CI is unavailable (owner decision 2026-10-12). The core is checked
-  locally with `scripts/gates.sh` on the owner's Mac; a cloud Linux session is only a
-  fallback (owner decision 2026-11-06). The last CI runs passed on Linux and macOS.
-  The installable package, the embedding worker (Metal) and worker isolation are
-  macOS arm64 only. Windows has not been built or tested.
+- **Platforms.** The core merge gates run on macOS arm64. The last hosted core
+  checks passed on Linux and macOS before GitHub Actions became unavailable.
+  The installable package targets macOS arm64. Source builds of the embedding
+  worker use Metal on macOS or CPU on Linux. The optional generation worker
+  has separate Linux and macOS isolation profiles. Windows is untested.
+  [Worker controls](docs/deployment.md#experimental-owned-generation-controls).
 
 ## Install from source
 
