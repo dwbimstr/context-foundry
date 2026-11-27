@@ -161,6 +161,11 @@ experimental tip through `ac43ed2`. [Merge and local gates](validation.md#local-
   chat used that route to recover both decisions and the coverage finding.
   [Rust maintenance review and handoff](validation.md#keeping-earlier-decisions-through-a-rust-maintenance-review--2026-11-27).
 
+  The original Rust chat subsequently completed one native desktop compaction.
+  Before reopening Foundry, it reconstructed a passing regression with both
+  current operator decisions. The host carried both decisions verbatim into the
+  replacement history. [Compaction receipt and limits](validation.md#real-desktop-compaction-during-the-rust-review--2026-11-27).
+
 - **Finite desktop qualification complete, 2026-11-23.** A fresh ChatGPT
   desktop project chat verified the real project store and retrieved
   `apply_owned_block` at `src/bootstrap.rs:904`. Through the separate exercise

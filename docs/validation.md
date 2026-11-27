@@ -1,5 +1,46 @@
 # Validation
 
+## Real desktop compaction during the Rust review — 2026-11-27
+
+The [original Rust maintenance chat](#keeping-earlier-decisions-through-a-rust-maintenance-review--2026-11-27)
+continued on the same desktop thread. Before compaction, the coordinator froze
+the two current operator decisions from the revision-6 notebook as the answer
+key. The installed Foundry binary replayed the original task writes on a private
+copy of the same Rust index. The entire six-entry export, including superseded
+entries, matched the saved export.
+
+Sending `/compact` through the chat connector first produced an assistant-written
+recap and zero host compaction events. The operator then selected the desktop's
+native command. The original thread recorded a `compacted` history entry and a
+completed `ContextCompaction` item before the next user request. The host reported
+77,021 input tokens on the last ordinary response before compaction and 31,972 on
+the first response afterward. These are per-request observations.
+
+Without a feature ID, the saved answers or any new tool calls, the same chat
+reconstructed the standalone `Vec::retain_mut` regression. Its first answer
+preserved both decisions.
+
+| Saved decision | What the generated test did |
+| --- | --- |
+| Start with distinct payloads and overwrite each visited payload with the same value. | Initialized each payload from its original ID and assigned 7 in every visited callback. It rejected one element, retained the next, then panicked with an unvisited tail. |
+| Count destruction by stable original ID after dropping the vector. Leave surviving contents, order and capacity unspecified. | Dropped the vector after catching the panic, checked every original ID's count was one, and made no assertions about the surviving vector. Its callback visitation check concerned the path taken before the panic. |
+
+The unedited test passed with the installed Rust 1.97.1 standard library.
+The chat also identified the existing hole-and-predicate-panic test and explained
+what the mutation case adds. The host retained both operator decisions verbatim
+in the earlier task messages carried into the replacement history. The chat had
+also written its own recap beforehand. This run establishes recall across one
+manual compaction in this desktop integration. Recall when a decision exists
+only in Foundry, and behavior at automatic context-window exhaustion, remain
+unmeasured. No decision repair was warranted.
+
+After the unaided answer, the chat tried its earlier native review registration.
+It still pointed to the temporary loopback address retired after the previous
+run. The same chat verified revision 6 through the installed Foundry command
+against the restored notebook. Both active decision IDs agreed with its test,
+and the older fixture choice was historical. The run used the existing desktop
+account and local tools.
+
 ## Keeping earlier decisions through a Rust maintenance review — 2026-11-27
 
 A ChatGPT desktop project chat reviewed a concrete regression in
