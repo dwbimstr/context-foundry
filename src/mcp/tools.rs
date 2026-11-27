@@ -143,7 +143,7 @@ impl FoundryMcp {
                 .and_then(serde_json::Value::as_object_mut)
                 .expect("context properties");
             properties.insert("task_id".into(), serde_json::json!({"type":"string","minLength":1,"maxLength":128,"description":"Primary task ID; requires task_revision."}));
-            properties.insert("compose_evidence".into(), serde_json::json!({"type":"boolean","description":"Compose bounded evidence across selected admitted roots using the primary task; requires task_id and task_revision."}));
+            properties.insert("compose_evidence".into(), serde_json::json!({"type":"boolean","description":"Compose evidence for a feature question using task_id and task_revision. Source handles can be retrieved. A text_match is a lead; check the cited source before asserting a dependency."}));
             properties.insert("compact_evidence".into(), serde_json::json!({"type":"boolean","description":"Compact evidence accounting; requires compose_evidence. Source citations and task constraints are retained."}));
             properties.insert("boundary_config".into(), serde_json::json!({"type":"string","description":"Indexed boundary configuration path; requires compose_evidence."}));
             properties.insert("task_revision".into(), serde_json::json!({"type":"integer","minimum":1,"description":"Expected task revision; requires task_id."}));
@@ -1321,6 +1321,13 @@ impl FoundryMcp {
         };
         // 013 T003: the policy state (no engine work).
         outcome["policy"] = self.state.policy.status();
+        #[cfg(feature = "semantic")]
+        if let Some(slot) = &self.state.decision_semantic {
+            outcome["decision_semantic"] = serde_json::json!(match slot {
+                Ok(runtime) => runtime.status_word(),
+                Err(reason) => reason.clone(),
+            });
+        }
         if let Some(resources) = &self.state.model_resources {
             outcome["model_resources"] = resources.status();
         }
@@ -1329,8 +1336,11 @@ impl FoundryMcp {
 
     #[tool(
         name = "task_context",
-        description = "Experimental task state and recoverable views. Explicit structured assertion review without prose interpretation; export uses CLI.",
-        input_schema = schema(r#"{"type":"object","additionalProperties":false,"required":["workspace_id","task_id","command"],"properties":{"workspace_id":{"type":"string"},"task_id":{"type":"string"},"command":{"type":"object","additionalProperties":false,"required":["op"],"properties":{"op":{"enum":["create","apply","inspect","peek","render","forget","advise","review","promote","search"]},"title":{"type":"string"},"expected_revision":{"type":"integer","minimum":0},"edits":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["op"],"properties":{"op":{"enum":["add","select","pin","fold","expand","checkpoint","restore","dismiss"]},"entry":{"type":"object","additionalProperties":false,"required":["id","kind","text","author","provenance","source_links"],"properties":{"id":{"type":"string"},"kind":{"enum":["requirement","constraint","observation","hypothesis","decision","rejected_attempt","question","work","artifact"]},"text":{"type":"string"},"author":{"type":"string"},"provenance":{"type":"string"},"source_links":{"type":"array","items":{"type":"string"}},"supersedes":{"type":["string","null"]},"action_key":{"type":["string","null"]},"assertions":{"type":"array","maxItems":16,"items":{"type":"object","additionalProperties":false,"required":["key","relation","value"],"properties":{"key":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$"},"relation":{"enum":["equals","not_equals"]},"value":{"type":"string","minLength":1,"maxLength":512}}}}}},"entry_id":{"type":"string"},"selected":{"type":"boolean"},"pinned":{"type":"boolean"},"summary":{"type":"string"},"name":{"type":"string"}}},"minItems":1,"maxItems":32},"entry_id":{"type":"string"},"offset":{"type":"integer","minimum":0},"bytes":{"type":"integer","minimum":4,"maximum":65536},"max_bytes":{"type":"integer","minimum":256,"maximum":1048576},"action_key":{"type":"string"},"paths":{"type":"array","maxItems":16,"items":{"type":"string"}},"finishing":{"type":"boolean"},"memory_id":{"type":"string"},"author":{"type":"string"},"provenance":{"type":"string"},"query":{"type":"string","minLength":1,"maxLength":256},"limit":{"type":"integer","minimum":1,"maximum":32},"after_id":{"type":["string","null"]},"include_history":{"type":"boolean"},"assertions":{"type":"array","maxItems":16,"items":{"type":"object","additionalProperties":false,"required":["key","relation","value"],"properties":{"key":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$"},"relation":{"enum":["equals"]},"value":{"type":"string","minLength":1,"maxLength":512}}}}}}}}"#),
+        description = r#"Project task memory. To save a decision, use the workspace_id from status and the feature's task_id. For a new feature choose a task_id and send {"op":"create","title":"Retry policy"} as command. Use the revision returned by create or inspect as expected_revision. Put each add inside command.edits and its decision fields inside entry. Example request:
+{"workspace_id":"<workspace_id from status>","task_id":"retry-policy","command":{"op":"apply","expected_revision":1,"edits":[{"op":"add","entry":{"id":"retry-limit","kind":"decision","text":"Keep the retry limit at three.","author":"Project owner","provenance":"Planning meeting","source_links":[]}}]}}
+Replace the example values with the actual revision, entry ID, decision and attribution. Use an empty source_links array when there are no indexed handles.
+For a meeting and spec used by several features, capture each original once in a project notebook. Use cite_source on a feature claim with an exact source quote and any explicitly clarified team wording. Ask source_review with workspace_id and the operator’s question in text, omitting task_id. Show changed and surviving evidence, follow next_after_id, and ask about wording-only leads. For an edited source, a unique quote_match identifies the exact current passage. If absent or repeated, current_excerpt is a position preview. To assess a new change request, send propose_change with workspace_id, verbatim text, source and author; omit task_id. Reopen with the returned task_id and proposal_impact. Show the cited dependent feature, use implementation_context then retrieve the code, and ask the clarification. Only on an explicit answer use clarify_proposal with expected_revision, disposition, author and answer text; accept needs the offered scope_token, dismiss omits it. Find earlier decisions for a new note with {"op":"find_decisions","text":"<original note>"} and workspace_id alone. If a lead has via_requirement, quote both the requirement and its referenced decision. If wording is weak, ask the clarification. On a miss an opted-in local owner may return semantic_leads. Read the actual decision quotes. Offer one only if it addresses the action AND object in the question; ask whether it applies. If none fits, ask the recovery_question without mentioning unrelated leads. Rank is never confirmation. Without a fitting lead, ask the returned clarification or recovery_question. Retry find_decisions with the original text and the title or partial title the operator supplies in feature_title. If feature_title_options are returned, ask the operator to choose an exact title, even for one option. When matching_feature_titles exceeds the options shown, they can supply more words. Retry only with their choice or added words. Present returned decisions as options and ask which applies. For needs_review show the changed_support example and label any position preview. Use source_review for all supporting originals. List saved features with {"op":"list"}. With capture, give expected_revision and a source label plus original text, or an indexed file path as source with optional lines. To find other features relying on a saved decision, call decision_uses with its entry_id and expected_revision. Quote the dependent requirement and the current_support original if present. If needs_source_review, explain which citation changed. A shared capture lineage is the same source. Follow next_after_id when present. For wording_matches ask the returned clarification. Save a documented or confirmed dependency with apply/add on the other feature: use a requirement or constraint with relies_on set to the returned decision_ref. After capture, use connections with its entry_id. Show the attributions and earlier promises. If two readings fit, use the passages to ask one focused question about the choice. Only on an explicit choice, call review_connection with expected_revision, entry_id, prior_id, prior_span [offset,end] from the candidate, disposition (accept or dismiss) and author. Add supersedes for an explicit correction. To assess impact, call context with task_id, the receipt revision as task_revision, and compose_evidence:true. To inspect a task, send exactly {"op":"inspect"} as command. To peek at an original, send {"op":"peek","entry_id":"<id from inspect>","offset":0,"bytes":4096}. Continue at next_offset until null. Review compares explicit structured assertions; export uses CLI."#,
+        input_schema = schema(include_str!("task_context.schema.json")),
         annotations(read_only_hint = false, open_world_hint = false)
     )]
     async fn task_context(
@@ -1363,16 +1373,46 @@ impl FoundryMcp {
         }
         let read = matches!(
             request.command,
-            crate::task_context::Command::Search { .. }
+            crate::task_context::Command::List { .. }
+                | crate::task_context::Command::FindDecisions { .. }
+                | crate::task_context::Command::SourceReview { .. }
+                | crate::task_context::Command::ProposalImpact {}
+                | crate::task_context::Command::DecisionUses { .. }
+                | crate::task_context::Command::Connections { .. }
+                | crate::task_context::Command::Search { .. }
                 | crate::task_context::Command::Advise { .. }
                 | crate::task_context::Command::Review { .. }
                 | crate::task_context::Command::Inspect {}
                 | crate::task_context::Command::Peek { .. }
                 | crate::task_context::Command::Render { .. }
         );
+        #[cfg(feature = "semantic")]
+        let fallback = self.state.decision_semantic.clone();
         Ok(self
             .memory_op(&ctx, read, move |engine, control| {
                 let result = engine.task_context(&request, control)?;
+                #[cfg(feature = "semantic")]
+                let result = if let Some(slot) = fallback.as_ref()
+                    && let crate::task_context::Command::FindDecisions {
+                        text,
+                        feature_title: None,
+                    } = &request.command
+                    && result["recovery_question"].is_string()
+                {
+                    engine.semantic_decision_leads(
+                        &request.workspace_id,
+                        result,
+                        control,
+                        |passages| match slot {
+                            Ok(runtime) => runtime
+                                .score_decisions(text, passages, control)
+                                .map_err(|e| e.code().to_owned()),
+                            Err(reason) => Err(reason.clone()),
+                        },
+                    )?
+                } else {
+                    result
+                };
                 engine.drain_task_memory(&result);
                 Ok(result)
             })

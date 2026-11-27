@@ -197,6 +197,8 @@ pub(crate) struct Shared {
     /// `include_memory:true` is refused. Disabling never touches records.
     no_memory: bool,
     experimental_task_context: bool,
+    #[cfg(feature = "semantic")]
+    decision_semantic: SemanticSlot,
     watch: Option<Arc<crate::watch::Watch>>,
     #[cfg(feature = "semantic")]
     semantic_turn: Mutex<Option<Instant>>,
@@ -460,6 +462,8 @@ impl Shared {
             shutdown: CancellationToken::new(),
             no_memory: false,
             experimental_task_context: false,
+            #[cfg(feature = "semantic")]
+            decision_semantic: None,
             watch: None,
             #[cfg(feature = "semantic")]
             semantic_turn: Mutex::new(None),
@@ -522,7 +526,7 @@ impl Shared {
         }
         self.wait_preparation_idle(SHUTDOWN_ENGINE_WAIT).await;
         #[cfg(feature = "semantic")]
-        if let Some(Ok(runtime)) = &self.semantic {
+        if let Some(Ok(runtime)) = self.semantic.as_ref().or(self.decision_semantic.as_ref()) {
             // The supervised stop path: a call still running ends (bounded by
             // the supervisor's in-flight grace), then the worker is stopped
             // and reaped, and the provider thread is joined.

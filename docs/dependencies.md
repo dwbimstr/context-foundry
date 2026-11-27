@@ -2,6 +2,18 @@
 
 This inventory records Cargo metadata for the locked dependency graph. It is not a legal or vulnerability audit. No dependency sources are vendored. Binary distribution must retain the applicable license/notice texts from the selected graph.
 
+The optional task context workflow uses `rust-stemmers` 1.2.0
+(`MIT/BSD-3-Clause` in the package manifest) for English word forms in
+meeting notes. The matcher calls `Stemmer::stem` with `Algorithm::English`.
+The 008 regression `later_note_finds_two_promises_and_reviews_only_the_connection`
+checks that comparisons preserve the original bytes and their attribution.
+The locked crate uses the existing serde dependencies.
+
+The experimental saved-decision fallback reuses `foundry-embed` and the
+selected local EmbeddingGemma 2 profile. The standalone Laya, Mapika and Inkling
+decision-reader trials introduce no runtime or weight dependency into the
+Foundry binary or desktop configuration. [Model roles and evidence](references/laya-decision-ecosystem.md).
+
 One section is not about a dependency. The
 [oh-my-pi reference patches](#oh-my-pi-reference-patches) are tracked files that
 carry lines of upstream source, and that section records their license and notices.

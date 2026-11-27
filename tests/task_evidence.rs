@@ -106,6 +106,74 @@ fn report(text: &str) -> Value {
 }
 
 #[test]
+fn captured_source_anchors_impact_and_keeps_its_original_across_reindex() {
+    let mut env = fixture();
+    let capture = |revision, path| json!({"op":"capture","expected_revision":revision,"source":path,"lines":"3-5"});
+    std::fs::write(env.dir.path().join("root/unindexed.py"), SERVICE).unwrap();
+    assert!(matches!(
+        task(&env.engine, capture(env.revision, "unindexed.py")),
+        Err(FoundryError::NotFound)
+    ));
+
+    let saved = task(&env.engine, capture(env.revision, "service.py")).unwrap();
+    env.revision = saved["revision"].as_u64().unwrap();
+    let entry_id = saved["entry_id"].as_str().unwrap();
+    let composed = compose(&env);
+    let delivered = response::pack_enriched_context(
+        &composed,
+        None,
+        Budget::request(8192),
+        &response::stdout_bytes,
+    )
+    .unwrap();
+    let evidence = report(&delivered.text);
+    assert!(
+        evidence["discovery"]["queried_entries"]
+            .as_array()
+            .unwrap()
+            .contains(&saved["entry_id"])
+    );
+    let sources = evidence["sources"].as_array().unwrap();
+    assert!(
+        sources[0]["via"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|via| via == &format!("task:{entry_id}")
+                || via == &format!("text_match:{entry_id}"))
+    );
+    for via in [format!("task:{entry_id}"), format!("text_match:{entry_id}")] {
+        assert!(
+            sources
+                .iter()
+                .any(|s| s["via"].as_array().unwrap().contains(&json!(via))),
+            "{via}"
+        );
+    }
+
+    env.engine
+        .replace_source("service.py", "def renamed(): pass\n")
+        .unwrap();
+    let current = task(&env.engine, json!({"op":"render","max_bytes":8192})).unwrap();
+    let linked = current["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["id"] == entry_id)
+        .unwrap();
+    assert_eq!(linked["source_links"][0]["status"], "stale");
+    let original = task(
+        &env.engine,
+        json!({"op":"peek","entry_id":entry_id,"offset":0,"bytes":4096}),
+    )
+    .unwrap();
+    assert_eq!(
+        original["text"],
+        SERVICE.split_inclusive('\n').skip(2).collect::<String>()
+    );
+}
+
+#[test]
 fn relationship_proofs_and_their_source_dependencies_share_one_budget_decision() {
     let mut e = fixture();
     let noise = format!(

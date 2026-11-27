@@ -1,0 +1,204 @@
+{
+  "case_id": "pavo-slip-r1",
+  "attribution": "Original synthetic replay fixture. All people, records, codes and source bytes were invented for this case.",
+  "title": "Resume the Pavo dispatch slip",
+  "task_id": "pavo-slip",
+  "source": {
+    "path": "dispatch.rs",
+    "before": "pub const SLIP_STATION: &str = \"CEDAR-24\";\n",
+    "after": "pub const SLIP_STATION: &str = \"LARCH-86\";\n",
+    "encoding": "UTF-8",
+    "before_sha256": "14c259967e436f62e5ff8d78acf2365d2e8935f2cac98706cc567e54178f44cf",
+    "after_sha256": "6dbb203a00db016fb4909798b36b496feb837e3c74d66317516ce8710c456fa3"
+  },
+  "entries": [
+    {
+      "id": "rule-seal",
+      "kind": "constraint",
+      "text": "Every Pavo test slip must carry seal MICA-37.",
+      "author": "Dispatch operator",
+      "provenance": "Synthetic dispatch log P17, instruction 1.",
+      "source_links": [],
+      "assertions": [
+        {
+          "key": "pavo/slip.seal",
+          "relation": "equals",
+          "value": "MICA-37"
+        }
+      ]
+    },
+    {
+      "id": "layout-draft",
+      "kind": "decision",
+      "text": "Print Pavo test slips using layout RIDGE-09.",
+      "author": "Print lead",
+      "provenance": "Synthetic dispatch log P18, draft selection.",
+      "source_links": [],
+      "assertions": [
+        {
+          "key": "pavo/slip.layout",
+          "relation": "equals",
+          "value": "RIDGE-09"
+        }
+      ]
+    },
+    {
+      "id": "station-sighting",
+      "kind": "observation",
+      "text": "The dispatch source assigns CEDAR-24 to SLIP_STATION.",
+      "author": "Fixture reader",
+      "provenance": "Synthetic dispatch log P19, direct reading of dispatch.rs at the linked revision.",
+      "source_links": [],
+      "assertions": [
+        {
+          "key": "pavo/slip.station",
+          "relation": "equals",
+          "value": "CEDAR-24"
+        }
+      ]
+    },
+    {
+      "id": "layout-adopted",
+      "kind": "decision",
+      "text": "Use layout VALE-61 for the Pavo test slip.",
+      "author": "Print lead",
+      "provenance": "Synthetic dispatch log P20, adopted replacement for the P18 draft.",
+      "source_links": [],
+      "supersedes": "layout-draft",
+      "assertions": [
+        {
+          "key": "pavo/slip.layout",
+          "relation": "equals",
+          "value": "VALE-61"
+        }
+      ]
+    },
+    {
+      "id": "proof-question",
+      "kind": "question",
+      "text": "Should duplicate-proof slips be printed on vellum? Ticket QUILL-52 is awaiting a decision.",
+      "author": "Proof desk",
+      "provenance": "Synthetic dispatch log P21, unresolved production question.",
+      "source_links": []
+    }
+  ],
+  "link_before_entry_ids": [
+    "station-sighting"
+  ],
+  "replay": [
+    "Index source.before at source.path in a fresh scratch root and capture the full source handle spanning byte zero through its UTF-8 byte length.",
+    "Create the named task. Apply entries in listed order as add edits, setting source_links to a one-element array containing that BEFORE handle only for link_before_entry_ids. Keep the revision from the last mutation.",
+    "Replace the same file with source.after and reindex. Keep the stored original handle. Resume using current source and task state.",
+    "For each review, insert the current expected_revision into command. Compare advice unordered by entry ID. The prompt may be presented without any oracle fields."
+  ],
+  "reviews": [
+    {
+      "id": "challenge-violations",
+      "command": {
+        "op": "review",
+        "paths": [],
+        "finishing": false,
+        "max_bytes": 8192,
+        "assertions": [
+          {
+            "key": "pavo/slip.seal",
+            "relation": "equals",
+            "value": "CHALK-73"
+          },
+          {
+            "key": "pavo/slip.layout",
+            "relation": "equals",
+            "value": "RIDGE-09"
+          }
+        ]
+      },
+      "expect": {
+        "silence": false,
+        "advice": [
+          {
+            "entry_id": "rule-seal",
+            "trigger": "constraint_violation"
+          },
+          {
+            "entry_id": "layout-adopted",
+            "trigger": "assertion_conflict"
+          }
+        ]
+      }
+    },
+    {
+      "id": "changed-source",
+      "command": {
+        "op": "review",
+        "paths": [],
+        "finishing": false,
+        "max_bytes": 8192,
+        "assertions": [
+          {
+            "key": "pavo/slip.station",
+            "relation": "equals",
+            "value": "LARCH-86"
+          }
+        ]
+      },
+      "expect": {
+        "silence": true,
+        "stale": 1,
+        "advice": []
+      }
+    },
+    {
+      "id": "silent-control",
+      "command": {
+        "op": "review",
+        "paths": [],
+        "finishing": false,
+        "max_bytes": 8192,
+        "assertions": [
+          {
+            "key": "pavo/slip.seal",
+            "relation": "equals",
+            "value": "MICA-37"
+          },
+          {
+            "key": "pavo/slip.layout",
+            "relation": "equals",
+            "value": "VALE-61"
+          }
+        ]
+      },
+      "expect": {
+        "silence": true,
+        "stale": 0,
+        "advice": []
+      }
+    }
+  ],
+  "prompt": "Prepare one Pavo dispatch slip from the current source and resumed task. Return a JSON object with seal, layout and station code strings, and duplicate_proof as an object with ticket and status (\"open\" or \"resolved\"). Cite the task entry IDs that justify the seal, layout and ticket and give the source path, line and symbol for the station in a separate evidence object.",
+  "expected_answer": {
+    "seal": "MICA-37",
+    "layout": "VALE-61",
+    "station": "LARCH-86",
+    "duplicate_proof": {
+      "ticket": "QUILL-52",
+      "status": "open"
+    },
+    "evidence": {
+      "seal": "rule-seal",
+      "layout": "layout-adopted",
+      "duplicate_proof": "proof-question",
+      "station": {
+        "path": "dispatch.rs",
+        "line": 1,
+        "symbol": "SLIP_STATION"
+      }
+    }
+  },
+  "expected_state": {
+    "superseded_entry_id": "layout-draft",
+    "superseded_by": "layout-adopted",
+    "stale_link_entry_id": "station-sighting",
+    "old_station": "CEDAR-24",
+    "open_question_id": "proof-question"
+  }
+}

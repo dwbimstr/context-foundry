@@ -6,8 +6,10 @@ implemented and accepted (owner policy 2026-10-04); deferred and superseded spec
 excluded. This checklist replaces spec 015; it is not another product.
 [003 T006](../specs/003-agent-retrieval-context/spec.md#t006--validate-retrieval-repairs-in-real-coding-tasks)
 remains a release condition that bounded pilot v1 cannot accept. Owner decision,
-2026-11-06, "Draft pilot v2, unfunded": a pilot v2 contract is to be drafted, and nothing
-is spent until the owner separately authorizes a key, rights and a costed budget.
+2026-11-06, "Draft pilot v2, unfunded": the [pilot v2 draft](../specs/003-agent-retrieval-context/contracts/bounded-pilot-v2.md) records the proposed scope.
+Execution requires separate authorization for a key, rights and a costed budget.
+The desktop memory walkthroughs and local decision-reader comparisons are development
+evidence. They leave the release and signing gates open. [Current disposition](resume-context-ecosystem.md).
 
 1. Record the selected scope, actual acceptance evidence and known limitations. Verify
    advertised integrations with their real consumer; do not make untested claims.

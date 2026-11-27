@@ -1,5 +1,9 @@
 @AGENTS.md
 
+For source discovery, apply the Foundry-first routing in the imported project
+instructions. During the desktop comparison use the local Foundry MCP server
+for this checkout. Keep Prakarana outside the test.
+
 ## Where the work runs
 
 Owner decision, 2026-11-06: "Mac only, drop sandbox". The work runs on **the owner's

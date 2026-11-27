@@ -1,5 +1,12 @@
 # 009 — Neural context that becomes useful and stays prepared
 
+This spec owns source preparation, embedding worker identity and semantic
+source retrieval. The small-workspace decision lookup uses the same local
+worker with a distinct owner launch option. Its inputs are saved quotations
+and it requires no prepared source vectors. Task revision checks and delivery
+belong to the [003 decision-lookup contract](../003-agent-retrieval-context/contracts/shared-source-review.md#optional-semantic-recovery-of-a-saved-decision).
+The [capability map](../../docs/architecture.md#capability-map) covers both modes.
+
 Owner-passage preservation, 2026-10-16: experimental prose selection keeps the
 next disjoint matching lexical document of an already discovered long callable
 beside its first document. The lexical code lane does this before its global cut;
@@ -1387,7 +1394,7 @@ representation or query handling that the owner selects
 acceptance guards below are kept as written.
 The original G2 verdict remains valid for its original question: gain over no profile.
 This task asks which current losses can be repaired at the same delivery budget.
-The [resumable handoff](../../docs/resume-context-ecosystem.md#current-status--2026-11-06)
+The [resumable handoff](../../docs/resume-context-ecosystem.md#current-status)
 owns the current baseline, case-review disposition and selected repair hypothesis;
 the candidate checkpoint below remains required before promotion.
 
@@ -1550,7 +1557,7 @@ labelled; they do not assign causes to the 249 historical G2 misses.
   The authoring/checking/sealing checkpoint subsequently completed, and the
   statistical and outer runtime guards are selected; see the
   [dated seal receipt](../../docs/validation.md#t005-fresh-holdout-seal-and-evaluation-guards--2026-11-11)
-  and [current status owner](../../docs/resume-context-ecosystem.md#current-status--2026-11-06).
+  and [current status owner](../../docs/resume-context-ecosystem.md#current-status).
   This does not accept a retrieval candidate.
 - **One packing variant selected, 2026-11-11.** After the fresh holdout was sealed
   and its durable copy verified, select the default-off
@@ -1569,7 +1576,7 @@ labelled; they do not assign causes to the 249 historical G2 misses.
   rejected this variant for body loss; the flag and implementation were removed,
   while the candidate commit and binary remain retained. The final held-out set
   was not queried because this prerequisite promotion gate already failed. The
-  [handoff](../../docs/resume-context-ecosystem.md#current-status--2026-11-06) owns status.
+  [handoff](../../docs/resume-context-ecosystem.md#current-status) owns status.
 - **Verification:** fixtures establish trace attribution for absent candidates,
   stale units, rank/cap exclusion and packing omission; invalid traces cannot certify
   coverage. Test the selected repair's relevant source/budget/cache invariants and run
@@ -1641,7 +1648,7 @@ Owner decision, 2026-11-06, "Lexical-only, drop T006 gate": the
 agent-task gate no longer applies to this opt-in, and no real-agent benefit is claimed.
 The lexical-only change and default are implemented and accepted at T010's written
 scope ([receipt](../../docs/validation.md#t010-singleton-qualification--2026-11-11));
-see the [current status](../../docs/resume-context-ecosystem.md#current-status--2026-11-06).
+see the [current status](../../docs/resume-context-ecosystem.md#current-status).
 The semantic-store opt-in behavior described above is historical. Supplied dense
 windows and semantic model admission retain their ordinary behavior. This does
 not accept T005 or establish semantic-quality or real-agent benefit.

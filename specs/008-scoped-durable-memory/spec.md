@@ -1,5 +1,12 @@
 # 008 — Explicit project memory
 
+The primary store also owns original captures,
+feature decisions, explicitly confirmed relationships and per-claim citation
+history. The client can inspect, peek, promote and forget under the existing
+task and memory lifecycle. 003 owns the desktop delivery and optional semantic
+lookup. T004 structured assertion review remains deterministic.
+[Shared-source contract](../003-agent-retrieval-context/contracts/shared-source-review.md) · [Operator guide](../../docs/experimental-context.md#recoverable-task-context).
+
 Status: T001 and T002 implemented locally 2026-10-04 and unreleased (see
 [validation](../../docs/validation.md)). T003–T005 are experimental and unaccepted.
 Owner decision, 2026-11-06, "Measure them in pilot v2": their acceptance bar stays,
@@ -16,7 +23,8 @@ Spec-pass decisions recorded 2026-10-03: one MCP `memory` tool, compact memory l
 context and search, content-free forget/export reports and refusal of contradictory
 input before commit. No external prerequisite.
 
-Implementation decisions (2026-10-04, captain, after cross-lab review):
+The following schema-3 implementation decisions are historical. The current
+upgrade target is 12. [Compatibility table](../../docs/release.md#what-is-compatible).
 
 - **Store schema 3.**
   - `upgrade-store --to 3` upgrades a v1 or v2 store in one write transaction, and
@@ -262,9 +270,11 @@ This adds one migration and one record validator, without another index or queue
   the same engine operations; it is omitted unless explicitly enabled at launch.
   Every request names `workspace_id` and `task_id`; the primary root owns the record.
 - `create` names a title. `apply` names `expected_revision` and a bounded sequence of
-  edits, all validated and committed together. `inspect` returns metadata and view;
-  `peek` returns a byte-bounded UTF-8 page of one exact original observation with
-  payload digest, offset and next offset. `render` returns the selected working view
+  edits, all validated and committed together. The MCP catalog describes the exact
+  read commands. `{"op":"inspect"}` returns metadata and view. A `peek` command
+  requires `op`, `entry_id`, `offset` and `bytes` (4–65,536). Start at byte zero
+  and use the returned `next_offset` for the next UTF-8 page of the original.
+  Each page carries the payload digest. `render` returns the selected working view
   within a complete serialized **byte** budget, or refuses without truncating protected
   entries. It does not claim a provider token allowance or conversation replacement.
 - Entry kinds distinguish requirement, constraint, observation, hypothesis, decision,
@@ -293,6 +303,29 @@ evidence, not blockers to this sandbox implementation. Pilot v2 (to draft, unfun
 is to measure them (owner, 2026-11-06, Status above); T003 stays open until an
 authorized run passes. 003 owns
 the delivery boundary.
+
+#### Capturing sources for a feature question
+
+A client can rediscover a feature in the primary workspace with `list`. It
+returns up to eight task IDs, titles and current revisions per page. A
+`capture` records supplied text under its source label, or captures a passage
+from an indexed repository path with an optional line range. Preserve the
+original bytes, provenance, author when known and the exact indexed citation.
+Assign the entry ID in Foundry. An exact retry returns the existing receipt,
+including whether the entry has since been superseded. Other writes require
+the current task revision. All existing workspace and size limits apply.
+
+Keep separately attributed accounts visible until an explicit correction names
+the earlier capture. Show the correction in the current view and make the
+earlier original available by ID. A long capture initially displays a verbatim
+excerpt of up to 1,024 bytes. The client can open the full original. During
+task-scoped evidence composition, selected captures can supply search terms
+within the existing four-query limit, after requirements and questions.
+When the operator supplies a current indexed passage, deliver its citation and
+related leads ahead of incidental question matches. Report text matches as
+candidates and explicit stored citations separately.
+The host can inspect the evidence to explain impact and ask about an unresolved
+choice. An informal capture carries no authority to change a project decision.
 
 ### T004 — Experimental grounded reminders and explicit promotion
 
@@ -491,3 +524,91 @@ status once in fresh+stale+missing order joined by `+` — rendered by the one s
 read-only: no pruning, no revision consumption, no claim that the record itself was
 revalidated, no invented timestamp, and `get`'s exact per-link handles/statuses are
 unchanged. Stale or missing links never affect a record's eligibility.
+
+### Later notes and earlier decisions
+
+For a meeting note or ticket of up to 4,096 bytes, `find_decisions {text}`
+searches current selected entries in the admitted workspace without a task ID.
+Keep the original in the chosen feature with `capture`. Read `connections
+{entry_id}` to see which earlier passages the saved note may affect. Give
+the note and each suggested passage a verifiable entry ID, attribution,
+hash and byte range. Source-backed passages retain their indexed citations.
+A decision, an explicit requirement or constraint, and a captured account
+keep their original kinds. Shared words indicate a possible connection.
+Two plausible passages produce one clarification naming both.
+
+Only `review_connection {expected_revision,entry_id,prior_id,prior_span,disposition,author}`
+records an operator's choice and the exact byte range they saw. A later read
+returns the two most recently reviewed passages with their attributions and
+current source status. The full history keeps every reviewed range. Accept attaches the earlier entry to the note's
+current view. Dismiss removes the pair from suggestions. Both originals stay
+available. Every changed disposition is attributed and revisioned in the
+owning task's transaction. Restoring a view preserves the review history.
+A superseded or stale source cannot authorize a current connection. The
+review applies to the relationship alone. Decisions, promotions and project
+memory continue to use their existing explicit operations.
+
+The local search returns at most two source passages with qualifying word
+overlap using English word stems in one or two adjacent sentences, bounded
+to a contiguous 512-byte window. It reports matching and stale
+counts. Captures longer than the query limit use the first 4,096 bytes for
+discovery and retain the entire original. The task owns up to 128 review
+events. Older task records start with an empty history. Use the updated
+experimental reader for records containing reviews.
+
+Workspace decision discovery also follows one explicitly declared requirement
+or constraint to the saved decision it relies on. This lets someone find a
+decision using the dependent feature's explanation on their first encounter.
+Return both attributed passages with exact byte ranges. Recheck the declaration,
+decision identity, selection and indexed handles in the same transaction.
+A changed or forgotten decision cannot be revived by an old declaration.
+
+Keep the two-result limit. Check at most eight wording-matched declarations,
+report how many fell outside the shortlist, and count each admitted entry once.
+Prefer a lead covering more distinct query terms. Two terms in a long question
+need a matching phrase, sufficient query coverage, or additional evidence
+across the declared relationship. Weak wording alone asks for the relevant
+feature or rule. Both passages report `directly_cited_originals` when they
+have explicit source citations. A changed original marks the passage
+`needs_review`. An operator can open source_review for the full comparison.
+The task-scoped connection review and saved proposal operations retain their existing contracts.
+
+If a workspace lookup offers a `recovery_question`, a client helping the
+operator recover a saved decision asks it. After the operator supplies the
+title or the part they remember, repeat `find_decisions` with the original
+`text` and their words in `feature_title`. An exact title takes priority,
+ignoring surrounding whitespace and ASCII case. A unique exact title scopes
+the read to at most two current decisions, with wording matches first.
+Duplicate exact titles remain unresolved.
+
+When there is no exact match, a fragment can match a contiguous sequence of
+whole title words in order, ignoring case. It must include a distinctive
+word. Short or common function words alone cannot suggest a title. The
+response gives the total `matching_feature_titles`, up to three saved title
+strings in `feature_title_options`, and an empty decision candidate list.
+Ask the operator to choose an exact title, even when only one is offered.
+If the desired title is outside the shown options, ask for a longer fragment.
+Retry with the original question and the title the operator selected.
+An unknown title returns a clarification and an empty decision candidate list.
+
+Ask which quoted decision applies. A decision with changed supporting
+evidence includes one `changed_support` example from the existing review
+operation. Its current excerpt retains its role as an exact quote or position
+preview when available. The full set of supports remains in source_review. Naming
+a feature establishes the search scope. Applicability remains the operator's
+judgment. This lookup writes nothing.
+
+The second route applies the bounded candidate selection studied in
+[Hindsight’s fusion implementation](https://github.com/vectorize-io/hindsight/blob/550ef5e304623be2a456913acbac1b1a834fb2c3/hindsight-api-slim/hindsight_api/engine/search/fusion.py#L29)
+and its [cap tests](https://github.com/vectorize-io/hindsight/blob/550ef5e304623be2a456913acbac1b1a834fb2c3/hindsight-api-slim/tests/test_fusion_cap.py).
+Foundry ranks distinct question terms across one human-declared dependency
+and reopens the referenced decision locally. [Implementation](../../src/task_context/connections/discovery.rs).
+
+### Shared originals across features
+
+A project notebook can hold a meeting and a specification independently of any
+feature. Each feature can retain its own attributed reliance on a quoted range
+of a shared original. Preserve the original capture, supersession history and
+confirmed wording. Resolve each support separately on read so an operator can
+see both an edited specification and a still-current independent meeting
+record. See the [operator contract and implementation plan](../003-agent-retrieval-context/contracts/shared-source-review.md).

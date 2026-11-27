@@ -1,0 +1,182 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["workspace_id", "command"],
+  "allOf": [{
+    "if": {"properties": {"command": {"properties": {"op": {"enum": ["list", "find_decisions", "source_review", "propose_change"]}}}}},
+    "then": {"not": {"required": ["task_id"]}},
+    "else": {"required": ["task_id"]}
+  }],
+  "properties": {
+    "workspace_id": {"type": "string"},
+    "task_id": {"type": "string"},
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op"],
+      "properties": {
+        "op": {
+          "enum": ["list", "find_decisions", "source_review", "propose_change", "proposal_impact", "clarify_proposal", "cite_source", "withdraw_citation", "connections", "review_connection", "decision_uses", "create", "capture", "apply", "inspect", "peek", "render", "forget", "advise", "review", "promote", "search"]
+        },
+        "origin_task_id": {"type": "string", "description": "Task that holds the original, such as the project notebook."},
+        "origin_entry_id": {"type": "string", "description": "Original entry_id from capture."},
+        "capture_revision": {"type": "integer", "description": "Stable capture_revision from capture or inspect. Legacy captures use zero."},
+        "quote": {"type": "string", "description": "Exact UTF-8 passage from the chosen original, up to 512 bytes."},
+        "wording": {"type": "string", "description": "Optional team wording explicitly associated with this claim by the operator."},
+        "citation_revision": {"type": "integer", "description": "Revision of the citation being withdrawn."},
+        "scope_token": {"type":"string","pattern":"^[0-9a-f]{64}$","description":"The scope_token of the current interpretation explicitly selected by the operator."},
+        "prior_span": {"type":"array","items":{"type":"integer","minimum":0},"minItems":2,"maxItems":2,"description":"The exact [offset,end] of the earlier passage shown to the operator."},
+        "prior_id": {"type": "string", "description": "Earlier entry returned by connections."},
+        "disposition": {"enum": ["accept", "dismiss"]},
+        "source": {"type": "string", "description": "Origin of pasted text, or an indexed repository-relative file path when text is omitted."},
+        "text": {"type": "string", "description": "Verbatim supplied text. Omit to capture the indexed source."},
+        "lines": {"type": "string", "description": "Optional one-based line range of the indexed source, e.g. 319-335."},
+        "supersedes": {"type": "string", "description": "For an explicit correction, the earlier captured entry ID."},
+        "title": {"type": "string"},
+        "feature_title": {"type": "string", "minLength": 1, "maxLength": 1024, "description": "Operator-supplied saved feature title or remembered consecutive title words. Keep the original question in text. If feature_title_options are returned, ask which exact title to use, even for one option."},
+        "expected_revision": {"type": "integer", "minimum": 0},
+        "edits": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["op"],
+            "properties": {
+              "op": {"enum": ["add", "select", "pin", "fold", "expand", "checkpoint", "restore", "dismiss"]},
+              "entry": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "kind", "text", "author", "provenance", "source_links"],
+                "properties": {
+                  "id": {"type": "string"},
+                  "kind": {
+                    "enum": [
+                      "requirement",
+                      "constraint",
+                      "observation",
+                      "hypothesis",
+                      "decision",
+                      "rejected_attempt",
+                      "question",
+                      "work",
+                      "artifact"
+                    ]
+                  },
+                  "text": {"type": "string"},
+                  "author": {"type": "string"},
+                  "provenance": {"type": "string"},
+                  "source_links": {"type": "array", "items": {"type": "string"}},
+                  "relies_on": {
+                    "type": "object", "additionalProperties": false, "required": ["task_id", "entry_id", "token"],
+                    "description": "For a requirement or constraint, the decision_ref returned by decision_uses in another feature. Supply only for documented or explicitly confirmed reliance; quote the reason in the entry text.",
+                    "properties": {"task_id": {"type": "string"}, "entry_id": {"type": "string"}, "token": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+                  },
+                  "supersedes": {"type": ["string", "null"]},
+                  "action_key": {"type": ["string", "null"]},
+                  "assertions": {
+                    "type": "array",
+                    "maxItems": 16,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["key", "relation", "value"],
+                      "properties": {
+                        "key": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128,
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$"
+                        },
+                        "relation": {"enum": ["equals", "not_equals"]},
+                        "value": {"type": "string", "minLength": 1, "maxLength": 512}
+                      }
+                    }
+                  }
+                }
+              },
+              "entry_id": {"type": "string"},
+              "selected": {"type": "boolean"},
+              "pinned": {"type": "boolean"},
+              "summary": {"type": "string"},
+              "name": {"type": "string"}
+            }
+          },
+          "minItems": 1,
+          "maxItems": 32
+        },
+        "entry_id": {"type": "string"},
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "For peek, start at byte 0 or use the previous next_offset."
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 4,
+          "maximum": 65536,
+          "description": "Required page size for peek, in UTF-8 bytes."
+        },
+        "max_bytes": {"type": "integer", "minimum": 256, "maximum": 1048576},
+        "action_key": {"type": "string"},
+        "paths": {"type": "array", "maxItems": 16, "items": {"type": "string"}},
+        "finishing": {"type": "boolean"},
+        "memory_id": {"type": "string"},
+        "author": {"type": "string"},
+        "provenance": {"type": "string"},
+        "query": {"type": "string", "minLength": 1, "maxLength": 256},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 32},
+        "after_id": {"type": ["string", "null"]},
+        "include_history": {"type": "boolean"},
+        "assertions": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["key", "relation", "value"],
+            "properties": {
+              "key": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$"
+              },
+              "relation": {"enum": ["equals"]},
+              "value": {"type": "string", "minLength": 1, "maxLength": 512}
+            }
+          }
+        }
+      },
+      "allOf": [
+        {"if":{"properties":{"op":{"const":"source_review"}}},"then":{"required":["op","text"],"additionalProperties":false,"properties":{"op":{},"text":{},"after_id":{}}}},
+        {"if":{"properties":{"op":{"const":"cite_source"}}},"then":{"required":["op","expected_revision","entry_id","origin_task_id","origin_entry_id","capture_revision","quote","author"],"additionalProperties":false,"properties":{"op":{},"expected_revision":{},"entry_id":{},"origin_task_id":{},"origin_entry_id":{},"capture_revision":{},"quote":{},"author":{},"offset":{},"wording":{}}}},
+        {"if":{"properties":{"op":{"const":"withdraw_citation"}}},"then":{"required":["op","expected_revision","citation_revision","author"],"additionalProperties":false,"properties":{"op":{},"expected_revision":{},"citation_revision":{},"author":{}}}},
+        {"if":{"properties":{"op":{"const":"propose_change"}}},"then":{"required":["op","text","source","author"],"maxProperties":4}},
+        {"if":{"properties":{"op":{"const":"proposal_impact"}}},"then":{"required":["op"],"maxProperties":1}},
+        {"if":{"properties":{"op":{"const":"clarify_proposal"}}},"then":{"required":["op","expected_revision","text","author","disposition"],"additionalProperties":false,"properties":{"op":{},"expected_revision":{},"text":{},"author":{},"disposition":{},"scope_token":{}},"if":{"properties":{"disposition":{"const":"accept"}}},"then":{"required":["scope_token"]},"else":{"not":{"required":["scope_token"]}}}},
+        {"if": {"properties": {"op": {"const": "find_decisions"}}}, "then": {"required": ["op", "text"], "maxProperties": 3, "additionalProperties": false, "properties": {"op": {}, "text": {}, "feature_title": {}}}, "else": {"not": {"required": ["feature_title"]}}},
+        {"if": {"properties": {"op": {"const": "decision_uses"}}}, "then": {"required": ["op", "entry_id", "expected_revision"], "additionalProperties": false, "properties": {"op": {}, "entry_id": {}, "expected_revision": {}, "after_id": {}}}},
+        {"if": {"properties": {"op": {"const": "connections"}}}, "then": {"required": ["op", "entry_id"], "maxProperties": 2}},
+        {"if": {"properties": {"op": {"const": "review_connection"}}}, "then": {"required": ["op", "expected_revision", "entry_id", "prior_id", "prior_span", "disposition", "author"], "maxProperties": 7}},
+        {
+          "if": {"properties": {"op": {"const": "list"}}},
+          "then": {"additionalProperties": false, "properties": {"op": {}, "after_id": {}}}
+        },
+        {
+          "if": {"properties": {"op": {"const": "capture"}}},
+          "then": {
+            "required": ["op", "expected_revision", "source"],
+            "not": {"required": ["text", "lines"]},
+            "additionalProperties": false,
+            "properties": {"op": {}, "expected_revision": {}, "source": {}, "text": {}, "lines": {}, "author": {}, "supersedes": {}}
+          }
+        },
+        {"if": {"properties": {"op": {"const": "inspect"}}}, "then": {"required": ["op"], "maxProperties": 1}},
+        {
+          "if": {"properties": {"op": {"const": "peek"}}},
+          "then": {"required": ["op", "entry_id", "offset", "bytes"], "maxProperties": 4}
+        }
+      ]
+    }
+  }
+}

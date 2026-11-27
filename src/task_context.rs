@@ -7,6 +7,11 @@ use redb::{ReadableDatabase, ReadableTable, ReadableTableMetadata, TableDefiniti
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
+mod capture;
+mod connections;
+pub use connections::CitationChoice;
+pub use connections::{ConnectionChoice, DecisionRef, ProposalAnswer};
+use connections::{ConnectionReview, ProposalState, SourceCitation};
 
 pub(crate) const TASKS: TableDefinition<&str, &str> = TableDefinition::new("task_context");
 pub const MAX_REQUEST_BYTES: usize = 1024 * 1024;
@@ -20,16 +25,25 @@ pub struct Scope<'a> {
     pub expected_revision: u64,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct ReviewedQuery {
+    pub entry_id: String,
+    pub revision: u64,
+    pub passage: String,
+}
+
 /// Complete mandatory view, validated in the source batch's final read.
 #[derive(Clone, Debug)]
 pub struct ContextView {
     pub(crate) line: String,
+    pub(crate) reviewed: Vec<ReviewedQuery>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
     pub workspace_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub task_id: String,
     pub command: Command,
 }
@@ -37,12 +51,66 @@ pub struct Request {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    /// Find a feature by title in this workspace, including after a client restart.
+    List {
+        #[serde(default)]
+        after_id: Option<String>,
+    },
+    FindDecisions {
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        feature_title: Option<String>,
+    },
+    ProposeChange {
+        text: String,
+        source: String,
+        author: String,
+    },
+    ProposalImpact {},
+    SourceReview {
+        text: String,
+        #[serde(default)]
+        after_id: Option<String>,
+    },
+    CiteSource(CitationChoice),
+    WithdrawCitation {
+        expected_revision: u64,
+        citation_revision: u64,
+        author: String,
+    },
+    ClarifyProposal {
+        expected_revision: u64,
+        #[serde(flatten)]
+        answer: ProposalAnswer,
+    },
+    Connections {
+        entry_id: String,
+    },
+    DecisionUses {
+        expected_revision: u64,
+        entry_id: String,
+        #[serde(default)]
+        after_id: Option<String>,
+    },
+    ReviewConnection(ConnectionChoice),
     Create {
         title: String,
     },
     Apply {
         expected_revision: u64,
         edits: Vec<Edit>,
+    },
+    Capture {
+        expected_revision: u64,
+        source: String,
+        #[serde(default)]
+        text: Option<String>,
+        #[serde(default)]
+        lines: Option<String>,
+        #[serde(default)]
+        author: Option<String>,
+        #[serde(default)]
+        supersedes: Option<String>,
     },
     Advise {
         action_key: String,
@@ -126,9 +194,16 @@ impl Kind {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Disposition {
+    Accept,
+    Dismiss,
+}
+
 /// An exact, single-valued caller fact or constraint. Keys include any scope or
 /// environment identity the caller needs; prose is never interpreted as a rule.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Assertion {
     pub key: String,
@@ -144,7 +219,7 @@ pub enum Relation {
 
 /// Caller assertions with attribution; neither an observation nor a decision is
 /// automatically certified true. Supersession is explicit and preserves history.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Entry {
     pub id: String,
@@ -159,6 +234,8 @@ pub struct Entry {
     pub action_key: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub assertions: Vec<Assertion>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relies_on: Option<Box<DecisionRef>>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -182,11 +259,21 @@ struct StoredEntry {
     entry: Entry,
     sha256: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    decision_revision: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    capture_revision: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     assertions_sha256: Option<String>,
     view: View,
 }
 impl StoredEntry {
     fn with_assertions(&self, mut value: Value) -> Value {
+        if self.entry.is_captured_source() {
+            value["capture_revision"] = json!(self.capture_revision.unwrap_or(0));
+        }
+        if let Some(reference) = &self.entry.relies_on {
+            value["declared_relies_on"] = json!(reference);
+        }
         if let Some(digest) = &self.assertions_sha256 {
             value["assertions"] = json!(self.entry.assertions);
             value["assertions_sha256"] = json!(digest);
@@ -205,6 +292,12 @@ struct Task {
     checkpoints: BTreeMap<String, BTreeMap<String, View>>,
     dismissed: BTreeSet<String>,
     promotions: BTreeMap<String, Promotion>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    connection_reviews: Vec<ConnectionReview>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    source_citations: Vec<SourceCitation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    proposal: Option<ProposalState>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -271,6 +364,9 @@ fn assertions_digest(assertions: &[Assertion]) -> FResult<Option<String>> {
 }
 fn entry_valid(entry: &Entry) -> FResult<()> {
     id(&entry.id)?;
+    if let Some(reference) = &entry.relies_on {
+        reference.validate(entry.kind)?;
+    }
     if !entry.assertions.is_empty()
         && !matches!(
             entry.kind,
@@ -344,6 +440,15 @@ impl Task {
         for item in &self.entries {
             let e = &item.entry;
             entry_valid(e)?;
+            if item
+                .decision_revision
+                .is_some_and(|rev| e.kind != Kind::Decision || rev == 0 || rev > self.revision)
+                || e.relies_on
+                    .as_ref()
+                    .is_some_and(|r| r.task_id == self.task_id)
+            {
+                return Err(invalid("invalid cross-feature decision identity"));
+            }
             for handle in &e.source_links {
                 if store::HandleRef::parse(handle)?.ws16 != self.workspace_id[..16] {
                     return Err(invalid("task source link names another workspace"));
@@ -388,6 +493,11 @@ impl Task {
                 return Err(invalid("invalid or duplicate promotion lineage"));
             }
         }
+        self.validate_connection_reviews()?;
+        self.validate_source_citations()?;
+        if let Some(proposal) = &self.proposal {
+            proposal.validate(self)?;
+        }
         for (name, checkpoint) in &self.checkpoints {
             id(name)?;
             for (entry_id, view) in checkpoint {
@@ -422,6 +532,8 @@ impl Task {
                 }
                 self.entries.push(StoredEntry {
                     entry: entry.clone(),
+                    decision_revision: None,
+                    capture_revision: None,
                     sha256: crate::digest(entry.text.as_bytes()),
                     assertions_sha256: assertions_digest(&entry.assertions)?,
                     view: View {
@@ -511,7 +623,31 @@ pub fn parse(value: Value) -> FResult<Request> {
     if crate::json_len(&value)? > MAX_REQUEST_BYTES {
         return Err(invalid("task request exceeds 1 MiB"));
     }
-    serde_json::from_value(value).map_err(|_| invalid("invalid task request fields"))
+    if matches!(
+        value["command"]["op"].as_str(),
+        Some("list" | "find_decisions" | "propose_change" | "source_review")
+    ) && value.get("task_id").is_some()
+    {
+        return Err(invalid("workspace discovery omits task_id"));
+    }
+    if value["command"]
+        .get("feature_title")
+        .is_some_and(Value::is_null)
+    {
+        return Err(invalid("feature_title must be a string when supplied"));
+    }
+    let request: Request =
+        serde_json::from_value(value).map_err(|_| invalid("invalid task request fields"))?;
+    if !matches!(
+        request.command,
+        Command::List { .. }
+            | Command::FindDecisions { .. }
+            | Command::ProposeChange { .. }
+            | Command::SourceReview { .. }
+    ) {
+        id(&request.task_id)?;
+    }
+    Ok(request)
 }
 
 fn source_links(tx: &redb::ReadTransaction, entry: &Entry) -> FResult<Vec<Value>> {
@@ -539,13 +675,45 @@ fn source_links(tx: &redb::ReadTransaction, entry: &Entry) -> FResult<Vec<Value>
         })
         .collect()
 }
-fn render_view(tx: &redb::ReadTransaction, task: &Task) -> FResult<Value> {
-    let entries = task.entries.iter().filter(|e| e.view.selected && !task.superseded(&e.entry.id)).map(|e| -> FResult<Value> {
-        Ok(e.with_assertions(json!({"id":e.entry.id,"kind":e.entry.kind,"author":e.entry.author,"provenance":e.entry.provenance,"sha256":e.sha256,"representation":if e.view.summary.is_some() { "caller_summary" } else { "original" },"text":e.view.summary.as_ref().unwrap_or(&e.entry.text),"source_links":source_links(tx,&e.entry)?})))
-    }).collect::<FResult<Vec<_>>>()?;
-    Ok(
-        json!({"workspace_id":task.workspace_id,"task_id":task.task_id,"revision":task.revision,"boundary":"foundry_task_context","host_application":"unknown","title":task.title,"entries":entries}),
-    )
+fn render_view(
+    tx: &redb::ReadTransaction,
+    task: &Task,
+    reviewed: Option<&mut Vec<ReviewedQuery>>,
+) -> FResult<Value> {
+    let mut fresh_entries = BTreeMap::new();
+    let mut entries = task.entries.iter()
+        .filter(|e| e.view.selected && !task.superseded(&e.entry.id))
+        .enumerate()
+        .map(|(index, e)| -> FResult<Value> {
+            let representation = if e.has_source_excerpt() {
+                "source_excerpt"
+            } else if e.view.summary.is_some() {
+                "caller_summary"
+            } else {
+                "original"
+            };
+            let links = source_links(tx, &e.entry)?;
+            if !task.connection_reviews.is_empty() && links.iter().all(|link| link["status"] == "fresh") {
+                fresh_entries.insert(e.entry.id.as_str(), (index, e));
+            }
+            let mut value = e.with_assertions(json!({
+                "id": e.entry.id, "kind": e.entry.kind,
+                "author": e.entry.author, "provenance": e.entry.provenance, "sha256": e.sha256,
+                "representation": representation, "text": e.view.summary.as_ref().unwrap_or(&e.entry.text),
+                "source_links": links
+            }));
+            if let Some(previous) = &e.entry.supersedes {
+                value["supersedes"] = json!(previous);
+            }
+
+            Ok(value)
+        }).collect::<FResult<Vec<_>>>()?;
+    let passages = task.attach_current_connections(tx, &fresh_entries, &mut entries, reviewed)?;
+    let mut view = json!({"workspace_id":task.workspace_id,"task_id":task.task_id,"revision":task.revision,"boundary":"foundry_task_context","host_application":"unknown","title":task.title,"entries":entries});
+    if let Some(passages) = passages {
+        view["accepted_passages"] = passages;
+    }
+    Ok(view)
 }
 
 impl Engine {
@@ -581,7 +749,9 @@ impl Engine {
             .filter(|e| e.view.selected && !task.superseded(&e.entry.id))
             .map(|e| {
                 let mut entry = e.entry.clone();
-                if let Some(summary) = &e.view.summary {
+                if let Some(summary) = &e.view.summary
+                    && !e.has_source_excerpt()
+                {
                     entry.text = summary.clone();
                 }
                 entry
@@ -592,15 +762,17 @@ impl Engine {
         &self,
         tx: &redb::ReadTransaction,
         scope: Scope<'_>,
+        compose: bool,
     ) -> FResult<ContextView> {
         let task = self.task_in(tx, scope)?;
-        let view = render_view(tx, &task)?;
+        let mut reviewed = Vec::new();
+        let view = render_view(tx, &task, compose.then_some(&mut reviewed))?;
         let sha256 = crate::digest(&serde_json::to_vec(&view)?);
         let line = format!(
             "task-view: {}\n",
             serde_json::to_string(&json!({"sha256":sha256,"view":view}))?
         );
-        Ok(ContextView { line })
+        Ok(ContextView { line, reviewed })
     }
 }
 
@@ -612,13 +784,68 @@ impl Engine {
         if self.workspace_id().ok_or(FoundryError::WorkspaceUnbound)? != request.workspace_id {
             return Err(FoundryError::WrongWorkspace);
         }
-        id(&request.task_id)?;
         if crate::json_len(request)? > MAX_REQUEST_BYTES {
             return Err(invalid("task request exceeds 1 MiB"));
         }
+        if let Command::ProposeChange {
+            text: original,
+            source,
+            author,
+        } = &request.command
+        {
+            if !request.task_id.is_empty() {
+                return Err(invalid("propose_change uses workspace_id without task_id"));
+            }
+            let task_id = ProposalState::task_id(original, source, author)?;
+            let scoped = Request {
+                task_id,
+                ..request.clone()
+            };
+            self.task_mutate(&scoped, control)?;
+            return self.task_context(
+                &Request {
+                    command: Command::ProposalImpact {},
+                    ..scoped
+                },
+                control,
+            );
+        }
+        if let Command::SourceReview { text, after_id } = &request.command {
+            if !request.task_id.is_empty() {
+                return Err(invalid("source_review uses workspace scope"));
+            }
+            return self.source_review(&request.workspace_id, text, after_id.as_deref(), control);
+        }
+        if let Command::FindDecisions {
+            text,
+            feature_title,
+        } = &request.command
+        {
+            if !request.task_id.is_empty() {
+                return Err(invalid("workspace discovery omits task_id"));
+            }
+            return self.find_decisions(
+                &request.workspace_id,
+                text,
+                feature_title.as_deref(),
+                control,
+            );
+        }
+        if let Command::List { after_id } = &request.command {
+            if !request.task_id.is_empty() {
+                return Err(invalid("list uses workspace_id without a task_id"));
+            }
+            return self.list_tasks(&request.workspace_id, after_id.as_deref(), control);
+        }
+        id(&request.task_id)?;
         match &request.command {
             Command::Create { .. }
             | Command::Apply { .. }
+            | Command::Capture { .. }
+            | Command::ClarifyProposal { .. }
+            | Command::CiteSource(_)
+            | Command::WithdrawCitation { .. }
+            | Command::ReviewConnection(_)
             | Command::Forget { .. }
             | Command::Promote { .. } => self.task_mutate(request, control),
             _ => {
@@ -844,7 +1071,30 @@ impl Engine {
                             return Err(invalid("advice envelope exceeds byte budget"));
                         }
                     }
+                    Command::ProposalImpact {} => return task.proposal_impact(&tx, control),
+                    Command::DecisionUses {
+                        expected_revision,
+                        entry_id,
+                        after_id,
+                    } => {
+                        if task.revision != *expected_revision {
+                            return Err(FoundryError::Conflict(
+                                "decision task revision changed; inspect before continuing".into(),
+                            ));
+                        }
+                        result =
+                            task.decision_uses(&tx, entry_id, after_id.as_deref(), true, control)?;
+                    }
+                    Command::Connections { entry_id } => {
+                        result = task.connections(&tx, entry_id, control)?;
+                    }
                     Command::Inspect {} => {
+                        if !task.connection_reviews.is_empty() {
+                            result["connection_reviews"] = json!(task.connection_reviews);
+                        }
+                        if !task.source_citations.is_empty() {
+                            result["source_citations"] = json!(task.source_citations);
+                        }
                         result["dismissed"] = json!(task.dismissed);
                         result["promotions"] = json!(task.promotions);
                         result["title"] = json!(task.title);
@@ -891,7 +1141,7 @@ impl Engine {
                         if !(256..=MAX_REQUEST_BYTES).contains(max_bytes) {
                             return Err(invalid("render max_bytes must be 256..1048576"));
                         }
-                        result = render_view(&tx, &task)?;
+                        result = render_view(&tx, &task, None)?;
                         if crate::json_len(&result)? + 1 > *max_bytes {
                             return Err(invalid(
                                 "selected view exceeds byte budget; explicitly fold or deselect unprotected entries",
@@ -915,7 +1165,7 @@ impl Engine {
                             .find(|e| &e.entry.id == entry_id)
                             .ok_or(FoundryError::NotFound)?;
                         let packet = crate::task_host::Packet::new(
-                            render_view(&tx, &task)?,
+                            render_view(&tx, &task, None)?,
                             entry_id.clone(),
                             tool_call_id.clone(),
                             entry.sha256.clone(),
@@ -944,6 +1194,7 @@ impl Engine {
         }
     }
     fn task_mutate(&self, request: &Request, control: &Control) -> FResult<Value> {
+        let capture = self.capture_original(request)?;
         let tx = self.db.begin_write()?;
         let mut result;
         {
@@ -953,8 +1204,36 @@ impl Engine {
                 .get(request.task_id.as_str())?
                 .map(|v| decode(v.value(), &request.task_id, &request.workspace_id))
                 .transpose()?;
+            if let (Some(task), Some(entry)) = (&previous, &capture)
+                && let Some(existing) = task.entries.iter().find(|e| e.entry.id == entry.id)
+            {
+                if existing.entry != *entry {
+                    return Err(FoundryError::Conflict("capture ID already in use".into()));
+                }
+                return Ok(json!({"task_id":task.task_id,"revision":task.revision,
+                    "outcome":"existing","entry_id":entry.id,"sha256":existing.sha256,
+                    "historical":task.superseded(&entry.id),"capture_revision":existing.capture_revision.unwrap_or(0)}));
+            }
+            if previous.as_ref().is_some_and(|t| t.proposal.is_some())
+                && !matches!(
+                    request.command,
+                    Command::ProposeChange { .. }
+                        | Command::ClarifyProposal { .. }
+                        | Command::Forget { .. }
+                )
+            {
+                return Err(invalid(
+                    "use clarify_proposal to record a proposal response",
+                ));
+            }
+            let title = match &request.command {
+                Command::Create { title } => Some(title.as_str()),
+                Command::ProposeChange { text, .. } => Some(connections::proposal_title(text)),
+                _ => None,
+            };
             let mut task = match (&request.command, previous) {
-                (Command::Create { title }, None) => {
+                (_, None) if title.is_some() => {
+                    let title = title.unwrap_or_default();
                     text(title, 1024)?;
                     if table.len()? >= 128 {
                         return Err(invalid(
@@ -964,14 +1243,26 @@ impl Engine {
                     Task {
                         task_id: request.task_id.clone(),
                         workspace_id: request.workspace_id.clone(),
-                        title: title.clone(),
+                        title: title.to_owned(),
                         revision: 1,
                         entries: Vec::new(),
                         checkpoints: BTreeMap::new(),
                         dismissed: BTreeSet::new(),
                         promotions: BTreeMap::new(),
+                        connection_reviews: Vec::new(),
+                        source_citations: Vec::new(),
+                        proposal: None,
                     }
                 }
+                (Command::ProposeChange { .. }, Some(task)) => {
+                    if task.proposal.is_none() {
+                        return Err(FoundryError::Conflict("proposal ID already in use".into()));
+                    }
+                    return Ok(
+                        json!({"task_id":task.task_id,"revision":task.revision,"outcome":"existing"}),
+                    );
+                }
+                (Command::CiteSource(_) | Command::WithdrawCitation { .. }, Some(task)) => task,
                 (Command::Create { title }, Some(task)) => {
                     if &task.title == title {
                         return Ok(
@@ -984,6 +1275,15 @@ impl Engine {
                 }
                 (
                     Command::Apply {
+                        expected_revision, ..
+                    }
+                    | Command::Capture {
+                        expected_revision, ..
+                    }
+                    | Command::ReviewConnection(ConnectionChoice {
+                        expected_revision, ..
+                    })
+                    | Command::ClarifyProposal {
                         expected_revision, ..
                     }
                     | Command::Forget { expected_revision }
@@ -1002,6 +1302,46 @@ impl Engine {
                 (_, None) => return Err(FoundryError::NotFound),
                 _ => unreachable!(),
             };
+            let original_count = task.entries.len();
+            if let Command::ProposeChange {
+                text: original,
+                source,
+                author,
+            } = &request.command
+            {
+                task.save_proposal(original, source, author)?;
+            }
+            if let Command::ClarifyProposal { answer, .. } = &request.command {
+                // The writer owns the transaction; this snapshot cannot race another writer.
+                task.answer_proposal(&self.db.begin_read()?, answer, control)?;
+            }
+            let captured = capture
+                .as_ref()
+                .map(|entry| (entry.id.clone(), crate::digest(entry.text.as_bytes())));
+            if let Some(entry) = capture {
+                if let Some(parent) = &entry.supersedes
+                    && !task
+                        .entries
+                        .iter()
+                        .any(|e| e.entry.id == *parent && e.entry.is_captured_source())
+                {
+                    return Err(invalid(
+                        "capture can correct only a previously captured original",
+                    ));
+                }
+                for handle in &entry.source_links {
+                    store::validate_link_span(&tx, &request.workspace_id, handle)?;
+                }
+                let excerpt = capture::excerpt(&entry.text).map(str::to_owned);
+                task.edit(&Edit::Add { entry })?;
+                if let Some(excerpt) = excerpt {
+                    task.entries
+                        .last_mut()
+                        .expect("just added capture")
+                        .view
+                        .summary = Some(excerpt);
+                }
+            }
             if let Command::Apply { edits, .. } = &request.command {
                 if edits.is_empty() || edits.len() > 32 {
                     return Err(invalid("apply requires 1..32 edits"));
@@ -1019,6 +1359,25 @@ impl Engine {
                                         "explicitly forget promoted memory {memory_id} before superseding its task decision"
                                     )));
                                 }
+                            }
+                        }
+                        if let Some(reference) = &entry.relies_on {
+                            if reference.task_id == task.task_id {
+                                return Err(invalid("relies_on requires another feature"));
+                            }
+                            let raw = table
+                                .get(reference.task_id.as_str())?
+                                .ok_or(FoundryError::NotFound)?;
+                            let origin =
+                                decode(raw.value(), &reference.task_id, &request.workspace_id)?;
+                            let decision = origin.current_decision(&reference.entry_id)?;
+                            if &origin.decision_ref(decision)? != reference.as_ref() {
+                                return Err(FoundryError::Conflict(
+                                    "decision identity changed".into(),
+                                ));
+                            }
+                            for link in &decision.entry.source_links {
+                                store::validate_link_span(&tx, &request.workspace_id, link)?;
                             }
                         }
                         for handle in &entry.source_links {
@@ -1098,6 +1457,26 @@ impl Engine {
             let revision = store::read_counter(&meta, "task_revision")?
                 .checked_add(1)
                 .ok_or(FoundryError::RevisionExhausted)?;
+            if matches!(
+                request.command,
+                Command::CiteSource(_) | Command::WithdrawCitation { .. }
+            ) {
+                let receipt = task.record_source_citation(
+                    &self.db.begin_read()?,
+                    &request.command,
+                    revision,
+                )?;
+                if let Some(existing) = receipt {
+                    return Ok(json!({"task_id":task.task_id,"revision":task.revision,
+                        "outcome":"existing","citation_revision":existing}));
+                }
+            }
+            if let Command::ReviewConnection(choice) = &request.command
+                && !task.record_connection(&tx, choice, revision)?
+            {
+                return Ok(json!({"task_id":task.task_id,"revision":task.revision,
+                    "outcome":"existing","disposition":choice.disposition}));
+            }
             if matches!(request.command, Command::Forget { .. }) {
                 let mut removed = Vec::new();
                 let mut memory = tx.open_table(crate::memory::MEMORY)?;
@@ -1124,6 +1503,14 @@ impl Engine {
                 result = json!({"task_id":request.task_id,"revision":revision,"outcome":"deleted","forgotten_memory_ids":removed});
             } else {
                 task.revision = revision;
+                for item in &mut task.entries[original_count..] {
+                    if item.entry.is_captured_source() {
+                        item.capture_revision = Some(revision);
+                    }
+                    if item.entry.kind == Kind::Decision {
+                        item.decision_revision = Some(revision);
+                    }
+                }
                 task.valid()?;
                 let encoded = serde_json::to_string(&task)?;
                 if encoded.len() > MAX_RECORD_BYTES {
@@ -1136,6 +1523,21 @@ impl Engine {
             if let Some((memory_id, memory_revision)) = promoted {
                 result["memory_id"] = json!(memory_id);
                 result["memory_revision"] = json!(memory_revision);
+            }
+            if let Command::ReviewConnection(choice) = &request.command {
+                result["disposition"] = json!(choice.disposition);
+            }
+            if let Some((id, sha256)) = captured {
+                result["entry_id"] = json!(id);
+                result["sha256"] = json!(sha256);
+                result["historical"] = json!(false);
+                result["capture_revision"] = json!(revision);
+            }
+            if matches!(
+                request.command,
+                Command::CiteSource(_) | Command::WithdrawCitation { .. }
+            ) {
+                result["citation_revision"] = json!(revision);
             }
             meta.insert("task_revision", revision.to_string().as_str())?;
         }

@@ -17,6 +17,11 @@ pub(super) fn open_owner(
     mut options: ServerOptions,
     shutdown: CancellationToken,
 ) -> AResult<Arc<Shared>> {
+    #[cfg(feature = "semantic")]
+    let semantic_decision_fallback = options
+        .semantic
+        .as_ref()
+        .is_some_and(|s| s.decision_fallback);
     let model_resources = options
         .model_resources
         .take()
@@ -90,6 +95,12 @@ pub(super) fn open_owner(
     // reports, with baseline results intact. Only explicit continuous mode
     // starts preparation at launch; otherwise an index action is required.
     let semantic = semantic_slot_reserved(semantic_launch, model_resources.as_ref())?;
+    #[cfg(feature = "semantic")]
+    let (semantic, decision_semantic) = if semantic_decision_fallback {
+        (None, semantic)
+    } else {
+        (semantic, None)
+    };
     // 013 T003: the config is validated and its worker loaded HERE, once,
     // before serving (bounded by the load ceiling). An invalid config or a
     // failed start leaves the policy unavailable by name; baseline
@@ -117,6 +128,8 @@ pub(super) fn open_owner(
         shutdown,
         no_memory: options.no_memory,
         experimental_task_context: options.experimental_task_context,
+        #[cfg(feature = "semantic")]
+        decision_semantic,
         watch: watch.clone(),
         #[cfg(feature = "semantic")]
         semantic_turn: Mutex::new(None),

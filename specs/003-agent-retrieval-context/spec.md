@@ -1,5 +1,12 @@
 # 003 — Context inside coding agents
 
+ChatGPT desktop uses the project MCP owner for
+source discovery and feature memory. The operator-facing contracts cover
+[shared originals and decision recovery](contracts/shared-source-review.md)
+and [proposed changes and impact](contracts/indirect-change-impact.md).
+The [current handoff](../../docs/resume-context-ecosystem.md) owns readiness,
+including the outstanding T006 pilot. Earlier planning and measurements follow.
+
 Planning addition, 2026-10-09: [T006](#t006--validate-retrieval-repairs-in-real-coding-tasks)
 is authorized for execution by the owner on 2026-10-09 under the [ecosystem plan](../../docs/context-ecosystem-plan.md).
 The 2026-10-10 continuation now permits explicit frozen task-view application at the
@@ -95,7 +102,12 @@ configuration manager, global prompt injection or extra instruction file format.
 An exception follows the actual task's required semantics. Rewriting an ordinary
 identifier lookup as a regex does not exempt it from using Foundry first.
 
-An eligible discovery request attempts Foundry once before shell search. If useful
+An eligible discovery request attempts Foundry once before shell search, host
+code search, directory exploration or exploratory reads. A desktop session with
+both project and synthetic configurations checks the workspace identity when
+the selected store is uncertain. If the mounted tool catalog is unavailable
+but the project MCP configuration works, use its Foundry server and identify
+the calling client in the receipt. If useful
 evidence is returned, follow its citations and do not automatically repeat the same
 discovery with grep. A later distinct question or explicitly requested exhaustive
 check remains permitted. Optional models are not required for this ordering: use
@@ -139,14 +151,27 @@ reuse the [adapter economics contract](contracts/adapter-economics.md), not new 
 
 ### Catalog and instruction text
 
+The ChatGPT desktop local-project adapter (`connect --host chatgpt-desktop`)
+uses the same TOML transport and tool-approval settings as the Codex host.
+An explicitly selected `connect --experimental-task-context` forwards the
+existing server option to the owner's launch command. A desktop acceptance
+receipt requires a call from the project chat with the indexed result returned
+to the chat. Configuration generation and a scripted MCP client measure earlier
+steps in the connection. See the [desktop quickstart](../../README.md#chatgpt-desktop-on-your-mac).
+
+The current default catalog includes `search`, `context`, `retrieve`, `references`,
+`status`, `index` and `memory`. The task flag adds `task_context` and the
+task-aware schema fields. `--no-memory` removes the `memory` tool. The token counts
+and descriptions below record earlier catalog revisions. [Tool definitions](../../src/mcp/tools.rs).
+
 Approved 2026-10-03 for T005; it landed with 001 T004 (committed in `5edf32c`) because
 both change `src/mcp.rs` and `src/bootstrap.rs`, and an MCP test pins these strings
 exactly. `lines`, `view` and outlines are live since 001 T004/T006, `root`/`roots`
 since 007 T001 (2026-10-04, `cc402e0`), and the sixth tool `memory` with `context`'s
-`include_memory` since 008 (2026-10-04). The serialized `tools/list` is 793 o200k
+`include_memory` since 008 (2026-10-04). At that revision the serialized `tools/list` was 793 o200k
 tokens with 008 (661 after 007 T001; 598 after T006; ceiling 800).
-`mcp --no-memory` serves the five-tool catalog: 669 tokens, where `context`'s static
-schema still lists `include_memory`. Tool descriptions, exactly:
+At that revision, `mcp --no-memory` served five tools at 669 tokens. The static
+`context` schema listed `include_memory`. The recorded descriptions were:
 
 ~~~text
 search: Use BEFORE grep/rg for indexed code: one line per hit with handle, line, symbol and match. Follow handles with retrieve. Indexed snapshot, not live disk.
@@ -774,7 +799,7 @@ and a no-provider preflight, removing the Anthropic-only author restriction.
 The full actual installed-host fixture preflight now passes; both earlier failed
 attempts and the original calibration evidence are retained. See the
 [receipt](../../docs/validation.md#no-provider-apparatus-preflight--2026-10-29)
-and [current handoff](../../docs/resume-context-ecosystem.md#current-status--2026-11-06).
+and [current handoff](../../docs/resume-context-ecosystem.md#current-status).
 The guard remains fixture-only. This does not authorize another coding comparison,
 establish live-provider capture or amend T006's acceptance.
 
@@ -1025,8 +1050,55 @@ composed evidence missed a fact behind one of them
 extended to admitted roots by the continuation below. Ordinary and exact-name
 context remains byte-compatible without the new option.
 
+When a task has reviewed connections, its composed view includes up to two
+current accepted passages, newest review first, and the count omitted. Each pair
+identifies its reviewer, review revision and original entries. It quotes the first
+512 UTF-8 bytes or less of the meeting note and the exact byte range accepted in
+the earlier entry. Both originals and their attribution are recoverable by entry
+ID. An indexed capture whose original bytes match the current source also gets a
+handle for the exact earlier passage. A later dismissal, supersession, deselection
+or stale source on either end removes the pair from this view. A review records
+the relationship between passages. Within the existing four task searches, explicit
+requirements and questions take precedence, followed by the reviewed quotations
+and then the other captured sources. A reviewed quotation uses the local prose
+search. Its results carry `reviewed_text_match:<review revision>` and take
+precedence in source delivery. A policy change still requires a decision, and
+an implementation claim still requires reading the cited code.
+
+To answer which other saved feature relies on a decision, use the primary
+workspace's `task_context` operation `decision_uses` with the originating
+task, its current revision and the decision entry ID. This reads the existing
+008 task rows. A requirement or constraint can carry one typed `relies_on`
+reference returned by that operation. The entry's original words explain why
+the dependent feature needs the decision. Its author, supporting sources and
+original byte range travel with the answer. Record a reference only where
+the source documents the dependency or the operator has confirmed it. A second
+feature also adopts the decision when its active requirement contains the same
+original bytes and cites the same exact, fresh indexed source range. This path
+uses existing records without writing a relationship.
+
+The reference binds the workspace, task, immutable decision and its creation
+revision. Legacy decisions retain an identity derived from their original
+record. New decisions under reused IDs receive a new identity. Adding a
+reference checks the current decision and its source links in the consuming
+task's write transaction. Unrelated edits can advance either task's revision.
+Superseded, deselected or source-stale evidence cannot establish current use.
+There is one writer for each requirement and no separate reverse index.
+
+The read considers eight saved tasks per page and returns one cited reason per
+other feature, with a cursor for continuation. A matching declaration takes
+precedence. In its absence, shared wording in the first 4,096 bytes of an
+eligible active entry may produce a quoted clarification for the operator.
+Quotes span at most 512 UTF-8 bytes, with full originals available by `peek`.
+A page with no evidence establishes only that no qualifying entry was found
+on that page. Each page is a fresh snapshot and reports stale candidates
+encountered during selection. Restart pagination if the saved features change.
+
+The [indirect change-impact contract and implementation plan](contracts/indirect-change-impact.md)
+extends this workflow to a saved proposal expressed without feature or decision IDs.
+
 The planner starts with eight main-query candidates, at most four selected active
-requirements/questions (1,024 bytes each, four lexical candidates per query), eight
+task searches (1,024 bytes each, four lexical candidates per query), eight
 explicit source links, four source-bound briefs, eight boundary seed paths/eight
 relations and at most 32 final source units. It makes no extra model calls and writes
 no task state. Folded entries use the caller's selected summary; original bytes remain
@@ -1293,3 +1365,7 @@ entry IDs, with `basis: explicit_source_link_overlap` and satisfaction not estab
 Text similarity, an observing-test link alone and stale/foreign source identities do
 not produce a join. All original endpoint/test bodies must still fit atomically.
 This supplies traceability, not requirement correctness or exhaustive coverage.
+
+The [shared-source review workflow](contracts/shared-source-review.md) extends
+experimental task-context delivery to project originals, team vocabulary and
+the features requiring review after an edit.

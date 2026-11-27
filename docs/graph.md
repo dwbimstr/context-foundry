@@ -1,5 +1,14 @@
 # Graph import
 
+Use the graph operation that owns the relationship you need.
+
+| Question | Evidence and scope |
+| --- | --- |
+| Which files are connected by an imported edge? | `import-graph` and `graph` traverse the producer's declared file relationships. The format is described below. |
+| Where is this symbol referenced? | `import-scip` and `references` use a compiler artifact bound to the indexed snapshot. Without compiler facts, source context can show approximate usage. [Compiler contract](../specs/005-graph-evidence-lifecycle/spec.md) |
+| What executed, or which service handles this HTTP call? | `import-execution` reads a completed producer artifact. `boundary` publishes or queries scoped static Python Flask/FastAPI and literal HTTP facts. [Execution evidence](experimental-context.md#explicit-execution-evidence) · [Boundary scope](experimental-context.md#boundary-relationships-and-task-evidence) |
+| Which feature relies on a saved decision and why? | The dependent feature records a requirement or constraint in task memory. `task_context` with `decision_uses` returns its quoted reason. `source_review` checks which shared originals have changed. A wording match asks the operator for clarification. [Memory workflow](experimental-context.md#recoverable-task-context) |
+
 `foundry import-graph FILE` atomically replaces the named producer's complete
 bundle. Other producers retain their facts. An empty `edges` array removes that
 producer's contribution. A rejected bundle preserves the prior contribution.

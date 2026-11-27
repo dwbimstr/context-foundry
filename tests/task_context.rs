@@ -79,6 +79,892 @@ fn cli(e: &Env, command: Value) -> Value {
     serde_json::from_slice(&output.stdout).unwrap()
 }
 #[test]
+fn proposal_scope_survives_new_wording_but_not_a_replaced_decision() {
+    let e = env();
+    let run = |engine: &Engine, task: Option<&str>, command: Value| {
+        let mut args = json!({"workspace_id":e.wid,"command":command});
+        if let Some(task) = task {
+            args["task_id"] = json!(task);
+        }
+        engine.task_context(&task_context::parse(args)?, &Control::unbounded())
+    };
+    let engine = Engine::open_existing(&e.store).unwrap();
+    let ask = json!({"op":"propose_change","text":"  Can orchard cleanup preserve the golden harvest?","author":"Jo","source":"Planning chat"});
+    let empty = run(&engine, None, ask.clone()).unwrap();
+    assert_eq!(empty["candidates"], json!([]));
+    assert!(run(&engine, Some("wrong"), ask.clone()).is_err());
+    let receipt = empty["task_id"].as_str().unwrap();
+    let origin = create(&engine);
+    let original = add(
+        "keep",
+        "decision",
+        "Require orchard cleanup to wait for the growers.",
+    );
+    let owner = apply(&engine, origin, json!([original])).unwrap();
+    let proposal = run(&engine, None, ask.clone()).unwrap();
+    assert_eq!(proposal["revision"], empty["revision"]);
+    assert_eq!(proposal["proposal"]["quote"], ask["text"]);
+    assert_eq!(proposal["proposal"]["author"], "Jo");
+    let candidate = &proposal["candidates"][0];
+    assert_eq!(candidate["basis"], "wording_match");
+    assert_eq!(candidate["selected"], false);
+    assert_eq!(candidate["impact"]["dependents"], json!([]));
+    assert!(proposal["clarification"].as_str().unwrap().ends_with('?'));
+    let accept = json!({"op":"clarify_proposal","expected_revision":proposal["revision"],
+        "disposition":"accept","scope_token":candidate["scope_token"],"author":"Jo","text":"Assess the growers' rule."});
+    let ack = run(&engine, Some(receipt), accept.clone()).unwrap();
+    assert!(run(&engine, Some(receipt), accept.clone()).is_err());
+    let newer = run(
+        &engine,
+        Some("newer"),
+        json!({"op":"create","title":"New harvest feature"}),
+    )
+    .unwrap();
+    run(
+        &engine,
+        Some("newer"),
+        json!({"op":"apply","expected_revision":newer["revision"],"edits":[
+            add("first","decision","Orchard cleanup should preserve the golden harvest."),
+            add("second","decision","Preserve the golden harvest during orchard cleanup as agreed.")
+        ]}),
+    )
+    .unwrap();
+    drop(engine);
+    let engine = Engine::open_existing(&e.store).unwrap();
+    let read = || run(&engine, Some(receipt), json!({"op":"proposal_impact"})).unwrap();
+    let confirmed = read();
+    assert_eq!(confirmed["scope_status"], "confirmed_scope");
+    assert_eq!(confirmed["policy_status"], "proposed");
+    assert_eq!(
+        confirmed["candidates"][0]["scope_token"],
+        candidate["scope_token"]
+    );
+    assert_eq!(
+        confirmed["last_answer"]["scope"]["decision"]["entry_id"],
+        "keep"
+    );
+    let taught = run(
+        &engine,
+        None,
+        json!({"op":"propose_change","text":accept["text"],"author":"Dana","source":"Later chat"}),
+    )
+    .unwrap();
+    assert_eq!(taught["scope_status"], "needs_clarification");
+    assert_eq!(
+        taught["candidates"][0]["previous_clarification"]["proposal_id"],
+        receipt
+    );
+    assert_eq!(
+        taught["candidates"][0]["previous_clarification"]["answered_by"],
+        "Jo"
+    );
+    let later = taught["task_id"].as_str().unwrap();
+    run(&engine,Some(later),json!({"op":"clarify_proposal","expected_revision":taught["revision"],"disposition":"accept","scope_token":taught["candidates"][0]["scope_token"],"author":"Dana","text":"Yes."})).unwrap();
+    assert_eq!(
+        run(&engine, Some(later), json!({"op":"proposal_impact"})).unwrap()["scope_status"],
+        "confirmed_scope"
+    );
+    let mut replacement = add("new", "decision", "Require final clearance.");
+    replacement["entry"]["supersedes"] = json!("keep");
+    apply(
+        &engine,
+        owner["revision"].as_u64().unwrap(),
+        json!([replacement]),
+    )
+    .unwrap();
+    let changed = read();
+    assert_eq!(
+        run(&engine, Some(later), json!({"op":"proposal_impact"})).unwrap()["scope_status"],
+        "support_changed"
+    );
+    assert_eq!(changed["scope_status"], "support_changed");
+    assert_eq!(changed["candidates"].as_array().unwrap().len(), 2);
+    assert!(
+        changed["candidates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|c| c["selected"] == false)
+    );
+    assert_eq!(changed["last_answer"]["text"], accept["text"]);
+    let mut stale = accept;
+    stale["expected_revision"] = ack["revision"].clone();
+    assert!(run(&engine, Some(receipt), stale).is_err());
+    run(&engine,Some(receipt),json!({"op":"clarify_proposal","expected_revision":ack["revision"],"author":"Jo","text":"Set this aside.","disposition":"dismiss"})).unwrap();
+    drop(engine);
+    let engine = Engine::open_existing(&e.store).unwrap();
+    let dismissed = run(&engine, None, ask).unwrap();
+    assert_eq!(dismissed["scope_status"], "dismissed");
+    assert_eq!(dismissed["last_answer"]["text"], "Set this aside.");
+    assert!(dismissed["clarification"].is_null());
+}
+
+#[test]
+fn only_exact_rule_bytes_neighboring_the_review_can_suggest_impact() {
+    let e = env();
+    let engine = Engine::open_existing(&e.store).unwrap();
+    let policy = "Seal the ledger. Orchard keys require two signatures. Unrelated policy. Archive the invoice.";
+    engine.replace_source("rules.md", policy).unwrap();
+    let mut feature = call(&engine, json!({"op":"create","title":"Ledger"})).unwrap();
+    for (id, quote, rule) in [
+        ("near", "Seal the ledger.", "Seal the ledger."),
+        ("far", "Archive the invoice.", "Archive the invoice."),
+        (
+            "paraphrase",
+            "Seal the ledger.",
+            "The account must be closed.",
+        ),
+    ] {
+        let start = policy.find(quote).unwrap();
+        let handle = context_foundry::SourceHandle {
+            workspace_id: e.wid.clone(),
+            path: "rules.md".into(),
+            sha256: context_foundry::digest(policy.as_bytes()),
+            start: start as u64,
+            end: (start + quote.len()) as u64,
+        }
+        .to_v2();
+        let mut edit = add(id, "decision", rule);
+        edit["entry"]["source_links"] = json!([handle]);
+        feature = apply(
+            &engine,
+            feature["revision"].as_u64().unwrap(),
+            json!([edit]),
+        )
+        .unwrap();
+    }
+    let spec = call(
+        &engine,
+        json!({"op":"capture","source":"rules.md","expected_revision":feature["revision"]}),
+    )
+    .unwrap();
+    let note=call(&engine,json!({"op":"capture","source":"Meeting","text":"Orchard keys require signatures. Alert violet penguins.","expected_revision":spec["revision"]})).unwrap();
+    let linked = call(
+        &engine,
+        json!({"op":"connections","entry_id":note["entry_id"]}),
+    )
+    .unwrap();
+    let prior = &linked["candidates"][0];
+    assert_eq!(prior["quote"], "Orchard keys require two signatures.");
+    let review = json!({"op":"review_connection","entry_id":note["entry_id"],"prior_id":prior["entry_id"],"prior_span":[prior["offset"],prior["end"]],"author":"Alex","disposition":"accept","expected_revision":note["revision"]});
+    call(&engine, review).unwrap();
+    let request=task_context::parse(json!({"workspace_id":e.wid,"command":{"op":"propose_change","text":"Who alerts the violet penguins?","source":"Planning","author":"Alex"}})).unwrap();
+    let read = || {
+        engine
+            .task_context(&request, &Control::unbounded())
+            .unwrap()
+    };
+    let found = read();
+    assert_eq!(found["candidates"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        found["candidates"][0]["basis"],
+        "adjacent_in_reviewed_source"
+    );
+    assert_eq!(
+        found["candidates"][0]["impact"]["decision"]["entry_id"],
+        "near"
+    );
+    assert_eq!(found["scope_status"], "needs_clarification");
+    let duplicate = task_context::parse(json!({"workspace_id":e.wid,"command":{"op":"propose_change","text":"Orchard keys require signatures. Alert violet penguins.","source":"Operator","author":"Alex"}})).unwrap();
+    let copied = engine
+        .task_context(&duplicate, &Control::unbounded())
+        .unwrap();
+    assert_eq!(
+        copied["candidates"][0]["lead"]["entry_id"],
+        note["entry_id"]
+    );
+    engine.replace_source("rules.md", "Replaced text.").unwrap();
+    assert_eq!(read()["candidates"], json!([]));
+}
+
+#[test]
+fn another_feature_requires_a_decision_only_with_current_evidence() {
+    let e = env();
+    let engine = Engine::open_existing(&e.store).unwrap();
+    let send = |task_id: &str, command: Value| {
+        let request =
+            task_context::parse(json!({"workspace_id":e.wid,"task_id":task_id,"command":command}))
+                .unwrap();
+        engine.task_context(&request, &Control::unbounded())
+    };
+    let apply_one = |task: &str, rev: &Value, edit: Value| {
+        send(
+            task,
+            json!({"op":"apply","expected_revision":rev,"edits":[edit]}),
+        )
+    };
+    let rule = "Keep independently edited project copies until the editor resolves them.";
+    let why = "Cleanup must wait for the editor before removing a changed project copy.";
+    engine.replace_source("policy.md", rule).unwrap();
+    engine.replace_source("other.md", rule).unwrap();
+    let link = |path: &str| {
+        context_foundry::SourceHandle {
+            workspace_id: e.wid.clone(),
+            path: path.into(),
+            sha256: context_foundry::digest(rule.as_bytes()),
+            start: 0,
+            end: rule.len() as u64,
+        }
+        .to_v2()
+    };
+    let mut decision = add("policy", "decision", rule);
+    decision["entry"]["source_links"] = json!([link("policy.md")]);
+    let start = send(
+        "correction",
+        json!({"op":"create","title":"Correct a decision"}),
+    )
+    .unwrap();
+    let owner = apply_one("correction", &start["revision"], decision.clone()).unwrap();
+    let uses = |owner: &Value| {
+        send(
+            "correction",
+            json!({"op":"decision_uses","entry_id":"policy","expected_revision":owner["revision"]}),
+        )
+    };
+    let reference = uses(&owner).unwrap()["decision_ref"].clone();
+    let mut r = send("cleanup", json!({"op":"create","title":"Delete a task"})).unwrap();
+    let mut similar = add("wording", "requirement", rule);
+    similar["entry"]["source_links"] = json!([link("other.md")]);
+    r = apply_one("cleanup", &r["revision"], similar).unwrap();
+    let open = uses(&owner).unwrap();
+    assert_eq!(open["dependents"], json!([]));
+    assert_eq!(open["wording_matches"][0]["quote"], rule);
+    assert!(
+        open["wording_matches"][0]["clarification"]
+            .as_str()
+            .unwrap()
+            .ends_with('?')
+    );
+    let mut adopted = add("adopted", "constraint", rule);
+    adopted["entry"]["source_links"] = json!([link("policy.md")]);
+    r = apply_one("cleanup", &r["revision"], adopted).unwrap();
+    let automatic = uses(&owner).unwrap();
+    assert_eq!(
+        automatic["dependents"][0]["basis"],
+        "same_required_source_passage"
+    );
+    assert_eq!(
+        automatic["dependents"][0]["shared_source"],
+        link("policy.md")
+    );
+    assert_eq!(automatic["wording_matches"], json!([]));
+    let mut correction = add(
+        "released",
+        "constraint",
+        "This constraint has been withdrawn.",
+    );
+    correction["entry"]["supersedes"] = json!("adopted");
+    r = apply_one("cleanup", &r["revision"], correction).unwrap();
+    assert_eq!(uses(&owner).unwrap()["dependents"], json!([]));
+
+    let mut required = add("gate", "requirement", why);
+    required["entry"]["relies_on"] = reference.clone();
+    let mut wrong = required.clone();
+    wrong["entry"]["relies_on"]["token"] = json!("0".repeat(64));
+    assert!(apply_one("cleanup", &r["revision"], wrong).is_err());
+    assert!(apply_one("correction", &owner["revision"], required.clone()).is_err());
+    engine.replace_source("guide.md", why).unwrap();
+    let guide = context_foundry::SourceHandle {
+        workspace_id: e.wid.clone(),
+        path: "guide.md".into(),
+        sha256: context_foundry::digest(why.as_bytes()),
+        start: 0,
+        end: why.len() as u64,
+    }
+    .to_v2();
+    required["entry"]["source_links"] = json!([guide]);
+    apply_one("cleanup", &r["revision"], required.clone()).unwrap();
+    let bumped = apply_one(
+        "correction",
+        &owner["revision"],
+        add("another", "work", "Unrelated progress"),
+    )
+    .unwrap();
+    assert!(uses(&owner).is_err());
+    let found = uses(&bumped).unwrap();
+    assert_eq!(found["decision_ref"], reference);
+    assert_eq!(found["dependents"][0]["task_id"], "cleanup");
+    assert_eq!(found["dependents"][0]["quote"], why);
+    assert_eq!(found["dependents"][0]["basis"], "declared_dependency");
+    assert_eq!(found["wording_matches"], json!([]));
+    engine
+        .replace_source("guide.md", "Superseded guide")
+        .unwrap();
+    let stale = uses(&bumped).unwrap();
+    assert_eq!(stale["dependents"], json!([]));
+    assert_eq!(stale["stale_evidence_omitted"], 1);
+    engine.replace_source("guide.md", why).unwrap();
+    engine.replace_source("policy.md", "Updated rule").unwrap();
+    assert!(matches!(uses(&bumped), Err(FoundryError::StaleHandle)));
+    engine.replace_source("policy.md", rule).unwrap();
+    send(
+        "correction",
+        json!({"op":"forget","expected_revision":bumped["revision"]}),
+    )
+    .unwrap();
+    let new = send(
+        "correction",
+        json!({"op":"create","title":"Correct a decision"}),
+    )
+    .unwrap();
+    let new = apply_one("correction", &new["revision"], decision).unwrap();
+    let after = uses(&new).unwrap();
+    assert_ne!(after["decision_ref"], reference);
+    assert_eq!(after["dependents"], json!([]));
+}
+
+#[test]
+fn named_feature_recovers_decisions_when_the_operator_remembers_only_the_title() {
+    let e = env();
+    let engine = Engine::open_existing(&e.store).unwrap();
+    let run = |request| {
+        engine
+            .task_context(
+                &task_context::parse(request).unwrap(),
+                &Control::unbounded(),
+            )
+            .unwrap()
+    };
+    let ask = |title: Option<&str>| {
+        let mut cmd =
+            json!({"op":"find_decisions","text":"Can the observatory postpone a lunar excursion?"});
+        if let Some(title) = title {
+            cmd["feature_title"] = json!(title);
+        }
+        run(json!({"workspace_id":e.wid,"command":cmd}))
+    };
+    let mut replacement = add("green", "decision", "Use green labels.");
+    replacement["entry"]["supersedes"] = json!("old");
+    let saved = apply(&engine,create(&engine),json!([
+        add("old","decision","Use violet labels."), replacement,
+        add("hidden","decision","Use blue labels."), {"op":"select","entry_id":"hidden","selected":false},
+        add("rule","requirement","Labels must be legible.")
+    ])).unwrap();
+    let miss = ask(None);
+    assert_eq!(miss["candidates"], json!([]));
+    assert!(miss["recovery_question"].is_string());
+    let scoped = ask(Some("  REPAIR A RETRY POLICY  "));
+    assert_eq!(scoped["basis"], "operator_named_feature");
+    assert!(scoped["clarification"].is_string());
+    assert_eq!(scoped["candidates"].as_array().unwrap().len(), 1);
+    assert_eq!(scoped["candidates"][0]["entry_id"], "green");
+    assert_eq!(scoped["candidates"][0]["quote"], "Use green labels.");
+    let partial = ask(Some("RETRY policy"));
+    assert_eq!(partial["candidates"], json!([]));
+    assert_eq!(
+        partial["feature_title_options"],
+        json!(["Repair a retry policy"])
+    );
+    assert_eq!(partial["matching_feature_titles"], 1);
+    assert!(partial["clarification"].is_string());
+    assert!(!partial.to_string().contains("Use green labels."));
+    let confirmed = ask(partial["feature_title_options"][0].as_str());
+    assert_eq!(confirmed["candidates"][0]["quote"], "Use green labels.");
+    for fragment in ["retr", "repair policy", "a", "other"] {
+        let miss = ask(Some(fragment));
+        assert_eq!(miss["candidates"], json!([]));
+        assert!(
+            miss["feature_title_options"]
+                .as_array()
+                .is_none_or(Vec::is_empty)
+        );
+    }
+    for (id, title) in [
+        ("batch", "Batch retry policy"),
+        ("jobs", "Jobs retry policy"),
+        ("uplink", "Uplink retry policy"),
+        ("audit", "Backup audit"),
+    ] {
+        let feat =
+            run(json!({"workspace_id":e.wid,"task_id":id,"command":{"op":"create","title":title}}));
+        run(
+            json!({"workspace_id":e.wid,"task_id":id,"command":{"op":"apply","expected_revision":feat["revision"],"edits":[add("private","decision","Inspect the full run first.")]}}),
+        );
+    }
+    let several = ask(Some("retry policy"));
+    assert_eq!(several["matching_feature_titles"], 4);
+    assert_eq!(several["candidates"], json!([]));
+    let options = several["feature_title_options"].as_array().unwrap();
+    assert_eq!(options.len(), 3);
+    let distinct: std::collections::BTreeSet<_> =
+        options.iter().map(|name| name.as_str().unwrap()).collect();
+    assert_eq!(distinct.len(), 3);
+    assert!(distinct.iter().all(|name| name.ends_with("retry policy")));
+    assert!(!several.to_string().contains("Backup audit"));
+    assert!(!several.to_string().contains("Inspect the full run first."));
+    apply(
+        &engine,
+        saved["revision"].as_u64().unwrap(),
+        json!([
+            add("round", "decision", "Use round labels."),
+            add("thin", "decision", "Use thin labels.")
+        ]),
+    )
+    .unwrap();
+    let capped = ask(Some("Repair a retry policy"));
+    assert_eq!(capped["candidates"].as_array().unwrap().len(), 2);
+    run(
+        json!({"workspace_id":e.wid,"task_id":"duplicate","command":{"op":"create","title":"Repair a retry policy"}}),
+    );
+    assert_eq!(ask(Some("Repair a retry policy"))["candidates"], json!([]));
+}
+
+#[test]
+fn first_encounter_follows_only_current_declared_reasons_and_separates_loose_wording() {
+    let e = env();
+    let engine = Engine::open_existing(&e.store).unwrap();
+    let run = |task: Option<&str>, cmd: Value| {
+        let mut req = json!({"workspace_id":e.wid,"command":cmd});
+        if let Some(id) = task {
+            req["task_id"] = json!(id);
+        }
+        engine
+            .task_context(&task_context::parse(req).unwrap(), &Control::unbounded())
+            .unwrap()
+    };
+    let ask = |q| run(None, json!({"op":"find_decisions","text":q}));
+    let origin = create(&engine);
+    let policy = "The depot retains the register after a transfer.";
+    let revision = apply(
+        &engine,
+        origin,
+        json!([add("register", "decision", policy)]),
+    )
+    .unwrap()["revision"]
+        .clone();
+    let reference = call(
+        &engine,
+        json!({"op":"decision_uses","entry_id":"register","expected_revision":revision}),
+    )
+    .unwrap()["decision_ref"]
+        .clone();
+    let reason = "Curators reconcile pigment slips before shipment.";
+    let feature = run(
+        Some("museum"),
+        json!({"op":"create","title":"Museum transfer"}),
+    );
+    let note = run(
+        Some("museum"),
+        json!({"op":"capture","source":"Curator minutes","text":"Review each collection.","expected_revision":feature["revision"]}),
+    );
+    // Two matching declarations to one target still yield a single decision.
+    let mut declarations = Vec::new();
+    for i in 0..9 {
+        let mut edit = add(&format!("curator-{i}"), "requirement", reason);
+        edit["entry"]["relies_on"] = reference.clone();
+        declarations.push(edit);
+    }
+    let feature = run(
+        Some("museum"),
+        json!({"op":"apply","expected_revision":note["revision"],"edits":declarations}),
+    );
+    let cite = run(
+        Some("investigation"),
+        json!({"op":"cite_source","expected_revision":revision,"entry_id":"register","origin_task_id":"museum","origin_entry_id":note["entry_id"],"capture_revision":note["capture_revision"],"quote":"Review each collection.","author":"Curator"}),
+    );
+    let query = "Which register governs a shipment?";
+    let report = ask(query);
+    assert_eq!(report["matching"], 1);
+    assert_eq!(report["unchecked_declarations"], 1);
+    let decision = &report["candidates"][0];
+    assert_eq!(decision["directly_cited_originals"], "current");
+    assert_eq!(decision["quote"], policy);
+    assert_eq!(decision["shared_words"], json!(["register"]));
+    let via = &decision["via_requirement"];
+    assert_eq!(via["quote"], reason);
+    assert_eq!(via["relies_on"], reference);
+    assert_eq!(via["shared_words"], json!(["shipment"]));
+    for c in [decision, via] {
+        let bytes = c["end"].as_u64().unwrap() - c["offset"].as_u64().unwrap();
+        assert_eq!(
+            run(
+                c["task_id"].as_str(),
+                json!({"op":"peek","entry_id":c["entry_id"],"offset":c["offset"],"bytes":bytes})
+            )["text"],
+            c["quote"]
+        );
+    }
+    let loose = ask("Does the depot authorize quarterly payroll transfer fees abroad?");
+    assert_eq!(loose["candidates"], json!([]));
+    assert!(loose["clarification"].is_string());
+    assert_eq!(
+        ask("depot register")["candidates"][0]["entry_id"],
+        "register"
+    );
+    let reason_only = ask("Who reconciles pigment slips?");
+    assert_eq!(reason_only["candidates"][0]["entry_id"], "register");
+    assert_eq!(reason_only["candidates"][0]["shared_words"], json!([]));
+    run(
+        Some("museum"),
+        json!({"op":"capture","source":"Curator minutes","text":"Skip the collection review.","expected_revision":feature["revision"],"supersedes":note["entry_id"]}),
+    );
+    assert_eq!(
+        ask(query)["candidates"][0]["directly_cited_originals"],
+        "needs_review"
+    );
+    let named = run(
+        None,
+        json!({"op":"find_decisions","text":query,"feature_title":"Repair a retry policy"}),
+    );
+    let changed = &named["candidates"][0]["changed_support"];
+    assert_eq!(changed["original"]["quote"], "Review each collection.");
+    assert_eq!(changed["current_excerpt"]["role"], "position_preview");
+    assert_eq!(
+        changed["current_excerpt"]["quote"],
+        "Skip the collection review."
+    );
+    assert_eq!(changed["quote_match"]["status"], "absent");
+    run(
+        Some("investigation"),
+        json!({"op":"forget","expected_revision":cite["revision"]}),
+    );
+    assert_eq!(ask(query)["candidates"], json!([]));
+    let revision = create(&engine);
+    apply(
+        &engine,
+        revision,
+        json!([add("register", "decision", policy)]),
+    )
+    .unwrap();
+    assert_eq!(ask(query)["candidates"], json!([]));
+}
+
+#[test]
+fn later_note_finds_two_promises_and_reviews_only_the_connection() {
+    let e = env();
+    let mut engine = Engine::open_existing(&e.store).unwrap();
+    let r = create(&engine);
+    let promise = "Café rules. Record the original task identity. Copy access is retained while edits are reviewed. Removing the original task preserves separately edited copies.";
+    engine.replace_source("policy.md", promise).unwrap();
+    engine
+        .replace_source(
+            "cleanup.rs",
+            "/// Removing the original task preserves separately edited copies.
+fn keep_copy(edited: bool) -> bool { edited }",
+        )
+        .unwrap();
+    engine.refresh(&Control::unbounded()).unwrap();
+    let spec = call(
+        &engine,
+        json!({"op":"capture","expected_revision":r,"source":"policy.md"}),
+    )
+    .unwrap();
+    let r = apply(&engine,spec["revision"].as_u64().unwrap(),json!([
+        add("old","decision","Notify legal on every separately edited copy."),
+        {"op":"add","entry":{"id":"notice","kind":"decision","text":"Notify the editor before removing an edited copy.","author":"Mika","provenance":"team decision","supersedes":"old","source_links":[]}},
+        add("other","decision","The café opens every Monday.")
+    ])).unwrap()["revision"].as_u64().unwrap();
+    let note = "Can we remove an edited copy when the original task closes?";
+    let find = |text: &str| {
+        task_context::parse(
+            json!({"workspace_id":e.wid,"command":{"op":"find_decisions","text":text}}),
+        )
+        .unwrap()
+    };
+    let found = engine
+        .task_context(&find(note), &Control::unbounded())
+        .unwrap();
+    assert_eq!(found["matching"], 2);
+    assert!(found["clarification"].as_str().unwrap().ends_with('?'));
+    let matched = found["candidates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["entry_id"] == spec["entry_id"])
+        .unwrap();
+    let range =
+        matched["offset"].as_u64().unwrap() as usize..matched["end"].as_u64().unwrap() as usize;
+    assert_eq!(matched["quote"], &promise[range]);
+    assert!(
+        matched["quote"]
+            .as_str()
+            .unwrap()
+            .contains("preserves separately edited copies")
+    );
+    assert_eq!(matched["source_links"][0]["status"], "fresh");
+    assert_eq!(
+        engine
+            .task_context(&find("Jupiter tulips"), &Control::unbounded())
+            .unwrap()["matching"],
+        0
+    );
+    let mut wrong = find(note);
+    wrong.workspace_id = "0".repeat(64);
+    assert!(matches!(
+        engine.task_context(&wrong, &Control::unbounded()),
+        Err(FoundryError::WrongWorkspace)
+    ));
+
+    let saved = call(
+        &engine,
+        json!({"op":"capture","expected_revision":r,"source":"meeting","text":note}),
+    )
+    .unwrap();
+    let read = json!({"op":"connections","entry_id":saved["entry_id"]});
+    let proposed = call(&engine, read.clone()).unwrap();
+    assert_eq!(proposed["note"]["quote"], note);
+    assert_eq!(proposed["note"]["sha256"], saved["sha256"]);
+    let review = |rev: &Value, prior: &Value, disposition: &str| {
+        let passage = proposed["candidates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["entry_id"] == *prior);
+        let span = passage
+            .map(|p| json!([p["offset"], p["end"]]))
+            .unwrap_or(json!([0, 1]));
+        json!({"op":"review_connection","entry_id":saved["entry_id"],"prior_id":prior,"prior_span":span,
+               "expected_revision":rev,"disposition":disposition,"author":"Reviewer"})
+    };
+    let mut wrong_passage = review(&saved["revision"], &spec["entry_id"], "accept");
+    wrong_passage["prior_span"] = json!([0, 1]);
+    assert!(matches!(
+        call(&engine, wrong_passage),
+        Err(FoundryError::Conflict(_))
+    ));
+    let accept = review(&saved["revision"], &spec["entry_id"], "accept");
+    let accepted = call(&engine, accept.clone()).unwrap();
+    assert!(matches!(
+        call(&engine, accept),
+        Err(FoundryError::Conflict(_))
+    ));
+    let retry = call(
+        &engine,
+        review(&accepted["revision"], &spec["entry_id"], "accept"),
+    )
+    .unwrap();
+    assert_eq!(retry["revision"], accepted["revision"]);
+    assert_eq!(retry["outcome"], "existing");
+    assert!(
+        call(
+            &engine,
+            review(&accepted["revision"], &json!("old"), "accept")
+        )
+        .is_err()
+    );
+    assert!(
+        call(
+            &engine,
+            review(&accepted["revision"], &json!("other"), "accept")
+        )
+        .is_err()
+    );
+    let dismissed = call(
+        &engine,
+        review(&accepted["revision"], &json!("notice"), "dismiss"),
+    )
+    .unwrap();
+    drop(engine);
+    let reopened = cli(&e, read.clone());
+    let engine = Engine::open_existing(&e.store).unwrap();
+    assert_eq!(reopened["candidates"], json!([]));
+    assert_eq!(reopened["reviews"].as_array().unwrap().len(), 2);
+    let reviewed = reopened["reviewed_passages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["review"]["disposition"] == "accept")
+        .unwrap();
+    assert_eq!(reviewed["prior"]["quote"], matched["quote"]);
+    assert_eq!(reviewed["prior"]["sha256"], matched["sha256"]);
+    let render = || json!({"op":"render","max_bytes":8192});
+    let view = call(&engine, render()).unwrap();
+    let current_note = |v: &Value| {
+        v["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["id"] == saved["entry_id"])
+            .unwrap()["accepted_connections"]
+            .clone()
+    };
+    assert_eq!(current_note(&view), json!([spec["entry_id"]]));
+    let impact = |revision: &Value| {
+        let context = engine
+            .context_candidates_with(
+                "What changes if we keep an edited copy?",
+                context_foundry::Strategy::Auto,
+                &Control::unbounded(),
+                &context_foundry::store::ContextOptions {
+                    task: Some(task_context::Scope {
+                        workspace_id: &e.wid,
+                        task_id: "investigation",
+                        expected_revision: revision.as_u64().unwrap(),
+                    }),
+                    compose_evidence: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let packed = context_foundry::response::pack_enriched_context(
+            &context,
+            None,
+            context_foundry::response::Budget::request(6000),
+            &context_foundry::response::stdout_bytes,
+        )
+        .unwrap();
+        let record = |prefix| {
+            let line = packed
+                .text
+                .lines()
+                .find_map(|l| l.strip_prefix(prefix))
+                .unwrap();
+            serde_json::from_str::<Value>(line).unwrap()
+        };
+        let evidence = record("task-evidence: ");
+        assert!(
+            evidence["discovery"]["queried_entries"]
+                .as_array()
+                .unwrap()
+                .len()
+                <= 4
+        );
+        let matches: std::collections::BTreeSet<_> = evidence["sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|s| {
+                s["handle"]
+                    .as_str()
+                    .is_some_and(|h| h.starts_with("cleanup.rs#"))
+            })
+            .flat_map(|s| s["via"].as_array().unwrap())
+            .filter_map(|v| v.as_str()?.strip_prefix("reviewed_text_match:"))
+            .map(|rev| rev.parse::<u64>().unwrap())
+            .collect();
+        (
+            record("task-view: ")["view"]["accepted_passages"].clone(),
+            matches,
+        )
+    };
+    let (accepted_passages, matches) = impact(&dismissed["revision"]);
+    assert_eq!(
+        matches.into_iter().collect::<Vec<_>>(),
+        [accepted["revision"].as_u64().unwrap()]
+    );
+    let items = accepted_passages["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(accepted_passages["omitted"], 0);
+    assert_eq!(items[0]["note"]["quote"], note);
+    assert_eq!(items[0]["prior"]["quote"], matched["quote"]);
+    assert_eq!(items[0]["reviewed_by"], "Reviewer");
+    assert_eq!(items[0]["review_revision"], accepted["revision"]);
+    let source = engine
+        .retrieve(items[0]["prior"]["handle"].as_str().unwrap(), None, 1024)
+        .unwrap();
+    assert_eq!(String::from_utf8(source.span).unwrap(), matched["quote"]);
+    assert!(view.get("accepted_passages").is_none());
+    let reversed = call(
+        &engine,
+        review(&dismissed["revision"], &json!("notice"), "accept"),
+    )
+    .unwrap();
+    assert_ne!(reversed["revision"], dismissed["revision"]);
+    assert_eq!(
+        call(&engine, read).unwrap()["reviews"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+    engine
+        .replace_source("policy.md", "Different policy.")
+        .unwrap();
+    assert!(
+        call(
+            &engine,
+            review(&reversed["revision"], &spec["entry_id"], "accept")
+        )
+        .is_err()
+    );
+    let view = call(&engine, render()).unwrap();
+    assert_eq!(current_note(&view), json!(["notice"]));
+    let (current, matches) = impact(&reversed["revision"]);
+    assert!(!matches.contains(&accepted["revision"].as_u64().unwrap()));
+    assert_eq!(current["items"].as_array().unwrap().len(), 1);
+    assert_eq!(current["items"][0]["prior"]["entry_id"], "notice");
+    assert!(current["items"][0]["prior"].get("handle").is_none());
+    let dismissed = call(
+        &engine,
+        review(&reversed["revision"], &json!("notice"), "dismiss"),
+    )
+    .unwrap();
+    assert_eq!(
+        impact(&dismissed["revision"]),
+        (Value::Null, Default::default())
+    );
+    let restored = call(
+        &engine,
+        review(&dismissed["revision"], &json!("notice"), "accept"),
+    )
+    .unwrap();
+    let corrected = call(&engine, json!({"op":"capture","expected_revision":restored["revision"],
+        "supersedes":saved["entry_id"],"source":"meeting","text":"The editor will keep the original task open."})).unwrap();
+    assert_eq!(
+        impact(&corrected["revision"]),
+        (Value::Null, Default::default())
+    );
+    let original = call(
+        &engine,
+        json!({"op":"peek","entry_id":spec["entry_id"],"offset":0,"bytes":4096}),
+    )
+    .unwrap();
+    assert_eq!(original["text"], promise);
+    assert_eq!(original["source_links"][0]["status"], "stale");
+}
+
+#[test]
+fn capture_replays_without_duplication_and_corrections_preserve_separate_accounts() {
+    let e = env();
+    let engine = Engine::open_existing(&e.store).unwrap();
+    let initial = create(&engine);
+    let original = format!("{}é{}", "a".repeat(1023), "b".repeat(80));
+    let input = json!({"op":"capture","expected_revision":initial,"source":"planning meeting","text":original});
+    let first = call(&engine, input.clone()).unwrap();
+    let view = call(&engine, json!({"op":"render","max_bytes":4096})).unwrap();
+    assert_eq!(view["entries"][0]["representation"], "source_excerpt");
+    assert_eq!(view["entries"][0]["text"], "a".repeat(1023));
+    let other = call(&engine, json!({"op":"capture","expected_revision":first["revision"],"source":"ticket","author":"editor","text":original})).unwrap();
+    assert_ne!(other["entry_id"], first["entry_id"]);
+    let change = json!({"op":"capture","expected_revision":other["revision"],"source":"meeting correction","text":"Keep the separately edited copy.","supersedes": first["entry_id"]});
+    let corrected = call(&engine, change.clone()).unwrap();
+    assert_eq!(call(&engine, change).unwrap()["outcome"], "existing");
+    let mut stale = input.clone();
+    stale["text"] = json!("stale concurrent change");
+    assert!(matches!(
+        call(&engine, stale),
+        Err(FoundryError::Conflict(_))
+    ));
+    drop(engine);
+
+    let engine = Engine::open_existing(&e.store).unwrap();
+    let list = task_context::parse(json!({"workspace_id":e.wid,"command":{"op":"list"}})).unwrap();
+    let tasks = engine.task_context(&list, &Control::unbounded()).unwrap();
+    assert_eq!(
+        tasks["tasks"],
+        json!([{"task_id":"investigation","title":"Repair a retry policy","revision":corrected["revision"]}])
+    );
+    let replay = call(&engine, input).unwrap();
+    assert_eq!(replay["revision"], corrected["revision"]);
+    assert_eq!(replay["historical"], true);
+    let peek = call(
+        &engine,
+        json!({"op":"peek","entry_id":first["entry_id"],"offset":0,"bytes":4096}),
+    )
+    .unwrap();
+    assert_eq!(peek["text"], original);
+    assert_eq!(peek["sha256"], first["sha256"]);
+    let current = call(&engine, json!({"op":"render","max_bytes":4096})).unwrap();
+    let ids: Vec<_> = current["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| &e["id"])
+        .collect();
+    assert_eq!(ids, [&other["entry_id"], &corrected["entry_id"]]);
+}
+
+#[test]
 fn cli_lifecycle_recovers_non_repository_observation_after_fold_restart_and_restore() {
     let e = env();
     let r = cli(&e, json!({"op":"create","title":"Repair a retry policy"}))["revision"]
@@ -590,12 +1476,83 @@ async fn experimental_mcp_tool_is_opt_in_and_matches_cli_state() {
             enabled
         );
         if enabled {
-            let schema = &catalog
+            let tool = catalog
                 .tools
                 .iter()
                 .find(|t| t.name == "task_context")
+                .unwrap();
+            // Desktop clients can see the description even when arguments render as unknown.
+            let mut example = tool
+                .description
+                .as_deref()
                 .unwrap()
-                .input_schema;
+                .lines()
+                .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+                .find(|request| request["command"]["op"] == "apply")
+                .expect("catalog includes a complete apply request");
+            example["workspace_id"] = json!(e.wid);
+            let request = task_context::parse(example).expect("advertised decision request parses");
+            assert!(
+                matches!(request.command, task_context::Command::Apply { ref edits, .. }
+                if matches!(edits.as_slice(), [task_context::Edit::Add { entry }] if entry.kind == task_context::Kind::Decision))
+            );
+            let schema = &tool.input_schema;
+            let command = &schema["properties"]["command"];
+            assert_eq!(command["required"], json!(["op"]));
+            let rules = command["allOf"].as_array().expect("per-operation rules");
+            let dependency = rules
+                .iter()
+                .find(|r| r["if"]["properties"]["op"]["const"] == "decision_uses")
+                .unwrap();
+            assert_eq!(
+                dependency["then"]["required"],
+                json!(["op", "entry_id", "expected_revision"])
+            );
+            assert!(dependency["then"]["properties"].get("after_id").is_some());
+            let reference = &command["properties"]["edits"]["items"]["properties"]["entry"]["properties"]
+                ["relies_on"];
+            assert_eq!(
+                reference["required"],
+                json!(["task_id", "entry_id", "token"])
+            );
+            let lookup = rules
+                .iter()
+                .find(|rule| rule["if"]["properties"]["op"]["const"] == "find_decisions")
+                .unwrap();
+            assert_eq!(lookup["then"]["required"], json!(["op", "text"]));
+            assert_eq!(lookup["then"]["maxProperties"], 3);
+            assert_eq!(lookup["then"]["additionalProperties"], false);
+            assert_eq!(
+                lookup["then"]["properties"],
+                json!({"op": {}, "text": {}, "feature_title": {}})
+            );
+            assert_eq!(command["properties"]["feature_title"]["type"], "string");
+            for (op, fields) in [
+                ("propose_change", vec!["op", "text", "source", "author"]),
+                ("proposal_impact", vec!["op"]),
+                ("connections", vec!["op", "entry_id"]),
+                (
+                    "review_connection",
+                    vec![
+                        "op",
+                        "expected_revision",
+                        "entry_id",
+                        "prior_id",
+                        "prior_span",
+                        "disposition",
+                        "author",
+                    ],
+                ),
+                ("inspect", vec!["op"]),
+                ("peek", vec!["op", "entry_id", "offset", "bytes"]),
+            ] {
+                let rule = rules
+                    .iter()
+                    .find(|rule| rule["if"]["properties"]["op"]["const"] == op)
+                    .expect("catalog describes the read operation");
+                assert_eq!(rule["then"]["required"], json!(fields));
+                assert_eq!(rule["then"]["maxProperties"], fields.len());
+            }
             assert_eq!(
                 schema["properties"]["command"]["properties"]["assertions"]["maxItems"],
                 16
@@ -607,7 +1564,8 @@ async fn experimental_mcp_tool_is_opt_in_and_matches_cli_state() {
             );
             for command in [
                 json!({"op":"create","title":"MCP task"}),
-                json!({"op":"apply","expected_revision":1,"edits":[{"op":"add","entry":{"id":"obs","kind":"observation","text":"MCP recovery bytes","author":"sandbox operator","provenance":"synthetic task interaction","source_links":[],"assertions":[{"key":"scope:mcp","relation":"equals","value":"3"}]}}]}),
+                json!({"op":"apply","expected_revision":1,"edits":[{"op":"add","entry":{"id":"obs","kind":"observation","text":"MCP recovery bytes","author":"sandbox operator","provenance":"synthetic task interaction","source_links":[],"assertions":[{"key":"scope:mcp","relation":"equals","value":"3"}]}}, add("cap", "decision", "Keep the retry limit at three.")]}),
+                json!({"op":"inspect"}),
                 json!({"op":"peek","entry_id":"obs","offset":0,"bytes":100}),
                 json!({"op":"review","expected_revision":2,"paths":[],"finishing":true,"max_bytes":4096}),
                 assertion_review(
@@ -642,6 +1600,20 @@ async fn experimental_mcp_tool_is_opt_in_and_matches_cli_state() {
             }
         }
         if enabled {
+            let request = json!({"workspace_id":e.wid,"command":{"op":"find_decisions","text":"Should the retry limit change when a request expires?"}});
+            let answer = client
+                .call_tool(
+                    CallToolRequestParams::new("task_context")
+                        .with_arguments(request.as_object().unwrap().clone()),
+                )
+                .await
+                .unwrap();
+            assert_ne!(answer.is_error, Some(true), "{answer:?}");
+            let rmcp::model::ContentBlock::Text(text) = &answer.content[0] else {
+                panic!()
+            };
+            let found: Value = serde_json::from_str(&text.text).unwrap();
+            assert_eq!(found["candidates"][0]["entry_id"], "cap");
             let arguments = |id| {
                 json!({"workspace_id":e.wid,"task_id":"investigation","command":{"op":"apply","expected_revision":2,"edits":[add(id,"work","race candidate")]}}).as_object().unwrap().clone()
             };
@@ -1592,4 +2564,429 @@ fn exported_host_packet_binds_a_folded_observation_and_recovers_original_after_r
         call(&engine, export(r, "output")).is_err(),
         "an unfolded entry is not an admitted replacement"
     );
+}
+
+#[test]
+fn shared_originals_report_direct_and_inherited_impact_after_an_indexed_edit() {
+    let e = env();
+    let send = |engine: &Engine, task: Option<&str>, command: Value| {
+        let mut args = json!({"workspace_id":e.wid,"command":command});
+        if let Some(task) = task {
+            args["task_id"] = json!(task);
+        }
+        engine.task_context(&task_context::parse(args)?, &Control::unbounded())
+    };
+    let engine = Engine::open_existing(&e.store).unwrap();
+    let old = "Preserve the independent amendment.";
+    let new = "Archive the independent amendment.";
+    engine.replace_source("spec.md", old).unwrap();
+    let create =
+        |name: &str| send(&engine, Some(name), json!({"op":"create","title":name})).unwrap();
+    let notebook = create("notebook");
+    let meeting=send(&engine,Some("notebook"),json!({"op":"capture","source":"Planning","author":"Mo","text":"Keep the separately edited copy.","expected_revision":notebook["revision"]})).unwrap();
+    let capture = json!({"op":"capture","source":"spec.md","author":"Li","expected_revision":meeting["revision"]});
+    let spec = send(&engine, Some("notebook"), capture.clone()).unwrap();
+    let replay = send(&engine, Some("notebook"), capture).unwrap();
+    assert_eq!(replay["capture_revision"], spec["capture_revision"]);
+    assert_eq!(replay["outcome"], "existing");
+    let feature = create("cleanup");
+    let feature=send(&engine,Some("cleanup"),json!({"op":"apply","expected_revision":feature["revision"],"edits":[add("keep","decision","Retain a separately edited child when deleting its original.")]})).unwrap();
+    let cite = |entry: &str, revision: &Value, receipt: &Value, quote: &str| json!({"op":"cite_source","entry_id":entry,"expected_revision":revision,"origin_task_id":"notebook","origin_entry_id":receipt["entry_id"],"capture_revision":receipt["capture_revision"],"quote":quote,"author":"Ari","wording":"Can we retire the parent?"});
+    let request = cite("keep", &feature["revision"], &spec, old);
+    let accepted = send(&engine, Some("cleanup"), request.clone()).unwrap();
+    assert_eq!(
+        send(&engine, Some("cleanup"), request).unwrap()["outcome"],
+        "existing"
+    );
+    let decision = send(
+        &engine,
+        Some("cleanup"),
+        json!({"op":"decision_uses","entry_id":"keep","expected_revision":accepted["revision"]}),
+    )
+    .unwrap();
+    let other = create("handoff");
+    let mut rule = add(
+        "independent",
+        "requirement",
+        "Handoff relies on cleanup preserving the editor’s changes.",
+    );
+    rule["entry"]["relies_on"] = decision["decision_ref"].clone();
+    let other = send(
+        &engine,
+        Some("handoff"),
+        json!({"op":"apply","expected_revision":other["revision"],"edits":[rule]}),
+    )
+    .unwrap();
+    let meeting_link = send(
+        &engine,
+        Some("handoff"),
+        cite(
+            "independent",
+            &other["revision"],
+            &meeting,
+            "Keep the separately edited copy.",
+        ),
+    )
+    .unwrap();
+    let bill = create("billing");
+    send(&engine,Some("billing"),json!({"op":"apply","expected_revision":bill["revision"],"edits":[add("bill","requirement","Retire a parent account after billing closes.")]})).unwrap();
+    engine.replace_source("spec.md", new).unwrap();
+    drop(engine);
+    let engine = Engine::open_existing(&e.store).unwrap();
+    let report =
+        |query: &str| send(&engine, None, json!({"op":"source_review","text":query})).unwrap();
+    let uses = |revision: &Value| {
+        send(
+            &engine,
+            Some("cleanup"),
+            json!({"op":"decision_uses","entry_id":"keep","expected_revision":revision}),
+        )
+        .unwrap()
+    };
+    let impact = uses(&accepted["revision"]);
+    assert_eq!(
+        impact["decision"]["directly_cited_originals"],
+        "needs_review"
+    );
+    assert_eq!(
+        impact["decision"]["changed_support"]["quote_match"]["status"],
+        "absent"
+    );
+    let dependent = &impact["dependents"][0];
+    assert_eq!(dependent["needs_source_review"], true);
+    assert_eq!(dependent["directly_cited_originals"], "current");
+    assert_eq!(
+        dependent["current_support"]["original"]["quote"],
+        "Keep the separately edited copy."
+    );
+    assert_eq!(
+        dependent["current_support"]["same_capture_lineage_as_decision"],
+        false
+    );
+    let review = report("Can we retire the parent?");
+    let rows = review["claims"].as_array().unwrap();
+    assert_eq!(
+        rows.iter()
+            .filter(|r| r["review_status"] == "needs_review")
+            .count(),
+        2
+    );
+    let handoff = rows.iter().find(|r| r["feature"] == "handoff").unwrap();
+    assert_eq!(handoff["question_match"], "previously_confirmed_wording");
+    assert_eq!(
+        handoff["claim"]["quote"],
+        "Handoff relies on cleanup preserving the editor’s changes."
+    );
+    assert_eq!(handoff["supports"][0]["original"]["author"], "Mo");
+    assert_eq!(handoff["supports"][0]["status"], "current");
+    let changed = &handoff["supports"][1];
+    assert_eq!(changed["status"], "indexed_source_changed");
+    assert_eq!(changed["original"]["quote"], old);
+    assert_eq!(changed["current_excerpt"]["text"], new);
+    assert_eq!(changed["quote_match"], json!({"status":"absent"}));
+    assert_eq!(changed["current_excerpt"]["role"], "position_preview");
+    assert_eq!(changed["via_decision"], decision["decision_ref"]);
+    let collision = report("Can we retire the parent account after billing closes?");
+    assert!(collision["clarification"].is_string());
+    assert!(
+        collision["claims"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["feature"] == "billing" && r["review_status"] == "no_confirmed_source")
+    );
+    for (body, expected, offset) in [
+        (
+            format!("{old} New appendix."),
+            json!({"status":"unique","moved":false}),
+            0,
+        ),
+        (
+            format!("Préface. {old} New appendix."),
+            json!({"status":"unique","moved":true}),
+            "Préface. ".len(),
+        ),
+        (
+            format!("{old} Also: {old}"),
+            json!({"status":"repeated"}),
+            0,
+        ),
+    ] {
+        engine.replace_source("spec.md", &body).unwrap();
+        let review = report("What requires review?");
+        let row = review["claims"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["feature"] == "handoff")
+            .unwrap();
+        assert_eq!(row["review_status"], "needs_review");
+        assert_eq!(row["supports"][0]["status"], "current");
+        let support = &row["supports"][1];
+        assert_eq!(support["quote_match"], expected);
+        let excerpt = &support["current_excerpt"];
+        assert_eq!(excerpt["offset"], offset);
+        let read = engine
+            .retrieve(excerpt["handle"].as_str().unwrap(), None, 1024)
+            .unwrap();
+        let wanted = if expected["status"] == "unique" {
+            old
+        } else {
+            &body
+        };
+        assert_eq!(read.span, wanted.as_bytes());
+    }
+    // A corrected line selection can exclude the original quote even when
+    // it survives elsewhere in the current indexed file.
+    engine
+        .replace_source("spec.md", &format!("{new}\n{old}"))
+        .unwrap();
+    let revised=send(&engine,Some("notebook"),json!({"op":"capture","source":"spec.md","lines":"1-1","author":"Li","supersedes":spec["entry_id"],"expected_revision":spec["revision"]})).unwrap();
+    let queue = report("Can we retire the parent?");
+    let handoff = queue["claims"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["feature"] == "handoff")
+        .unwrap();
+    let support = &handoff["supports"][1];
+    assert_eq!(support["status"], "source_revised");
+    assert_eq!(
+        support["quote_match"],
+        json!({"status":"unique","moved":true})
+    );
+    assert_eq!(support["current_excerpt"]["role"], "exact_quote");
+    assert!(support["current_excerpt"]["entry_id"].is_null());
+    let read = engine
+        .retrieve(
+            support["current_excerpt"]["handle"].as_str().unwrap(),
+            None,
+            1024,
+        )
+        .unwrap();
+    assert_eq!(read.span, old.as_bytes());
+    assert!(
+        send(
+            &engine,
+            Some("cleanup"),
+            cite("keep", &accepted["revision"], &spec, old)
+        )
+        .is_err()
+    );
+    let repaired = send(
+        &engine,
+        Some("cleanup"),
+        cite("keep", &accepted["revision"], &revised, new),
+    )
+    .unwrap();
+    assert!(
+        report("Can we retire the parent?")["claims"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|r| r["review_status"] != "needs_review")
+    );
+    let hist = send(&engine, Some("cleanup"), json!({"op":"inspect"})).unwrap();
+    assert_eq!(hist["source_citations"].as_array().unwrap().len(), 2);
+    let withdraw = json!({"op":"withdraw_citation","expected_revision":repaired["revision"],"citation_revision":repaired["citation_revision"],"author":"Ari"});
+    send(&engine, Some("cleanup"), withdraw.clone()).unwrap();
+    assert_eq!(
+        send(&engine, Some("cleanup"), withdraw).unwrap()["outcome"],
+        "existing"
+    );
+    let handoff = report("Can we retire the parent?")["claims"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["feature"] == "handoff")
+        .unwrap()
+        .clone();
+    assert_eq!(handoff["supports"].as_array().unwrap().len(), 1);
+
+    // The same meeting cited by both features is one capture lineage.
+    let owner = send(&engine, Some("cleanup"), json!({"op":"inspect"})).unwrap();
+    let shared = send(
+        &engine,
+        Some("cleanup"),
+        cite(
+            "keep",
+            &owner["revision"],
+            &meeting,
+            "Keep the separately edited copy.",
+        ),
+    )
+    .unwrap();
+    let read = || uses(&shared["revision"])["dependents"][0].clone();
+    assert_eq!(
+        read()["current_support"]["same_capture_lineage_as_decision"],
+        true
+    );
+    assert_eq!(read()["needs_source_review"], false);
+
+    // Prefer the other original while it is current. Once edited, the
+    // surviving meeting cannot clear the requirement's own review flag.
+    let extra = send(
+        &engine,
+        Some("handoff"),
+        cite("independent", &meeting_link["revision"], &revised, new),
+    )
+    .unwrap();
+    assert_eq!(read()["current_support"]["original"]["quote"], new);
+    assert_eq!(
+        read()["current_support"]["same_capture_lineage_as_decision"],
+        false
+    );
+    engine.replace_source("spec.md", "Newer revision.").unwrap();
+    let mixed = read();
+    assert_eq!(mixed["needs_source_review"], true);
+    assert_eq!(mixed["directly_cited_originals"], "needs_review");
+    assert_eq!(
+        mixed["current_support"]["same_capture_lineage_as_decision"],
+        true
+    );
+    send(&engine, Some("handoff"), json!({"op":"withdraw_citation","expected_revision":extra["revision"],"citation_revision":meeting_link["citation_revision"],"author":"Ari"})).unwrap();
+    assert!(read()["current_support"].is_null());
+
+    // A new notebook can hold identical bytes under the same IDs; the old
+    // decision citation must not claim the new capture as its own.
+    send(
+        &engine,
+        Some("notebook"),
+        json!({"op":"forget","expected_revision":revised["revision"]}),
+    )
+    .unwrap();
+    let notebook = send(
+        &engine,
+        Some("notebook"),
+        json!({"op":"create","title":"notebook"}),
+    )
+    .unwrap();
+    let recreated = send(&engine, Some("notebook"), json!({"op":"capture","source":"Planning","author":"Mo","text":"Keep the separately edited copy.","expected_revision":notebook["revision"]})).unwrap();
+    assert_eq!(meeting["entry_id"], recreated["entry_id"]);
+    assert_ne!(meeting["capture_revision"], recreated["capture_revision"]);
+    let handoff = send(&engine, Some("handoff"), json!({"op":"inspect"})).unwrap();
+    send(
+        &engine,
+        Some("handoff"),
+        cite(
+            "independent",
+            &handoff["revision"],
+            &recreated,
+            "Keep the separately edited copy.",
+        ),
+    )
+    .unwrap();
+    let recreated_use = uses(&shared["revision"]);
+    assert_eq!(
+        recreated_use["decision"]["changed_support"]["status"],
+        "recreated_original"
+    );
+    assert_eq!(
+        recreated_use["dependents"][0]["current_support"]["same_capture_lineage_as_decision"],
+        false
+    );
+}
+
+#[test]
+fn shared_original_identity_survives_a_pasted_revision_but_never_resurrects_after_forget() {
+    let e = env();
+    let engine = Engine::open_existing(&e.store).unwrap();
+    let send = |task: &str, cmd: Value| {
+        let mut request = json!({"workspace_id":e.wid,"command":cmd});
+        if !task.is_empty() {
+            request["task_id"] = json!(task);
+        }
+        engine.task_context(&task_context::parse(request)?, &Control::unbounded())
+    };
+    let new =
+        || send("notes", json!({"op":"create","title":"Notebook"})).unwrap()["revision"].clone();
+    let capture = |rev: Value| {
+        send("notes",json!({"op":"capture","expected_revision":rev,"source":"Meeting","author":"Ada","text":"Résumé. ha ha ha!"})).unwrap()
+    };
+    let old = capture(new());
+    let f = create(&engine);
+    let f = apply(
+        &engine,
+        f,
+        json!([add("rule", "constraint", "Operator confirmation required.")]),
+    )
+    .unwrap();
+    let mut cite = json!({"op":"cite_source","entry_id":"rule","expected_revision":f["revision"],"origin_task_id":"notes","origin_entry_id":old["entry_id"],"capture_revision":old["capture_revision"],"quote":"ha ha","author":"Ada"});
+    assert!(send("investigation", cite.clone()).is_err());
+    cite["offset"] = json!(1);
+    assert!(send("investigation", cite.clone()).is_err());
+    cite["offset"] = json!("Résumé. ".len());
+    send("investigation", cite.clone()).unwrap();
+    let changed=send("notes",json!({"op":"capture","source":"Renamed minutes","author":"Ada","text":"Résumé. Stop.","supersedes":old["entry_id"],"expected_revision":old["revision"]})).unwrap();
+    let impact = || {
+        send(
+            "",
+            json!({"op":"source_review","text":"What requires review?"}),
+        )
+        .unwrap()["claims"][0]["supports"][0]
+            .clone()
+    };
+    assert_eq!(impact()["status"], "source_revised");
+    assert_eq!(impact()["current_excerpt"]["quote"], "Stop.");
+    assert_eq!(impact()["quote_match"], json!({"status":"absent"}));
+    let correction=send("notes",json!({"op":"capture","source":"Renamed minutes","author":"Ada","text":"Édition finale. ha ha. Final decision.","supersedes":changed["entry_id"],"expected_revision":changed["revision"]})).unwrap();
+    let support = impact();
+    assert_eq!(
+        support["quote_match"],
+        json!({"status":"unique","moved":true})
+    );
+    let current = &support["current_excerpt"];
+    assert_eq!(current["entry_id"], correction["entry_id"]);
+    assert_eq!(current["quote"], "ha ha");
+    assert_eq!(current["offset"], "Édition finale. ".len());
+    assert_eq!(current["end"], "Édition finale. ha ha".len());
+
+    let repeated=send("notes",json!({"op":"capture","source":"Renamed minutes","author":"Ada","text":"Chorus: ha ha ha!","supersedes":correction["entry_id"],"expected_revision":correction["revision"]})).unwrap();
+    assert_eq!(impact()["quote_match"], json!({"status":"repeated"}));
+    send(
+        "notes",
+        json!({"op":"forget","expected_revision":repeated["revision"]}),
+    )
+    .unwrap();
+    assert_eq!(impact()["status"], "missing_original");
+    assert!(impact()["quote_match"].is_null());
+    let recreated = capture(new());
+    assert_eq!(old["entry_id"], recreated["entry_id"]);
+    assert_ne!(old["capture_revision"], recreated["capture_revision"]);
+    assert_eq!(impact()["status"], "recreated_original");
+    assert!(impact()["original"].is_null());
+    assert!(send("investigation", cite).is_err());
+}
+
+#[test]
+fn source_review_pages_all_claims_and_rejects_changed_snapshot_or_question() {
+    let e = env();
+    let engine = Engine::open_existing(&e.store).unwrap();
+    let r = create(&engine);
+    let edits = (0..7)
+        .map(|i| add(&format!("c{i}"), "requirement", "Return orchard receipts."))
+        .collect::<Vec<_>>();
+    apply(&engine, r, json!(edits)).unwrap();
+    let page = |query: &str, cursor: Option<&Value>| {
+        let mut cmd = json!({"op":"source_review","text":query});
+        if let Some(cursor) = cursor {
+            cmd["after_id"] = cursor.clone();
+        }
+        let request = task_context::parse(json!({"workspace_id":e.wid,"command":cmd}))?;
+        engine.task_context(&request, &Control::unbounded())
+    };
+    let query = "Are orchard receipts required?";
+    let first = page(query, None).unwrap();
+    let cursor = &first["next_after_id"];
+    assert_eq!(first["claims"].as_array().unwrap().len(), 4);
+    let next = page(query, Some(cursor)).unwrap();
+    assert_eq!(next["claims"].as_array().unwrap().len(), 3);
+    assert_eq!(next["claims"][0]["claim"]["entry_id"], "c4");
+    assert!(next["next_after_id"].is_null());
+    assert!(page("Another question", Some(cursor)).is_err());
+    engine.replace_source("fresh.md", "Changed").unwrap();
+    assert!(matches!(
+        page(query, Some(cursor)),
+        Err(FoundryError::Conflict(_))
+    ));
 }

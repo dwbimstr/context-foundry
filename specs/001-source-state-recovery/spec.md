@@ -4,7 +4,7 @@ Planning addition, 2026-10-09: [T010](#t010--retrieve-behavioral-evidence-for-a-
 is authorized for execution by the owner on 2026-10-09 under the [ecosystem plan](../../docs/context-ecosystem-plan.md).
 Existing task acceptance stands. T010's lexical behavioral selection is accepted
 and enabled by default with explicit opt-out; see the
-[current status](../../docs/resume-context-ecosystem.md#current-status--2026-11-06).
+[current status](../../docs/resume-context-ecosystem.md#current-status).
 
 Status: T001–T006 implemented and verified locally; not released. T001–T003 were
 verified on 2026-10-01 (owner-approved scope: 001 + 003 first implementation). T004–T006

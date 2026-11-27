@@ -2020,6 +2020,7 @@ fn connect_info(
         semantic_profile: None,
         knowledge_profile: None,
         development_isolation: false,
+        experimental_task_context: false,
         http_port: None,
         token_env: None,
         references: Vec::new(),
@@ -2196,7 +2197,7 @@ fn connect_forwards_profiles_without_loading_or_maintaining() {
     let semantic = "semantic \"é日本\\.json";
     let knowledge = "knowledge \"é日本\\.json";
     // Deliberately nonexistent: configuration generation must not load profiles.
-    for host in ["omp", "codex"] {
+    for host in ["chatgpt-desktop", "omp", "codex"] {
         let output = std::process::Command::new(BIN)
             .current_dir(dir.path())
             .arg("--store")
@@ -2205,6 +2206,7 @@ fn connect_forwards_profiles_without_loading_or_maintaining() {
             .arg(&root)
             .args([
                 "--print-config",
+                "--experimental-task-context",
                 "--semantic-profile",
                 semantic,
                 "--knowledge-profile",
@@ -2215,6 +2217,7 @@ fn connect_forwards_profiles_without_loading_or_maintaining() {
             .unwrap();
         assert!(output.status.success(), "{output:?}");
         let printed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(printed["host"], host);
         let launch = printed["launch"].as_array().unwrap();
         let args: Vec<String> = if host == "omp" {
             let config: serde_json::Value =
@@ -2257,6 +2260,7 @@ fn connect_forwards_profiles_without_loading_or_maintaining() {
             );
         }
         assert!(args.iter().any(|a| a == "--development-isolation"));
+        assert!(args.iter().any(|a| a == "--experimental-task-context"));
         assert!(!args.iter().any(|a| a.ends_with("-maintain")));
         assert!(!store.exists());
     }

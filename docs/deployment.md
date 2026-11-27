@@ -1,17 +1,11 @@
 # Bootstrap, isolated workers and deployment
 
-Status (2026-10-08): bootstrap/connect and both MCP transports (003), compiler
-references (005), multi-root context (007), explicit memory (008) and the owned model
-gateway (003 T004) are implemented and accepted ([validation](validation.md)). The
-package and its install/upgrade/rollback/uninstall lifecycle are implemented and
-checked with ad-hoc-signed development bundles. The semantic and learning workers run
-only under development isolation; production isolation waits for Developer ID signing
-and package acceptance, and owned learning (013) is frozen off. Nothing is released.
-This is the shared deployment boundary for 003
-adapter onboarding, 005 explicit producer execution, 009 embeddings and 013 owned
-learning — not another product, daemon or spec stage. No signed installation or
-publication is claimed. [Bounded scratch feasibility](review/feasibility.md)
-is recorded separately.
+The standard installation runs a Rust CLI or a local MCP owner for explicitly
+admitted roots. ChatGPT desktop is the primary project-memory client. Codex and OMP
+also have connection profiles. Model workers are optional. Development bundles
+have install, upgrade, rollback and uninstall receipts. The first public release
+still requires the signed semantic package and its installed-artifact checks. [Architecture](architecture.md#current-architecture) ·
+[Acceptance and remaining work](resume-context-ecosystem.md) · [Release checklist](release.md).
 
 ## User flow and ownership
 
@@ -104,9 +98,10 @@ context policy. Unknown host/version is `host_unsupported`. It does not edit glo
 files, expose arbitrary shell commands or start a daemon. User/agent installation uses
 only session-authorized config changes and preserves unrelated prior bytes. 003 T003
 must test one actual host; generic MCP is not proof of provider interception.
-Implemented hosts (2026-10-01): `omp` (verified with OMP 18.4.9) and `codex` (verified
-with Codex CLI 0.159.2); output is JSON with the host config text, project instruction
-block, exact launch argv and capability note. Printed tool timeouts exceed the maximum
+The supported values are `chatgpt-desktop`, `codex` and `omp`. The desktop
+project and Codex use TOML. The earlier OMP and Codex CLI checks used OMP 18.4.9
+and Codex CLI 0.159.2. Output includes host config text, the instruction block,
+exact launch arguments and a capability note. Printed tool timeouts exceed the maximum
 1,200,000 ms index timeout (OMP `timeout`, Codex `tool_timeout_sec`). Codex requires
 per-call approval for MCP tools by default, which blocks non-interactive runs; tools
 therefore declare MCP `readOnlyHint` annotations, and the printed Codex config sets
@@ -124,6 +119,33 @@ bearer/API key, transplant subscription credentials or silently change existing
 provider/model settings. Refer to the gateway's exact
 [protocol and accounting contract](../specs/003-agent-retrieval-context/contracts/adapter-economics.md).
 
+### Desktop decision lookup
+
+To capture originals and review feature decisions, generate the project configuration with
+`connect --host chatgpt-desktop --experimental-task-context` as in the
+[desktop quickstart](../README.md#chatgpt-desktop-on-your-mac). For local Gemma
+decision suggestions, the MCP owner's launch command must include the decision
+profile. With an indexed root, a semantic-capable binary, the pinned local worker and
+a valid profile, the server can be launched directly.
+
+```sh
+foundry --store "$STORE" mcp --root "$ROOT" --experimental-task-context \
+  --decision-semantic-profile "$PROFILE" --development-isolation
+```
+
+Use absolute paths for the executable, store, root and profile in the desktop
+project's launch configuration. These are **server** arguments. The current
+`connect` command can forward a source `--semantic-profile`, but takes no
+`--decision-semantic-profile` option. The MCP owner accepts one of those two
+profiles per launch. Restart the configured server after changing its arguments.
+In the project chat, call `status` and confirm the expected `workspace_id` and
+`decision_semantic: ready`. A synthetic fallback has its own workspace ID.
+
+`task_context` with `find_decisions` can now return original decision passages
+on an eligible title-blind miss. The client checks their meaning and current
+support. A busy or unavailable worker leaves the ordinary clarification path
+available. [Contract](../specs/003-agent-retrieval-context/contracts/shared-source-review.md#optional-semantic-recovery-of-a-saved-decision) · [Desktop receipt](validation.md#native-title-blind-decision-recovery-in-chatgpt--2026-11-26).
+
 ## Ecosystem readiness disposition — 2026-10-01
 
 The reported predecessor availability and call failures were accepted observations,
@@ -135,7 +157,7 @@ No predecessor store, service or host-global configuration was migrated or chang
 | --- | --- | --- |
 | Prakarana serves one store; Warp has a store without a live daemon; team-kit and Proxima are unindexed | 001/003: explicitly bootstrap each named repository into its own Foundry store. Existing predecessor stores are not Foundry stores and are neither adopted nor replaced implicitly. Direct stdio needs no always-on daemon | Inspect/apply/connect on admitted fixtures; baseline context survives missing optional resources |
 | Collection-root teams cannot reach repository stores | 003: the worker brief supplies its actual canonical repository, absolute store configuration and available transport. A collection cwd or outside-path mention is not admission. Explicit separate-root queries are allowed; 007's joins/registry remain deferred (2026-10-03: 007 reactivated for launch-time references with one budgeted multi-root response; still no registry or cross-root joins) | Start a client from another cwd; immutable binding and foreign-handle refusal; separate-root reconciliation cannot delete another root |
-| Wrong arguments and failing history queries | 001 validates types, unknown fields, bounds and error precedence; 003 exposes the same schemas. The selected baseline has five tools, not a generative `ask` loop. Do not require that predecessor tool or add it to fix adoption statistics | Invalid-argument cases before mutation; real SDK catalog/calls; actual host reports unavailable capability rather than retrying another store |
+| Wrong arguments and failing history queries | 001 validates types, unknown fields, bounds and error precedence; 003 exposes the same schemas. The October 1 baseline had five tools. The current default catalog has seven. Do not require that predecessor tool or add it to fix adoption statistics | Invalid-argument cases before mutation; real SDK catalog/calls; actual host reports unavailable capability rather than retrying another store |
 | A busy status returns an old healthy snapshot | 003 returns `busy` when its engine slot is occupied. Completed status identifies the observed store/snapshot, not current-disk or model health. Read deadlines return `deadline_exceeded`, not a partial successful read or cached health certificate | Concurrent status/index, cancellation and delayed-library cases; no successful read after expiry |
 | Oversized lexical terms, rewrite/reclaim failures and neural transport churn | 001 owns bounded byte-preserving source/recovery; redb/Tantivy own physical persistence. 009 owns exact-input cache identity, visible partial coverage, disk-cap refusal and explicit offline purge. Do not port custom WAL/slot/checkpoint machinery or predecessor cache bytes | Long unbroken source text under the admitted file bound still retrieves byte-exactly; 001 restart/repair; 009 recipe/cache/index/worker acceptance before advertising semantics |
 | Workers use the wrong store or an unavailable route | 003 per-project configuration and transcript-visible fallback; only the task's independently authorized roots. No user-global entry pinning one repository across every session; borrowed subagents use their parent's configured connection | Real host/version tool ordering and fallback; root/hash/range rejection cannot widen permissions |
@@ -295,7 +317,7 @@ query embeddings and document batches alike, behind one model slot:
   primary root and returns at once; `index {semantic: "pause"}` admits no new batch.
   With `semantic`, `index` does nothing else; combined with `root` or `scip` it is
   `invalid_argument`. Without a profile, or after a refused start, the answer is
-  `semantic_unavailable` with the fallback reason. Startup never resumes preparation.
+  `semantic_unavailable` with the fallback reason. Starting an owner with explicit continuous maintenance enables its change-driven preparation. Ordinary serving leaves preparation explicit.
 - **Cache cap.** Preparation holds at most 2 GiB of vectors per workspace unless the
   operator says otherwise: `semantic prepare --cache-cap BYTES` for a CLI run,
   `mcp --semantic-cache-cap BYTES` for the owner's runs. At the cap a run stops
@@ -335,24 +357,19 @@ query embeddings and document batches alike, behind one model slot:
   reaped. Each document call has 60 s
   plus the supervisor's 30 s in-flight grace; expiry pauses with `provider_timeout`. A
   failed, malformed or wrong-function reply pauses with its provider code and
-  publishes nothing from that batch. Completion is `stopped` with no reason. There
-  are no hidden retries, job journal, leases or watcher; `prepare` resumes.
+  publishes nothing from that batch. Completion is `stopped` with no reason. An explicit `prepare` resumes retained work, and `--semantic-maintain` enables continuous maintenance.
 - **Publication.** Committed coverage is republished from the cache after the first
   batch, then whenever the vectors not yet published reach the size of the last
   published generation, and at every stop except exit. Context and search use the
   coverage that has arrived and say `partial` or `ready`.
-- **Status.** `status` adds a `semantic` object: the metadata-only census of
-  `semantic status`, the live state (`running`, `paused`, `stopped`), `reason`, the
-  last error, the last provider observation with its time, and the resident
-  `runtime`: `ready`, the start's `fallback:` word after a refused start, or
-  `fallback:provider_exited` / `fallback:resource_limit` after a model call returned
-  that failure and no call has succeeded since, read without calling the model.
-  The census gets half the read deadline; when that runs out, the object names
-  `census: deadline_exceeded` with the committed state row.
-- **Limits.** The real lifecycle on a declared corpus (cold preparation, partial and
-  steady queries, edit catch-up, restart) is written as an ignored measurement-phase
-  test and has not been run. Each publication rebuilds the generation from the cache
-  under the engine slot; its cost on a large corpus is unmeasured.
+- **Status.** Ordinary status reports recorded publication and cache counters,
+  worker readiness and progress. Use `status` with `semantic_audit:true` for
+  an explicit audit. Coverage, source freshness and worker readiness describe
+  different facts.
+- **Publication and scale.** The current derived generation can reuse an
+  immutable base plus a bounded delta. A matching restart can reuse the publication.
+  The owner revalidates changed inputs before serving. The native Rust corpus has a
+  completed replay and changed-input check. [Lifecycle](experimental-context.md#continuous-semantic-maintenance) · [Measured scope](validation.md#semantic-scale-replay-and-changed-input-acceptance--2026-11-10).
 
 **013 learning worker, implemented 2026-10-05 (013 T002; development profile only).**
 Normal training admission returns `isolation_unavailable`. `foundry learning train
@@ -673,7 +690,7 @@ publication authorization and destination are still required to upload any artif
 
 ## Experimental schema 12
 
-The experimental context branch uses schema 12 for a disposable publication lookup
+The store uses schema 12 for a disposable publication lookup
 and bounded changed-input frontier. It preserves schema 11 source/config-bound
 relationship scopes and key postings, schema 10 generated-knowledge completion caching
 and lineage, schema 9 independent semantic/knowledge obligations, schema 8 briefs

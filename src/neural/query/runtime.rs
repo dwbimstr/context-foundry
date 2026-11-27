@@ -405,6 +405,68 @@ impl QueryRuntime {
         }
     }
 
+    /// Compare a bounded set of current decision passages with the question.
+    /// No source partition, persisted vectors or background preparation are involved.
+    pub(crate) fn score_decisions(
+        &self,
+        question: &str,
+        passages: &[&str],
+        control: &Control,
+    ) -> Result<Vec<f64>, ProviderError> {
+        let deadline = Instant::now() + Duration::from_millis(1500);
+        let bounded = control.bounded_by(deadline);
+        let until = bounded.deadline().expect("bounded model call");
+        let query = self.embed(question, until)?;
+        let norm = |v: &[f32]| v.iter().map(|&x| f64::from(x).powi(2)).sum::<f64>().sqrt();
+        let qnorm = norm(&query);
+        let mut scores = Vec::with_capacity(passages.len());
+        for batch in passages.chunks(self.profile.document_limits().inputs) {
+            let inputs = batch
+                .iter()
+                .map(|text| {
+                    tokenize_query_with_limit(
+                        &self.tokenizer,
+                        &self.profile.descriptor.document_template,
+                        text,
+                        self.profile.document_limits().tokens,
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let call = self.dispatch_documents(inputs, control.bounded_by(until))?;
+            let vectors = loop {
+                if bounded.is_cancelled() {
+                    return Err(if Instant::now() >= until {
+                        ProviderError::Timeout
+                    } else {
+                        ProviderError::Cancelled
+                    });
+                }
+                if let Some(result) = call.wait(Duration::from_millis(10)) {
+                    break result?;
+                }
+            };
+            if vectors.len() != batch.len() {
+                return Err(ProviderError::Malformed("decision batch length".into()));
+            }
+            for v in vectors {
+                provider::validate_vector(&v, query.len())?;
+                let dot = v
+                    .iter()
+                    .zip(&query)
+                    .map(|(&a, &b)| f64::from(a) * f64::from(b))
+                    .sum::<f64>();
+                let score = dot / (norm(&v) * qnorm);
+                if !score.is_finite() {
+                    return Err(ProviderError::Malformed(
+                        "invalid decision similarity".into(),
+                    ));
+                }
+                scores.push(score);
+            }
+        }
+        Ok(scores)
+    }
+
     /// 009 T003: admit ONE document batch (at most the profile's batch of
     /// inputs, limits checked first) on the same slot as queries, with the
     /// caller's `control` (its deadline and cancellation reach the provider).

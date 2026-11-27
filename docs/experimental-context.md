@@ -1,5 +1,11 @@
 # Experimental task context
 
+Start with [recoverable task context](#recoverable-task-context) to save a meeting,
+a spec and the decisions that cite them. For implementation evidence use
+[boundary relationships and task evidence](#boundary-relationships-and-task-evidence).
+The [capability map](architecture.md#capability-map) identifies which optional worker,
+profile or host each workflow needs.
+
 ## Pipelined source ingestion
 
 Ordinary CLI/MCP `index` now overlaps source reads and hashing with ordered source
@@ -305,7 +311,8 @@ or interleave lexical candidates. A named semantic fallback still serves lexical
 results. Lexical behavioral selection has been on by default on the experimental line
 since 2026-11-11, when the singleton candidate passed 001 T010's own gates
 ([context v2](../specs/001-source-state-recovery/contracts/context-v2.md#experimental-behavioral-support--001-t010-2026-10-09),
-[receipt](validation.md#t010-singleton-qualification--2026-11-11)). Pass
+[receipt](validation.md#t010-singleton-qualification--2026-11-11)), and on `main`
+since 2026-11-20. Pass
 `--experimental-behavior-context=false` to `context` or `mcp` for the ordinary lexical
 path; the bare flag still works. The first default attempt of the same day passed G1/G2
 but lost the required `refund` definition in the frozen economics fixture; its
@@ -551,6 +558,24 @@ existing synthetic checks, and network-filesystem event behavior remains unverif
 
 ## Recoverable task context
 
+For a small project, add `--decision-semantic-profile FILE` to an MCP owner
+already using `--experimental-task-context` to help find saved decisions in
+the operator's own words. A local development worker also requires
+`--development-isolation`. Check `status.decision_semantic` for readiness.
+Use the ordinary `find_decisions` command without a title. When the ordinary lookup returns a `recovery_question`, read any
+`semantic_leads` and quote a decision only if it
+addresses the question. For example, a decision about keeping edited copies
+cannot establish a payroll date. Ask for the relevant rule when none fits.
+The owner ranks up to eight eligible decisions across at most 32 task records
+and can return two leads. An ordinary wording match can bypass this lookup,
+including a match on an attributed account. `--semantic-profile` is the
+mutually exclusive source-retrieval mode. ChatGPT reads the decision passages.
+The Laya, Mapika and Inkling trials ran outside the product. [Desktop setup](deployment.md#desktop-decision-lookup) · [Reader trials](validation.md#inkling-2-mini-decision-judging-gemma-leads--2026-11-27). [Scope and limits](../specs/003-agent-retrieval-context/contracts/shared-source-review.md#optional-semantic-recovery-of-a-saved-decision).
+
+To save a meeting and specification once and ask which features need review
+after an edit, follow the [shared-source workflow and commands](../specs/003-agent-retrieval-context/contracts/shared-source-review.md#commands-and-output).
+
+
 This branch adds recoverable task state beside retrieval. Start with a disposable
 store. New stores use schema 12; an older store needs an explicit
 `foundry --store STORE upgrade-store --to 12`. Take a closed-store backup first if
@@ -563,11 +588,71 @@ with `foundry --store STORE mcp --root ROOT --experimental-task-context`. `--no-
 MCP catalog is unchanged without the flag. Task IDs are caller-chosen, scoped to the
 primary store's workspace ID (shown by `status`). They are not per-user access controls.
 
-Every request has this shape:
+To resume a feature in another session, call `task_context` with the workspace
+ID and `{"op":"list"}` as the command. Follow `next_after_id` with `after_id`
+when needed. To start a feature, choose a short task ID and a descriptive title:
 
 ```json
 {"workspace_id":"<workspace ID from status>","task_id":"retry-investigation","command":{"op":"create","title":"Repair retry backoff"}}
 ```
+
+For a feature-impact question, give the chat the material as you received it.
+The client can record a conversation or ticket with a command such as
+`{"op":"capture","expected_revision":1,"source":"design meeting","text":"Keep the independently edited copy."}`.
+For an indexed spec, use its repository-relative path as `source` and optional
+`lines` in place of `text`. Keep the receipt's entry ID for an explicit
+correction via `supersedes`. Send the feature question to `context` with
+`task_id`, `task_revision` and `compose_evidence:true`. Follow cited handles
+with `retrieve` to check what depends on the change. A `text_match` indicates
+which supplied words led to a source. Use `peek` to inspect an earlier account.
+
+When a later meeting note arrives and you do not know which feature it
+belongs to, send `{"op":"find_decisions","text":"<meeting note>"}` with only
+the workspace ID. A decision found through another feature includes
+`via_requirement`. Quote the decision and the requirement that led to it.
+Either passage can flag its directly cited originals as `needs_review`;
+use `source_review` for the changed support before acting on the policy.
+If Foundry returns only a clarification, ask which feature or rule the
+operator means. Once the feature is identified, use its revision to capture the note.
+Read `{"op":"connections","entry_id":"<captured note ID>"}` to see the note
+beside the earlier promises. Show their authors, exact passages and the
+clarification to the operator. After their choice, send `review_connection`
+with the current `expected_revision`, the note's `entry_id`, the earlier
+`prior_id`, its `prior_span` of `[offset,end]`, the reviewer's `author` and `disposition` of `accept` or `dismiss`.
+The next session can read the outcome with `connections` or `inspect`.
+
+After accepting a connection, ask the feature question with the same scoped
+`context` call. In the task view’s `accepted_passages`, read the meeting note beside
+the exact earlier words and the name of the reviewer. The entry IDs identify
+their authors and originals in the view. Use the earlier passage's `handle`
+when present to reopen those exact indexed bytes. In `task-evidence.sources`,
+`reviewed_text_match:<revision>` identifies places found using that quotation.
+Read a cited implementation before reporting its behavior. Answer separately
+what the code does today, what the proposed change would affect, and which
+choice the operator still needs to make.
+
+For “Which other feature relies on this decision?”, open the feature that owns
+the decision and call `task_context` with its task ID and a command like
+`{"op":"decision_uses","expected_revision":5,"entry_id":"chosen-backoff"}`.
+Follow `next_after_id` with `after_id` until it is null. Read the other feature’s
+requirement in `dependents` and quote its reason. Each `wording_matches` result
+includes a question to ask before treating it as a dependency. If both features
+already cite the exact same indexed rule and the other feature has saved it as a
+requirement, Foundry recognizes that use directly.
+
+If a decision’s source changed, quote the change from `decision.changed_support`.
+An excerpt marked `position_preview` shows what the source says at that position
+today. The saved decision still needs review. A dependent can also have a
+`current_support.original` with its own author and words. Quote it alongside
+the dependency. When `same_capture_lineage_as_decision` is true, both cite
+the same saved source. A current meeting quote can explain why a feature
+still needs protection while the team reviews the change.
+
+When a source explicitly states reliance, or the operator confirms it, save
+the reason on the **dependent** feature. Use its existing `apply` / `add`
+operation, choose `requirement` or `constraint`, and set `relies_on` to the
+origin’s returned `decision_ref`. Keep the source wording, attribution and
+supporting handles. Supersede that entry when the requirement changes.
 
 Save the returned `revision`. Every mutation after creation names the current
 `expected_revision`; a conflict means inspect the live record before retrying. A

@@ -1,5 +1,1619 @@
 # Validation
 
+## Local merge gates for desktop project memory — 2026-11-27
+
+All eight gates in `scripts/gates.sh` passed on the clean experimental commit
+`e9f600b` on macOS arm64, using Rust 1.97.1 and the minimum supported Rust
+1.90.0. The default Rust test harness reported 1,331 passed, 0 failed and 35
+ignored. The separate recovery harness passed all 21 cases. The opt-in pilot
+unit suite reported 133 passed, 0 failed and 1 ignored.
+The documentation follow-up updates the source-install instructions for the
+default branch. The PR records each gate, its log digest and the documentation
+checks. [PR #57](https://github.com/dwbimstr/context-foundry/pull/57).
+
+## Architecture and capability documentation — 2026-11-27
+
+The documentation review used experimental tip `810f934` and main tip
+`37a3cd8`. The installed Foundry MCP owner opened the project store at schema
+12 and source revision 554. Search, context and handle retrieval worked on that
+snapshot. Its indexed source predates the latest task changes, so the checkout
+and tool schemas supplied the current implementation details. Offline Cargo
+metadata confirmed one crate, the default semantic build feature and the
+feature gates on the embedding, generation, learning and pilot binaries.
+
+Four read-only catalog checks returned seven tools by default, eight with
+task context, six with project memory disabled and seven with both switches.
+The task flag also exposed task-aware context arguments. All three host
+profiles printed a launch configuration containing the requested task flag.
+Argument parsing required task context for the decision profile and rejected
+combining it with the source semantic profile. The store, search, source-unit
+and semantic-generation format constants matched the compatibility table.
+These checks cover interfaces and documentation. Desktop, model, scale and
+signed-package evidence retain their own dated scopes. [Architecture](architecture.md#current-architecture) · [Compatibility](release.md#what-is-compatible) · [Handoff](resume-context-ecosystem.md#current-status).
+
+## Inkling 2 Mini Decision judging Gemma leads — 2026-11-27
+
+Inkling recovered the original Cleanup decision and asked on the billing and
+payroll controls. With linked evidence it recovered five of seven applicable
+decisions through Foundry, including every applicable decision the native
+lookup offered. It asked on all eight unrelated requests. The two remaining
+misses keep the trial below the frozen acceptance rule. Gemma and the
+ChatGPT reader remain the experimental desktop workflow.
+
+| Same 15 requests | Recovered with both eligible decisions supplied | Recovered through native lookup | Unrelated requests correctly sent to clarification | Wrong links shown |
+|---|---:|---:|---:|---:|
+| Inkling, saved quote | 5/7 | 4/7 | 8/8 | 0 |
+| Inkling, quote and linked evidence | 6/7 | 5/7 | 8/8 | 0 |
+| Mapika Q4, saved quote (previous run) | 3/7 | 3/7 | 8/8 | 0 |
+| Mapika Q4, quote and linked evidence (previous run) | 2/7 | 2/7 | 8/8 | 0 |
+
+On “Can we discard the predecessor and safeguard a collaborator's revision?”,
+the Cleanup quote scored 0.898 and 0.892 with the options reversed. The saved
+decision was “Cleanup keeps an edited copy when retiring its parent.” Its
+spec citation still needs review. Adding the linked evidence also recovered
+“If the master is retired, what becomes of the version a teammate changed
+separately?” The lower of its two scores rose from 0.326 to 0.899.
+
+Two misses explain the difference between judging a link and delivering it.
+For the reviewer's independently edited version of a retiring folder, the
+ordinary lookup returned an attributed account with no decision candidate.
+Inkling selected Cleanup when given the decision directly (0.920 with linked
+evidence). For the sealed shipping paperwork question, the native lookup
+returned no decision and Inkling also asked when given Dispatch directly
+(0.285). The other Dispatch wording succeeded in both arms.
+
+The installed Foundry MCP server replayed all 15 questions from the Mapika
+trial against the same five-task project snapshot. The Gemma profile returned
+identical lookup responses. Both eligible decision records, their revisions,
+quote digests and linked evidence also matched.
+
+Each request was paired with both saved decisions, including when the native
+lookup already asked. One arm used only the saved quote. The other added the
+same cited passages and declared dependency used in the Mapika trial. The
+decision question and answer wording were fixed. A link needed an applies
+probability of at least 0.80 in **both** option orders. Exactly one qualifying
+link from the native candidates could be shown to the operator. Reusing
+identical inputs across arms reduced 120 ordered comparisons to 90 distinct
+inputs. Model inputs omitted the expected answers and feature-title hints.
+
+The run used the publisher's v5.1 `System15Engine.decide_batch` with its
+balanced halting threshold (0.969), fitted exit temperatures and up to five
+passes. The operator cutoff was applied to the unrounded Choice probabilities.
+The M5 Max used PyTorch 2.13.0 on Metal and Transformers 5.24.0 with network
+access denied during inference. The 13 BF16 backbone shards, decision heads
+and scratchpad totaled 51,667,890,326 bytes. Each matched its published
+SHA-256. The local loader used the bare Transformers text model and brought
+each layer's full expert matrices into memory as needed. The standard
+Transformers loader reported zero missing, unexpected or mismatched keys.
+The three 30-input batches took 87, 81 and 105 seconds (4 min 32 s combined).
+During the last batch macOS reported a 32 GiB peak footprint so far. This
+run measured batched inference. Interactive ChatGPT latency with Inkling is
+unmeasured. The dated local evidence under `runs/inkling-decision-2026-11-27/`
+includes the frozen inputs, per-order scores and checked native responses.
+The trial made zero paid requests.
+[Pinned decision code](https://huggingface.co/eltokh7/inkling-2-mini-decision/blob/dc334283b9a69ef68622fae41317ba9c698ab7f6/modeling.py) · [Earlier desktop walkthrough](#native-title-blind-decision-recovery-in-chatgpt--2026-11-26).
+
+## Mapika 4B Q4 judging Gemma decision leads — 2026-11-27
+
+The local Mapika judge asked for clarification on the original Cleanup question
+even though native Foundry had returned the exact `keep-copy` decision. It
+correctly asked on billing and payroll. Across 15 questions it selected 3 of
+7 applicable decisions using their saved wording and asked on all 8 unrelated
+requests. Adding the saved source and dependent-feature evidence reduced the
+selections to 2 of 7. The experimental branch retains the native Gemma shortlist
+and ChatGPT’s reading of the citations.
+
+**Method.** The installed MCP server reopened the five-task project snapshot
+and ran each query without a feature-title argument. Both current decisions
+were scored separately, including as a control when the ordinary lookup
+already asked. Only a decision returned by the native lookup could reach the
+operator. The questions, expected IDs and rule were frozen before scoring.
+Each typed Choice asked whether the quote governed the specific action and
+subject. Its alternatives were “This decision applies to the request” and
+“The record is insufficient; ask for clarification.” Each link had to score
+at least 0.80 in both option orders. Exactly one accepted link was needed
+to show a decision. A quoted decision still required the reader to honor its
+source-review status.
+
+| Cases | Relevant decisions / unrelated requests | Saved quote only | With linked evidence |
+|---|---:|---|---|
+| Original Cleanup, billing and payroll | 1 / 2 | Missed Cleanup, asked on both controls | Same |
+| Six fresh paraphrases, two per intent | 2 / 4 | Recovered one Cleanup decision, asked on all four controls | Same |
+| Different feature, sealed shipping paperwork | 1 / 0 | Asked. The native lookup offered no decision | Same |
+| Five additional questions frozen before the linked-evidence comparison | 3 / 2 | Recovered one Cleanup and one Dispatch decision, asked on both controls | Recovered Dispatch, asked on both controls |
+| **All cases** | **7 / 8** | **3 recovered, 8 correct asks, 0 wrong links** | **2 recovered, 8 correct asks, 0 wrong links** |
+
+On “Can we discard the predecessor and safeguard a collaborator's revision?”
+the less favorable of the two quote-only probabilities for Cleanup was 0.280.
+On “Someone revised their own duplicate. Do we keep that work when the item
+it came from is removed?” it was 0.941. Of four Cleanup questions that
+omitted the word “cleanup”, only that second wording recovered the decision.
+The native result mapped to revision 9 and the exact saved quote “Cleanup
+keeps an edited copy when retiring its parent.” Its spec still needs review.
+
+The follow-up kept the decision question, cutoff and option reversal fixed.
+It added the prior spec citation, the labeled preview of its revision,
+the Handoff requirement and its current meeting citation where available.
+It replayed the original ten cases and included five newly frozen ones.
+The overlap is a paired comparison. Even in this small set, lowering the
+cutoff cannot recover every intended link while keeping all controls clear:
+one billing paraphrase scored 0.310 for Cleanup with linked evidence,
+higher than the original Cleanup question’s 0.276.
+
+**Runtime.** The M5 Max ran Mapika v3 Q4_K_M on Metal with network denied
+during inference. The 2,708,804,000-byte GGUF matched its published SHA-256.
+The publisher’s standalone readout used decider-ai 1.5.0, llama-cpp-python
+0.3.38 and fitted Choice temperature 2.098. Median call time was 57 ms for
+one decision and one option order, or 69 ms with linked evidence. Peak judge
+process RSS was about 3.33 GiB. The first run wrote its scores and aborted
+at Metal teardown. Explicitly freeing the native batch, context, model and
+backend produced clean exits with the same initial selections. Separate
+MCP reads checked every decision ID, revision and quote digest. Private
+inputs, per-order scores, model identity and replay checks are under
+`runs/mapika-decision-2026-11-27/`. This exercise made no paid requests.
+[Mapika weights and readout](https://huggingface.co/Mapika/decider-4b-GGUF/tree/d3a78581751d518bbfa9e871a6d84059554d53c5).
+
+The retrieval model in this profile is EmbeddingGemma 2's 270M-parameter
+text backbone. Its installed BF16 GGUF is 557,950,176 bytes (532.1 MiB).
+With its 32,170,510-byte tokenizer the two files total 562.8 MiB on disk.
+The full text, vision and audio model has 740M parameters. The profile emits
+768-dimensional vectors. [Pinned Google model card](https://huggingface.co/google/embeddinggemma-2/blob/914f7f89142e33e77833254d9c9b90c3cef7303b/README.md).
+
+## Native title-blind decision recovery in ChatGPT — 2026-11-26
+
+Code `6a8f9ef` adds an opt-in local decision profile. The project MCP owner
+feeds the question and current saved decision passages to the existing
+EmbeddingGemma 2 worker, then rechecks each returned identity and its
+sources. Two scoped suggestions fit in the ordinary lookup response. A
+client can ask the existing clarification whenever the passages do not
+support an answer. This path needs no source vector rebuild. The earlier
+separate Markdown passage index played no part in this run.
+
+A fresh ChatGPT project chat received three questions with no feature title
+or expected answer. Its first attempt found no Foundry tools while the app
+catalog reported the optional server pending. The chat retried after startup
+with the same questions and no content hint. Five native tool calls then
+succeeded: project status, three `find_decisions` calls and `source_review`.
+Status reported 421 sources at revision 554 and `decision_semantic: ready`.
+Both Prakarana registrations were disabled.
+
+| Question | Desktop answer |
+|---|---|
+| Can we discard the predecessor and safeguard a collaborator's revision? | Quoted “Cleanup keeps an edited copy when retiring its parent.” Identified `keep-copy` at revision 9, showed the old supporting spec, labeled the new editor-approval wording a position preview, and asked whether the decision applied. |
+| Should we retire the parent account after billing closes? | The ordinary lookup asked which feature or rule governs account retirement. |
+| Move payroll to Thursday. | The model ranked both saved decisions as possible leads. The reader found that neither governed payday and asked where the scheduling decision was saved. |
+
+The test project held two current decisions. The fallback offered both on
+the first and third questions. The observed distinction came from reading
+the quotations. Three focused Rust tests passed, including a source-owner
+test that revises a decision during scoring, checks worker refusal and
+declines to rank a pool larger than the limit. The lexical-only build check,
+formatting and documentation links passed. Project activation used the
+installed binary and a development-isolated local worker. The exercise used
+the existing ChatGPT session and zero separately billed provider calls.
+Private native responses and the desktop transcript checks are in
+`runs/native-semantic-decisions-2026-11-26/`.
+
+An offline Laya comparison batched four relation questions across these
+three operator requests. The pinned typed checkpoint missed the intended
+decision and abstained on the two unrelated controls at the threshold
+selected before the run. Its batching and quality receipts are in the same
+run directory. [Local evidence, model alternatives and hardware choices](references/laya-decision-ecosystem.md#which-model-belongs-in-decision-recovery--2026-11-26).
+
+## Trying local EmbeddingGemma 2 on a missed decision — 2026-11-26
+
+“Can we discard the predecessor and safeguard a collaborator's revision?”
+was replayed verbatim, with no feature name, suggested synonym or task ID.
+In the connected project, `find_decisions` returned zero candidates and asked
+which feature held the decision. A fresh installed MCP server on the saved
+five-task snapshot gave the same answer with the local semantic profile
+enabled. The task lookup matches saved words and declared relationships.
+It has no embedding search over task entries. We also tried project
+`context` with memory inclusion. The snapshot's source vectors used the
+older `units6` recipe. The installed `units7` reader reported
+`profile_mismatch` and served lexical evidence on those requests.
+
+To test what the model could contribute, we read every selected,
+nonhistorical entry with current or absent indexed links from the five
+live project tasks. Nine passages qualified, including two decisions.
+Each became one local Markdown document named by its content hash. Both
+arms saw identical original bytes and opaque paths. Task titles, entry
+IDs and the historical superseded spec stayed out of the search inputs.
+The installed BF16 EmbeddingGemma 2 hierarchy profile prepared the nine
+documents in 9.15 seconds and published all 18 units. Each question then
+went to the same MCP `context` operation with a 2,048-token budget.
+
+| Operator question | Position of the saved Cleanup decision with lexical search | Position with Gemma enabled | Fresh reader of the Gemma results |
+|---|---|---|---|
+| Discard the predecessor and safeguard a collaborator's revision? | Absent from eight delivered passages | 6 of 9 | Selected the exact decision as a candidate. |
+| Should we retire the parent account after billing closes? | 1 of 2 | 1 of 9 | Asked for the governing billing decision. |
+| Move payroll to Thursday. | No passages | 2 of 9 | Asked for the governing scheduling decision. |
+
+The fresh-context reader received the questions, delivered passages and their
+saved entry kinds. It had no expected answer, feature titles or previous chat.
+It chose “Cleanup keeps an edited copy when retiring its parent.” In the live
+project we mapped the returned passage digest to `keep-copy` at revision 9
+and reopened the exact bytes. Its cited spec still needs review. The current
+position preview asks for the editor’s approval before archiving. All five
+task revisions were unchanged.
+
+This was a local MCP replay and a fresh agent reading its output. The
+temporary passage index made the decision visible to that reader and also
+returned all nine passages on both unrelated questions. The result supports
+neither automatic selection by rank nor a retrieval-default change. A fresh
+desktop GUI chat and a native semantic task-memory lookup were outside the
+demonstrated path. The run used the installed weights and local worker,
+without a paid endpoint or a project reindex. Local receipts are in
+`runs/gemma-cleanup-2026-11-26/`.
+
+## Which feature still relies on the edited Cleanup decision? — 2026-11-26
+
+On the saved five-task project snapshot, the previous installed server named
+Editorial handoff and quoted its reason for relying on Cleanup. To find out
+whether Handoff still had its own support, the reader needed another operation.
+With code `e88be0d`, the same `decision_uses` call returned the following.
+
+| Question | Evidence in the installed MCP response |
+|---|---|
+| Which feature needs review, and why? | Editorial handoff has a declared requirement. “Handoff relies on cleanup to preserve the editor’s separate amendments.” |
+| What changed for Cleanup? | Ivo’s cited spec said “Keep the separately edited copy when its parent is retired.” Those words are absent from the revision. The preview at that position says “Request the editor’s approval before archiving a separately edited copy.” The saved decision still says to keep it. |
+| What still supports Handoff? | Mina’s current meeting record says “Handoff must preserve the editor’s independently amended copy.” It is a separate saved source from Ivo’s spec. Handoff remains flagged for review. |
+
+Five byte-range reads reopened the decision, dependent requirement, old spec,
+revised preview and meeting quote. The candidate and installed impact responses
+matched byte for byte. Both returned one confirmed dependency and two
+wording-only leads. The revisions of all five tasks stayed the same.
+
+A fresh-context agent read only the installed impact response in this session.
+Asked whether the copy could be archived, it answered “Review Editorial
+handoff and keep the edited copy for now.” It quoted Mina, identified Ivo’s
+new wording as a preview, and kept both wording-only matches unconfirmed.
+This exercised a reader of the MCP response. Desktop GUI interaction was
+outside this iteration.
+
+Five focused tests passed in 2.70 seconds of test execution, plus compilation.
+They covered shared and separate source histories, withdrawal, reused capture
+IDs, dependency discovery, proposal impact and the served MCP tool description.
+Formatting and documentation links passed. The replay used a fresh local stdio
+MCP client and the installed desktop binary against a copy of the project store.
+The no-spend transcript is in `runs/decision-use-sources-2026-11-26/`.
+
+## Choosing a saved feature from remembered title words — 2026-11-25
+
+An operator remembered “cleanup” while looking for the decision about
+retiring a predecessor and keeping a collaborator’s revision. The earlier
+installed binary asked for another title and offered no choices. On the
+same five-task project snapshot (workspace `2f558a2157b9c452…`, source
+revision 554), the updated installed MCP offered **Desktop check — Cleanup**
+and asked whether that was the intended feature. It returned zero decision
+passages at this point.
+
+| Remembered words | Installed MCP response |
+|---|---|
+| cleanup | One title, with a confirmation question. |
+| desktop check | Four matching features. It showed three titles, asked the operator to select or narrow the list, and returned zero decisions. |
+| clean, the, or pressroom | Each yielded zero titles and zero decisions. |
+| Desktop check — Cleanup, after selection | The saved `keep-copy` decision at revision 9, with its changed supporting specification. |
+
+Three byte-range reads recovered the decision, original citation and
+current position preview. The saved decision says “Cleanup keeps an edited
+copy when retiring its parent.” The old spec sentence is absent. The preview
+says “Request the editor’s approval before archiving a separately edited
+copy.” The source still needs review. The five task revisions stayed equal.
+
+A fresh-context reviewer read the transcript and asked for confirmation even
+when only one title matched. We also simulated the operator replying “Yes,
+that's the one” to that named option. In a first agent-client attempt, the
+private transport instructions omitted the operation key and the generated
+request failed before reaching Foundry. A second fresh agent received the
+normal MCP command example, carried the original question and confirmed
+title into a single successful call, recovered `keep-copy`, and distinguished
+the position preview from a newly approved decision. The interaction used the
+installed server through local stdio MCP.
+
+The two focused tests covered lookup behavior
+and the SDK’s served catalog. They passed in 2.46 seconds of test execution,
+plus compilation. Formatting and documentation link checks passed. Candidate
+and installed MCP responses matched. The code is `cfa077c` and local
+transcripts are in `runs/partial-feature-2026-11-25/`. This was a no-spend
+local MCP exercise with agent review. Full suites and benchmarks were
+outside this iteration.
+
+## Recovering a decision by its feature name — 2026-11-25
+
+An installed Foundry MCP looked up “Can we discard the predecessor and
+safeguard a collaborator's revision?” on a read-only exercise using a copy
+of the five saved project tasks (workspace `2f558a2157b9c452…`, ready,
+source revision 554). The baseline returned zero candidates and no question.
+
+The first edit asked where the decision had been saved. With the test-supplied
+reply **Desktop check — Cleanup**, Foundry returned revision 9, entry
+`keep-copy`, and asked whether it was the intended decision. A byte-range
+read confirmed “Cleanup keeps an edited copy when retiring its parent.”
+Two fresh-context agents read the MCP outputs. Both identified the saved
+decision as an option and flagged the need to check the revised original.
+The lookup requires the operator to supply the feature name in this case.
+
+The second edit put one changed source beside the decision. Ivo’s original
+said “Keep the separately edited copy when its parent is retired.” That exact
+sentence was absent from the revised spec. The position preview now read
+“Request the editor’s approval before archiving a separately edited copy.”
+Separate reads recovered the exact bytes of the decision, original and
+preview. A third fresh-context agent surfaced the approval condition, asked
+the operator to confirm the recovered decision and withheld authorization
+for permanent deletion. The preview provides current words at the cited
+position. The operator decides whether they govern the original question.
+
+The installed build on `f34a2e4` reproduced the candidate’s responses
+through fresh local stdio MCP. An unknown title returned no passages. The
+billing question continued to ask for clarification. The five tasks retained
+their revisions. Three focused Rust checks covered named-feature recovery,
+dependency discovery and source revision, and the SDK’s served tool schema.
+They passed in 2.19 seconds of test execution, plus compilation. Formatting
+and documentation links passed. Qualification used same-session agent
+judgments and local MCP, with no new desktop chat, long suite, benchmark or
+paid provider run. The transcripts are local in `runs/feature-title-2026-11-25/`.
+
+## Finding a decision in another feature’s words — 2026-11-25
+
+“**What happens to separate amendments during handoff?**” previously surfaced
+the handoff requirement and meeting. The installed Foundry now leads with the
+cleanup decision, “Cleanup keeps an edited copy when retiring its parent.”
+The result explains why by quoting the saved requirement, “Handoff relies on
+cleanup to preserve the editor’s separate amendments.” The requirement
+explicitly names that decision. No one taught Foundry the question. The
+decision’s directly cited spec needs review. The handoff’s own meeting
+citation remains current.
+
+The comparison used the same local snapshot of the actual project store
+(`2f558a2157b9c452…`, index revision 554). All five task IDs and revisions
+matched the native server and remained equal before and after the read-only
+exercise. A fresh stdio MCP client used the original installed binary for the
+baseline and reopened each returned passage with `peek`. The candidate and
+updated installed executable used the same operations and six fixed questions.
+
+| Question | Earlier result | Updated result |
+|---|---|---|
+| Retire the parent while preserving a colleague’s amendment? | Three wording matches. Cleanup and handoff appeared as separate leads. | One decision with the handoff requirement that explains the amendment. |
+| A colleague amended the published version. Is retiring its predecessor safe? | Cleanup appeared on “its” and “retiring.” | Cleanup appeared on “retiring” and the linked requirement supplied “amended.” The revised spec still needs review. |
+| What happens to separate amendments during handoff? | The two returned passages omitted the decision. | Cleanup appears first via the requirement, with zero shared words in the decision passage. |
+| Should we retire the parent account after billing closes? | Cleanup appeared as the sole lead. | No candidate. Foundry asks which feature or rule the operator means. |
+| edited promoted copy task forget | Two leading passages from the correction feature. | The same two passages and order. Three passages qualified across the project, down from five. |
+| Move payroll to Thursday. | No lead. | No lead. |
+
+All cited byte ranges reopened exactly, including both ends of each
+declared relationship. Every fixed question fit within the eight-declaration
+lookup limit. Two additional questions checked the boundary. A second billing
+formulation also stopped surfacing cleanup. A question about discarding a
+predecessor and safeguarding a collaborator’s revision still found nothing
+in either version. First encounters need some recognizable wording in the
+decision or its declared dependent. This exercise measures these saved cases.
+
+A separate museum-records regression covers duplicate declarations, the
+shortlist limit, weak wording, a revised original and a forgotten decision
+recreated under the same ID. The full evidence is local under
+`runs/decision-discovery-2026-11-25/`.
+
+All eight offline gates passed on `9cacf69`. The default suite passed
+1,329 tests with 35 ignored. The pilot suite passed 133 with 1 ignored.
+Both had zero failures. The installed desktop binary matched the gated
+artifact by SHA-256 (`9c78f2f4554fc80c…`). A fresh
+local MCP process verified the installed binary against the project snapshot.
+The run incurred no provider spend.
+
+## Following a reviewed quote after an edit — 2026-11-25
+
+An operator asked “When we retire the parent, what happens to the editor’s
+changes?” Task cleanup directly cited the specification. Editorial handoff
+relied on that decision and also cited Mina's meeting statement. The spec
+passage they relied on was “Keep the separately edited copy when its parent
+is retired.”
+
+Fresh local MCP clients reopened the same isolated notebook after each
+indexed edit. Both features needed review in every row. The separate meeting
+citation stayed current.
+
+| Change to the spec | What Foundry returned |
+|---|---|
+| Prefixed the sentence with “Préface. ” | Unique, moved. Retrieve reopened just the original sentence at UTF-8 byte range [10, 69). |
+| Added an appendix after the sentence | Unique, same position. Retrieve reopened the sentence at [0, 59). |
+| Added a second copy of the sentence | Repeated. Foundry labeled the excerpt as a position preview. |
+| Replaced the sentence with a request for the editor’s approval | Absent. The preview showed the replacement at the former position. |
+| Removed the file and reindexed | Source missing. Foundry returned neither a comparison nor a current excerpt. |
+
+We then supplied corrected meeting minutes with a new introduction. Peek of
+the cited capture at [17, 87) recovered Mina’s exact sentence, “Mina: Handoff
+must preserve the editor’s independently amended copy.” The reviewed original
+and its author stayed available. A unique byte match helps the operator find
+the passage again. Meaning and reconfirmation still require a review.
+
+The two extended store tests cover overlapping repetitions, UTF-8 offsets,
+and a fresh indexed line selection whose original passage moved outside the
+selection. Local transcripts are under `runs/revised-quote-2026-11-25/`.
+
+All eight offline gates passed on `2a8461e`. The default suite passed
+1,328 tests with 35 ignored. The pilot suite passed 133 with 1 ignored.
+Both had zero failures. The installed desktop executable matched the gated
+binary by SHA-256 (`57d9414eb6fc0c68…`). The same local
+MCP exercise passed against the installed executable with a second isolated
+store. This run used local stdio clients and incurred no provider spend.
+
+## First-try decision write in a fresh desktop project chat — 2026-11-25
+
+The earlier desktop chat made three unsuccessful decision writes before it
+received the nested command shape. The project Foundry tool now advertises a
+complete request with the workspace and task IDs, the revision from create or
+inspect, and the decision under `command.edits[].entry`. The SDK catalog
+test reads the example out of the running server's description and checks
+that the request parser accepts a single decision addition.
+
+A new local ChatGPT project chat received an ordinary-language request to
+save Nila's decision from the dispatch review and read it back. Its prompt
+supplied the words and attribution. The chat saw the advertised example in
+its tool lookup and used native Foundry calls for the entire task. The seven
+calls, in order, were status, list, create, apply, inspect, peek and list.
+All seven succeeded in one turn without follow-up syntax guidance.
+
+On the actual project store (`2f558a2157b9c452…`, source revision 554), create
+returned revision 14 for **Desktop check — Dispatch manifest**. The only
+apply used that revision and committed revision 15. Inspect returned entry
+`sealed-dispatch-manifest`, kind `decision`, author `Nila` and provenance
+`dispatch review`. Peek recovered the exact sentence “A sealed dispatch
+manifest keeps the destination approved at handoff.” The four existing tasks
+kept their revisions. The labeled acceptance decision remains available.
+
+Only the project Foundry server was restarted. The exercise used the
+existing desktop session and launched no separate provider job. Both
+Prakarana registrations were disabled. A separate status probe from the
+earlier chat failed during initialization while the fresh chat owned the
+store. Local receipts are under `runs/desktop-decision-first-write-2026-11-25/`.
+
+All eight offline local gates passed on `a070522`. The default suite passed 1,328
+tests with 35 ignored. The pilot suite passed 133 with 1 ignored. Both had
+zero failures. The installed binary matched the default-suite binary by SHA-256.
+
+## Shared-source review in a fresh desktop project chat — 2026-11-24
+
+A fresh ChatGPT desktop chat asked “When we retire the parent, what happens to
+the editor’s changes?” through the native project Foundry tools. Only the
+project's Foundry server was restarted. Its replacement opened the actual
+project store using the installed executable from the preceding qualification.
+The sibling MCP process kept its PID. Native status identified workspace
+`2f558a2157b9c452…`, source revision 554, with 421 sources and zero pending.
+
+The chat created one labeled notebook and two labeled features. It saved
+Mina's supplied meeting sentence at capture revision 5 and Ivo's supplied
+spec sentence at 6. At workspace task revision 12 both feature claims were
+current. The chat then used capture with supersedes to record Ivo’s edited
+spec at revision 13. The repository files and the existing feature task were
+outside the exercise. Each review fit on one page.
+
+| Feature | Why the edit reached it | Result after the edit |
+|---|---|---|
+| Desktop check — Cleanup | Its decision said “Cleanup keeps an edited copy when retiring its parent.” It directly cited the spec. | Needs review. The old quote was “Keep the separately edited copy when its parent is retired.” The new quote was “Request the editor’s approval before archiving a separately edited copy.” |
+| Desktop check — Editorial handoff | Its requirement said “Handoff relies on cleanup to preserve the editor’s separate amendments.” Its declared reliance on Cleanup remained current. | Needs review through Cleanup's revised spec. Mina’s independent meeting evidence remained current: “Handoff must preserve the editor’s independently amended copy.” |
+
+Both claims matched the previously confirmed wording. Foundry asked whether
+the feature still relied on the revised source. A separate question about a
+billing contact's parent account returned wording-only matches and a
+clarification. The revision stayed at 13. Native peek recovered both spec
+versions and marked the old one historical. The two review flags remain
+open in the labeled exercise tasks.
+
+The chat made 29 native calls, all to the project Foundry server. Three
+malformed apply requests and an unsupported schema request failed with
+`invalid_argument`. The desktop caller saw the task arguments as `unknown`.
+It completed the writes after receiving the nested add-entry shape. The
+[operator guide](../specs/003-agent-retrieval-context/contracts/shared-source-review.md#commands-and-output)
+now includes that example. All three source_review calls succeeded on their
+first attempt. The exercise launched no separate provider job and made no
+Prakarana calls. Process and native tool receipts are under
+`runs/shared-source-desktop-live/`.
+
+## Which features need review after a specification edit? — 2026-11-24
+
+A local project notebook received two originals. Mina's supplied meeting
+export said “Handoff must preserve the editor’s independently amended copy.”
+The indexed specification said “Keep the separately edited copy when its
+parent is retired.” Replaying capture produced the same receipt. Inspect
+showed two originals.
+
+Task cleanup cited the spec in its retention decision. Editorial handoff
+declared that it relied on that decision and cited the meeting directly.
+The feature's stated reason was “Handoff promises the editor that
+independently amended work will survive cleanup.” A new client asked
+“When we retire the parent, what happens to the editor’s changes?” It
+recovered both features and the previously confirmed team wording.
+
+The actual spec file was then edited to read “Request the editor’s approval
+before archiving a separately edited copy.” After indexing the file, a fresh
+client asked the same question. Both Task cleanup and Editorial handoff
+needed review. The latter showed the old spec quote, a retrievable current
+excerpt, the declared decision and the still-current meeting passage. The
+client retrieved the fixture's Rust implementation through the decision's code
+handle and reopened the original spec bytes with peek. Billing contacts shared
+some words and had no confirmed source for this dependency. The response
+asked the operator to clarify. Recording the correction and explicitly
+reconfirming its passage cleared both review flags on another fresh read.
+
+The separate replay of the previously saved real project used an isolated
+copy and an explicitly attributed exercise answer. “May I retire the parent
+while preserving a colleague's amendment?” previously returned zero leads.
+The new proposal found the saved clarification, named “Forget a task and its
+promoted project memory” and recovered the cited operator guide. The billing
+parent-account question also surfaced that example. Both required a new
+scope choice. A payroll question returned zero candidates. Withdrawing the
+old passage review removed the suggestion.
+
+The [plan, command contract and limits](../specs/003-agent-retrieval-context/contracts/shared-source-review.md)
+define source freshness and review scope. The fixtures establish this local
+workflow. They supply no population-level language-recall, model-cost or
+code-search accuracy estimate.
+
+All eight gates passed on `112bee0`. The default suite passed 1,328 tests
+with 35 ignored, counting the final result from each test executable and the
+doc tests. The pilot-feature suite passed 133 with one ignored. Both had zero
+failures. The artifact installed at the configured desktop path (SHA-256
+prefix `13fb12aef3411e44`) passed the four fresh MCP sessions above and the
+saved-case replay. The walkthrough used an isolated project and a separate
+copy of the previously saved case. Provider spend was zero.
+
+The already-open desktop chat returned `invalid_argument` for source_review
+after installation. A second process using the exact live project settings
+returned `store_busy` during initialization while the earlier owner held
+the store. The subsequent [fresh desktop project check](#shared-source-review-in-a-fresh-desktop-project-chat--2026-11-24) loaded the installed build. Local transcripts are in
+`runs/shared-source-review-2026-11-24/`.
+
+## From an indirect request to the affected feature — 2026-11-24
+
+“Someone rewrote the team's shared guidance. Can I clean up the original
+without losing their work?” The operator supplied that request, an author
+and a source label. The previous executable found the meeting note and
+rejected the new proposal operation. On the saved two-feature case the new
+operation preserved the complete question and followed the note's accepted
+review at revision 7. The rule about deleting an edited copy sits immediately
+before the reviewed passage in the same indexed spec. Foundry returned it
+as a possible interpretation and asked whether that rule governed the request.
+
+The conditional impact was specific. **“Forget a task and its promoted
+project memory”** relies on the original rule. Its saved requirement cited
+both the rule and the guide. Retrieving the guide returned “task forget
+refuses atomically: resolve/forget that record through `memory` first.”
+The suggested `context` arguments returned an implementation handle.
+Retrieving it showed the revision comparison in `Engine::task_mutate` and
+the early conflict before removal. The operator's policy choice remains
+open. Should cleanup keep refusing deletion, or allow deletion while
+preserving the separately edited copy?
+
+A fresh local MCP process recovered an explicit exercise answer and its
+chosen decision. Withdrawing the supporting passage review removed the
+candidate; the previous answer remained readable and a stale acceptance
+was refused. A subsequent dismissal survived another restart. The local
+store tests also added two stronger wording matches after confirmation,
+superseded the selected decision, and changed the cited source. They check
+that unrelated wording cannot displace the selection and that withdrawn
+support cannot confirm a replacement. In the same-file negative control,
+a more distant rule and a paraphrase citing the adjacent byte range were
+both excluded.
+
+The [contract and implementation plan](../specs/003-agent-retrieval-context/contracts/indirect-change-impact.md)
+gives the commands, persistence limits and failure behavior. The walkthrough
+used an isolated copy of the saved project features under local MCP. Its
+answers are exercise data. Discovery starts from at most two lexical leads;
+this case demonstrates a reviewed evidence path, without establishing general
+paraphrase recall.
+
+All eight existing local gates passed on `6a065de`. The default suite had
+1,327 passes and 35 ignored tests. The pilot suite had 133 passes and one
+ignored test. Both reported zero failures. Two fresh local MCP processes
+launched the installed desktop executable. The first retrieved the guide
+and code; the second reopened the original proposal and retrieved the same
+guard. The active ChatGPT GUI process was outside this run. Both Prakarana
+registrations were disabled. Provider spend was zero. Local receipts are in
+`runs/indirect-impact-2026-11-24/`.
+
+## Which other feature relies on this decision? — 2026-11-24
+
+The feature “Correcting a decision after it was copied to project memory”
+holds the contract that an independently edited or recreated project-memory
+record must be resolved before task deletion. **“Forget a task and its
+promoted project memory” relies on that decision.** Its operator guide says
+“task forget refuses atomically: resolve/forget that record through `memory`
+first.” The saved requirement cites both the guide and the original
+[memory contract](../specs/008-scoped-durable-memory/spec.md).
+The [operator workflow](experimental-context.md#recoverable-task-context)
+explains how to reopen the reason.
+
+The local MCP walkthrough used an isolated copy of the saved correction
+feature and saved the deletion feature beside it. The desktop project store
+already had a running stdio owner. Its live tasks and open choices were
+preserved. The walkthrough added a decision using the contract’s original
+bytes and saved the same passage as a requirement for deletion after checking
+the independently worded operator guide. Neither record supplied a foreign
+decision ID. On restart, the client listed both saved features, inspected the
+originating decision, then asked `decision_uses` for the other feature. It got
+one dependent and reopened the exact requirement, contract and guide citations.
+This establishes shared adoption of a documented rule. It leaves the proposed
+change to allow deletion with a surviving edited copy open.
+
+The previous executable rejected the new operation. During the walkthrough,
+the short note “Keep the independently edited copy” produced no lead. The
+guide’s separate sentence about removing an **unchanged** copy produced a
+clarification question and zero dependents. Saving the documented requirement
+then established the dependency. No reviewer approval was attributed to either
+wording match.
+
+An explicitly documented or operator-confirmed dependency can instead be
+saved with `relies_on` on the dependent feature’s requirement or constraint.
+On a second copy of the same two-feature store, a local MCP client supplied
+the guide’s own wording and the returned decision reference. Reading the
+dependency then quoted the guide and identified it as a declared requirement.
+The focused real-store regression covers that route, different source files
+with identical words, supersession, source edits, unrelated task revisions
+and reuse of task and decision IDs after deletion. The operation is scoped
+to one admitted workspace. It reads eight tasks per page and quotes one
+reason per other feature. Task rows containing new decision creation revisions
+or explicit references require a compatible reader.
+
+All eight existing local gates passed on `8a34154`, including the default test
+suite and the Rust 1.90 checks. The documentation link check passed. A fresh
+local MCP client ran the installed desktop executable against the saved pair
+and reopened both source citations. The existing desktop chat kept its own
+process. Both Prakarana registrations were disabled. The walkthrough used
+local storage and made no provider calls. Signing and release remain gated.
+
+## Change planning from a reviewed note — 2026-11-24
+
+We asked what would need attention if deleting a task could keep a shared copy
+that someone else had edited. The local MCP request supplied the question,
+the saved feature and its revision, with a 6,000-token delivery cap. The
+walkthrough used an isolated copy of the previous review against the real
+Foundry repository. Its reviewer had accepted one connection at revision 7.
+The task held that connection and a separate dismissal at revision 8.
+
+On the same indexed sources, the previously installed binary returned the
+accepted entry ID. Its view cut off part of the reviewed promise, and its
+delivered source omitted the revision check. With `91b21e9`, the reply paired
+the meeting note with the exact 229-byte passage accepted from the
+[memory spec](../specs/008-scoped-durable-memory/spec.md). A separate
+`retrieve` on the passage handle returned those same bytes at lines 353–356.
+The evidence report attributed the [deletion code](../src/task_context.rs)
+to a text match on that review. Opening the returned Rust handle confirmed
+both the revision check and the removal of an unchanged copy.
+
+**What would change for the operator?** Today, an edited copy blocks deletion
+of the original task. An unchanged copy is removed with the task. Allowing
+the task to disappear while an edited copy survives would affect the deletion
+branch, the recorded promise of explicit reconciliation, and the
+[regression that expects a conflict](../tests/task_context.rs). One decision
+remains open. Should the surviving copy retain a reference to its deleted
+origin, and what should opening that reference show? The review establishes
+that the two passages belong together. The operator has yet to approve a
+change in deletion behavior.
+
+A separate local MCP replay dismissed the accepted link at revision 9. The
+same question then returned zero accepted passages and zero sources attributed
+to a reviewed text match. All three review events remained readable. The
+focused regression also changes the indexed source and supersedes the note.
+Each removes the affected pair and its search attribution. The mounted project
+task was inspected at revision 3 with six originals. The walkthrough made
+its review choices only in the isolated store.
+
+All eight existing local gates passed on `91b21e9`. The documentation link
+check passed. A fresh stdio MCP client launched the updated desktop executable
+and reopened the reviewed spec and the deletion code. This delivery check ran
+locally on one saved feature. The already-open chat used its existing server
+process. Both Prakarana servers were disabled. The run used no provider,
+signing service or release workflow.
+
+## Later meeting note and earlier decisions — 2026-11-23
+
+The starting input was one illustrative meeting note asking whether removing
+the original task also removes a shared copy someone edited. The local MCP
+client supplied the wording and the workspace ID alone. The preceding
+feature's four originals matched the connected desktop project store
+byte-for-byte. The walkthrough used a separate store indexing that same real
+repository so that reviewer choices during development could be exercised
+without settling the operator's actual policy.
+
+The first attempt located the right spec but quoted an attribution rule.
+With English word forms and a bounded window of adjacent sentences,
+`d7334bf` found the [live-copy protection](../specs/008-scoped-durable-memory/spec.md)
+and the separately attributed review note about deletion. The operator can
+distinguish two changes here. Correcting the original decision involves a
+live-copy guard. Deleting the task involves a revision check that refuses
+to remove an independently edited copy. A consequential clarification is
+whether deletion should now succeed and retain the edited copy. The current
+[implementation](../src/task_context.rs) requires explicit reconciliation.
+
+A fresh local MCP client located the feature without an earlier task or
+decision ID, captured the note, and opened both suggested passages by
+their exact byte ranges. The indexed spec citation was fresh. A walkthrough
+reviewer accepted the contract connection and dismissed the other. A later
+process rediscovered the feature and confirmed both quoted passages against
+their immutable originals at revision 8. Only the accepted connection
+appeared on the note. Both accounts remained intact. The feature regression
+also covers a reversed choice, intervening revision, wrong passage, unrelated
+source, changed source and UTF-8 byte offsets.
+
+The live desktop project task `correcting-a-copied-decision` holds the
+illustrative note at revision 3. Updating the spec file changed its source
+handle, so the saved passage was refreshed with the same bytes and a link
+to its former revision. The connected desktop owner verified the note and
+fresh citation using its existing task operations. Both proposed choices
+are pending in the actual project. The new operations were exercised through
+local MCP stdio sessions. The installed desktop executable advertised the three
+new operations and reopened the exact saved review passages. The already-open
+desktop connection still returned `invalid_argument` for `connections` on
+its earlier catalog.
+
+All eight existing gates passed on `d7334bf`, including Clippy on Rust 1.90.
+The default suite reported 1,322 top-level libtest passes and 35 ignored,
+and its custom recovery runner passed all 21 cases. The optional pilot
+suite passed 133 with one ignored. Counts exclude nested subprocess summaries.
+The documentation link check passed. All feature checks ran locally with
+Prakarana disabled.
+
+The matcher can suggest relationships when wording overlaps. A suggestion
+expresses a possible connection. Source text and author attribution remain
+visible for the operator's judgment. Reviews occupy the existing experimental
+task record. A reader predating this change can open earlier records and
+requires an upgrade to read tasks with saved connection reviews.
+
+## Feature impact across sessions — 2026-11-23
+
+An operator supplied a conversation about understanding feature dependencies.
+The feature under review was correcting a decision already copied to project
+memory. An indexed passage from the [memory contract](../specs/008-scoped-durable-memory/spec.md)
+supplied the current policy. The reviewer's working premise and correction
+were attributed to the reviewer. The operator made no decision about how the
+proposed feature should handle an independently edited copy.
+
+The first 6,000-token MCP response spent its source budget on incidental
+question matches. The spec citation survived in the task view, but the answer
+did not deliver the related implementation. On `b431ad6`, the same query and
+budget returned the operation declaration and the supplied contract first. A
+scoped search in the cited file and two exact reads located the [live-copy
+guard and revision comparison](../src/task_context.rs). They show why a
+correction currently requires explicitly handling the project copy, and why
+task deletion refuses an independently edited copy. The spec also places
+existing exports and backups outside logical deletion.
+
+The check used independent local MCP stdio sessions against the indexed
+Foundry repository. One saved the conversation, spec and working premise.
+After the explicit correction, a new client knew only the feature title and
+question. It discovered the feature at task revision 15, read three current
+entries and followed the correction back to the historical original. The
+spec citation was fresh. The report marked word matches as candidates and
+reported unavailable compiler coverage. Foundry delivered the evidence and
+the host interpreted the source to answer the question.
+
+The same four attributed originals were saved using the connected desktop
+owner's existing task edit operation. Its normal inspect, peek and retrieve
+calls confirmed all four digests, the historical premise and the live
+spec citation at lines 342–358, in project task `correcting-a-copied-decision`
+at revision 2. The new capture and listing operations ran in separate MCP
+sessions. The installed desktop executable subsequently reopened the example
+in a fresh stdio session. Existing desktop connections kept their loaded
+version. No model, training, provider call or new benchmark was needed.
+
+All eight local publication gates passed on `b431ad6`. The default suite
+passed 1,323 tests with 35 ignored. The optional pilot unit suite passed
+133 tests with one ignored. The documentation link check passed.
+
+## First-try desktop inspect and peek — 2026-11-23
+
+The [previous native run](#fresh-chatgpt-desktop-project-chat--2026-11-23)
+returned eight argument errors on the two task reads. The shared command
+schema listed every operation's fields together. In `c63ced6`, the
+[advertised schema](../src/mcp/task_context.schema.json) requires the exact
+keys for each of these reads. The tool description also gives complete examples
+for hosts that display a simplified type signature.
+
+The new catalog regression failed against the old binary's schema and passed
+on the candidate. All 27 task-context tests passed. A Draft 2020-12 validator
+checked the installed executable's actual `tools/list` response against three
+valid and eleven invalid requests. That included the extra inspect fields and
+missing peek fields seen in the previous chat.
+
+**Desktop catalog refresh.** The first fresh project chat after the executable
+swap displayed the old description and received two argument errors, one on
+each read operation. That chat finished and its exercise connection was closed.
+After the new description became visible, a separate fresh chat called
+`status`, confirmed the exercise workspace (`c7ab30e07bde1c6f…`), and read
+the mounted declaration before touching either task. Its prompts supplied
+neither the command fields nor the expected answers.
+
+| Handoff | First inspections | First peeks | Answer checked against the fixture |
+| --- | ---: | ---: | --- |
+| Pavo, revision 7 | 1/1 | 5/5 | Recovered the historical layout and folded station observation. Used seal `MICA-37`, adopted layout `VALE-61`, cited current station `LARCH-86` at `dispatch.rs:1`, and kept ticket `QUILL-52` open. |
+| Palisade, revision 11 | 1/1 | 2/2 | Retrieved Edda Lo's pearl ticket and Ivo Keen's moss specimen report. Cited both originals and left the production stock unresolved. |
+
+All seven original texts and hashes matched the authored fixtures. Every peek
+completed in one page. The only refusal in the qualifying chat's 23 native
+calls was the expected `stale_handle` when it retrieved the old Pavo source.
+The second turn ran the eight fixed review inputs once each. All eight matched
+their expected advice or silence, including the changed-source count and both
+opposing authors. Both Prakarana registrations were disabled. The chat used
+only the exercise MCP server and launched no separate paid provider job.
+Private catalog snapshots, native calls, grader and logs are under
+`runs/desktop-read-schema-2026-11-23/`.
+
+All eight local gates passed on the code and tests in `c63ced6`, using Rust
+1.97.1 and the 1.90.0 minimum toolchain with Cargo offline. The default suite
+reported 1,319 passed and 35 ignored across its test binaries. The separate
+`pilot-capture` unit suite reported 133 passed and one ignored.
+
+## Fresh ChatGPT desktop project chat — 2026-11-23
+
+One new local ChatGPT desktop chat opened in the trusted Context Foundry project
+at `ea8d084`. Its native `context-foundry.status` returned the project workspace
+(`2f558a2157b9c452…`), ready at source revision 515 with 418 sources, zero pending
+and zero parse failures. A search for `apply_owned_block`, scoped to
+`src/bootstrap.rs`, returned a definition handle. Retrieving that same handle
+returned lines 904–908, beginning with the public function declaration at line 904.
+
+The same chat opened the separate `foundry-case-review` workspace
+(`c7ab30e07bde1c6f…`, three sources at revision 4). It answered both
+[authored cases](../examples/task-handoff/README.md) before receiving the fixed
+review inputs. The prompts withheld the answer keys. Grading compared the first
+answer and the recorded native tool responses against the fixtures.
+
+| Case | What the chat recovered | Fixed review inputs |
+| --- | --- | --- |
+| Pavo, revision 7 | Seal `MICA-37`, adopted layout `VALE-61`, and current station `LARCH-86` at `dispatch.rs:1`. It recovered the folded `CEDAR-24` observation, received `stale_handle` on its saved link, and left vellum ticket `QUILL-52` open. | 3/3 matched. The conflicting seal and superseded layout triggered both expected reminders. The changed-source proposal returned empty advice with `stale: 1`. The matching control returned empty advice with `stale: 0`. |
+| Palisade, revision 11 | Edda Lo's job ticket specified pearl at `job_ticket.md:7`. Ivo Keen's specimen report recorded moss at `specimen_report.md:7`. The chat retrieved both current sources, attributed each value and left production stock unresolved. | 5/5 matched. Each stock proposal cited the opposing report. The proofing, matching-trim and empty-proposal controls returned empty advice. |
+
+All eight fixed reviews returned `verified: false` and `omitted: 0`. The
+returned advice matched the expected entries and triggers, including the stored
+and proposed values in both Palisade conflicts. Every advised entry matched its
+original bytes, author, provenance and source links. Task revisions held at 7
+and 11 throughout both turns.
+
+The first turn made 39 native MCP calls. Two `inspect` requests included
+unsupported fields and six `peek` requests lacked the required byte range.
+The chat used Foundry to look up the command shapes and recovered all six
+requested originals. One concurrent retrieve returned `busy`; retrying the
+saved handle returned the expected `stale_handle`. The second turn made eight
+native calls, one per fixed review, all successful. Both Prakarana registrations
+were disabled and the chat made zero Prakarana calls. The test used the existing
+desktop session and local Foundry servers. It launched no paid provider run and
+did not measure desktop token cost. Native receipts, answers and the grader are
+local under `runs/chatgpt-desktop-native-2026-11-23/`.
+
+## ChatGPT desktop, memory handoff, Rust use sites and Mach IPC — 2026-11-23
+
+Base `c143f24` already includes the timer census. This no-provider round had four
+outputs: a desktop connection, one development-only retrieval rule, two original
+synthetic cases read by a second client, and one native startup observation.
+It leaves the broad startup inventory, paid pilot and signed package outside
+this round. Private receipts are under `runs/chatgpt-dev-round-2026-11-23/`.
+
+**ChatGPT desktop.** On macOS arm64, ChatGPT desktop 26.1117.41037
+(`com.openai.codex`) displayed the installed executable and all project STDIO
+arguments in Settings. The operator subsequently reported the server missing
+from `/mcp`. The project store initially reported `repair_required`; derived
+index repair and explicit source indexing restored ready status (415 indexed
+sources, zero pending, revision 499 at the check). The older optional semantic
+generation was retained and requires a separate refit. These checks used lexical
+retrieval. Five focused MCP connection tests passed.
+
+With owner approval, a user-scope fallback binds a separate synthetic workspace
+and limits discovery to five read tools. The trusted project overrides the root
+and store and enables task context. The native app-server's unscoped catalog
+returned the five fallback tools. An MCP client using the two exact configurations
+called `status`, `search` and `retrieve` in order and recovered the public
+`apply_owned_block` declaration at `src/bootstrap.rs:904` and the current station
+in the synthetic `dispatch.rs:1`, respectively. This running chat's own registry
+still reported an unknown MCP server at that check. The user-scope catalog,
+Settings screenshot and direct MCP readback are separate observations. The
+[desktop instructions](../README.md#chatgpt-desktop-on-your-mac) include a
+fresh-chat check for the native tool path.
+
+A repeat catalog discovery exposed a competing STDIO owner of the synthetic
+store. The later client failed its initialization handshake. The final fallback
+opens a separate copy of a closed synthetic seed per connection. Two simultaneous
+clients completed `status → search → retrieve` on the same cited handle and
+both copies were removed on shutdown. The unscoped app-server catalog then
+returned the five Foundry tools with no startup error. A separate session
+still lacked a mounted Foundry binding. A later
+[fresh project chat](#fresh-chatgpt-desktop-project-chat--2026-11-23)
+completed the native call.
+
+At the owner's request the test also disables the desktop `prakarana` and
+`prakarana-ask` registrations and parks this checkout's other Prakarana
+registrations and OMP tool. Positive checks covered the parsed config,
+preservation of unrelated settings and a dry run of the private restoration
+script. The app-server accepted the MCP configuration reload and returned zero
+callable tools under each disabled Prakarana registration. The pre-existing
+chat still listed its earlier mounted tools, so the test uses no Prakarana
+calls. The private settings backup sits outside the build and run caches.
+
+**Memory.** Two authors in separate fresh contexts wrote the
+[Pavo](../examples/task-handoff/stale-case.json) and
+[Palisade](../examples/task-handoff/conflict-case.json) cases. After the CLI
+writer exited, a separately initialized MCP reader issued 30 tool calls. Eight
+of eight reminder and silence expectations matched. Seven of seven original
+entries matched byte-for-byte, and two folded observations were recovered by
+content search and peek. Pavo refused the stale handle, recovered the current
+station from source and kept the question open. Palisade returned the opposing
+author for each same-scope proposal and silence for the three controls. The
+first setup attempt counted its ignore file as a fourth source and stopped
+before creating tasks. The corrected attempt indexed exactly three sources.
+The [portable exercises](../examples/task-handoff/README.md) reproduce the
+fixture store for a human or second client. The oracle was deterministic.
+Model behavior and provider economics are unmeasured.
+
+**Use sites.** Before joining development labels, the constructor sealed one
+candidate list from 388 archived G2 responses. It examined up to eight displayed
+locators per case, required verified verbatim bytes, and chose at most one
+unique compiler-resolved definition per seed. Ties favored more distinct uses
+in the seed, fewer referencing documents, earlier use, then full symbol ID.
+All 292 selected Rust hops matched the frozen occurrence extract and source
+bytes. Five synthetic selection and abstention controls passed.
+
+| Corpus | Cases | Baseline located | Cases with a hop | Missed targets newly reached |
+| --- | ---: | ---: | ---: | --- |
+| Rust | 197 | 52 | 114 | 0 of 145 |
+| TypeScript | 191 | 117 | Unknown | No pinned compiler reference producer |
+
+Of 1,544 Rust seed slots, 1,077 lacked a producer document, including 893 outside
+the library-only producer scope. Of the other slots, 18 lacked eligible verbatim
+source and 157 lacked an eligible reference. The 292 hops yielded 248 distinct
+destinations when deduplicated per case. One already-located target was
+rediscovered. This measures exact identity reachability under the selected rule.
+It gives no case for promoting that rule. The fresh holdout stayed sealed. No
+ranking, model or shipping default changed.
+
+**Mach and XPC.** Four bounded runs used the pinned host and production bridge
+under the existing restrictions in the Python launcher reconstruction. All four
+reached HOLD with two local refusal receipts each and exited without Ready.
+Each of the three instrumented runs saw three successful service lookups and
+seven successful notification registrations. The two monitored XPC constructors
+recorded zero calls. From the retirement sample to close, the uninstrumented
+half-second hold counted two sends and one receive. Two instrumented half-second
+holds counted zero. The single five-second hold counted ten sends and five
+receives while the monitored hooks were silent. These are whole-task counters;
+the peer, cause and external effects remain unknown.
+
+The task-local control counted 64 sends and 64 receives against zero while
+idle. Two early controls trapped during cleanup of an inactive anonymous XPC
+object. The corrected control passed. All eight process groups were reaped
+without force. The run and first readback finished within 116 seconds of the
+25-minute limit by UTC. The cross-process monotonic check was unsuitable on the
+installed Python. The result advances the inventory and leaves runtime
+admission on HOLD. It supplies no production Rust-launcher observation.
+
+**Local gates.** All eight gates in `scripts/gates.sh` exited zero for the Rust
+adapter changes in this round with Cargo offline. The default suite reported
+1,321 passed and 35 ignored; the feature-specific pilot suite reported 136 passed
+and one ignored. The default and Rust 1.90 Clippy/check gates passed. The
+portable fixture loader separately reproduced both task revisions and source
+freshness. The private gate logs and per-gate exit codes are under the round.
+
+**Publication readback.** The implementation and records were pushed as
+`fe3fb26` on `experimental/context-ecosystem`. A fresh checkout from the
+remote matched the commit and Git tree, and its Markdown link check passed.
+The final project reindex at that point reported 418 sources, ready state and
+zero pending. Cleanup removed only the two dedicated gate caches, with
+7,975,821,312 allocated bytes measured before deletion. Receipts, the installed
+desktop executable, synthetic workspaces and temporary-settings recovery
+files remain available locally.
+
+## Startup timer census — 2026-11-23
+
+This round advances the census row "Debugger and process timers" of the
+[startup inventory census](#startup-inventory-census--2026-11-20). It counts timer creation sites in
+the host's patched source and observes the timers the pinned host creates during startup, without a
+source change. Base `ed5b53f`; host `28c61eff…5406` and bridge `ce9a7181…44c7` unchanged; every
+native run used the landed startup policy (fatal network denial with the syslog carve-out) or, for
+the ordinary-RPC control, `(deny network*)` without the process-fork denial. One session ran it in
+the main checkout with agents for design, staging and the clocked run; this is in-session
+self-review, not an independent review.
+
+### Static census
+
+A search of the 10,339-file patched source found 1,933 timer-API matches (`setTimeout`,
+`setInterval`, `setImmediate`, `AbortSignal.timeout`, `Bun.sleep`, `Bun.sleepSync` and
+`scheduler.wait`/`yield`), plus 42 separate `node:timers/promises` imports. 1,094 are in tests and
+121 are comments, types or non-timers; 718 are in runtime code at 713 sites. Their classes are
+inferred from paths, flags and owners: 8 seen in startup in earlier rounds, 2 teardown, 125 behind
+an existing startup exclusion, 308 after the handoff by path, 169 in other modes, 27 outside the
+main JavaScript context and 79 unknown, plus 5 unknown imports. Two design critiques corrected the
+first classification before the run: a known teardown site; an auth timer seen in startup; the
+connection prewarm and usage prefetch, which are called in startup but excluded before any timer
+(now behind an exclusion); and secrets loading, gated off by default (now unknown).
+
+### Native census
+
+A test-only preload, not a product fence, wrapped the global timer functions, `node:timers` and
+`node:timers/promises`, `AbortSignal.timeout`, `Bun.sleep`, `scheduler.wait` and
+`ref`/`unref`/`refresh`. It recorded creation with frames reduced to chunk and line, fire, clear,
+and pending snapshots at RPC retirement, at the end of a hold and at exit. Bare Bun under the
+startup policy recorded every wrapped form, `Bun.sleep` included. `Bun.sleep`, `scheduler.wait` and
+the promise `setTimeout` keep the event loop alive; `AbortSignal.timeout` does not.
+
+On the exact host and bridge, three preloaded normal runs reached HOLD with the same channel and
+refusals as a run without the preload, within twice its launch-to-reap time. Over the six runs that
+decide settlement (three normal, withheld catalog, close with the refusal pending, and a 40-second
+hold after `rpc_retired`):
+- 45 timers were created before retirement, and every one was fired or cleared by it. None was
+  pending at retirement, and none was created or fired in the retirement window or the hold. The
+  close-pending run, which never retires, had 3 timers with no retirement window. The hold run
+  recorded the same 51 trace rows as a normal run.
+- 14 site and owner keys at 10 source sites were observed, all joined to source lines the static
+  census predicted; two helper owners joined ambiguously. They are 9 startup keys, among them the
+  catalog and provider discovery deadlines, the 30-second extension handler race, the 10-second
+  watchdog interval and a 200 ms settings timer, and 5 teardown keys.
+- In teardown, four session shutdown deadlines are created through `withTimeout` and cleared (5 of
+  6 runs; not the close-pending run), and the 10-second `postmortem.ts:290` deadline is abandoned
+  at exit in every run, which came at most 17.3 ms after close. With the refusal pending, the
+  watchdog interval is also abandoned at exit.
+- A repeat of a normal run from a fresh case directory gave its site set.
+
+An ordinary-RPC control started the debugger sweep after a launch request and five other sites
+absent from the restricted runs, including the connection prewarm. It keeps most exclusions (no
+LSP, skills, title, prewalk, MCP, OTLP or marketplace), so those owners' timers were not contrasted.
+An in-host control recorded a timer for each probe through the host's bundled helpers.
+
+### Findings for the owner
+
+- The pre-registered expiry of the per-extension 30-second abort signal (`runner.ts:1263`) did not
+  occur: no production run created an `AbortSignal.timeout`. Why that site was not reached is not
+  shown.
+- The in-host control's probe frames were tagged as non-bridge (`x`) rather than bridge (`b`), so
+  the coverage rule classed all 18 in-host forms blind although each probe recorded its timer. The
+  inferred cause is the file name the trusted extension copy of the bridge loads under. It was
+  recorded as computed.
+- The bundled call path is not shown for `Bun.sleep` (no bundled caller), `setImmediate` (its one
+  site's first frame is native) or `scheduler.yield`.
+
+### Cleanup and size
+
+All 34 native groups (33 in the qualification readback plus the repeat run) were reaped and none
+was forced. The final readback removed 10 host-extracted addon copies and the staged shared addon
+(11 files) after matching `ee0bf26f…900b`, taking the round from 1,237,962,752 to 16,011,264
+allocated bytes. The pinned host and the four earlier rounds' files were unchanged. The clocked part
+took about 4 of its 150 minutes, which override the contract's 90-minute wording, with authoring,
+staging and self-tests before the clock. There was no product change and no Cargo gate. Zero
+provider calls, zero spend. Receipts, including the protocol, critiques, amendments and static
+census, are under `runs/pilot-startup-timer-census-2026-11-23/`.
+
+### Deviations from the protocol
+
+- Session-owner amendments, not deviations: the defaults on the ordinary-RPC policy, chunk-and-line
+  frames and no product change; the abort-signal expiry as a finding, not a failure; the
+  ordinary-RPC control keeping `--restrict-tools`; and the replacement of `check.py` and `replay.py`
+  by the timer checker, decision script and the repeat run.
+- Staging needed its one allowed repair: Bun's `process.hrtime` does not share the driver's clock, so
+  the preload records real time; the `Bun` wrappers are assigned rather than redefined; and the
+  fixture keeps its abort signals alive. Two pre-clock reviews then found 23 tooling defects, all
+  fixed and the self-tests rerun before the clock. The join's shape fallback was not implemented; it
+  was not needed.
+- Staging measured the bundle chunk count as 3,210, not 3,201, and the header counts as 3,791 and
+  3,519, not the design's 3,351 and 3,081. The bundle join scores candidates with three lines of
+  context on each side and a 0.1 margin. Drivers ran with `python3 -E -s -B`, not `-I`.
+  `inputs.json` wraps the zero-cost fields for the pinned static census receipt.
+- `/private/tmp`: one empty shell here-document ran during the staging fix before `TMPDIR` was set,
+  and staging made two read-only listings beyond the fixture glob. In the clocked phase, read-only
+  inspection commands ran without the `TMPDIR` prefix; none wrote a file and the listing was
+  unchanged. No round data was written there.
+
+### Not established
+
+- Timers outside the wrapped JavaScript entry points: Bun, Zig and JavaScriptCore internals, the
+  addon's Tokio timers, option-driven timeouts, blocking `Atomics.wait`, workers and subprocesses,
+  unexecuted third-party code, and references captured before the preload loaded.
+- Reachability of unobserved runtime sites: the 84 unknown entries and the unobserved sites in the
+  other classes. Every static class is inferred.
+- Whether host code runs in response to an `AbortSignal.timeout` expiry.
+- Timers created after the RPC/Ready handoff in an admitting profile, and activity later than 40
+  seconds after `rpc_retired`.
+- Fidelity of the launches: the host runs reconstruct the launch in Python and add the preload; no
+  production-launcher (Cargo) run was made.
+- Any owner decision on the fence or on a host patch. The admitting profile, the inventory freeze
+  and admission stay on HOLD.
+- This was in-session self-review, not an independent one.
+
+## Startup early connect and fatal network denial — 2026-11-21
+
+This round advances row 1 of the [startup inventory census](#startup-inventory-census--2026-11-20),
+"Connection preparation", and answers the [previous round](#startup-transport-witness--2026-11-20)'s
+open items about the Unix-socket connect every Bun process it launched made before host code. The
+startup launcher now makes a sandbox `network*` denial end the host, except a denial of the syslog
+socket, which stays non-fatal. Twelve classes were shown to be killed on bare fixtures with the
+same suffix (inferred for the host). Mach/XPC and daemon-proxied routes are not covered. Base
+`99966c2`; host `28c61eff…5406` and bridge `ce9a7181…44c7` unchanged. One session ran it in the
+main checkout, with agents for staging, controls and the product gates; this is in-session
+self-review, not an independent review.
+
+### The early connect
+
+Static reading on this Mac (macOS 27.0.1, 26A434), with 12 receipts (ten tool runs under
+`(deny network*)`, two in-process Python reads): libSystem's simple logging makes
+`socket(AF_UNIX, SOCK_DGRAM, 0)` and connects it to the 15-byte path `/var/run/syslog`. When
+that connect fails it closes the socket and sends nothing. It is reached from libxpc's `_xpc_bundle_resolve_root`, at the call that logs
+`bundle %s tainted with reason "missing root"` after the bundle's container fails a read check;
+that this container is the executable's directory is inferred from the launch-path cells below.
+The `libsystem_platform` and `libxpc` UUIDs match the witness's image records. The logged
+message was not captured.
+
+Kernel level, without the witness: under the fatal rule alone, bare Bun in place died before main
+(signal 9, no output, 24.9 ms after launch). With the syslog carve-out added it exited normally. So
+did the host's three normal runs, which died under the fatal rule in the previous round. So every
+sandbox network operation in those startups matched the carve-out (inferred from these pairs;
+another operation on the same socket could not be told apart).
+
+Witness corroboration: a test-only library-call witness (v3, not a system-call tracer; 72-check
+self-test, whose errno check cannot detect a dropped `RESTORE_ERRNO` alone; fit in all eight
+witness runs) recorded the pre-constructor `connect` to `/var/run/syslog` returning −1 `EPERM` in
+Bun in place, in a C fixture at a literal-only path, in bare Bun under the carve-out and in the
+host's witness run. Its frames run from `_simple_asl_connect` through `_os_log_simple` to the
+"missing root" log site, then, symbolized after the round by a
+sandboxed static read, through `__xpc_bundle_resolve_sync`, a `dispatch_once` block,
+`__xpc_bundle_resolve`, `xpc_bundle_copy_services` and `__xpc_collect_images` to
+`__libxpc_initializer`. The design's predicted route through `__xpc_early_init` and
+`__xpc_init_pid_domain` did not appear, so that part of the static model is not shown.
+
+Launch path (pattern A of the protocol). Under today's policy with the witness, the connect was
+present for Bun in place and for a C no-op fixture copied to a path that only a literal rule
+re-allows. It was absent for Bun copied into a readable case directory and for the C fixture run
+from its case directory. Under the fatal rule, the two literal-only executables died before main
+and the two readable ones lived. Allowing `file-read-data` on Bun's directory alone removed the
+connect. So the connect is made by any libSystem process whose executable's directory is
+unreadable, not by Bun itself (inferred from these cells and the static reading; every settled
+prediction held). The copied Bun matched the original's hash, mode, extended attributes and
+signature lines.
+
+The optional log probe did not run: `log stream` under `(deny network*)` exited with code 64 within
+its 1.5 s start window, with no stream lines and one stderr line (not kept), so no Sandbox deny
+line was captured.
+
+### Fatal denial with a syslog carve-out
+
+The C fixture's syslog connect returned −1 `EPERM` under today's policy and was killed under the
+fatal rule. With `(deny network-outbound (literal "/private/var/run/syslog"))` after the fatal rule
+(P1S), it returned −1 `EPERM` and the process lived. A later non-fatal deny therefore replaces the
+fatal action, and nothing is newly allowed; the `remote unix-socket` form was not needed. Still
+killed under P1S, each within 11-28 ms: TCP4 and TCP6 connect, UDP send with an address, UDP
+connect, inet bind, `listen` on an unbound socket, AF_UNIX connect to an owned listener (0
+accepts), AF_UNIX bind, AF_SYSTEM control connect, AF_UNIX connect to `/var/run/mDNSResponder`,
+`DNSServiceCreateConnection` and `getaddrinfo("localhost")`. A same-process socket pair was not
+killed. A later `(allow network-outbound (remote ip "localhost:Q"))` to an owned listener also
+overrode the kill (one accept). A later path-filter allow was not run, because it would have let
+the connect reach syslogd.
+
+### Startup under the new rule
+
+In the Python reconstruction of the exact host and bridge under P1S:
+- Survived: bare Bun and its addon load (exit 0), and the host's three normal runs, the
+  withhold-catalog run and the witness run, each reaching HOLD with the extracted addon
+  `ee0bf26f…`. The witness run recorded no `network*` call after its constructor and one addon
+  socket pair. A 20-second hold after
+  `rpc_retired` passed without a kill.
+- A close with the refusal pending ended with exit 70 under both today's policy and P1S. The host
+  made no fatal `network*` call there.
+- Killed by signal 9 the driver did not send: bare `Bun.connect` (24.5 ms after launch), the spliced
+  `Bun.connect` (0.9 ms after its trace) and `SIGUSR1` (11.2 ms after the signal). With the witness,
+  the `SIGUSR1` run's last `network*` record is an inet `bind` to loopback port 9229 with no exit
+  record, so the killed call is inferred to be the inspector bind.
+
+### Red, fix, green
+
+The change sets `STARTUP_OBSERVATION_POLICY_SUFFIX` in `src/pilot_capture/host.rs` to
+`(deny process-fork)(deny network* (with send-signal SIGKILL))(deny network-outbound (literal "/private/var/run/syslog"))`,
+used only under `CatalogProfile::StartupObservation`. `startup_host_exit` now records `code` and
+`signal`. Tests:
+- a pin on the constant;
+- the `rpc-input` control's written-out policy oracle, plus an assertion that its host did not die by
+  `SIGKILL`;
+- a check that the normal journal's exit row has `code: 0` and `signal: null`;
+- `source_startup_signal_listener_fails_closed`, which sends `SIGUSR1` through the actual launcher
+  after the first refusal.
+
+On the red tree (old constant, exit record without code and signal), the four tests failed with
+exit 101, each on its own assertion. The signal
+test failed because startup reached the HOLD. After the fix all passed. Through the actual launcher,
+without the witness, both signal runs ended the host by signal 9 that the parent did not send. Each
+journaled `startup_host_exit` with `signal: 9`, `code: null`, `forced: false`, after a protocol halt
+`startup_unexpected_event` before retirement, and the parent returned that fault. That the killed
+call was the bind rests on the reconstruction's witness run. A kill names no destination, so this
+is not journal completeness. A parent-killed test was not added: its path is the signal test's
+before-retirement branch.
+
+Implementer interpretation, flagged to the owner: this kernel action on an existing denial
+intercepts no JavaScript API, so it is read as outside the rejected blanket API fence. The contrary
+reading: the fence was rejected because its coverage was incomplete, and this rule is also
+incomplete, since it misses Mach/XPC and daemon-proxied routes and a kill names no destination. The
+owner chose this round; that is not a decision on either reading. Reverting it means the constant,
+the policy oracle and its message, the constant pin test and the `SIGUSR1` test.
+
+### Gates
+
+`pilot-capture` feature, Rust 1.97.1 unless stated, one at a time; stdout SHA-256 prefixes:
+- Reds, exit 101: `unit-red` (132 passed, 1 failed, 1 ignored) `575997ea`, `rpc-input-red`
+  `a7d1af65`, `startup-red` `09399cc1`, `signal-red` `85c45cb6`.
+- Greens: `unit` (133 passed, 1 ignored) `eb24d52e`, `rpc-input` `6581fada`, `signal` `3badb3a1`,
+  `signal-repeat` `a356e27b`, `startup` `7d767c45`, `startup-repeat` `d97eadfa` (each 14 journals;
+  normal journal 18 rows with the HOLD), `lint` (clippy `-D warnings`) and `msrv` (Rust 1.90.0
+  `cargo check`).
+- `fmt` failed once: rustfmt joined the constant onto one line and split two assertions. The
+  pre-declared `cargo fmt` fallback changed only `host.rs` and `tests/pilot_capture.rs`, and
+  `fmt-2` passed.
+- After cleanup, the kept test binaries replayed the startup, `rpc-input` and signal tests (signal
+  9, `forced: false`). The reconstruction under the landed constant gave HOLD, a spliced-connect
+  kill and a `SIGUSR1` kill.
+
+Not run: `scripts/gates.sh` and the default-feature gates (only `pilot-capture` code changed; not a
+merge), and native macOS acceptance.
+
+### Cleanup and size
+
+All 44 native groups in the qualification readback (43 clocked cases and the staging self-test)
+were gone and none was forced; so were the superseded first staging self-test and the three
+replay host cases.
+Cleanup removed the two Cargo targets and the round's scratch, reducing allocation by
+3,514,355,712 bytes. The final readback then removed 15 host-extracted addon copies, the
+staged shared addon and 2 Bun copies after matching their hashes. That took the round from
+2,189,123,584 to 234,274,816 allocated bytes. The pinned host and both earlier rounds' files were unchanged. The clock started
+at 15:24:17 UTC: decision at minute 4.8, all gates green by minute 21.3, close-out within the
+150-minute deadline. That deadline overrides the contract's 90-minute wording; authoring and
+compiling were staged before the clock. Zero provider calls, zero spend. Receipts, including the
+protocol, critiques and amendments, are under `runs/pilot-startup-early-connect-2026-11-21/`.
+
+### Deviations from the protocol
+
+- Session-owner amendments before the clock, not deviations:
+  - if the close-pending case had been killed only under the carve-out, the rule would not have
+    been adopted;
+  - compile-only steps were added before the red and the green gates. Both compiled first time,
+    so there were no authoring fixes.
+- Staging ran `sw_vers` once outside the sandbox (output discarded); the static receipt ran
+  sandboxed.
+- Design-time static reads (`dyld_info`, `sw_vers`) ran without a sandbox in four in-session stages
+  before the round (the brief and three design stages); the in-round static receipts ran under
+  `(deny network*)` and are the evidence.
+- By protocol, the brief's optional late allow of the syslog socket was replaced with the documented
+  loopback allow to an owned listener, so no connect reached a system daemon.
+- Staging departed from the protocol text where it was wrong or could not be built, each recorded in
+  the round's `staging-report.md`:
+  - extended-attribute names were read through libSystem's `listxattr`;
+  - self-test check 11 was rebuilt (4 own-image and 28 libxpc addresses) and check 5 strengthened;
+  - pre fitness was extended to in-flight network records and to absence claims;
+  - part of S3 ran before S2;
+  - the `Qw` case was added.
+
+  Twelve review findings in the tooling were fixed before the clock, two of them in part (findings
+  2 and 12). The witness was rebuilt once and its self-test rerun; the first receipts are kept.
+- Helper files went into the session's scratchpad under `/private/tmp`, where the protocol drafts
+  were also written before staging: a clock helper, a copy of the host cases' execution receipt, a
+  policy listing from a review pass and a staging review script. None is evidence; the receipts are
+  under the round directory. The session owner read G.1 S7 as covering stores and evidence, and
+  treated this as a deviation, not a stop.
+- During the controls, the first `decision.json` misread the static receipt and withdrew the static
+  claim. It was kept as `superseded-decision-1.json` and corrected at minute 4.82, with no other
+  branch changed. The probe's outcome was added to it once afterwards.
+- The controls executor:
+  - ran one extra witness check on the first launch-path cells before the rest;
+  - added a decision tool (`decide.py`, not in the protocol's copy list);
+  - annotated `witness-readback.json` after `check.py` wrote it (three fields; `check.py`
+    unchanged).
+- The product-phase agent's session ended with an API error after the last gate, before it wrote
+  its summary, and the close-out agent failed the same way. The session owner wrote the summary from
+  the receipts and ran the close-out; nothing was rerun. The replay's three Cargo tests have no
+  before-and-after listing of the temporary directory; the listing taken afterwards was unchanged.
+- The deeper frames were symbolized after the round by a sandboxed static read, first without a
+  receipt and then repeated with one (`attribution/deeper-frames.json`).
+- The first self-review pass ran before the commit existed and was repeated after it. In response,
+  the constant's doc comment and the signal test's SAFETY comment were reworded (comments only).
+  `cargo fmt --check` and clippy with `-D warnings` passed on the committed tree; no other gate was
+  rerun (receipts in the round's `postfix/`).
+
+### Not established
+
+- Journal completeness: a kill names no destination.
+- `network*` classes other than the twelve shown, and Mach and XPC routes. The twelve were shown
+  on bare fixtures with the same suffix; at the host, only a TCP connect and the inspector bind were
+  killed. Name resolution's AF_SYSTEM and `mDNSResponder` connects are therefore inferred to end the
+  startup host. The syslog socket stays a silent denial.
+- The logged message and other log routes.
+- The libxpc initializer route the design predicted.
+- How the Cargo test's 13 fault-path hosts end, since that test journals no exit for them.
+- Activity beyond 20 s after `rpc_retired`.
+- Fidelity of the reconstruction: the reconstructed witness launches add `DYLD_INSERT_LIBRARIES`.
+- The admitting profile, the inventory freeze and admission stay on HOLD.
+- Whether the tripwire is outside the rejected fence is an implementer interpretation awaiting the
+  owner.
+- This was in-session self-review, not an independent one.
+
+## Startup transport witness — 2026-11-20
+
+This round advances row 1 of the [startup inventory census](#startup-inventory-census--2026-11-20),
+"Connection preparation". It reads the startup transports from source, tests on the pinned host
+which kernel network operations the startup-observation profile denies, and tried to make such a
+denial end the host instead of returning an error the host can ignore. That change was not
+adopted: under the fatal denial, every Bun process the round started (19, bare and host) died
+during startup before it printed or sent anything, so a fatal denial kills normal startup. The
+inferred cause is one Unix-socket connect that each Bun process in which the repaired witness
+loaded made before any host code. Its result and the kill site were not recorded, and its
+attribution to libSystem's logging path is also an inference (below). A test-only library-call
+witness recorded what the host called. The base commit is `f51b223`; no source changed, the
+host stays `28c61eff…5406` and the bridge `ce9a7181…44c7`. One agent ran the round in the main
+checkout; this is in-session self-review, not an independent review.
+
+### Route table (source reading; completeness not established)
+
+A read-only reading of the patched upstream source and the Foundry launcher gives this
+disposition per transport class under the startup-observation profile. It is static source
+reading, not runtime proof; the runtime column cites this round's runs.
+
+| Class | Reachable before acknowledgment | Disposition | Seen at runtime |
+| --- | --- | --- | --- |
+| Foundry channel (fds 3/4) and RPC stdio | yes | owned protocol channels | yes |
+| Anthropic warm-up HEAD, catalog GET | yes | classified and refused before I/O through the journal | two refusals per run |
+| Other registry fetches | only through the catalog hook | fail closed through the journal | no |
+| Addon Tokio socket pair | yes | observed and attributed; same process, no peer | one per run |
+| Early Unix-socket connect to a 15-character path (inferred: libSystem logging to the syslog socket) | yes, before any host code | inferred denied silently (result not recorded); unclassified | recorded in the 9 Bun processes in which the repaired witness loaded |
+| `SIGUSR1` inspector listener | armed; external signal only | unjournaled listener attempt, denied | when signalled |
+| Provider discovery, credentials, telemetry, marketplace, MCP, memory | no | excluded before construction; existing receipts | no |
+| Tools, web, browser, subagents, inference, CLI subcommands | no | need a prompt, tool or command | no |
+| Raw TCP/TLS, Unix sockets, WebSocket, workers, subprocess IPC | no | excluded by profile gates | no |
+| Automatic Codex WebSocket prewarm | no (model, provider, empty auth) | excluded by gates only; no patch | no |
+| Addon Mach/XPC services | no | excluded by gates; Mach lookups are not denied | no |
+| Bun crash upload, auto-install, resolver configuration | unknown | unclassified runtime routes | no |
+| `DNSServiceCreateConnection` / `getaddrinfo` to `mDNSResponder` | only if used | Unix-socket route, denied; `getaddrinfo("localhost")` also makes two denied AF_SYSTEM control connects | no (bare fixtures only) |
+
+### Kernel controls
+
+Small C fixtures ran under a bare policy with the startup policy's network, real-home and
+process-fork denials.
+
+With today's denials, each of these returned -1 with `EPERM` from the libSystem entry point:
+
+- TCP connect over IPv4 and IPv6;
+- UDP send with an address, and UDP connect;
+- bind of an inet socket, and `listen` on an unbound one;
+- AF_UNIX bind;
+- AF_UNIX connect to a listening socket the driver owned;
+- AF_SYSTEM control connect.
+
+An AF_UNIX connect to a path that does not exist returned `ENOENT` instead, consistent with the
+path lookup failing before any sandbox check (inferred). Sending on a same-process Unix socket
+pair succeeded.
+
+With `(deny network* (with send-signal SIGKILL))` appended, each of the nine denied classes ended
+by signal 9 that the driver did not send, before the fixture printed its result. The driver
+reaped them 10 to 28 ms after the fixture's marker; these are reap times, upper bounds on the
+time of death, since the two fixtures that were not killed, the missing-path connect and the
+socket pair, were reaped 31 and 34 ms after theirs.
+`DNSServiceCreateConnection` and `getaddrinfo("localhost")` take the Unix-socket route to
+`mDNSResponder`, and `getaddrinfo` also makes two AF_SYSTEM control connects inside
+`libsystem_info`, both denied. Both fixtures are killed under the fatal suffix. Since a bare
+AF_SYSTEM control connect is also killed there, a fatal rule that allowed only the
+`mDNSResponder` route would still kill this name resolution (inferred). Under today's policy the
+first fails, and the second still answers `localhost` after those denials and without the
+`com.apple.dnssd.service` Mach lookup; where the answer comes from is not shown.
+
+Bun reports the kernel's `EPERM` on connect as `ECONNREFUSED` through `Bun.connect`, `node:net`,
+`node:http`, `node:https`, `node:http2` and `node:tls`, and as `EPERM` through `fetch` and
+`WebSocket`. The witness saw `EPERM` returned to Bun in the same runs. This is consistent with the
+2026-11-18 `ECONNREFUSED` being Bun's mapping of a kernel denial (inferred from the pairs).
+
+### Fatal network denial: not adopted
+
+Under the fatal suffix, every Bun process died at startup, before it printed or sent anything:
+
+- bare Bun in ten runs, including one that only loads the addon: reaped 12 to 23 ms after
+  launch, or 79 to 86 ms with the witness inserted;
+- the exact host and bridge, launched by the Python reconstruction described under Witness, in
+  nine runs: three normal, withhold-catalog, the spliced `Bun.connect` fixture, a 20-second hold,
+  `SIGUSR1`, and two with the witness. They were reaped 58 to 67 ms after launch, or 115 to 133 ms
+  with the witness, with no channel frame and no addon extraction.
+
+So the fatal suffix would kill normal startup, and the `Bun.connect` fixture never reached its
+connect. The protocol's decision rule therefore kept the startup policy unchanged. No product
+phase ran: neither the policy constant, its tests nor the always-run killed-host test were added.
+Whether such a kernel tripwire falls outside the rejected blanket API fence remains an
+implementer interpretation awaiting the owner, and nothing depends on it now.
+
+Under today's policy, the spliced fixture opened one raw `Bun.connect` to a closed loopback port
+before the startup owner was bound. The kernel denied it, the fixture saw `ECONNREFUSED`, and the
+channel reached the usual messages and the HOLD. The Python parent's refusal journal held only
+the two classified refusals. A `SIGUSR1` sent after the first refusal made Bun try to start its
+inspector. It printed that the address was in use, and the run still reached the HOLD.
+
+### Witness
+
+The witness is a test-only library-call witness: a library inserted with
+`DYLD_INSERT_LIBRARIES` that interposes 37 libSystem entry points. It is not a system-call
+tracer. It records the transport class, destination class and port, result, errno and
+image-relative frames. It records no payloads or addresses: an IP destination is a class and a
+port. It names a host only from a five-name allowlist (only `localhost` occurred), a Unix socket
+path only for five allowlisted system sockets (otherwise a class and length), and a Mach or
+notify name only under `com.apple.`. It refuses, without passing on, any lookup of a name other
+than `localhost` or a numeric literal; outside its self-test no such lookup occurred. The first
+version's self-test passed 61 checks; the repaired version was checked only by the A1 and B1
+reruns (see the deviations).
+
+Positive controls under bare pinned Bun and C fixtures showed these calls:
+
+- `connect`, `connect$NOCANCEL`, `connectx`, `bind`, `sendmsg_x`, `send` and `sendto`;
+- `socket`, `socketpair`, `recvmsg` and `recvmsg_x`;
+- `getaddrinfo` and `DNSServiceCreateConnection`;
+- `bootstrap_look_up` and `xpc_connection_create_mach_service`;
+- `notify_register_file_descriptor`;
+- `posix_spawn` and `fork`.
+
+`bootstrap_look_up2`, `notify_register_check` and `notify_register_dispatch` were also recorded,
+but only incidentally; no designed control covers them, and the protocol lists them as hooked,
+not shown. Other hooks are hooked but not shown, among them `accept`, `getnameinfo`,
+`DNSServiceQueryRecord`, `posix_spawnp` and `execve`. Calls between system libraries were
+visible: `send` reached `sendto`, and the resolver calls reached `connect$NOCANCEL`. In every
+case it was inserted into and that lived long enough, the witness loaded once in the right
+process, with no re-entry, truncation or lost record, except that the XPC fixture wrote no
+summary record, so its lost count is unknown. A record-cap fixture overflowed as designed, and
+injection through `sandbox-exec`'s own environment loaded nothing.
+
+The sandbox report probe did not run. `sandbox-exec` rejected the protocol's report suffix
+`(deny network* (with report))` with exit 65 ("report modifier does not apply to deny action"),
+so neither feasibility control made its call. `log stream`, run as this user without a privilege
+prompt, did deliver Sandbox deny lines for other processes, so report capture itself was not
+ruled out. The report runs of the two route fixtures and of the host were not run.
+
+Every Bun process in which the witness loaded (30) made two calls before the witness's
+constructor, which the first version only counted; the 13 C fixtures in which it loaded made
+none. The one allowed repair recorded them in the nine Bun processes in which it loaded, and both
+versions are retained. They are a `socket` and an AF_UNIX `connect` to a path of 15 characters. The repair
+records no result or errno for them, and keeps at most 12 return addresses. That length matches
+the syslog socket, and the frames resolve to libSystem's simple logging path by nearest exported
+symbol (both inferred; the logged message is not identified). That this connect is denied today
+and is the call the fatal suffix killed is also inferred. It is the only `network*` call recorded
+before the witness's constructor, and none of the five witness runs under the fatal suffix lived
+long enough for the witness to write anything. In the kernel controls, a `socket` followed by a
+connect to a missing path was not killed, while an AF_UNIX connect to a listening socket was
+denied and killed. The system profile treats `/private/var/run/syslog` as `network-outbound`.
+Every Bun executable ran in place from a path under the denied home that only a literal rule
+re-allows, while every C fixture ran from its case directory, so the round does not separate
+Bun from how it was launched.
+
+On the exact host and bridge, with the production policy, arguments and environment
+reconstructed in a Python parent (plus the witness in argv and environment), five runs were
+recorded: three normal runs, a withhold-catalog run and a run held 20 seconds after
+`rpc_retired`. Among network calls, each recorded only that early connect and the addon's Unix
+stream socket pair. None recorded a resolver or spawn call or anything after `rpc_retired`. These
+are recorded calls only. The Mach lookups recorded were `com.apple.system.notification_center`,
+`com.apple.logd` and `com.apple.FSEvents`, all through `bootstrap_look_up2`.
+
+With the spliced `Bun.connect` fixture, the witness recorded its connect to the closed port
+returning -1 `EPERM` from the host image, so connects made by host code are visible. The
+`SIGUSR1` run recorded a numeric-literal lookup and an IPv4 loopback `bind` on port 9229
+returning -1 `EPERM` from the host image. The inspector listener is a real, unjournaled transport
+attempt.
+
+### Gates
+
+All at `f51b223` with no source change, offline, `CARGO_TARGET_DIR=target/round`, Rust 1.97.1
+except the MSRV check:
+
+- `cargo fmt --check`: exit 0.
+- `cargo clippy --locked --offline --features pilot-capture --all-targets -- -D warnings`: exit 0,
+  log `a93798ca`.
+- `cargo test --locked --offline --features pilot-capture --lib pilot_capture`: exit 0, 132
+  passed, 0 failed, 1 ignored, log `5ddb7309`.
+- Rust 1.90.0 `cargo check --all-targets --locked --offline --features pilot-capture`: exit 0,
+  log `485ce9f4`.
+- The 14-case native startup journal: exit 0, log `29d9ce27`. Its normal run is the 18-row
+  HOLD with a 16-record attested prefix.
+- The native RPC input check: exit 0, log `7f95e0c7`.
+
+Both native tests passed again from the retained test binary after cleanup. Default-feature
+gates were not run because no code changed.
+
+### Cleanup and size
+
+The round's qualification readback counts 108 native process groups, 90 bare (including the
+passing staging self-test before the clock) and 18 host; all were gone afterwards and none was
+forced. Two failed attempts are outside that count: the first staging self-test, whose group was
+gone and not forced, and the first K0 attempt, whose driver crashed parsing output after waiting
+for the group, so its reap was not recorded. The cleanup removed the two Cargo targets and the
+round's scratch, which reduced allocation by 3,507,916,800 bytes. The nine addon copies the host extracted and the round's own shared copy
+were removed after matching `ee0bf26f…900b`, taking the round from 1,354,555,392 to
+243,437,568 allocated bytes. The pinned host and all 1,006 files of the previous round were
+unchanged.
+
+The round took about 20 minutes of its 150-minute deadline, which overrides the contract's
+90-minute wording; authoring and compiling were staged before the clock. It made zero provider
+calls and spent nothing. Private receipts, including this round's protocol and critiques, are
+under `runs/pilot-startup-transport-witness-2026-11-20/`.
+
+### Deviations from the protocol
+
+- An AF_UNIX connect to a missing path returns `ENOENT`, apparently before the sandbox check. Two
+  added controls and the witness's two Unix-socket connect controls therefore used a listening
+  socket the driver owned.
+- Case-root socket paths exceed the 104-byte socket path limit. Fixtures used paths relative to
+  the case root, and the witness classifies them as relative.
+- Four driver errors were fixed after the clock started: an output parser, shell argument
+  splitting, an argument assertion and the report probe's classification. Each affected run was
+  repeated, and the failed attempts are kept.
+- The witness image table holds 2,048 entries, not 512, and records each image's text size, not
+  its address range. The XPC fixture exits without cancelling its connection.
+- The repaired witness has no build receipt from the round, and its self-test was not run; the
+  61-check self-test covers the first version. A later rebuild of the retained repaired source
+  with the staging flags, run from the round directory under `(deny network*)`, reproduced the
+  retained library byte for byte (`8cb93966…`). That shows the compiler and flags, not how or
+  under which policy the original was built. The repair only adds the pre-constructor records.
+- The first version served the bare witness controls; the repaired one served the A1 and B1
+  reruns and all host witness runs.
+- The protocol's report suffix is malformed on this Darwin (above), and the report probe's
+  driver ran outside the bounded native runner; its four cases' groups were reaped and receipted.
+- `bun --version` ran once at staging without a sandbox, against the protocol's rule that every
+  native run uses `(deny network*)`. No receipt records it.
+- `bootstrap_look_up2`, `notify_register_check` and `notify_register_dispatch` were reported
+  from incidental records, although the protocol lists them as hooked, not shown.
+- The protocol said the contract's "Native addon and process resources" row gains a sentence if
+  the witness is fit. The round did not add it; the fix-up below did.
+
+### Fix-up after self-review
+
+Three in-session review passes over the committed record (self-review, not independent) found
+inferences stated as observations, a report-probe outcome misread, a group count that disagreed
+with its receipt and omitted deviations. A fix-up later the same day corrected this record, the
+handoff and the contract rows from the retained receipts, rebuilt the repaired witness once to
+check its bytes, and ran no native case or gate, because no code changed. Its receipts are in
+the round's `fixup/` directory.
+
+### Not established
+
+- A fail-closed rule for unclassified transports at startup. The early Unix-socket connect must
+  be handled before network denial can be fatal, and handling it was not tried.
+- The early connect's result and the kill site: the repair records no result, and nothing was
+  recorded under the fatal suffix. Both are inferred above.
+- Whether the early connect comes from Bun itself or from how it was launched. Every Bun
+  executable ran in place from a path under the denied home that only a literal rule re-allows,
+  and every C fixture from its case directory. A bare fatal-suffix pair, Bun copied into a case
+  directory and a C fixture run from a literal-only path, would separate them.
+- Whether an allow rule placed after `(deny network* (with send-signal SIGKILL))` prevents the
+  kill: the one control, a Bun fixture, died at startup before its connect.
+- Sandbox reports: the report probe did not run.
+- Journal completeness: a kernel denial is silent, and no destination is journaled.
+- Operation classes not shown, for example `accept`, and every claim through the witness beyond
+  the functions with a passing control.
+- Calls the witness cannot see: calls inside one library, unhooked functions (`write`, `writev`,
+  `sendfile`, `recv`), Network.framework flow setup, daemon-proxied I/O, JIT or unscanned images.
+  Calls before it loads are seen only through the repair, without results or reliable frames.
+- Whether the early connect goes to the syslog socket, and which code and message open it.
+- Mach and XPC routes to system daemons, which stay allowed, and the AF_SYSTEM control connects
+  inside name resolution.
+- Activity later than about 20 seconds after `rpc_retired`, and timers that fire later.
+- Fidelity of the host launches: every host run, including the nine under the fatal suffix,
+  reconstructs the launch in Python, and the witness runs add `DYLD_INSERT_LIBRARIES` to argv and
+  environment. The Cargo native tests ran the actual launcher without the witness and under
+  today's policy only.
+- The route table's unknown rows, its 2026-11-16 build census, which predates patches 4-26, and
+  its grep for unindented constructors.
+- Several routes were not exercised: Bun crash upload, auto-install, the automatic Codex WebSocket
+  prewarm, and the admitting profile's late routes.
+- The admitting profile, the inventory freeze and admission remain on HOLD.
+- This was in-session self-review, not an independent one.
+
+## Merge of the experimental line to `main` — 2026-11-20
+
+On the owner's instruction of 2026-11-20 (owner decision 21),
+[PR #56](https://github.com/dwbimstr/context-foundry/pull/56) merged at 16:36:50 UTC by
+merge commit as `37a3cd8`. Its parents are the previous `main`, `d94b013`, and the
+experimental head `f06c533`, and the tree of `main` is identical to `f06c533`. The two
+commits after the gated `455fa03` change only this file, so the
+[`455fa03` receipt](#local-gates-on-455fa03--2026-11-20) covers the merged code; the
+merge commit was not gated separately. Its subject ends with `[skip ci]`, and the
+Actions run list showed no run for it afterwards. `main` now carries the paused
+`.github/dependabot.yml` (decision 2), so Dependabot opens no more version-update
+pull requests; alerts and security updates are unaffected. Nothing was tagged or
+released.
+
+Not run: CI (Actions unavailable), the signed-package checks and the native script on a
+signed candidate (no Developer ID identity), and live MCP hosts against rmcp 3.10.0.
+
 ## Local gates on `455fa03` — 2026-11-20
 
 All eight gates exit 0 on `455fa03`, the head proposed for the merge to `main` (owner
@@ -302,6 +1916,26 @@ estimates 9 to 15 more native rounds, from the 2026-11-18/19 cadence of about on
 credential notice can fire with empty authentication at all, and which of the matched
 timer and network sites are reachable.
 
+Note, later on 2026-11-20: the [startup transport witness](#startup-transport-witness--2026-11-20)
+round advanced row 1 without closing it. A fatal network denial was not adopted because every
+Bun process the round launched died under it during startup, all of them from paths under the
+denied home readable only through a literal rule. The inferred cause is a Unix-socket connect
+made before any host code, attributed by inference to libSystem's logging, so the row still
+needs a fail-closed rule that survives that connect.
+
+Note, 2026-11-21: the [startup early connect](#startup-early-connect-and-fatal-network-denial--2026-11-21)
+round adopted a fail-closed startup rule. The early connect is libSystem's logging socket, made
+when the executable's directory is unreadable (inferred). Any other sandbox network denial now
+ends the startup host, without journaling a destination; twelve classes were shown on bare
+fixtures with the same suffix (inferred for the host). Mach and XPC routes and the admitting
+profile remain.
+
+Note, 2026-11-23: the [startup timer census](#startup-timer-census--2026-11-23) advanced the
+"Debugger and process timers" row without a source change. Every JavaScript timer the preload saw
+in startup was fired or cleared by RPC retirement, and none started in a 40-second hold; 84
+statically unknown entries were never observed, and `Bun.sleep`, runtime and addon internals and
+timers after the handoff remain.
+
 ## Native addon socket-pair static attribution — 2026-11-20
 
 The [2026-11-19 record](#native-unix-socket-creation-during-addon-load--2026-11-19)
@@ -574,7 +2208,7 @@ quotes the owner's choice; the last column is the result or where it is recorded
 | # | Item | Owner's choice | Result |
 |---|---|---|---|
 | 1 | Dependabot PR #55, eleven Cargo minor and patch updates | "Apply 8, hold 3" | Done: ignore, ureq, rmcp, uuid, notify, toml, tokio-rustls and rustls-pki-types applied by hand in `afa7b38` at the PR's versions, with a full gates run ([receipt](#local-gates-on-afa7b38--2026-11-20)); tree-sitter-scala (parse output and schema), usearch (ANN graph and G2) and redb (store database) are held until each is measured; the PR is closed. |
-| 2 | Weekly hosted workflow runs on Dependabot branches | "Pause version updates" | `.github/dependabot.yml` sets `open-pull-requests-limit: 0` for both ecosystems. Dependabot reads its configuration from the default branch, `main`, so the pause takes effect only after the next owner-approved merge to `main`. Alerts and security updates are unaffected. |
+| 2 | Weekly hosted workflow runs on Dependabot branches | "Pause version updates" | `.github/dependabot.yml` sets `open-pull-requests-limit: 0` for both ecosystems. Dependabot reads its configuration from the default branch, `main`; the pause took effect when PR #56 merged on 2026-11-20 ([record](#merge-of-the-experimental-line-to-main--2026-11-20)). Alerts and security updates are unaffected. |
 | 3 | Local-only branches of the rejected T005 experiments | "Push as archive branches" | Done: `archive/t005-fragment-order-20261113` (`ac81777`), `archive/t005-kept-body-headers-20261113` (`74b0b26`) and `archive/t005-headers-red-mutant-20261113` (`74b1be9`) are on GitHub. They never merge; they keep the commits the T005 receipts cite. Two of the tip commits lack `[skip ci]`, so the push started two hosted `Rust` workflow runs at 05:06 UTC on 2026-11-20 (about 9 and 31 minutes; one failed, one passed). That spend was not intended; no workflow file was changed, and the branches will not be pushed again. |
 | 4 | Untracked `.mcp.json`, `.omp/mcp.json`, `.omp/tools/` | "Ignore them" | Done: ignored as machine-local in `.gitignore`. |
 | 5 | Next move for 009 T005 | "Analyze, then one more" | Study the recorded development losses without touching the sealed 2026-11-18 holdout; select one more bounded candidate only if the analysis shows a plausible large gain, otherwise return to the owner. The analysis found none ([record](#t005-loss-analysis--2026-11-19)); see row 17. |
@@ -593,7 +2227,7 @@ quotes the owner's choice; the last column is the result or where it is recorded
 | 18 | Pilot v2 retrieval arms after 009 T005 closed (2026-11-20) | "Drop retrieval arms" | Pilot v2 tests task context only; the arms item and 003 T006's acceptance are amended so retrieval is no longer a v2 contrast. |
 | 19 | The host's implicit Apple on-device model provider in pilot v2 (2026-11-20) | "Disable in every arm" | Every v2 launch disables the `apple` provider; see the [crash diagnosis](#sandbox-profile-segmentation-fault-diagnosis--2026-11-20). |
 | 20 | Pilot v2 sample-size method (2026-11-20) | "Implement and test it" | The calibrated variance-based paired method is added to `scripts/pilot-v2-power.py` with tests and proposed for the freeze; nothing is frozen until the owner chooses the design. |
-| 21 | Merge of the experimental line to `main` (2026-11-20) | "Open the PR now" | A pull request from `experimental/context-ecosystem` to `main` is opened after the current startup round lands with a gates receipt; the owner merges it with a merge commit. |
+| 21 | Merge of the experimental line to `main` (2026-11-20) | "Open the PR now" | Done: [PR #56](https://github.com/dwbimstr/context-foundry/pull/56) was opened after the startup round landed with a [gates receipt](#local-gates-on-455fa03--2026-11-20), and merged on the owner's instruction as merge commit `37a3cd8` ([record](#merge-of-the-experimental-line-to-main--2026-11-20)). |
 
 The owner chose named limitations in rows 7, 13, 14 and 15 without wording their
 re-entry triggers. The triggers written into the specs and the pilot v2 draft are
@@ -6556,7 +8190,7 @@ a new bounded selection and unexposed acceptance evidence. Source, executable,
 closed development bundle, final private artifacts and correction receipts are
 retained under `runs/t005-header-candidate-2026-11-13/`,
 `runs/t005-heldout-final-2026-11-13/` and their named owned dataset roots. The
-[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+[handoff](resume-context-ecosystem.md#current-status) owns current status.
 The complete final bundle then passes two full snapshot readbacks: **807 files /
 7,112,164,903 bytes** across two roots, manifest
 `f11ec99734cb5167346f8e1cd627310e592c609a29334fea66c8b30678ad7969`.
@@ -6650,7 +8284,7 @@ bounds; the bundle is immutable after `evidence-readback.json`. Final-harness wo
 has a separate private run and does not amend the closed development evidence.
 
 T005 is not accepted, the candidate is not enabled/integrated/published, and the
-[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+[handoff](resume-context-ecosystem.md#current-status) owns current status.
 
 ## T005 exact body-input reconstruction — 2026-11-13
 
@@ -6702,7 +8336,7 @@ code changed, no new full Rust gate run or retrieval score is claimed, and no
 private source/context payload is added to Git. The helper source, original
 compile failure, fixed source, native receipts, exact contexts and aggregate
 remain private in `runs/t005-input-reconstruction-2026-11-13/`. The
-[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+[handoff](resume-context-ecosystem.md#current-status) owns current status.
 
 ## T005 retained candidate-coverage census — 2026-11-13
 
@@ -6753,7 +8387,7 @@ workers, and unchanged selected inputs/source. The selected stage is 900 seconds
 per-process RSS ceiling. No paid request or new Rust gate run is claimed.
 Private cases, source excerpts, pins and receipts remain in
 `runs/t005-coverage-diagnostic-2026-11-13/`; the
-[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+[handoff](resume-context-ecosystem.md#current-status) owns current status.
 
 ## T005 fragment-order candidate no promotion — 2026-11-13
 
@@ -6824,7 +8458,7 @@ Its source commits, binary, source bundle, native receipts, failed attempts and
 private raw evidence are retained in `runs/t005-fragment-candidate-2026-11-13/`
 and its named owned dataset directories. This K = 1 experiment is closed without
 promotion. T005 remains unaccepted at its broader retrieval goal; the
-[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+[handoff](resume-context-ecosystem.md#current-status) owns current status.
 
 ## Approved experimental publication and evidence closure — 2026-11-13
 
@@ -6848,7 +8482,7 @@ not just their earlier runtime outputs. Their `evidence-readback.json` receipts
 are finalized; neither authenticated encrypted restoration nor off-machine
 retention is newly established. Newer local commits need their own publication
 intent; this receipt does not authorize a larger payload. Current status remains
-with the [handoff](resume-context-ecosystem.md#current-status--2026-11-06).
+with the [handoff](resume-context-ecosystem.md#current-status).
 
 ## T005 actual same-file admission pressure — 2026-11-13
 
@@ -6886,7 +8520,7 @@ Only dated records and links change. No model, retrieval/scorer, store API,
 source-program execution, provider access or spend occurs. No new Rust gate run
 is claimed. Private receipts, exact occupant identities and the failed fixture
 are retained in `runs/t005-file-pressure-2026-11-13/`; the
-[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+[handoff](resume-context-ecosystem.md#current-status) owns current status.
 
 ## T005 retained cap-decision census — 2026-11-13
 
@@ -6943,7 +8577,7 @@ remains unused. No spend, model search, provider access, source-program executio
 or production change occurs. Private evidence is in
 `runs/t005-cap-census-2026-11-13/`. Only records change, so link/diff checks apply;
 the previous Rust gates are not presented as a new run. The
-[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+[handoff](resume-context-ecosystem.md#current-status) owns current status.
 
 ## Worker scratch creation defaults — 2026-11-13
 
@@ -6995,7 +8629,7 @@ by these named writes. Closed producer-tree checks remain separate. Pilot v2/T00
 current installed-host compatibility, complete startup observation and signed
 package acceptance remain open. Private receipts and failed attempts are retained
 in `runs/worker-scratch-permissions-2026-11-13/`; the
-[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+[handoff](resume-context-ecosystem.md#current-status) owns current status.
 
 ## Private full pipeline and preview archival — 2026-11-13
 
@@ -7066,7 +8700,7 @@ model search occurred. Current installed-host compatibility, complete startup
 observation, transient worker scratch-file modes and v2's declared task/arm/host
 qualification remain open. Private receipts and the original failure are retained
 in `runs/pilot-full-pipeline-2026-11-13/`; the
-[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+[handoff](resume-context-ecosystem.md#current-status) owns current status.
 
 ## Pilot semantic-producer permissions — 2026-11-13
 
@@ -7123,7 +8757,7 @@ This is not a global artifact-absence claim. Current installed-host compatibilit
 complete startup-network observation, the broader private pipeline, pilot v2/T006
 and release remain open. Private protocol, control, producer, gate and readback
 receipts are in `runs/pilot-semantic-permissions-2026-11-13/`; the
-[handoff](resume-context-ecosystem.md#current-status--2026-11-06) owns current status.
+[handoff](resume-context-ecosystem.md#current-status) owns current status.
 
 ## T005 compact candidate: no promotion — 2026-11-11
 
@@ -7202,7 +8836,7 @@ Private receipts: `runs/t005-packing-candidate-2026-11-11/`,
 G1 runtime receipt SHA-256:
 `f9ff337583e4f54efa22e211f7408a4a646ca69667bc9ef1211ba349199669aa`.
 These were local, no-spend measurements; signed-package and task/economic acceptance
-remain separate. The [handoff](resume-context-ecosystem.md#current-status--2026-11-06)
+remain separate. The [handoff](resume-context-ecosystem.md#current-status)
 owns current status.
 
 ## T005 sealed holdout encrypted retention — 2026-11-11

@@ -156,6 +156,8 @@ pub fn context_primary_with_options(
 pub struct SemanticServing {
     /// Explicit continuous maintenance, resumed only by this launch option.
     pub maintain: bool,
+    /// Operator allows current task decisions to be ranked by this local worker.
+    pub decision_fallback: bool,
     pub profile: PathBuf,
     pub development: bool,
     /// The owner's preparation cache cap; `None` is the 2 GiB default.
@@ -174,6 +176,7 @@ impl SemanticServing {
             development,
             cache_cap_bytes: None,
             maintain: false,
+            decision_fallback: false,
             #[cfg(all(feature = "test-faults", feature = "semantic"))]
             provider: None,
         }
@@ -187,6 +190,7 @@ impl SemanticServing {
             development: true,
             cache_cap_bytes: None,
             maintain: false,
+            decision_fallback: false,
             provider: Some(make),
         }
     }

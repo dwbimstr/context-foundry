@@ -16,7 +16,7 @@ pub enum AdapterCommand {
     #[command(group(
         clap::ArgGroup::new("isolated_workers")
             .multiple(true)
-            .args(["semantic_profile", "policy_config"])
+            .args(["semantic_profile", "decision_semantic_profile", "policy_config"])
     ))]
     Mcp {
         /// Write bounded retrieval diagnostics in a NEW private run directory.
@@ -30,6 +30,14 @@ pub enum AdapterCommand {
         /// Enable explicit experimental task state and reversible views.
         #[arg(long)]
         experimental_task_context: bool,
+        /// Rank a small set of saved decisions locally after a title-blind lookup misses.
+        #[arg(
+            long,
+            value_name = "FILE",
+            requires = "experimental_task_context",
+            conflicts_with = "semantic_profile"
+        )]
+        decision_semantic_profile: Option<PathBuf>,
         /// Watch the admitted primary repository for source changes.
         #[arg(long)]
         watch: bool,
@@ -122,6 +130,7 @@ pub enum AdapterCommand {
     /// `--apply-config FILE` authorizes the positively owned block, or
     /// `--remove-config FILE` removes it again.
     Connect {
+        /// Target host: chatgpt-desktop, codex or omp.
         #[arg(long, required_unless_present = "remove_config")]
         host: Option<String>,
         #[arg(long, required_unless_present = "remove_config")]
@@ -138,7 +147,7 @@ pub enum AdapterCommand {
             value_name = "FILE",
             conflicts_with_all = [
                 "host", "root", "print_config", "apply_config", "http_port",
-                "token_env", "budget", "reference",
+                "token_env", "budget", "reference", "experimental_task_context",
                 "semantic_profile", "knowledge_profile", "development_isolation",
             ]
         )]
@@ -156,6 +165,9 @@ pub enum AdapterCommand {
         /// (repeat for up to 8 references); recorded in the printed argv.
         #[arg(long = "reference", value_name = "ROOT=STORE")]
         reference: Vec<String>,
+        /// Include the opt-in task_context tool on the launched owner.
+        #[arg(long)]
+        experimental_task_context: bool,
         /// Forward this semantic serving profile; printing does not load it.
         #[arg(long, value_name = "FILE")]
         semantic_profile: Option<PathBuf>,
@@ -347,6 +359,7 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
             retrieval_trace_dir,
             experimental_behavior_context,
             experimental_task_context,
+            decision_semantic_profile,
             watch,
             root,
             transport,
@@ -369,17 +382,21 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
             for raw in &reference {
                 references.push(crate::roots::parse_reference(raw)?);
             }
+            let decision_only = decision_semantic_profile.is_some();
             let options = crate::mcp::ServerOptions {
                 store,
                 root,
                 references,
                 budget,
                 no_memory,
-                semantic: semantic_profile.map(|profile| crate::mcp::SemanticServing {
-                    cache_cap_bytes: semantic_cache_cap,
-                    maintain: semantic_maintain,
-                    ..crate::mcp::SemanticServing::new(profile, development_isolation)
-                }),
+                semantic: semantic_profile
+                    .or(decision_semantic_profile)
+                    .map(|profile| crate::mcp::SemanticServing {
+                        cache_cap_bytes: semantic_cache_cap,
+                        maintain: semantic_maintain,
+                        decision_fallback: decision_only,
+                        ..crate::mcp::SemanticServing::new(profile, development_isolation)
+                    }),
                 knowledge: knowledge_profile.map(|profile| {
                     crate::knowledge::maintenance::Serving {
                         profile,
@@ -467,6 +484,7 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
             token_env,
             budget,
             reference,
+            experimental_task_context,
             semantic_profile,
             knowledge_profile,
             development_isolation,
@@ -515,6 +533,7 @@ pub fn run(command: AdapterCommand, store: PathBuf, store_explicit: bool) -> ARe
                 store,
                 budget: read_budget(budget.as_deref())?,
                 budget_file,
+                experimental_task_context,
                 semantic_profile,
                 knowledge_profile,
                 development_isolation,

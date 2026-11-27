@@ -1,0 +1,193 @@
+{
+  "case_id": "palisade-cover-stock",
+  "classification": "synthetic development case",
+  "task_id": "palisade-press-handoff",
+  "title": "Reconcile the cover stock for Palisade batch 412",
+  "handoff": "The next press operator needs the cover stock for this batch. Recover both accounts, identify the mismatch and its sources, and leave the choice of stock unresolved until the discrepancy is checked.",
+  "key_meaning": "For one named environment, press and batch, the single job cover has exactly one cover stock. Both reports concern the same current production batch. Neither author withdrew an account.",
+  "source_files": [
+    {
+      "path": "job_ticket.md",
+      "text": "# Job ticket JT-412 (revision 1)\nIssued by Edda Lo, scheduling desk\nEnvironment: production\nPress: 7\nBatch: 412\nCover count per copy: 1\nCover stock: pearl\nTrim size: A5\nStatus: current\n"
+    },
+    {
+      "path": "specimen_report.md",
+      "text": "# Specimen label PS-412-7\nChecked by Ivo Keen at the press\nEnvironment: production\nPress: 7\nBatch: 412\nCover count per copy: 1\nCover stock mark on mounted sheet: moss\nTrim size: A5\nStatus: current\n"
+    }
+  ],
+  "entries": [
+    {
+      "id": "stock-ticket",
+      "kind": "observation",
+      "author": "Edda Lo",
+      "provenance": "Bindery scheduling desk, signed job ticket JT-412 revision 1",
+      "source_path": "job_ticket.md",
+      "text": "Job ticket JT-412 revision 1 assigns pearl stock to the sole cover of production batch 412 on press 7. The trim size is A5. The scheduling desk has issued this version for the current batch.",
+      "original_sha256": "471b75d59f4ab19a8a8cd0ee960d0f4f3281d08257f256162cc3be3b8a058415",
+      "assertions": [
+        {
+          "key": "palisade/binder/production/press-7/batch-412/cover-stock",
+          "relation": "equals",
+          "value": "pearl"
+        },
+        {
+          "key": "palisade/binder/production/press-7/batch-412/trim-size",
+          "relation": "equals",
+          "value": "A5"
+        }
+      ]
+    },
+    {
+      "id": "stock-inspection",
+      "kind": "observation",
+      "author": "Ivo Keen",
+      "provenance": "Press-side visual inspection, specimen label PS-412-7",
+      "source_path": "specimen_report.md",
+      "text": "I checked the cover mounted for production batch 412 on press 7. The sheet carries the moss stock mark. Its trim size is A5. The specimen label is PS-412-7.",
+      "original_sha256": "76d2c5510caf353227cea49c5e419d8c455366bcd3a95ad77d999669fa9250db",
+      "assertions": [
+        {
+          "key": "palisade/binder/production/press-7/batch-412/cover-stock",
+          "relation": "equals",
+          "value": "moss"
+        },
+        {
+          "key": "palisade/binder/production/press-7/batch-412/trim-size",
+          "relation": "equals",
+          "value": "A5"
+        }
+      ]
+    }
+  ],
+  "replay": {
+    "setup": "Write source_files[].text verbatim as UTF-8. Index the two files in a fresh admitted primary root. Create the named task, then add both entries as observations with no supersedes. For each add pass id, kind, text, author, provenance, assertions and source_links containing one fresh handle to source_path. source_path and original_sha256 are driver metadata. Use returned revisions throughout.",
+    "before_review": "Inspect both entries and require historical=false, selected=true and exactly one fresh source link per entry. Peek each original with offset=0, bytes=65536. Compare the UTF-8 text and sha256 to entries[].text and original_sha256, and require next_offset=null.",
+    "review_defaults": {
+      "op": "review",
+      "paths": [],
+      "finishing": false,
+      "max_bytes": 16384
+    },
+    "predicate": "Pass each proposed_assertions array as command.assertions with current expected_revision. Compare silence, omitted, stale, verified and the entire advice list projected to entry_id, trigger, conflicts. For each advised row also verify exact text, sha256, author, provenance and fresh source handle against the matching stored entry. All reads retain the same revision."
+  },
+  "probes": [
+    {
+      "id": "propose-inspection-stock",
+      "proposed_assertions": [
+        {
+          "key": "palisade/binder/production/press-7/batch-412/cover-stock",
+          "relation": "equals",
+          "value": "moss"
+        }
+      ],
+      "expect": {
+        "silence": false,
+        "advice": [
+          {
+            "entry_id": "stock-ticket",
+            "trigger": "assertion_conflict",
+            "conflicts": [
+              {
+                "stored": {
+                  "key": "palisade/binder/production/press-7/batch-412/cover-stock",
+                  "relation": "equals",
+                  "value": "pearl"
+                },
+                "proposed": {
+                  "key": "palisade/binder/production/press-7/batch-412/cover-stock",
+                  "relation": "equals",
+                  "value": "moss"
+                }
+              }
+            ]
+          }
+        ],
+        "omitted": 0,
+        "stale": 0,
+        "verified": false
+      }
+    },
+    {
+      "id": "propose-ticket-stock",
+      "proposed_assertions": [
+        {
+          "key": "palisade/binder/production/press-7/batch-412/cover-stock",
+          "relation": "equals",
+          "value": "pearl"
+        }
+      ],
+      "expect": {
+        "silence": false,
+        "advice": [
+          {
+            "entry_id": "stock-inspection",
+            "trigger": "assertion_conflict",
+            "conflicts": [
+              {
+                "stored": {
+                  "key": "palisade/binder/production/press-7/batch-412/cover-stock",
+                  "relation": "equals",
+                  "value": "moss"
+                },
+                "proposed": {
+                  "key": "palisade/binder/production/press-7/batch-412/cover-stock",
+                  "relation": "equals",
+                  "value": "pearl"
+                }
+              }
+            ]
+          }
+        ],
+        "omitted": 0,
+        "stale": 0,
+        "verified": false
+      }
+    },
+    {
+      "id": "different-environment",
+      "proposed_assertions": [
+        {
+          "key": "palisade/binder/proofing/press-7/batch-412/cover-stock",
+          "relation": "equals",
+          "value": "moss"
+        }
+      ],
+      "expect": {
+        "silence": true,
+        "advice": [],
+        "omitted": 0,
+        "stale": 0,
+        "verified": false
+      }
+    },
+    {
+      "id": "satisfies-both",
+      "proposed_assertions": [
+        {
+          "key": "palisade/binder/production/press-7/batch-412/trim-size",
+          "relation": "equals",
+          "value": "A5"
+        }
+      ],
+      "expect": {
+        "silence": true,
+        "advice": [],
+        "omitted": 0,
+        "stale": 0,
+        "verified": false
+      }
+    },
+    {
+      "id": "no-proposal",
+      "proposed_assertions": [],
+      "expect": {
+        "silence": true,
+        "advice": [],
+        "omitted": 0,
+        "stale": 0,
+        "verified": false
+      }
+    }
+  ],
+  "resolution": "The evidence supports two conflicting current attributions. Neither the store nor this case selects a winner."
+}

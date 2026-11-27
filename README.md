@@ -4,14 +4,18 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![MSRV 1.90](https://img.shields.io/badge/MSRV-1.90-orange.svg)](Cargo.toml)
 
-A local, deterministic context engine for coding agents, written in Rust. Name an
-identifier and Context Foundry answers with its definition, a short directory of its
-namesakes, or the places that use it, delivered as cited source under an exact token
-budget. It serves agents over MCP and the same answers on the command line. Core
-retrieval needs no model, GPU, network or provider key.
+Context Foundry gives coding agents cited source and gives a project a memory
+that survives the chat. Save a meeting and specification once, record a feature
+decision with its original words, then ask which other feature needs review
+after an edit. Foundry returns the dependency and its supporting quote. When
+only the wording matches, the chat asks you to clarify.
 
-**Pre-release.** Everything below runs from a checkout of `main`; there is no published
-release yet. See [Status](#status).
+Foundry runs locally in Rust. Source search, graph traversal, explicit memory
+and source review work without a model. ChatGPT desktop is the primary client
+for project memory. Codex, OMP and the CLI can also use the engine.
+
+**Pre-release.** A source build includes the ChatGPT desktop adapter. Enable task
+context to save decisions and review features affected by a source edit. [Architecture and capability map](docs/architecture.md#current-architecture) · [Current status](docs/resume-context-ecosystem.md).
 
 ## The problem
 
@@ -21,7 +25,11 @@ it wanted. In a large repository a name is often defined many times, and a quest
 like "who calls `parse_record`" takes several more rounds of searching and reading.
 Each round adds tokens to the agent's context.
 
-Context Foundry indexes a repository once and answers by name:
+A second problem arises across chats. A meeting changes a decision, the spec moves,
+and another feature still depends on the original wording. Saving the sources and
+their explicit links lets the next reader quote why that feature needs review.
+
+For source questions, Foundry can resolve a name in three ways.
 
 - **Definition.** A name that resolves to one definition returns its source in the
   first form that fits the budget: verbatim, signature, or a one-line address.
@@ -36,7 +44,7 @@ sent.
 
 ## Who it is for
 
-- Developers who run coding agents (OMP and Codex are the hosts exercised so far) on
+- Developers using ChatGPT desktop, Codex or OMP on
   local repositories, from small projects up to rust-lang/rust.
 - Teams that want context they can audit: cited spans, deterministic results, a token
   count of exactly what was delivered.
@@ -50,7 +58,7 @@ It is **not**:
   `mcp --watch` and off by default; otherwise index again after edits);
 - a compiler or code-intelligence server (it imports compiler references, it never
   runs a compiler);
-- a vector database, general memory service or secret scrubber;
+- an automatic transcript collector or secret scrubber;
 - available as a signed binary or on Windows today.
 
 ## How it works
@@ -79,29 +87,33 @@ It is **not**:
 5. **Memory and multiple roots.** Explicit project memory records can be added to
    context. One MCP owner can admit up to 8 other repositories and answer across all
    of them in one budgeted response.
+6. **Feature memory.** In the opt-in task workspace, capture original text or indexed
+   passages, cite them from a feature, and record why another feature relies on its
+   decision. After an edit, reopen the original quote, its current support and any
+   outstanding clarification. [Step-by-step workflow](specs/003-agent-retrieval-context/contracts/shared-source-review.md).
 
 ## Status
 
-"Stable core" means implemented, reviewed, gated and merged on `main`.
-"Experimental, opt-in" means merged on `main` by owner decision (2026-10-12) while its
-acceptance gates stay open ([follow-ups](FOLLOWUP.md)); defaults do not use it.
-Nothing is released, so no compatibility promise is made yet; store and index
-upgrades are explicit (`upgrade-store`, `repair-index`). Per-task evidence is in
-[validation](docs/validation.md).
+“Stable core” identifies the core interfaces. Experimental rows describe each
+optional capability and how to enable it. Dated checks and outstanding
+release conditions have separate records. [Validation](docs/validation.md) ·
+[Release checklist](docs/release.md).
 
 | Area | Maturity | Notes |
 | --- | --- | --- |
 | Indexing, recovery, repair | Stable core | Explicit store creation, bounded refresh, interrupted-index recovery, `repair-index`, `upgrade-store --to 12` (the current store schema, and the only target the command accepts) |
 | `search`, `context`, `retrieve` | Stable core | City map, doors, exact budgets; CLI and MCP |
-| MCP server | Stable core | Seven tools over stdio, or one shared loopback HTTP owner |
-| `bootstrap`, `connect` | Stable core | Configuration printed for OMP and Codex |
+| MCP server | Stable core | Seven tools by default over stdio or shared loopback HTTP; task context adds an eighth |
+| `bootstrap`, `connect` | Core, with experimental desktop adapter | Project configuration for ChatGPT desktop, Codex and OMP |
 | Project memory | Stable core | `foundry memory …` and the MCP `memory` tool |
 | Compiler references (SCIP) | Stable core | `import-scip` of rust-analyzer artifacts, `references`, exact doors |
 | Multi-root context | Stable core | `mcp --reference ROOT=STORE`, up to 8 |
 | Semantic retrieval | Optional, off by default | Implemented. EmbeddingGemma 2 passed G2 and G1. The first release ships it in the signed package, built with `--with-semantic`; no release happens until that package passes the installed-artifact checks (row 4 of the [measurement handoff](docs/measurement-handoff.md#measurements); [owner decision, 2026-11-06](docs/validation.md#owner-decisions--2026-11-06)) |
 | Owned learning | Frozen off | Implemented commands remain as research tooling; not packaged or advertised |
 | Model gateway | Meter only | One pinned host profile (OMP 18.6.0 with Z.ai `glm-5.3-flash`); no spend cap. Not part of the CLI and MCP release: it gets its own release after a new live proof ([owner decision, 2026-11-06](docs/validation.md#owner-decisions--2026-11-06)) |
-| Task context | Experimental, opt-in | `foundry task-context`: recoverable task state and evidence ([experimental context](docs/experimental-context.md#recoverable-task-context)) |
+| Task context | Experimental, opt-in | `foundry task-context`: captures, decisions, reversible views, cross-feature dependencies, change proposals and shared-source review ([experimental context](docs/experimental-context.md#recoverable-task-context)) |
+| Decision lookup in your own words | Experimental, opt-in | Local Gemma can return up to two saved quotations after an eligible miss. ChatGPT reads them and asks when support is insufficient. [Decision recovery](docs/experimental-context.md#recoverable-task-context) |
+| Local decision judges | Research only | Laya, Mapika and Inkling were tried as readers. The desktop workflow uses ChatGPT. [Trial results](docs/validation.md#inkling-2-mini-decision-judging-gemma-leads--2026-11-27) |
 | Source-bound briefs | Experimental, opt-in | `foundry brief`: derived knowledge bound to cited sources ([experimental context](docs/experimental-context.md#source-bound-derived-briefs)). Real-model acceptance deferred; not advertised for release ([owner decision, 2026-11-06](docs/validation.md#owner-decisions--2026-11-06)) |
 | Owned generation | Experimental, opt-in | `foundry knowledge` with a supervised local worker ([experimental context](docs/experimental-context.md#owned-local-generation)). Real-model acceptance deferred; not advertised for release ([owner decision, 2026-11-06](docs/validation.md#owner-decisions--2026-11-06)) |
 | HTTP boundary analysis | Experimental, opt-in | `foundry boundary`: indexed Python Flask/FastAPI routes; executes no repository code ([experimental context](docs/experimental-context.md#boundary-relationships-and-task-evidence)) |
@@ -109,7 +121,7 @@ upgrades are explicit (`upgrade-store`, `repair-index`). Per-task evidence is in
 **Not released yet:**
 
 - no tagged release, prebuilt binary or crates.io package (`publish = false`);
-- the macOS package is not signed; Developer ID signing and notarization come last;
+- macOS development bundles have ad-hoc checks. Developer ID signing and notarization remain pending;
 - the installed-artifact checks of the signed package with semantic retrieval have not
   run, and the first release waits for them.
 
@@ -168,12 +180,12 @@ cargo install --locked --path .        # installs `foundry` into ~/.cargo/bin
 cargo build --release --locked         # target/release/foundry
 ```
 
-`--no-default-features` builds the lexical-only core without the semantic feature.
+To build the core without semantic retrieval, add `--no-default-features`.
 
 ### Install a package (macOS arm64, unsigned)
 
 `scripts/package.sh` builds a versioned package and `scripts/install.sh` installs it
-under a prefix, with upgrade, rollback and uninstall. The package is not signed yet.
+under a prefix, with upgrade, rollback and uninstall. Developer ID signing and notarization remain pending.
 `package.sh` builds offline, so fetch dependencies first.
 
 ```sh
@@ -217,6 +229,41 @@ foundry --store /tmp/foundry-demo graph src/main.rs --depth 1
 
 ## Use it from an agent
 
+### ChatGPT desktop on your Mac
+
+Open the indexed repository as a trusted local project in the ChatGPT desktop
+app. From that repository, use a Foundry executable installed outside Cargo's
+build cache. The following commands configure this project only.
+
+```sh
+foundry --store "$PWD/.context-foundry" index "$PWD"
+mkdir -p .codex
+touch .codex/config.toml
+foundry --store "$PWD/.context-foundry" connect --host chatgpt-desktop \
+  --root "$PWD" --experimental-task-context --apply-config .codex/config.toml
+```
+
+In **Settings → MCP servers**, restart the server, then check `/mcp` in the
+composer. In the project chat ask “Use Context Foundry to search for a symbol
+I name, retrieve its handle, and show the cited lines.” Choose a symbol from
+your checkout. The tool call and returned lines verify discovery and readback
+in the app. `--experimental-task-context` also enables explicit task revisions,
+recovery and review. Omit it for the ordinary catalog. To disconnect, use
+`foundry connect --remove-config .codex/config.toml`.
+To find decisions without naming a feature, see the [decision-profile setup and limits](docs/deployment.md#desktop-decision-lookup).
+See the [ChatGPT desktop MCP guide](https://learn.chatgpt.com/docs/extend/mcp).
+
+If Settings lists the project server but the chat does not, compare the
+project and user-level catalogs. A user-level fallback can point to the demo
+in a separate store. Keep the real repository binding in the trusted project.
+Check `status` before relying on a citation. For project discovery follow
+the [Foundry-first session instructions](AGENTS.md).
+
+The [two-client handoff exercises](examples/task-handoff/README.md) create a
+separate synthetic workspace for testing stale evidence and conflicting claims.
+
+### Other local clients
+
 ```sh
 foundry bootstrap --root ~/src/repo             # inspect: prints a report, writes nothing
 foundry bootstrap --root ~/src/repo --apply     # create ~/src/repo/.context-foundry and index
@@ -232,11 +279,10 @@ launches the stdio server:
 foundry --store ~/src/repo/.context-foundry mcp --root ~/src/repo
 ```
 
-The server exposes seven tools: `search`, `context`, `retrieve`, `references` and
-`status` read; `index` and `memory` write, only to Foundry's own stores (`index` to the
-primary store or an admitted reference store, `memory` to the primary store), never to
-workspace files. Other MCP
-clients can launch the same command; only OMP and Codex have been exercised. Keep
+Five default tools read source or status (`search`, `context`, `retrieve`,
+`references` and `status`). The other two are `index`, which can update a
+primary or admitted reference store, and `memory`, which reads and writes
+primary-workspace records. The opt-in `task_context` tool reads and writes revisioned task records in the primary workspace. Keep
 `.context-foundry/` out of version control.
 
 A managed coding agent with shell access can also call this CLI directly, using
@@ -296,8 +342,7 @@ Short pointers; each links to its contract.
   including stale/capped candidates, shortened forms, unsupported citations, and budget
   omissions. Traces are bounded diagnostics, not evidence of host consumption.
   Lexical behavioral selection has been on by default on the
-  `experimental/context-ecosystem` line since 2026-11-11 (`main`, last merged on
-  2026-11-07, still defaults it off). A behavior question such as "how does …" about
+  experimental line since 2026-11-11 and reached `main` in the November 20 merge. A behavior question such as "how does …" about
   one resolved type gets the type's address and up to four of its methods that match
   the question, instead of the type body, when the candidates include such a method;
   otherwise the ordinary anchored result is kept. An eligible plain-language question
@@ -365,7 +410,9 @@ Short pointers; each links to its contract.
 | --- | --- |
 | [Spec portfolio](specs/README.md) | What each spec delivers and its status |
 | [Validation](docs/validation.md) | Acceptance evidence, measurements and their limits |
-| [Architecture](docs/architecture.md) | Design, ownership and alternatives |
+| [Architecture](docs/architecture.md#current-architecture) | Current data flow, capability map, runtime owners and optional models |
+| [Task workflow](docs/experimental-context.md#recoverable-task-context) | Capture originals, save decisions, follow dependencies and review changed sources |
+| [Resumable handoff](docs/resume-context-ecosystem.md) | Current branch disposition, accepted evidence and open gates |
 | [Deployment](docs/deployment.md) | Bootstrap, worker isolation, package lifecycle |
 | [Context-v2 contract](specs/001-source-state-recovery/contracts/context-v2.md) | Wire format, city map, languages, packing |
 | [Graph bundle format](docs/graph.md) | `import-graph` input |

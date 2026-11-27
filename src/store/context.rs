@@ -266,7 +266,7 @@ impl Engine {
         let tx = self.db.begin_read()?;
         let task_view = options
             .task
-            .map(|scope| self.task_view_in(&tx, scope))
+            .map(|scope| self.task_view_in(&tx, scope, false))
             .transpose()?;
         let mut sources = FinalSources::open(&tx)?;
         let mut counters = search.counters;

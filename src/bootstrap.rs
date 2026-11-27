@@ -612,6 +612,7 @@ pub struct ConnectInfo {
     pub knowledge_profile: Option<PathBuf>,
     /// Admit the selected semantic profile's development worker at launch.
     pub development_isolation: bool,
+    pub experimental_task_context: bool,
     pub http_port: Option<u16>,
     pub token_env: Option<String>,
     /// `--reference ROOT=STORE` admissions (007) exactly as given; the
@@ -685,6 +686,9 @@ fn launch_args(info: &ConnectInfo, store: &Path, root: &Path) -> AResult<Vec<Str
         "--root".to_owned(),
         root.display().to_string(),
     ];
+    if info.experimental_task_context {
+        args.push("--experimental-task-context".into());
+    }
     if let Some(port) = info.http_port {
         let token_env = info.token_env.as_deref().ok_or_else(|| {
             FoundryError::InvalidArgument("--token-env is required with --http-port".into())
@@ -726,11 +730,11 @@ fn launch_args(info: &ConnectInfo, store: &Path, root: &Path) -> AResult<Vec<Str
 /// `bearer_token_env_var` from the environment. OMP's config is built as a
 /// JSON value and serialized, so every path and name is escaped correctly.
 pub fn connect(info: &ConnectInfo) -> AResult<PrintedConfig> {
-    if !matches!(info.host.as_str(), "omp" | "codex") {
+    if !matches!(info.host.as_str(), "chatgpt-desktop" | "codex" | "omp") {
         return Err(AdapterError::named(
             "host_unsupported",
             format!(
-                "`{}` is not an implemented host; supported: omp, codex",
+                "`{}` is not an implemented host; supported: chatgpt-desktop, codex, omp",
                 info.host
             ),
         ));
@@ -805,14 +809,14 @@ pub fn connect(info: &ConnectInfo) -> AResult<PrintedConfig> {
                 HOST_TOOL_TIMEOUT_MS / 1000
             ));
             Ok(PrintedConfig {
-                host: "codex".into(),
+                host: info.host.clone(),
                 config_text: config.clone(),
                 owned_block: format!("{OWNED_BEGIN}\n{config}{OWNED_END}\n"),
                 json_native: false,
                 launch,
                 instructions,
                 capability_note: format!(
-                    "Codex mcp_servers.<id>.url / bearer_token_env_var / tool_timeout_sec ({timeout_note}). Tools declare standard MCP annotations; default_tools_approval_mode = \"writes\" lets the five read-only tools (search, context, retrieve, references, status) run without prompts, while index and memory, the tools that write (solely Foundry's own store for the bound root), need approval, and index is also listed for per-call approval; a host operator may tighten this. Per-project config requires project trust; printing or applying configuration is not runtime trust proof. Effective context ceiling {} tokens.",
+                    "ChatGPT desktop and Codex share the mcp_servers TOML configuration ({timeout_note}). MCP annotations and default_tools_approval_mode = \"writes\" request approval for write-capable tools. Index also requests per-call approval. The project must be trusted. In ChatGPT desktop, restart the MCP server in Settings and verify a cited result in the chat. Effective context ceiling {} tokens.",
                     info.budget.max_context_tokens
                 ),
             })

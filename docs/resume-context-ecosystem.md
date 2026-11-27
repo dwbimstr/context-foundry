@@ -1,9 +1,203 @@
-# Experimental ecosystem checkpoint — 2026-10-11
+# Experimental ecosystem handoff
 
-## Current status — 2026-11-06
+<a id="experimental-ecosystem-checkpoint--2026-10-11"></a>
+<a id="current-status--2026-11-06"></a>
 
-Updated 2026-11-20. This section owns current status; other documents link here,
-and dated paragraphs below are history.
+## Current status
+
+**Updated 2026-11-27.** This section owns current status. Dated entries below
+record the scope and limitations of each run.
+
+For the current system layout, start with the [architecture](architecture.md#current-architecture).
+It maps each capability to its runtime owner, client entry point and operating
+limits. The [desktop setup](deployment.md#desktop-decision-lookup) covers both
+the ordinary task workspace and its optional decision profile.
+
+- **Product goal, 2026-11-23.** An operator can give Foundry project context
+  from any source they choose, in the form they already have it. Foundry saves
+  the original, organizes related material as it arrives, and uses those
+  relationships to answer “If we build or change this feature, what else is
+  affected, why, and what do I still need to decide?” ChatGPT desktop is the
+  first place to use that capability. Project memory lives in Foundry across
+  clients and sessions. Each source keeps its identity, revision and access
+  scope. Decisions retain their author, corrections and unresolved disagreements.
+  An answer can follow a short explanation back to the original evidence.
+  Three design choices come from the roundups. Keep source material and the
+  context sent to a client separate, as in [Anthropic’s memory layers](https://www.anthropic.com/research/components-of-agent-memory).
+  Preserve changes over time as in [Zep](https://arxiv.org/abs/2501.13956).
+  Let a reader check a derived claim against its original, as in
+  [WikiTrace](https://arxiv.org/abs/2611.14320).
+
+  **First increment delivered.** In one real project, a feature question draws
+  on a supplied conversation, an indexed spec passage and the code. A later
+  MCP session found the feature by title, recovered an explicit correction,
+  reopened the original and located the guards for changing a copied decision.
+  The example is saved in the desktop project store as
+  `correcting-a-copied-decision`. [Workflow](experimental-context.md#recoverable-task-context)
+  and [evidence](validation.md#feature-impact-across-sessions--2026-11-23).
+
+  **Later meeting note delivered.** An ordinary note can now find a possible
+  decision across the project before the client has a feature or entry ID.
+  The saved note shows attributed candidate passages. An operator can accept
+  or dismiss a connection, revisit the exact words reviewed, and change that
+  choice while retaining its history. The copied-decision example located
+  the contract and a separate reviewer's account. Its open product question
+  is whether deleting the original task should succeed while leaving the
+  edited copy in place, or continue to require explicit reconciliation.
+  [Walkthrough and limits](validation.md#later-meeting-note-and-earlier-decisions--2026-11-23).
+
+  **Change planning from a reviewed note, 2026-11-24.** Asking what would
+  change if task deletion kept an edited copy now brings the meeting note,
+  the exact earlier promise and a cited deletion guard into the same scoped
+  answer. The code currently refuses deletion when the copy was edited. The
+  operator still owns the decision to change that behavior. Dismissing the
+  connection removes its quotation and search attribution on the next read.
+  [Feature walkthrough](validation.md#change-planning-from-a-reviewed-note--2026-11-24).
+
+  **Cross-feature decision use delivered, 2026-11-24.** Starting from the
+  saved correction decision, Foundry named “Forget a task and its promoted
+  project memory” and quoted why deletion must wait for an independently
+  edited copy to be resolved. Both features adopted the same indexed passage.
+  A requirement can also name a decision directly and explain its reliance
+  in its own words. Similar wording alone returns a question for the operator.
+  [Two-feature walkthrough and limits](validation.md#which-other-feature-relies-on-this-decision--2026-11-24).
+
+  **Indirect change requests, 2026-11-24.** Paste a request with its source
+  and author. Foundry saves the original, follows an attributed meeting note
+  to a candidate decision, and shows which other feature relies on it and
+  why. In the saved case, the cleanup feature's guide and the retrieved Rust
+  guard both require reconciliation before deletion. An explicit scope answer
+  survives a restart. Losing the reviewed evidence reopens the question.
+  The operator still needs to decide whether deleting the task should be
+  allowed while keeping a separately edited copy.
+  [Plan and commands](../specs/003-agent-retrieval-context/contracts/indirect-change-impact.md)
+  and [walkthrough](validation.md#from-an-indirect-request-to-the-affected-feature--2026-11-24).
+
+  **From shared originals to a feature review, 2026-11-24.** Save a meeting
+  and specification once in a project notebook. A fresh client can ask in
+  the team's terms which claims need review. Each feature can cite a passage
+  directly or rely on a decision that cites it. An edit to the indexed spec
+  surfaced both affected features with their reasons and preserved the
+  independently cited meeting. Previously clarified words can lead a new
+  proposal to the original evidence. Similar wording asks for confirmation.
+  [Operator contract](../specs/003-agent-retrieval-context/contracts/shared-source-review.md)
+  and [workflow receipt](validation.md#which-features-need-review-after-a-specification-edit--2026-11-24).
+  A fresh native ChatGPT desktop chat now verified the workflow on the actual
+  project store. Its two labeled acceptance features remain open for review
+  after the supplied spec was edited. [Desktop receipt](validation.md#shared-source-review-in-a-fresh-desktop-project-chat--2026-11-24).
+  The tool now includes a complete decision-write example. A fresh project
+  chat saved a new decision on its first attempt and recovered the exact
+  words and attribution. [First-write receipt](validation.md#first-try-decision-write-in-a-fresh-desktop-project-chat--2026-11-25).
+
+  After an edit, Foundry now tells the reviewer whether the cited words
+  appear once, appear more than once, or have disappeared. A unique match
+  reopens the exact passage even when it moved. A missing file stays
+  unresolved. The operator still decides whether the words carry the same
+  meaning. [Revised quote walkthrough](validation.md#following-a-reviewed-quote-after-an-edit--2026-11-25).
+
+  A first-time question about editorial amendments can now find cleanup's
+  decision through the handoff requirement that names it. The response
+  quotes both ends and flags the revised specification. On the same five
+  saved tasks, two unrelated billing questions stopped surfacing cleanup.
+  A paraphrase with no recognizable terms still missed. [Before and after on the project snapshot](validation.md#finding-a-decision-in-another-features-words--2026-11-25).
+
+  When the operator's question misses entirely, ChatGPT can ask for the
+  saved feature title. Foundry can then show up to two of that feature's
+  decisions, ask which applies, and place one changed supporting passage
+  beside each affected option. The cleanup walkthrough recovers the editor's
+  approval condition in the same lookup. [Agent review and installed MCP results](validation.md#recovering-a-decision-by-its-feature-name--2026-11-25).
+  The operator can also give just a few remembered title words. Foundry
+  offers up to three matching names and waits for a choice before returning
+  any decisions. A fresh agent carried a “yes” confirming the sole named
+  option into the installed MCP lookup. [Partial-title walkthrough](validation.md#choosing-a-saved-feature-from-remembered-title-words--2026-11-25).
+
+  After recovering a decision, ChatGPT can ask which other feature relies on it
+  and get both the changed decision source and a still-current citation for the
+  dependent feature. In the Cleanup example, Editorial handoff still cites
+  Mina’s meeting requirement while Ivo’s revised spec needs review.
+  [Installed decision-impact walkthrough](validation.md#which-feature-still-relies-on-the-edited-cleanup-decision--2026-11-26).
+
+  On the previous title-blind miss, a fresh reader found Cleanup’s exact
+  decision in a local Gemma search over nine saved passages. It was sixth
+  on the intended question and ranked higher on both unrelated controls.
+  In that earlier run, native task lookup still asked for the feature name. [Gemma comparison](validation.md#trying-local-embeddinggemma-2-on-a-missed-decision--2026-11-26).
+
+  The native, opt-in decision profile now handles that missed question in
+  the project’s ChatGPT chat. It recovered the original decision, flagged
+  the revised spec and asked for clarification on billing and payroll.
+  The first turn saw the tool catalog before Foundry was ready. After startup the chat
+  succeeded without a feature hint. A separate Laya trial made batched
+  judging faster but missed the intended decision. [Native walkthrough](validation.md#native-title-blind-decision-recovery-in-chatgpt--2026-11-26).
+
+  Mapika 4B Q4 correctly asked on every unrelated request but missed the
+  original Cleanup wording after Gemma found its decision. Adding the
+  linked sources still missed it. Keep the current ChatGPT reader.
+  [Local Mapika comparison](validation.md#mapika-4b-q4-judging-gemma-decision-leads--2026-11-27).
+
+  Inkling 2 Mini Decision recovered the original Cleanup paraphrase and
+  asked on billing and payroll. With linked evidence it recovered all five
+  applicable decisions available to the reader in the 15-question replay.
+  Two applicable decisions never appeared in the native shortlist. The
+  desktop workflow keeps Gemma retrieval and the ChatGPT reader.
+  [Local Inkling results and the two misses](validation.md#inkling-2-mini-decision-judging-gemma-leads--2026-11-27).
+
+- **Finite desktop qualification complete, 2026-11-23.** A fresh ChatGPT
+  desktop project chat verified the real project store and retrieved
+  `apply_owned_block` at `src/bootstrap.rs:904`. Through the separate exercise
+  store it answered both memory cases against withheld oracles and passed all
+  eight fixed reviews. After the MCP read schema was corrected, a fresh chat
+  with the updated catalog made both inspections and all seven original reads
+  on its first attempt, then passed all eight fixed reviews. Prakarana was
+  disabled. The first chat after the binary swap still saw the old description.
+  [Project-store receipt](validation.md#fresh-chatgpt-desktop-project-chat--2026-11-23)
+  and [first-try read receipt](validation.md#first-try-desktop-inspect-and-peek--2026-11-23).
+
+  The selected development reference hop recovered zero missed Rust targets.
+  Retain the current retrieval baseline. A blind wording pair on development
+  tasks using existing local vectors remains a possible future diagnostic,
+  subject to separate candidate selection. The unopened holdout stays sealed.
+  The native five-second hold recorded process-wide IPC after startup
+  retirement. Identifying its owner remains the open startup question, and
+  the admitting profile stays on HOLD.
+  [Development and startup evidence](validation.md#chatgpt-desktop-memory-handoff-rust-use-sites-and-mach-ipc--2026-11-23).
+
+- **Startup timer census, 2026-11-23.** A no-provider native round advances the census row
+  "Debugger and process timers" without a source change. A test-only timer preload on the
+  pinned host saw, in six startup runs, 45 JavaScript timers created before RPC retirement,
+  every one fired or cleared by it, and none created or fired in a 40-second hold after it.
+  Teardown adds four shutdown deadlines, all cleared, and a 10-second postmortem deadline
+  abandoned at exit. Only the wrapped JavaScript entry points are seen; runtime and addon
+  internals, 84 never-observed unknown entries and timers after the handoff stay open
+  ([record](validation.md#startup-timer-census--2026-11-23)). Host pin and bridge are unchanged; the admitting profile and
+  the rest of the inventory stay on HOLD.
+
+- **Startup early connect, 2026-11-21.** A no-provider native round adopts a fail-closed
+  startup network rule for census row 1.
+  - **The early connect.** The connect every Bun process in the previous round made before
+    host code is libSystem's logging socket, `/var/run/syslog`. It is made when the
+    executable's directory is unreadable (inferred from launch-path controls and static
+    reading). It stays denied and is now non-fatal.
+  - **The new rule.** Any other sandbox network denial now ends the startup host, and the
+    journal records the exit code and signal. Twelve classes were shown on bare fixtures with
+    the same suffix (inferred for the host). A kill names no destination, and Mach and XPC
+    routes are not covered.
+  - **Through the actual launcher**, a `SIGUSR1` now ends the host by signal 9, and the parent
+    fails closed.
+  - **Implementer interpretation, flagged to the owner.** Reading the kernel tripwire as outside
+    the rejected API fence is not an owner decision. The owner chose this round, and that
+    choice does not decide the reading. Reverting means the constant, the policy oracle and its
+    message, the constant pin test and the `SIGUSR1` test
+    ([record](validation.md#startup-early-connect-and-fatal-network-denial--2026-11-21);
+    [previous round](validation.md#startup-transport-witness--2026-11-20)).
+  - The host pin and bridge are unchanged. Mach and XPC routes, the admitting profile and the
+    rest of the inventory stay on HOLD.
+
+- **Experimental line merged to `main`, 2026-11-20.** On the owner's instruction,
+  [PR #56](https://github.com/dwbimstr/context-foundry/pull/56) merged the
+  experimental line through `f06c533` into `main` by merge commit `37a3cd8`, covered
+  by the [`455fa03` gates receipt](validation.md#local-gates-on-455fa03--2026-11-20).
+  The Dependabot version-update pause is now in effect. Nothing was tagged or
+  released ([record](validation.md#merge-of-the-experimental-line-to-main--2026-11-20)).
 
 - **Startup notification owner and pilot v2 decisions, 2026-11-20.** A no-provider
   native round closes the extension runner's deferred credential and MCP
@@ -57,7 +251,7 @@ and dated paragraphs below are history.
   ([analysis](validation.md#t005-loss-analysis--2026-11-19)), and the owner closed
   009 T005 without promotion: the baseline stays, it is a named limitation and no
   longer a release condition, and the 2026-11-18 holdout stays sealed. Pausing
-  Dependabot version updates takes effect only after the next merge to `main`.
+  Dependabot version updates took effect with the 2026-11-20 merge to `main`.
 
 - **Catalog refusal binding, 2026-11-19.** The fixed startup diagnostic
   requires the shared catalog refusal before recording catalog retirement.
@@ -1415,7 +1609,7 @@ provides a Linux host.
 ## Resume in this order
 
 This is the order as of the 2026-10-11 checkpoint; it is superseded. Take next steps
-from [Current status](#current-status--2026-11-06). What became of each step:
+from [Current status](#current-status). What became of each step:
 
 - Step 1 now runs on the owner's Mac (M5 Max, 64 GiB), not the sandbox.
 - Step 2 was measured as F9 on 2026-10-14; its capsule is lost with the archive.

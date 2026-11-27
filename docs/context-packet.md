@@ -1,6 +1,10 @@
 # Context packet: restarting this work elsewhere
 
-**Latest continuation, 2026-10-17:** current status lives only in the [resumable implementation handoff](resume-context-ecosystem.md); evidence is in [G2 restored as the retrieval instrument](validation.md#g2-restored-as-the-retrieval-instrument--2026-10-17). Paragraphs below are dated history.
+Start with the [current architecture](architecture.md#current-architecture) and
+[resumable implementation handoff](resume-context-ecosystem.md) when taking
+over this project. The dated setup and measurements below describe the
+October baseline. [Validation](validation.md) includes subsequent desktop and
+local-model evidence.
 
 Written 2026-10-08 so that a fresh agent (for example a cloud agent) can continue
 without the original sessions, their memory store or their temporary directories. Read
@@ -112,7 +116,7 @@ GPU headroom became a named limitation on 2026-11-06, and two defaults changed. 
 semantic profile without `representation` has selected complete `hierarchy-v1` since
 2026-10-22 ([record](validation.md#f4-and-the-hierarchy-default--2026-10-22));
 semantic retrieval itself stays off by default. Lexical behavioral selection has been
-on by default on the experimental line since 2026-11-11
+on by default on the experimental line since 2026-11-11, and on `main` since 2026-11-20
 ([record](validation.md#t010-singleton-qualification--2026-11-11)). Current status is
 in the [resumable handoff](resume-context-ecosystem.md).)
 
