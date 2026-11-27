@@ -1470,6 +1470,13 @@ async fn experimental_mcp_tool_is_opt_in_and_matches_cli_state() {
             command.arg("--experimental-task-context");
         }
         let client = ().serve(TokioChildProcess::new(command).unwrap()).await.unwrap();
+        let server_info = client.peer_info().unwrap();
+        let instructions = server_info.instructions.as_deref().unwrap();
+        assert_eq!(instructions.contains("after chat compaction"), enabled);
+        assert_eq!(
+            instructions.contains(r#"{"op":"render","max_bytes":8192}"#),
+            enabled
+        );
         let catalog = client.list_tools(None).await.unwrap();
         assert_eq!(
             catalog.tools.iter().any(|t| t.name == "task_context"),

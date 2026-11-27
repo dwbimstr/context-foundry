@@ -650,6 +650,16 @@ pub fn native_discovery_block() -> String {
     .join("\n")
 }
 
+pub(crate) fn task_aware_instructions(mut instructions: String, enabled: bool) -> String {
+    if enabled {
+        instructions.push_str(
+            r#"
+- When resuming a saved work item, including after chat compaction, reopen its current Foundry view before drafting an answer or running code. Use its workspace_id and task_id with task_context and {"op":"render","max_bytes":8192}. If you need the task ID, list the workspace's tasks first. If the view is unavailable, say which decisions you could not verify."#,
+        );
+    }
+    instructions
+}
+
 /// TOML basic-string escaping for paths and names printed into Codex config.
 fn toml_string(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 2);
@@ -744,7 +754,8 @@ pub fn connect(info: &ConnectInfo) -> AResult<PrintedConfig> {
         .map_err(|e| FoundryError::InvalidArgument(format!("store: {e}")))?;
     let binary = info.binary.display().to_string();
     let args = launch_args(info, &store, &root)?;
-    let instructions = native_discovery_block();
+    let instructions =
+        task_aware_instructions(native_discovery_block(), info.experimental_task_context);
     let timeout_note = format!(
         "tool timeout {} ms exceeds the {} ms maximum index timeout",
         HOST_TOOL_TIMEOUT_MS,

@@ -20,6 +20,11 @@ boundaries and existing authorization; do not ask again for already selected wor
   ChatGPT desktop sessions. At first connection or after a host restart, check
   `status` when the bound workspace is uncertain. The synthetic desktop demo has
   its own store; its results only answer questions about the demo.
+- When resuming a saved work item, including after chat compaction, reopen its
+  current Foundry view before drafting an answer or running code. Use its
+  `workspace_id` and `task_id` with `task_context` and
+  `{"op":"render","max_bytes":8192}`. If you need the task ID, list the workspace's
+  tasks first. If the view is unavailable, say which decisions you could not verify.
 - Locate an identifier with Foundry `search`, understand behavior or relationships
   with `context`, and follow a returned handle with `retrieve`. Try the applicable
   Foundry operation before grep, ripgrep, host code search, file listing or

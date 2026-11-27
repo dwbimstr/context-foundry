@@ -138,6 +138,13 @@ shows the loopback listener. A synthetic demo opens a different database file.
 
 ### Desktop decision lookup
 
+In projects that use saved work items, copy the `instructions` from
+`connect --experimental-task-context --print-config` into the project's
+`AGENTS.md`. The same resume guidance is also sent when the task-enabled MCP
+server initializes. For an already-open chat with the old project instructions,
+reload the project guidance before resuming work. The reminder contains no task
+contents. The chat reads the selected work item from its configured store.
+
 To capture originals and review feature decisions, generate the project configuration with
 `connect --host chatgpt-desktop --experimental-task-context` as in the
 [desktop quickstart](../README.md#chatgpt-desktop-on-your-mac). For local Gemma

@@ -2273,8 +2273,12 @@ impl ServerHandler for FoundryMcp {
     }
 
     fn get_info(&self) -> ServerConfig {
+        let instructions = crate::bootstrap::task_aware_instructions(
+            INIT_INSTRUCTIONS.to_owned(),
+            self.state.experimental_task_context,
+        );
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
-            .with_instructions(INIT_INSTRUCTIONS)
+            .with_instructions(instructions)
     }
 
     /// Pin both transports to the session-bearing protocol shape through

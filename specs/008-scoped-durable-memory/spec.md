@@ -280,6 +280,10 @@ This adds one migration and one record validator, without another index or queue
   `{"op":"render","max_bytes":8192}` to read its selected decisions and notes
   together. An over-budget view can be inspected and individual originals
   reopened with `peek`. The byte allowance applies to Foundry output.
+  With task context enabled, the printed project instructions and MCP startup
+  instructions ask a chat resuming a saved work item to read its current view
+  before answering or running code, including after chat compaction. An
+  unavailable view leaves the current decisions unverified.
 - Entry kinds distinguish requirement, constraint, observation, hypothesis, decision,
   rejected attempt, question, work and artifact. Author/provenance and optional exact
   source handles accompany each entry. Entries are immutable; a new entry may

@@ -2111,6 +2111,10 @@ fn connect_prints_parseable_codex_configuration_with_policy_and_timeouts() {
     let mut info = connect_info("codex", &root, store.clone());
     info.budget_file = Some(budget_file.clone());
     let printed = context_foundry::bootstrap::connect(&info).unwrap();
+    assert_eq!(
+        printed.instructions,
+        context_foundry::bootstrap::native_discovery_block()
+    );
     let config: toml::Table = printed.config_text.parse().expect("valid TOML");
     let server = config["mcp_servers"]["context-foundry"].as_table().unwrap();
     assert_eq!(
@@ -2218,6 +2222,12 @@ fn connect_forwards_profiles_without_loading_or_maintaining() {
         assert!(output.status.success(), "{output:?}");
         let printed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(printed["host"], host);
+        assert!(
+            printed["instructions"]
+                .as_str()
+                .unwrap()
+                .contains("after chat compaction")
+        );
         let launch = printed["launch"].as_array().unwrap();
         let args: Vec<String> = if host == "omp" {
             let config: serde_json::Value =

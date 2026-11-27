@@ -1,5 +1,48 @@
 # Validation
 
+## Reopening a Rust review decision saved only in Foundry — 2026-11-27
+
+After the [earlier compaction run](#real-desktop-compaction-during-the-rust-review--2026-11-27),
+the coordinator saved a third operator decision directly in the private Rust
+review notebook. Readback at revision 7 preserved both earlier decisions. The
+new entry's ID, text and identifying Rust type were absent from the original
+desktop chat. The host completed a new native compaction at 20:27:36 UTC.
+Its replacement history also lacked the new decision.
+
+On a neutral request to finish the standalone regression, the same chat ran
+the code without reading Foundry. Its test preserved both earlier decisions
+and passed on Rust 1.97.1. Substituting an unrelated panic payload also
+passed. The notebook's bounded 8,192-byte render
+returned all three current decisions in 4,785 bytes through the installed
+Foundry CLI.
+
+The task-enabled MCP startup text and printed project instructions now ask the
+chat to reopen its current work item before resuming. The already-open chat
+read the revised project instructions from disk. Its history still contained
+neither the decision ID nor its identifying Rust type before the replay.
+
+On the identical neutral continuation prompt, the chat first tried to render
+the saved work item over MCP. The review registration still pointed to the
+retired loopback endpoint. The chat then used the installed Foundry CLI to
+render revision 7 of the same notebook before drafting or running code.
+This was the first time the unseen decision appeared in the chat. The returned
+regression checked the type of the caught callback panic and the original
+element ID it carried. It preserved both earlier decisions.
+
+| Standalone regression on the installed Rust 1.97.1 | Result |
+| --- | --- |
+| Code from the chat's final answer, unedited | Passed |
+| Replace the deliberate panic with an unrelated payload | Failed at the panic downcast |
+| Keep the panic type and change its element ID from 2 to 3 | Failed at the element-ID assertion |
+
+Four focused checks passed for the task-enabled and default MCP startup text
+and generated host configuration. The run used the existing desktop account
+and local tools. The native compaction preceded the missed answer. The
+operator reported that the manual command was unavailable for another
+compaction after the guidance changed. The blind replay establishes recovery
+in the same already-compacted chat. Retention of the revised instructions
+across a subsequent compaction remains unverified.
+
 ## Real desktop compaction during the Rust review — 2026-11-27
 
 The [original Rust maintenance chat](#keeping-earlier-decisions-through-a-rust-maintenance-review--2026-11-27)
@@ -30,9 +73,10 @@ The chat also identified the existing hole-and-predicate-panic test and explaine
 what the mutation case adds. The host retained both operator decisions verbatim
 in the earlier task messages carried into the replacement history. The chat had
 also written its own recap beforehand. This run establishes recall across one
-manual compaction in this desktop integration. Recall when a decision exists
-only in Foundry, and behavior at automatic context-window exhaustion, remain
-unmeasured. No decision repair was warranted.
+manual compaction in this desktop integration. The [subsequent notebook-only
+run](#reopening-a-rust-review-decision-saved-only-in-foundry--2026-11-27)
+exercised a decision absent from chat history. Automatic context-window
+exhaustion remains unmeasured.
 
 After the unaided answer, the chat tried its earlier native review registration.
 It still pointed to the temporary loopback address retired after the previous
