@@ -1,11 +1,10 @@
 # Bootstrap, isolated workers and deployment
 
 The standard installation runs a Rust CLI or a local MCP owner for explicitly
-admitted roots. ChatGPT desktop is the primary project-memory client on the
-experimental branch. Codex and OMP also have connection profiles. Model workers
-are optional. Development bundles have install, upgrade, rollback and uninstall
-receipts. The first public release still requires the signed semantic package and
-its installed-artifact checks. [Architecture](architecture.md#current-architecture) ·
+admitted roots. ChatGPT desktop is the primary project-memory client. Codex and OMP
+also have connection profiles. Model workers are optional. Development bundles
+have install, upgrade, rollback and uninstall receipts. The first public release
+still requires the signed semantic package and its installed-artifact checks. [Architecture](architecture.md#current-architecture) ·
 [Acceptance and remaining work](resume-context-ecosystem.md) · [Release checklist](release.md).
 
 ## User flow and ownership
@@ -691,7 +690,7 @@ publication authorization and destination are still required to upload any artif
 
 ## Experimental schema 12
 
-The experimental context branch uses schema 12 for a disposable publication lookup
+The store uses schema 12 for a disposable publication lookup
 and bounded changed-input frontier. It preserves schema 11 source/config-bound
 relationship scopes and key postings, schema 10 generated-knowledge completion caching
 and lineage, schema 9 independent semantic/knowledge obligations, schema 8 briefs

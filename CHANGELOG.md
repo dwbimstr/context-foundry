@@ -8,7 +8,7 @@ was never published and is not a release.
 
 ## [Unreleased]
 
-### Experimental branch since November 20, 2026
+### Changes since November 20, 2026
 
 - ChatGPT desktop project configuration and the opt-in `task_context` tool support
   saving an attributed decision and reopening it in a fresh chat. [Desktop workflow](README.md#chatgpt-desktop-on-your-mac).

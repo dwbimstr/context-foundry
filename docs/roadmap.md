@@ -10,7 +10,7 @@ owns acceptance and remaining work.
 | Workstream | What is available or still gated |
 | --- | --- |
 | Source, graph and delivery (001, 003, 005, 007) | Cited search and retrieval, explicit graph and compiler imports, opt-in watching and bounded multi-root context. The Python HTTP boundary has a specific accepted static scope. |
-| Project memory and change impact (003, 008) | Recoverable task records, shared originals, reviewed dependencies and changed-source review are implemented on the experimental branch. Broader real-host task outcomes and economics remain tied to the unfunded pilot. |
+| Project memory and change impact (003, 008) | Recoverable task records, shared originals, reviewed dependencies and changed-source review are available through the opt-in task workspace. Broader real-host task outcomes and economics remain tied to the unfunded pilot. |
 | Semantic retrieval (009) | EmbeddingGemma 2 is the selected optional source profile. The experimental saved-decision lookup reuses its worker. The 009 T005 anchorless source-retrieval investigation closed at the existing baseline. |
 | Generation, learning and metering (010, 013, 003) | Generated knowledge is experimental with real-model utility deferred. Owned learning is frozen off. A new live proof belongs to the gateway's separate release. |
 | Distribution | The first release requires all active tasks, including 003 T006, and the signed semantic package with its installed-artifact checks. Paid trials and signing require their existing authorization. [Release checklist](release.md) |

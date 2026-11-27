@@ -1,6 +1,6 @@
 # 003 — Context inside coding agents
 
-On the experimental branch ChatGPT desktop uses the project MCP owner for
+ChatGPT desktop uses the project MCP owner for
 source discovery and feature memory. The operator-facing contracts cover
 [shared originals and decision recovery](contracts/shared-source-review.md)
 and [proposed changes and impact](contracts/indirect-change-impact.md).

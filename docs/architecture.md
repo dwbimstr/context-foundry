@@ -9,10 +9,8 @@ review after this edit?” draws on attributed originals, decisions and their ci
 ChatGPT desktop is the primary client for the second workflow. A fresh chat can reopen
 the same records by workspace and task ID. The project store supplies the memory.
 
-This describes `experimental/context-ecosystem` through 2026-11-27. The core and
-the original task-state tool are also on `main`. The desktop adapter, shared-source
-review and saved-decision fallback followed the November 20 merge. The handoff owns
-current acceptance and open work. [Current status](resume-context-ecosystem.md) ·
+This describes the implementation as of 2026-11-27. The handoff tracks
+acceptance and open work. [Current status](resume-context-ecosystem.md) ·
 [Portfolio](../specs/README.md) · [Release boundary](release.md).
 
 ```mermaid

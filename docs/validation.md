@@ -1,5 +1,16 @@
 # Validation
 
+## Local merge gates for desktop project memory — 2026-11-27
+
+All eight gates in `scripts/gates.sh` passed on the clean experimental commit
+`e9f600b` on macOS arm64, using Rust 1.97.1 and the minimum supported Rust
+1.90.0. The default Rust test harness reported 1,331 passed, 0 failed and 35
+ignored. The separate recovery harness passed all 21 cases. The opt-in pilot
+unit suite reported 133 passed, 0 failed and 1 ignored.
+The documentation follow-up updates the source-install instructions for the
+default branch. The PR records each gate, its log digest and the documentation
+checks. [PR #57](https://github.com/dwbimstr/context-foundry/pull/57).
+
 ## Architecture and capability documentation — 2026-11-27
 
 The documentation review used experimental tip `810f934` and main tip

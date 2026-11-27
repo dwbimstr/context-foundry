@@ -1,6 +1,6 @@
 # 008 — Explicit project memory
 
-On the experimental branch, the primary store also owns original captures,
+The primary store also owns original captures,
 feature decisions, explicitly confirmed relationships and per-claim citation
 history. The client can inspect, peek, promote and forget under the existing
 task and memory lifecycle. 003 owns the desktop delivery and optional semantic

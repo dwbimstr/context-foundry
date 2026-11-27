@@ -14,10 +14,8 @@ Foundry runs locally in Rust. Source search, graph traversal, explicit memory
 and source review work without a model. ChatGPT desktop is the primary client
 for project memory. Codex, OMP and the CLI can also use the engine.
 
-**Pre-release.** This README describes `experimental/context-ecosystem`. The
-November 20 merge brought the core and earlier opt-in task tools to `main`.
-The ChatGPT desktop adapter and recent decision and source-review workflows
-are on the experimental branch. [Architecture and capability map](docs/architecture.md#current-architecture) · [Current status](docs/resume-context-ecosystem.md).
+**Pre-release.** A source build includes the ChatGPT desktop adapter. Enable task
+context to save decisions and review features affected by a source edit. [Architecture and capability map](docs/architecture.md#current-architecture) · [Current status](docs/resume-context-ecosystem.md).
 
 ## The problem
 
@@ -96,8 +94,8 @@ It is **not**:
 
 ## Status
 
-“Stable core” identifies implemented capabilities on `main`. Experimental rows
-describe this branch and the opt-in needed to use them. Dated checks and outstanding
+“Stable core” identifies the core interfaces. Experimental rows describe each
+optional capability and how to enable it. Dated checks and outstanding
 release conditions have separate records. [Validation](docs/validation.md) ·
 [Release checklist](docs/release.md).
 
@@ -106,7 +104,7 @@ release conditions have separate records. [Validation](docs/validation.md) ·
 | Indexing, recovery, repair | Stable core | Explicit store creation, bounded refresh, interrupted-index recovery, `repair-index`, `upgrade-store --to 12` (the current store schema, and the only target the command accepts) |
 | `search`, `context`, `retrieve` | Stable core | City map, doors, exact budgets; CLI and MCP |
 | MCP server | Stable core | Seven tools by default over stdio or shared loopback HTTP; task context adds an eighth |
-| `bootstrap`, `connect` | Core, with experimental desktop adapter | Project configuration for OMP and Codex on main and ChatGPT desktop on the experimental branch |
+| `bootstrap`, `connect` | Core, with experimental desktop adapter | Project configuration for ChatGPT desktop, Codex and OMP |
 | Project memory | Stable core | `foundry memory …` and the MCP `memory` tool |
 | Compiler references (SCIP) | Stable core | `import-scip` of rust-analyzer artifacts, `references`, exact doors |
 | Multi-root context | Stable core | `mcp --reference ROOT=STORE`, up to 8 |
@@ -175,15 +173,14 @@ success or cost with a real model.
 ## Install from source
 
 ```sh
-git clone --branch experimental/context-ecosystem https://github.com/dwbimstr/context-foundry
+git clone https://github.com/dwbimstr/context-foundry
 cd context-foundry
 cargo install --locked --path .        # installs `foundry` into ~/.cargo/bin
 # or build without installing:
 cargo build --release --locked         # target/release/foundry
 ```
 
-For the core on `main`, omit the branch option at clone time. `--no-default-features`
-builds the core without semantic retrieval.
+To build the core without semantic retrieval, add `--no-default-features`.
 
 ### Install a package (macOS arm64, unsigned)
 

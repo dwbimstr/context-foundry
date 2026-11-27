@@ -1,7 +1,7 @@
 # Workflows worth building
 
 The [architecture and capability map](../docs/architecture.md#capability-map)
-describes the current experimental branch. The [resumable handoff](../docs/resume-context-ecosystem.md)
+describes the current implementation. The [resumable handoff](../docs/resume-context-ecosystem.md)
 owns status, and [validation](../docs/validation.md) owns dated evidence. For the
 desktop memory workflow, 008 owns explicit records and 003 owns client delivery,
 [shared-source review](003-agent-retrieval-context/contracts/shared-source-review.md)
