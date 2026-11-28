@@ -1479,6 +1479,7 @@ impl Engine {
             }
             if matches!(request.command, Command::Forget { .. }) {
                 let mut removed = Vec::new();
+                let mut retained = Vec::new();
                 let mut memory = tx.open_table(crate::memory::MEMORY)?;
                 for (memory_id, promotion) in &task.promotions {
                     let current = memory
@@ -1486,9 +1487,13 @@ impl Engine {
                         .map(|v| crate::memory::decode_row(memory_id, v.value()))
                         .transpose()?;
                     if let Some(record) = current {
-                        if record.revision != promotion.memory_revision {
-                            return Err(FoundryError::Conflict(format!(
-                                "promoted memory {memory_id} was edited or recreated; resolve/forget it explicitly first"
+                        if record.revision > promotion.memory_revision {
+                            retained.push(memory_id);
+                            continue;
+                        }
+                        if record.revision < promotion.memory_revision {
+                            return Err(FoundryError::CorruptStore(format!(
+                                "memory {memory_id} predates its promotion"
                             )));
                         }
                         memory.remove(memory_id.as_str())?;
@@ -1500,7 +1505,8 @@ impl Engine {
                     }
                 }
                 table.remove(request.task_id.as_str())?;
-                result = json!({"task_id":request.task_id,"revision":revision,"outcome":"deleted","forgotten_memory_ids":removed});
+                result = json!({"task_id":request.task_id,"revision":revision,"outcome":"deleted",
+                    "forgotten_memory_ids":removed,"retained_memory_ids":retained});
             } else {
                 task.revision = revision;
                 for item in &mut task.entries[original_count..] {

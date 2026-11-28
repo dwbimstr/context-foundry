@@ -2295,7 +2295,7 @@ fn promotion_is_explicit_indexed_and_forget_removes_derived_retrieval() {
     engine.refresh(&Control::unbounded()).unwrap();
 }
 #[test]
-fn promoted_copy_correction_blocks_destructive_forget_and_supersession() {
+fn superseding_a_decision_still_requires_resolving_its_live_promotion() {
     let e = env();
     let engine = Engine::open_existing(&e.store).unwrap();
     let r = create(&engine);
@@ -2329,7 +2329,11 @@ fn promoted_copy_correction_blocks_destructive_forget_and_supersession() {
         })
         .unwrap();
     assert!(matches!(
-        call(&engine, json!({"op":"forget","expected_revision":r})),
+        apply(&engine, r, json!([replacement.clone()])),
+        Err(FoundryError::Conflict(_))
+    ));
+    assert!(matches!(
+        call(&engine, json!({"op":"forget","expected_revision":r - 1})),
         Err(FoundryError::Conflict(_))
     ));
     assert_eq!(
@@ -2458,7 +2462,10 @@ fn cascade_forget_is_atomic_across_task_and_promoted_memory_on_abrupt_exit() {
         let r = apply(
             &engine,
             r,
-            json!([add("decision", "decision", "Retained project decision.")]),
+            json!([
+                add("decision", "decision", "Retained project decision."),
+                add("handoff", "decision", "Original handoff.")
+            ]),
         )
         .unwrap()["revision"]
             .as_u64()
@@ -2466,6 +2473,36 @@ fn cascade_forget_is_atomic_across_task_and_promoted_memory_on_abrupt_exit() {
         let r = call(&engine, promotion(r)).unwrap()["revision"]
             .as_u64()
             .unwrap();
+        let mut second = promotion(r);
+        second["entry_id"] = json!("handoff");
+        second["memory_id"] = json!("handoff-copy");
+        let promoted = call(&engine, second).unwrap();
+        let r = promoted["revision"].as_u64().unwrap();
+        let note = "An independent editorial decision.";
+        engine.replace_source("meeting.md", note).unwrap();
+        let link = context_foundry::SourceHandle {
+            workspace_id: e.wid.clone(),
+            path: "meeting.md".into(),
+            sha256: context_foundry::digest(note.as_bytes()),
+            start: 0,
+            end: note.len() as u64,
+        }
+        .to_v2();
+        engine
+            .memory_update(&context_foundry::memory::UpdateInput {
+                workspace_id: e.wid.clone(),
+                expected_revision: promoted["memory_revision"].as_u64().unwrap(),
+                fields: context_foundry::memory::RecordFields {
+                    id: "handoff-copy".into(),
+                    text: "Keep the quartzleaf amendments.".into(),
+                    author: "Editor".into(),
+                    provenance: "Handoff meeting".into(),
+                    source_links: vec![link],
+                },
+            })
+            .unwrap();
+        let edited =
+            serde_json::to_value(engine.memory_get("handoff-copy", &e.wid).unwrap()).unwrap();
         drop(engine);
         let out = Command::new(std::env::current_exe().unwrap())
             .args(["--exact", "task_fault_child"])
@@ -2473,9 +2510,20 @@ fn cascade_forget_is_atomic_across_task_and_promoted_memory_on_abrupt_exit() {
             .env("CF_TASK_FAULT_MODE", mode)
             .output()
             .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            assert_eq!(
+                out.status.signal(),
+                Some(libc::SIGABRT),
+                "{mode}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        #[cfg(not(unix))]
         assert!(!out.status.success());
-        let engine = Engine::open_existing(&e.store).unwrap();
         if mode.ends_with("before") {
+            let engine = Engine::open_existing(&e.store).unwrap();
             assert_eq!(
                 call(&engine, json!({"op":"inspect"})).unwrap()["revision"],
                 r
@@ -2484,16 +2532,37 @@ fn cascade_forget_is_atomic_across_task_and_promoted_memory_on_abrupt_exit() {
                 engine.memory_get("backoff-policy", &e.wid).unwrap().text,
                 "Retained project decision."
             );
-        } else {
-            assert!(matches!(
-                call(&engine, json!({"op":"inspect"})),
-                Err(FoundryError::NotFound)
-            ));
-            assert!(matches!(
-                engine.memory_get("backoff-policy", &e.wid),
-                Err(FoundryError::NotFound)
-            ));
+            drop(engine);
+            let result = cli(&e, json!({"op":"forget","expected_revision":r}));
+            assert_eq!(result["forgotten_memory_ids"], json!(["backoff-policy"]));
+            assert_eq!(result["retained_memory_ids"], json!(["handoff-copy"]));
         }
+        let mut engine = Engine::open_existing(&e.store).unwrap();
+        assert!(matches!(
+            call(&engine, json!({"op":"inspect"})),
+            Err(FoundryError::NotFound)
+        ));
+        assert!(matches!(
+            engine.memory_get("backoff-policy", &e.wid),
+            Err(FoundryError::NotFound)
+        ));
+        assert_eq!(
+            serde_json::to_value(engine.memory_get("handoff-copy", &e.wid).unwrap()).unwrap(),
+            edited
+        );
+        engine.refresh(&Control::unbounded()).unwrap();
+        let hits = engine
+            .memory_search(&context_foundry::memory::SearchInput {
+                workspace_id: e.wid.clone(),
+                query: "quartzleaf".into(),
+                limit: 4,
+                tokens: 512,
+            })
+            .unwrap()
+            .hits;
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, "handoff-copy");
+        assert_eq!(hits[0].revision, edited["revision"].as_u64().unwrap());
     }
 }
 
@@ -2551,6 +2620,7 @@ fn deleted_promotions_keep_their_lineage_and_cannot_be_reassigned() {
         .unwrap();
     let result = call(&engine, promotion(r)).unwrap();
     let r = result["revision"].as_u64().unwrap();
+    let original = engine.memory_get("backoff-policy", &e.wid).unwrap();
     engine
         .memory_forget(
             &context_foundry::memory::ForgetInput {
@@ -2574,6 +2644,30 @@ fn deleted_promotions_keep_their_lineage_and_cannot_be_reassigned() {
         engine.memory_get("backoff-policy", &e.wid),
         Err(FoundryError::NotFound)
     ));
+    // Reusing the same ID and contents still creates independently owned memory.
+    let recreated = engine
+        .memory_put(&context_foundry::memory::PutInput {
+            workspace_id: e.wid.clone(),
+            fields: context_foundry::memory::RecordFields {
+                id: original.id.clone(),
+                text: original.text,
+                provenance: original.provenance,
+                author: original.author,
+                source_links: vec![],
+            },
+        })
+        .unwrap();
+    assert!(recreated.revision > original.revision);
+    let deleted = call(&engine, json!({"op":"forget","expected_revision":r})).unwrap();
+    assert_eq!(deleted["forgotten_memory_ids"], json!([]));
+    assert_eq!(deleted["retained_memory_ids"], json!([original.id]));
+    assert_eq!(
+        engine
+            .memory_get("backoff-policy", &e.wid)
+            .unwrap()
+            .revision,
+        recreated.revision
+    );
 }
 
 #[test]

@@ -45,22 +45,20 @@ experimental tip through `ac43ed2`. [Merge and local gates](validation.md#local-
   The saved note shows attributed candidate passages. An operator can accept
   or dismiss a connection, revisit the exact words reviewed, and change that
   choice while retaining its history. The copied-decision example located
-  the contract and a separate reviewer's account. Its open product question
-  is whether deleting the original task should succeed while leaving the
-  edited copy in place, or continue to require explicit reconciliation.
+  the contract and a separate reviewer's account. This raised the question
+  of whether deleting the original task should leave the edited copy in place.
   [Walkthrough and limits](validation.md#later-meeting-note-and-earlier-decisions--2026-11-23).
 
   **Change planning from a reviewed note, 2026-11-24.** Asking what would
   change if task deletion kept an edited copy now brings the meeting note,
   the exact earlier promise and a cited deletion guard into the same scoped
-  answer. The code currently refuses deletion when the copy was edited. The
-  operator still owns the decision to change that behavior. Dismissing the
+  answer. At the time, the code refused deletion when the copy was edited. Dismissing the
   connection removes its quotation and search attribution on the next read.
   [Feature walkthrough](validation.md#change-planning-from-a-reviewed-note--2026-11-24).
 
   **Cross-feature decision use delivered, 2026-11-24.** Starting from the
   saved correction decision, Foundry named “Forget a task and its promoted
-  project memory” and quoted why deletion must wait for an independently
+  project memory” and quoted why the earlier rule required an independently
   edited copy to be resolved. Both features adopted the same indexed passage.
   A requirement can also name a decision directly and explain its reliance
   in its own words. Similar wording alone returns a question for the operator.
@@ -70,10 +68,8 @@ experimental tip through `ac43ed2`. [Merge and local gates](validation.md#local-
   and author. Foundry saves the original, follows an attributed meeting note
   to a candidate decision, and shows which other feature relies on it and
   why. In the saved case, the cleanup feature's guide and the retrieved Rust
-  guard both require reconciliation before deletion. An explicit scope answer
+  guard both required reconciliation before deletion. An explicit scope answer
   survives a restart. Losing the reviewed evidence reopens the question.
-  The operator still needs to decide whether deleting the task should be
-  allowed while keeping a separately edited copy.
   [Plan and commands](../specs/003-agent-retrieval-context/contracts/indirect-change-impact.md)
   and [walkthrough](validation.md#from-an-indirect-request-to-the-affected-feature--2026-11-24).
 
@@ -81,8 +77,14 @@ experimental tip through `ac43ed2`. [Merge and local gates](validation.md#local-
   to delete the original task found the saved Cleanup rule, Editorial handoff’s
   reason and the Rust guard. It identified the changed source and asked which
   deletion policy to implement before editing. An unrelated port request
-  received the launch command. The policy remains open.
+  received the launch command.
   [Desktop cases and focused checks](validation.md#a-deletion-request-surfaces-a-decision-before-editing--2026-11-27).
+
+  **Deletion policy implemented, 2026-11-27.** The owner chose to delete
+  the original task and preserve the independently edited copy. Foundry saved
+  and read back the decision at revision 18 of `correcting-a-copied-decision`.
+  Task forget now reports which copies it deleted and which newer records it
+  kept. [Decision and restart checks](validation.md#deleting-an-original-task-keeps-the-edited-copy--2026-11-27).
 
   **From shared originals to a feature review, 2026-11-24.** Save a meeting
   and specification once in a project notebook. A fresh client can ask in

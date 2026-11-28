@@ -819,11 +819,12 @@ lineage and revisions together. It retains task/entry/digest provenance and beco
 available to ordinary `memory get/search` and opt-in memory context. No task text
 enters project memory, source search or training automatically.
 
-An unchanged promoted copy is removed with task forget, even if its search document
-has not yet been deleted. If someone independently updates or recreates the project
-record, task forget refuses atomically: resolve/forget that record through `memory`
-first. Likewise, explicitly resolve/forget a live promoted copy before superseding
-its task decision. This makes correction visible. Deletion is logical: prior exports,
+Forgetting the original task deletes copies still at their promoted revision.
+The receipt lists them in `forgotten_memory_ids`. If someone has edited a copy
+or recreated the record under the same ID, its ID appears in `retained_memory_ids`
+and the record remains available through `memory get` and `memory search`.
+Superseding a task decision still requires explicitly resolving and forgetting its
+live promoted copy. Deletion is logical: prior exports,
 backups, transcripts and provider caches are outside this store's control.
 
 Limits are 128 live tasks, 128 entries per task, 256 KiB text per ordinary entry,

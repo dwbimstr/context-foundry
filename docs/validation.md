@@ -1,5 +1,32 @@
 # Validation
 
+## Deleting an original task keeps the edited copy — 2026-11-27
+
+After the desktop chat surfaced the Cleanup rule and Editorial handoff’s
+reliance on the editor’s amendments, the project owner chose “Let me delete
+the original task and keep the independently edited copy intact.” The native
+project Foundry MCP server committed `preserve-edited-copy-on-task-forget` in
+`correcting-a-copied-decision` at revision 18. Both `render` and `peek`
+returned the exact wording. The decision is attributed to the operator. The
+two desktop exercise records retain their original attribution.
+
+The [task deletion transaction](../src/task_context.rs) removes a promoted
+record only at its recorded revision. An ordinary MCP trial on macOS used the
+new binary and a disposable store with two promoted decisions. After one
+was edited, task forget returned the unchanged copy in `forgotten_memory_ids`
+and the editor’s copy in `retained_memory_ids`. A fresh server reopened
+the store and confirmed the task and unchanged copy were absent. Reading the
+editor’s full record returned the same data as before deletion.
+
+The [mixed-copy regression](../tests/task_context.rs) failed against the old
+refusal. On the new implementation it verified rollback before commit,
+durability after commit, and the edited copy’s text, author, provenance,
+source link, revision and search hit after restart. A same-ID record recreated
+with the original content also survived. Stale task revisions and superseding
+a decision with a live promotion still refused. The two focused suites passed
+with 38 task-context tests and 34 memory tests. Library Clippy, formatting
+and documentation link checks passed. The checks ran locally without a provider.
+
 ## A deletion request surfaces a decision before editing — 2026-11-27
 
 A fresh ChatGPT desktop project chat received only “Let me remove the original

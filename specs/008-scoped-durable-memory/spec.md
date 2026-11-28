@@ -363,18 +363,21 @@ consent. At most one promotion per decision, at most 128 tracked copies per task
 A task never reassigns a memory ID already present in its promotion lineage.
 
 Task forget atomically removes its originals, views, checkpoints and unchanged live
-promoted copies, queuing ordinary index deletions. A promoted record subsequently
-edited or recreated through `memory` makes task forget **refuse** without changing
-anything; explicitly resolve/forget that memory record first. A task decision cannot
-be superseded while its promoted copy remains live: explicitly correct/forget the
-project record first. These restrictions prevent silently leaving a stale derivative
-or deleting a separately edited record. Export includes promotion identities/revisions;
+promoted copies, queuing index deletions for those copies. The owner chose on
+2026-11-27 to keep an independently edited copy when deleting the original task.
+Forget compares the live memory revision with the revision recorded at promotion.
+It deletes an exact match and leaves a newer revision intact, including its author,
+provenance, source links and index work. Recreating a record under the same ID also
+gives it a newer revision. The receipt lists removed and retained live IDs in
+`forgotten_memory_ids` and `retained_memory_ids`. An already absent copy appears
+in neither list. Superseding a task decision still requires first resolving and
+forgetting its live promotion. Export includes promotion identities/revisions;
 project-memory export provides the exact promoted records. Logical deletion cannot
 erase prior exports, backups or host/provider copies.
 
 Tests must exercise silence, exact-match advice, persistent dismissal, promotion and
-indexed retrieval, revision collision, stale source refusal, correction/forget
-conflicts, and abrupt exit before/after promotion commit. Broader contradiction or
+indexed retrieval, revision collision, stale source refusal, supersession conflicts,
+and abrupt exit before and after promotion or mixed-copy deletion commits. Broader contradiction or
 constraint-violation detection uses the owner-selected structured contract below;
 pilot v2 is to measure real-host benefit (owner, 2026-11-06).
 

@@ -183,7 +183,8 @@ profiles, model files, datasets, checkpoints and host configuration files.
 - **Nothing rebuilds a store by deleting it.** No install, upgrade, repair or uninstall
   step removes feedback or memories. A memory record is removed only by an explicit
   forget: `memory forget` of that record, or a `task-context` forget of the task that
-  promoted it, which refuses if the record was edited since. No command removes a
+  promoted it while the record still has its promoted revision. Edited and recreated
+  records survive deletion of the original task. No command removes a
   feedback row; a correction replaces the row for the same example. Data that mirrors
   or is derived from the workspace does change without such a command: indexing drops
   the stored copy of a source that is gone from the workspace, and the knowledge cache
