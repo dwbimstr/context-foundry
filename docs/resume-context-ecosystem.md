@@ -84,7 +84,10 @@ experimental tip through `ac43ed2`. [Merge and local gates](validation.md#local-
   the original task and preserve the independently edited copy. Foundry saved
   and read back the decision at revision 18 of `correcting-a-copied-decision`.
   Task forget now reports which copies it deleted and which newer records it
-  kept. [Decision and restart checks](validation.md#deleting-an-original-task-keeps-the-edited-copy--2026-11-27).
+  kept. The project desktop server now runs `0240f6f`. A fresh project chat
+  deleted a throwaway task, and the normal stdio connection reopened its edited
+  copy intact. [Installed desktop check](validation.md#installed-desktop-deletion-on-the-project-store--2026-11-27)
+  and [decision and restart checks](validation.md#deleting-an-original-task-keeps-the-edited-copy--2026-11-27).
 
   **From shared originals to a feature review, 2026-11-24.** Save a meeting
   and specification once in a project notebook. A fresh client can ask in

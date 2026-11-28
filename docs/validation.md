@@ -1,5 +1,32 @@
 # Validation
 
+## Installed desktop deletion on the project store — 2026-11-27
+
+The configured project executable was replaced with the offline build of
+`0240f6f19ceb11b35ae021a52a06801a65b169a2`. The installed SHA-256 was
+`b6e3320bda1dfc640a03a79c674df0954f0da5c2c95bdd441cf14a652fcc9d38`.
+Only Foundry processes owning this project store were restarted. The first
+fresh desktop chat encountered a competing stdio owner and stopped before
+writing. A second fresh chat used native MCP over an authenticated loopback
+connection to the installed executable. Status confirmed the actual project
+workspace and the ready local decision profile.
+
+The chat created one throwaway task, promoted two synthetic decisions and
+independently edited one copy. Forget at task revision 22 returned deletion
+revision 23. Its receipt listed the unchanged copy as forgotten and the
+edited copy as retained. Both task inspect and get for the unchanged copy
+returned `not_found`. The full eight-field get result for the edited copy
+matched before and after deletion, including its revision 3, author, wording,
+origin attribution and empty source-link list.
+
+The temporary connection was closed and the original project configuration
+restored byte for byte. A desktop chat then read the retained copy through
+the normal `context-foundry` stdio registration. All eight fields still
+matched, and status still reported `decision_semantic: ready`. The running
+project owner matched the configured launch arguments and the installed
+executable’s inode. The edited synthetic copy remains in the project store.
+Both Prakarana registrations stayed disabled. The check used no paid provider.
+
 ## Deleting an original task keeps the edited copy — 2026-11-27
 
 After the desktop chat surfaced the Cleanup rule and Editorial handoff’s
