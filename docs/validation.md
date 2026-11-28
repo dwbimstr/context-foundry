@@ -1,5 +1,37 @@
 # Validation
 
+## Two open desktop chats on the project store — 2026-11-28
+
+Two fresh ChatGPT project chats used the installed `0240f6f` build and the
+ordinary `context-foundry` registration. Chat A asked what the editor wanted
+to keep after the original task closed, without a feature name or record ID.
+Chat B requested project status before making a correction. A’s two native
+status calls and B’s status call failed during initialization. The running
+stdio process held the actual store and had no TCP listener. Both chats
+stopped before reading or writing the note.
+
+The operator approved one project-only switch during setup. The installed
+executable now serves one authenticated IPv4 loopback endpoint with the original
+store, root and local decision profile. The project selects it under
+`context-foundry-project`. A private header helper supplies authentication;
+unauthenticated access returned HTTP 401. The user-scope demo kept its existing
+registration. Two new project chats opened with the shared registration. Both
+used the same owner throughout the following exchange.
+
+| Step | Observed through native Foundry MCP |
+| --- | --- |
+| A asks what to keep after the original task closed | With no feature name, note ID or notebook wording in the question, A searched project memory and retrieved revision 3. It quoted the violet notebook and attributed the note to “Synthetic independent editor.” |
+| B corrects the editor’s note | B read revision 3, updated that revision once and read back revision 4. Its exact text was “For the handoff, keep the amber index cards. The violet notebook can be recycled.” Only the text and revision changed. |
+| A asks “What should I keep now?” | The same chat fetched the note again and quoted the revision-4 wording and author. Its follow-up prompt contained neither the item to keep nor B’s correction. |
+| A asks about charging again after an invoice timeout | A reported no applicable saved decision and asked which rule should govern. The native billing results contained no editor-note ID. |
+
+Readback confirmed the owner’s separate deletion decision and its attribution
+at task revision 18. The store owner PID and the project configuration matched
+across the handoff. Both Prakarana registrations remained disabled. This run
+used the existing Foundry binary, with no server restart between A’s first
+read, B’s correction, A’s second read and the billing control. Spend was zero.
+[Project connection setup](deployment.md#use-the-same-store-from-two-desktop-chats).
+
 ## Installed desktop deletion on the project store — 2026-11-27
 
 The configured project executable was replaced with the offline build of

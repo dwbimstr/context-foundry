@@ -136,6 +136,31 @@ stdout pipes. For an explicitly shared HTTP owner, `lsof -nP -a -p PID -iTCP -sT
 shows the loopback listener. A synthetic demo opens a different database file.
 [Observed desktop layout and lifecycle](architecture.md#what-runs-on-the-desktop).
 
+### Use the same store from two desktop chats
+
+Run one project owner with `--transport streamable-http --bind 127.0.0.1:PORT
+--auth-token-env NAME`, retaining the project's store, root and task/decision
+profile arguments. Select a fixed local port for this installation. Each chat
+opens its own native MCP session at that owner's `/mcp` URL. Closing a chat
+leaves the other session and the owner available.
+
+When user scope already supplies a stdio demo named `context-foundry`, disable
+that inherited registration in the trusted project's configuration and register
+the HTTP URL under `context-foundry-project`. This keeps the demo available
+elsewhere and avoids combining inherited stdio arguments with the project URL.
+Keep the project's existing tool approval settings on the HTTP registration.
+
+For a desktop app already running without the bearer in its environment, set
+`http_headers_helper` to an absolute path to a private local executable that
+returns the Authorization header as JSON. Store the credential outside the
+repository with owner-only access. The server receives the same bearer through
+its named environment variable. On the project Mac the explicit launcher is
+in the workspace-ID directory under `~/.local/share/context-foundry-desktop/projects/`
+as `start-project-mcp`. Run it once if the owner has stopped, including after
+a reboot. Starting a chat requires no launcher or restart. A chat opened before
+the initial transport change can retain its old catalog; open the two chats
+after setup. [Desktop MCP configuration](https://learn.chatgpt.com/docs/extend/mcp?surface=desktop).
+
 ### Desktop decision lookup
 
 In projects that use saved work items, copy the `instructions` from

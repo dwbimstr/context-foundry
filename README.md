@@ -233,9 +233,10 @@ foundry --store /tmp/foundry-demo graph src/main.rs --depth 1
 
 ### ChatGPT desktop on your Mac
 
-The desktop host launches `foundry mcp` over stdio and the child holds the project
-store. Later chats can recover the same records when connected to that store.
-[Desktop process layout](docs/architecture.md#what-runs-on-the-desktop) · [Identify the running owner](docs/deployment.md#identify-the-running-desktop-owner).
+For a single connection, the desktop host launches `foundry mcp` over stdio
+and the child holds the project store. For two open chats, point both at one
+authenticated loopback owner so each can read the other's saved changes.
+[Two-chat setup](docs/deployment.md#use-the-same-store-from-two-desktop-chats) · [Desktop process layout](docs/architecture.md#what-runs-on-the-desktop).
 
 Open the indexed repository as a trusted local project in the ChatGPT desktop
 app. From that repository, use a Foundry executable installed outside Cargo's

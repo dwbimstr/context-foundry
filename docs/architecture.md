@@ -2,18 +2,18 @@
 
 ## Current architecture
 
-In the desktop project, ChatGPT's local app server launches the installed
-`foundry` executable with the `mcp` command. They exchange requests and replies through stdin
-and stdout. The Foundry process opens the project store and holds it while the
-connection lives. A later chat that connects to the same store can reopen saved
-decisions, their original wording and the features that rely on them.
+In this trusted project, ChatGPT's local app server connects each chat to the
+same installed `foundry mcp` process over authenticated loopback HTTP. That
+process owns the project store. One chat can reopen a note another chat just
+corrected. A single-client installation can still launch a stdio owner directly.
 
 ### What runs on the desktop
 
 ```mermaid
 flowchart LR
-    Chat["ChatGPT desktop project chat"] <--> Host["Desktop app server"]
-    Host <-->|"MCP over stdio"| Owner["foundry mcp · project owner"]
+    A["Project chat A"] <--> Host["Desktop app server"]
+    B["Project chat B"] <--> Host
+    Host <-->|"MCP sessions over authenticated loopback HTTP"| Owner["foundry mcp · project owner"]
     Owner <--> Store[("Project store · knowledge.redb and search/")]
     Root["Admitted repository files"] -->|"explicit index"| Owner
 ```
@@ -23,15 +23,16 @@ source, graph facts, memory and decisions. Its `search/` directory holds the
 Tantivy index that speeds up text lookup. Foundry can rebuild that index from
 the database while preserving saved decisions. [Storage and recovery](#commit-and-failure-ordering).
 
-The desktop host selects the registration for the trusted project. On the
-inspected Mac its `codex app-server` process launched Foundry. The Rust engine, task operations
-and store writer run inside its Foundry child. The child validates the canonical
+The desktop host selects the registration for the trusted project. The Rust
+engine, task operations and store writer run inside the shared Foundry process.
+The owner validates the canonical
 root against the workspace ID in the store before serving. A source search reads
 the indexed snapshot. A task lookup reads the saved records. Both return evidence
 on the same connection, and the chat interprets it. [Owner startup](../src/mcp/startup.rs) · [MCP transport and shutdown](../src/mcp/transport.rs).
 
 One process owns a **store**, and a repository may have separately prepared
-stores. On November 27, the desktop host had one owner for the real project,
+stores. Before the project switched to shared HTTP on November 27, the
+desktop host had one stdio owner for the real project,
 one for the case-review exercise, and three synthetic demo owners. Each demo
 launcher copied its seed into a temporary store for that connection. All five
 used pipes and held distinct store files. None listened on TCP. The inspection
@@ -309,8 +310,8 @@ can read them without a prepared source-vector index. [Desktop decision workflow
 
 One crate builds the `foundry` CLI and MCP owner. Feature-gated binaries provide
 embedding, generation, learning and pilot capture. The [desktop process layout](#what-runs-on-the-desktop)
-shows the default stdio transport.
-The same rmcp 3.10.0 server can instead start as a shared loopback HTTP owner.
+shows the project's shared loopback HTTP owner. The same rmcp 3.10.0 server
+also supports the default single-connection stdio transport.
 Both transports keep one-active/zero-queued engine admission and immutable scope.
 
 Core modules include `store` (authoritative redb state, derived Tantivy,

@@ -5,7 +5,7 @@
 
 ## Current status
 
-**Updated 2026-11-27.** This section owns current status. Dated entries below
+**Updated 2026-11-28.** This section owns current status. Dated entries below
 record the scope and limitations of each run.
 
 For the current system layout, start with the [architecture](architecture.md#current-architecture).
@@ -88,6 +88,13 @@ experimental tip through `ac43ed2`. [Merge and local gates](validation.md#local-
   deleted a throwaway task, and the normal stdio connection reopened its edited
   copy intact. [Installed desktop check](validation.md#installed-desktop-deletion-on-the-project-store--2026-11-27)
   and [decision and restart checks](validation.md#deleting-an-original-task-keeps-the-edited-copy--2026-11-27).
+
+  **Two-chat handoff, 2026-11-28.** The trusted desktop project now uses one
+  authenticated loopback Foundry owner. Chat A found the editor’s note without
+  an ID. B corrected it, and the same A retrieved and quoted the new revision
+  without being told the correction. A billing question returned no applicable
+  decision. [Two-chat receipt](validation.md#two-open-desktop-chats-on-the-project-store--2026-11-28)
+  and [connection setup](deployment.md#use-the-same-store-from-two-desktop-chats).
 
   **From shared originals to a feature review, 2026-11-24.** Save a meeting
   and specification once in a project notebook. A fresh client can ask in
