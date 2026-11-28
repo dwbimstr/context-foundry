@@ -1,5 +1,54 @@
 # Validation
 
+## A deletion request surfaces a decision before editing — 2026-11-27
+
+A fresh ChatGPT desktop project chat received only “Let me remove the original
+task even if someone has edited their copy.” The first stdio attempt could
+not open the project store while another desktop process owned it. The
+remaining chats used the native MCP tools of one authenticated loopback
+owner on that same store, with the project’s local decision profile.
+The initial shared-server chat found the guard and announced it would keep
+the copy without asking. It was stopped with a clean checkout. A first
+guidance change made a fresh chat pause, but it omitted Editorial handoff
+and offered to erase the editor’s changes.
+
+The proposal had five wording matches and zero decision candidates. Two
+stronger passages about the change had occupied both slots. Proposal impact
+now retains up to two directly matching decisions during the same scan and
+considers them after the leading passages. The response still offers at most
+two candidate decisions. A matching decision remains a lead until the
+operator confirms scope. The task-enabled client guidance also distinguishes
+a request for change from a choice about an existing rule.
+
+On the final candidate, a new desktop project chat received the same request
+without feature names or tool hints. Native status, decision lookup, source
+review, proposal impact, decision uses and source retrieval ran before its
+answer. It reported all of the following.
+
+- Cleanup’s saved example says “Cleanup keeps an edited copy when retiring its
+  parent.” Its original supporting quotation is absent from the revised
+  specification. The current excerpt is a position preview.
+- Editorial handoff says “Handoff relies on cleanup to preserve the editor’s
+  separate amendments.” Its separate meeting evidence still says “Handoff
+  must preserve the editor’s independently amended copy.”
+- The [Rust deletion guard](../src/task_context.rs) refuses the entire operation
+  when the promoted copy’s revision has changed. The chat asked whether to
+  preserve the edited copy or retain the refusal, and whether the exercise
+  records should govern the product change.
+
+The chat recorded the request as a proposal. The tracked patch was identical
+before and after the interaction. A separate fresh chat on the same candidate
+was asked how to bind the local MCP server to port 9741 for one launch. It
+gave the loopback address, Streamable HTTP transport and bearer environment
+variable option, with no Cleanup lead or policy question.
+
+The synthetic regression returned no decision on the old implementation and
+returned the saved rule on the fix. All 38 task-context tests and three focused
+MCP checks passed. Formatting, library Clippy with warnings denied and the
+link check passed. This qualifies one unhinted request and one unrelated
+control through the shared native desktop route. The runs used ordinary
+project chat instructions and existing desktop memory. Provider spend was zero.
+
 ## Foundry decision recovery after automatic desktop compaction — 2026-11-27
 
 With the resume guidance from `590fcf9` already loaded, the coordinator saved

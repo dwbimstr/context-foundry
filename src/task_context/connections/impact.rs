@@ -246,10 +246,7 @@ impl Routes {
         let table = tx.open_table(TASKS)?;
         let words = NoteWords::new(&proposal.entries[0].entry.text);
         let leads = if let Some(scope) = saved {
-            let mut leads = Suggestions {
-                include_identical_captures: true,
-                ..Suggestions::default()
-            };
+            let mut leads = Suggestions::default();
             if let Some(row) = table.get(scope.decision.task_id.as_str())? {
                 let origin = decode(row.value(), &scope.decision.task_id, &proposal.workspace_id)?;
                 // A saved choice binds identity; the new proposal may use only
@@ -280,7 +277,7 @@ impl Routes {
             leads
         } else {
             Suggestions {
-                include_identical_captures: true,
+                proposal_decisions: Some(Vec::new()),
                 ..Suggestions::default()
             }
             .workspace(tx, &proposal.workspace_id, &words, control)?
@@ -293,7 +290,16 @@ impl Routes {
             omitted_examples: 0,
         };
         let mut seen = BTreeSet::new();
-        for (_, _, lead) in leads.best {
+        // Passage rank alone can fill both slots with accounts that cannot
+        // supply a decision. Retain directly matched decisions from the same
+        // scan and let the existing identity check and two-route cap apply.
+        let mut ranked = leads.best;
+        for decision in leads.proposal_decisions.into_iter().flatten() {
+            if !ranked.contains(&decision) {
+                ranked.push(decision);
+            }
+        }
+        for (_, _, lead) in ranked {
             let task_id = lead["task_id"].as_str().ok_or(FoundryError::NotFound)?;
             let raw = table.get(task_id)?.ok_or(FoundryError::NotFound)?;
             let origin = decode(raw.value(), task_id, &proposal.workspace_id)?;

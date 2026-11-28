@@ -77,6 +77,13 @@ experimental tip through `ac43ed2`. [Merge and local gates](validation.md#local-
   [Plan and commands](../specs/003-agent-retrieval-context/contracts/indirect-change-impact.md)
   and [walkthrough](validation.md#from-an-indirect-request-to-the-affected-feature--2026-11-24).
 
+  **Pre-edit decision check, 2026-11-27.** A fresh ChatGPT project chat asked
+  to delete the original task found the saved Cleanup rule, Editorial handoff’s
+  reason and the Rust guard. It identified the changed source and asked which
+  deletion policy to implement before editing. An unrelated port request
+  received the launch command. The policy remains open.
+  [Desktop cases and focused checks](validation.md#a-deletion-request-surfaces-a-decision-before-editing--2026-11-27).
+
   **From shared originals to a feature review, 2026-11-24.** Save a meeting
   and specification once in a project notebook. A fresh client can ask in
   the team's terms which claims need review. Each feature can cite a passage

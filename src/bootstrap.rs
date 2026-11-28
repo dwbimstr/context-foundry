@@ -656,6 +656,14 @@ pub(crate) fn task_aware_instructions(mut instructions: String, enabled: bool) -
             r#"
 - When resuming a saved work item, including after chat compaction, reopen its current Foundry view before drafting an answer or running code. Use its workspace_id and task_id with task_context and {"op":"render","max_bytes":8192}. If you need the task ID, list the workspace's tasks first. If the view is unavailable, say which decisions you could not verify."#,
         );
+        instructions.push_str(concat!(
+            "\n- Before editing product behavior, check the request against relevant saved decisions with find_decisions. ",
+            "If a governing choice is open or the request conflicts with a saved rule or its enforcing code, ",
+            "quote the rule and cite the guard. If lookup finds only accounts or passages, follow proposal_impact or a relevant source_review claim to the decision. ",
+            "Use the decision’s own task and entry IDs with decision_uses and report who relies on it and why. State any uncertain support. Offer the existing behavior and the requested alternative, and wait for the operator's choice before editing. ",
+            "A proposal or a confirmed scope identifies what to review. Once the operator chooses the policy, proceed. ",
+            "For unrelated work, omit unrelated leads and continue.",
+        ));
     }
     instructions
 }

@@ -5,6 +5,16 @@ would be affected. They need to see the current rule, the other feature that
 uses it, the reason that feature depends on it, and where to check the code.
 The request itself remains a proposal until the operator makes a policy decision.
 
+The task-enabled project and MCP instructions apply this distinction to an
+ordinary request to change product behavior. Before a code or spec edit, the
+client surfaces an open or conflicting choice with the saved rule, attributed
+dependencies and enforcing code. It asks which policy to implement and waits
+for the answer. The client proceeds on an explicit choice and omits unrelated
+decisions when there is no applicable conflict. If meeting accounts occupy
+both passage slots, proposal impact can still offer a directly matching saved
+decision and its declared dependents. The two-candidate response cap and
+explicit scope confirmation still apply.
+
 ## Product contract
 
 1. Accept the original words and their attribution at workspace scope. The

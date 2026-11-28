@@ -189,7 +189,8 @@ struct Suggestions {
     best: Vec<(usize, bool, Value)>,
     matching: usize,
     stale: usize,
-    include_identical_captures: bool,
+    // Proposals can only bind a current decision or a passage reviewed against one.
+    proposal_decisions: Option<Vec<(usize, bool, Value)>>,
     discovery: Option<DecisionDiscovery>,
 }
 
@@ -261,7 +262,7 @@ impl Suggestions {
             {
                 continue;
             }
-            if !self.include_identical_captures
+            if self.proposal_decisions.is_none()
                 && e.kind == Kind::Observation
                 && item.sha256 == words.digest
             {
@@ -294,27 +295,41 @@ impl Suggestions {
                 }
             }
             self.matching += 1;
+            if kind == PriorKind::Decision
+                && let Some(decisions) = &mut self.proposal_decisions
+            {
+                Self::retain_best(decisions, shared.len(), true, source.clone());
+            }
             self.offer(shared.len(), kind != PriorKind::AttributedAccount, source);
         }
         Ok(())
     }
 
     fn offer(&mut self, score: usize, grounded: bool, source: Value) {
+        Self::retain_best(&mut self.best, score, grounded, source);
+    }
+
+    fn retain_best(
+        best: &mut Vec<(usize, bool, Value)>,
+        score: usize,
+        grounded: bool,
+        source: Value,
+    ) {
         let rank = |(score, grounded, v): &(usize, bool, Value)| {
             (*score, v.get("via_requirement").is_some(), *grounded)
         };
         let candidate = (score, grounded, source);
-        if let Some(i) = self.best.iter().position(|(_, _, v)| {
+        if let Some(i) = best.iter().position(|(_, _, v)| {
             v["task_id"] == candidate.2["task_id"] && v["entry_id"] == candidate.2["entry_id"]
         }) {
-            if rank(&self.best[i]) >= rank(&candidate) {
+            if rank(&best[i]) >= rank(&candidate) {
                 return;
             }
-            self.best.remove(i);
+            best.remove(i);
         }
-        self.best.push(candidate);
-        self.best.sort_by_key(|v| std::cmp::Reverse(rank(v)));
-        self.best.truncate(2);
+        best.push(candidate);
+        best.sort_by_key(|v| std::cmp::Reverse(rank(v)));
+        best.truncate(2);
     }
 
     fn result(self) -> Value {

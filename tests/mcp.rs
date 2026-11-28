@@ -2228,6 +2228,12 @@ fn connect_forwards_profiles_without_loading_or_maintaining() {
                 .unwrap()
                 .contains("after chat compaction")
         );
+        assert!(
+            printed["instructions"]
+                .as_str()
+                .unwrap()
+                .contains("wait for the operator's choice before editing")
+        );
         let launch = printed["launch"].as_array().unwrap();
         let args: Vec<String> = if host == "omp" {
             let config: serde_json::Value =

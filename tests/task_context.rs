@@ -200,6 +200,49 @@ fn proposal_scope_survives_new_wording_but_not_a_replaced_decision() {
 }
 
 #[test]
+fn proposal_recovers_a_decision_when_two_closer_accounts_have_no_decision() {
+    let e = env();
+    let engine = Engine::open_existing(&e.store).unwrap();
+    let revision = create(&engine);
+    let mut receipt = apply(
+        &engine,
+        revision,
+        json!([add("dispatch", "decision", "Orchard crates need approval.")]),
+    )
+    .unwrap();
+    for text in [
+        "Move the orchard crates and barrels before sunrise.",
+        "Deliver the orchard crates and barrels before sunrise.",
+    ] {
+        receipt = call(
+            &engine,
+            json!({"op":"capture","source":"Field notes","text":text,"expected_revision":receipt["revision"]}),
+        )
+        .unwrap();
+    }
+    let propose = |text: &str| {
+        let request = task_context::parse(json!({"workspace_id":e.wid,"command":{
+            "op":"propose_change","source":"Planning","author":"Alex","text":text}}))
+        .unwrap();
+        engine
+            .task_context(&request, &Control::unbounded())
+            .unwrap()
+    };
+    let result = propose("Ship the orchard crates and barrels before sunrise.");
+    assert_eq!(
+        result["candidates"][0]["impact"]["decision"]["entry_id"],
+        "dispatch"
+    );
+    assert_eq!(result["candidates"][0]["basis"], "wording_match");
+    assert_eq!(result["scope_status"], "needs_clarification");
+    assert_eq!(result["policy_status"], "proposed");
+    assert_eq!(
+        propose("Reschedule the radio broadcast.")["candidates"],
+        json!([])
+    );
+}
+
+#[test]
 fn only_exact_rule_bytes_neighboring_the_review_can_suggest_impact() {
     let e = env();
     let engine = Engine::open_existing(&e.store).unwrap();
@@ -1473,6 +1516,10 @@ async fn experimental_mcp_tool_is_opt_in_and_matches_cli_state() {
         let server_info = client.peer_info().unwrap();
         let instructions = server_info.instructions.as_deref().unwrap();
         assert_eq!(instructions.contains("after chat compaction"), enabled);
+        assert_eq!(
+            instructions.contains("wait for the operator's choice before editing"),
+            enabled
+        );
         assert_eq!(
             instructions.contains(r#"{"op":"render","max_bytes":8192}"#),
             enabled

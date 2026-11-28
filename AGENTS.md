@@ -25,6 +25,17 @@ boundaries and existing authorization; do not ask again for already selected wor
   `workspace_id` and `task_id` with `task_context` and
   `{"op":"render","max_bytes":8192}`. If you need the task ID, list the workspace's
   tasks first. If the view is unavailable, say which decisions you could not verify.
+- Before editing product behavior, check the request against relevant saved
+  decisions with `find_decisions`. If a governing choice is open or the
+  request conflicts with a saved rule or its enforcing code, quote the
+  attributed rule, explain any dependent feature, and cite the guard. If
+  lookup finds only accounts or passages, follow `proposal_impact` or a
+  relevant `source_review` claim to the decision. Use its own feature and
+  entry ID for `decision_uses`. Include the existing behavior as a choice,
+  identify changed or uncertain support, and present the requested alternative.
+  Wait for the operator's choice before editing. A proposal
+  or confirmed scope identifies what to review. Once the operator chooses the
+  policy, proceed. For unrelated work, omit unrelated leads and continue.
 - Locate an identifier with Foundry `search`, understand behavior or relationships
   with `context`, and follow a returned handle with `retrieve`. Try the applicable
   Foundry operation before grep, ripgrep, host code search, file listing or
